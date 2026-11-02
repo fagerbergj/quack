@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { EvalService } from '@quack/sdk';
+import { childPort } from '@quack/session';
 import type { DatasetItem } from './langfuse.ts';
 import { readSession, type SessionRecord } from './record.ts';
 
@@ -16,17 +16,9 @@ export type ReplayResult = { item: DatasetItem; seconds: number; record: Session
 
 const RUNTIME = fileURLToPath(new URL('../../runtime/src/main.ts', import.meta.url));
 
-async function freePort(): Promise<number> {
-  const s = createServer().listen(0, '127.0.0.1');
-  await new Promise((r) => s.once('listening', r));
-  const { port } = s.address() as { port: number };
-  await new Promise((r) => s.close(r));
-  return port;
-}
-
 // One request with wait: true holds until the run settles. A runtime that exits (a bad config path, a crash)
-// ends the wait at once instead of at the deadline; until it listens, the connect is retried.
-async function untilSettled(url: string, input: string, deadline: number, child: ChildProcess) {
+// ends the wait at once instead of at the deadline; a dropped connection is retried.
+async function untilSettled(input: string, deadline: number, child: ChildProcess) {
   const stop = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   const failed = new Promise<never>((_, reject) => {
@@ -36,27 +28,15 @@ async function untilSettled(url: string, input: string, deadline: number, child:
     child.once('exit', exited);
     timer = setTimeout(() => fail('replay timed out'), Math.max(0, deadline - Date.now()));
   });
-  // freePort releases the port before the child binds, so a stranger may answer there; only the child's own pid counts.
-  const listening = async () => {
-    for (;;) {
-      try {
-        const res = await fetch(`${url}/ping`, { signal: AbortSignal.any([stop.signal, AbortSignal.timeout(1000)]) });
-        if (((await res.json()) as { pid?: number }).pid === child.pid) return;
-      } catch (err) {
-        if (stop.signal.aborted) throw err;
-      }
-      await new Promise((res) => setTimeout(res, 200));
-    }
-  };
   const settled = async () => {
-    await listening();
+    const url = `http://127.0.0.1:${await childPort(child, 'runtime', deadline - Date.now())}`;
     for (;;) {
       try {
         await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1', wait: true }), signal: stop.signal });
         return;
       } catch (err) {
         if (stop.signal.aborted) throw err;
-        await new Promise((res) => setTimeout(res, 200)); // not listening yet
+        await new Promise((res) => setTimeout(res, 200));
       }
     }
   };
@@ -80,16 +60,15 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   if (missing.length) throw new Error(`no eval service for pinned ${missing.join(', ')}`);
   const doubles = await Promise.all(Object.entries(pins).map(([k, pin]) => services[k](pin)));
   const dir = await mkdtemp(join(tmpdir(), 'quack-eval-'));
-  const port = await freePort();
-  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, PORT: String(port) };
-  const child = spawn(process.execPath, [RUNTIME], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, PORT: '0' };
+  const child = spawn(process.execPath, [RUNTIME], { env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   let stderr = '';
-  child.stderr.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
+  child.stderr?.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
   const started = Date.now();
   let error: string | undefined;
   try {
     // Only the first input replays: later turns were the operator's answers to what the recorded run said.
-    await untilSettled(`http://127.0.0.1:${port}`, inputs[0] ?? '', started + timeoutMs, child);
+    await untilSettled(inputs[0] ?? '', started + timeoutMs, child);
   } catch (err) {
     error = `${(err as Error).message}${stderr ? `: ${crashLine(stderr)}` : ''}`;
   } finally {

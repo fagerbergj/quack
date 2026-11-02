@@ -10,10 +10,10 @@
     "@earendil-works/pi-durable": "1.4.0",
     "@quack/sdk": "*",
     "@quack/judge": "*",
-    "@quack/runtime": "*"
+    "@quack/runtime": "*",
+    "@quack/session": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.4.0",
-    "@quack/session": "*"
+    "@earendil-works/pi-ai": "1.4.0"
   }
 }

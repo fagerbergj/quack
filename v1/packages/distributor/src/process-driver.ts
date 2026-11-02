@@ -2,10 +2,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { shellEnv } from '@quack/session';
+import { childPort, shellEnv } from '@quack/session';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
@@ -38,30 +37,6 @@ export type HostDriver = {
 };
 
 type Child = { proc: ChildProcess; url: string; stopping: boolean };
-
-async function freePort(): Promise<number> {
-  const server = createServer().listen(0, '127.0.0.1');
-  await new Promise((r) => server.once('listening', r));
-  const { port } = server.address() as { port: number };
-  await new Promise((r) => server.close(r));
-  return port;
-}
-
-async function waitHealthy(url: string, proc: ChildProcess, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (proc.exitCode !== null) throw new Error(`session process exited with ${proc.exitCode}`);
-    try {
-      // A stranger on the port may accept and never answer; bound each probe so the deadline is reached.
-      const res = await fetch(`${url}/ping`, { signal: AbortSignal.timeout(1_000) });
-      if (res.ok && ((await res.json()) as { pid?: number }).pid === proc.pid) return;
-    } catch {
-      // not listening yet
-    }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error('session process did not become healthy');
-}
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
@@ -127,7 +102,6 @@ function firstInput(dir: string): string | undefined {
   }
 }
 
-const START_ATTEMPTS = 3;
 const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
@@ -209,18 +183,17 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     return { name, path: source && join(snapshotDir, 'agent.json') };
   }
 
-  async function spawnOnce(key: string, agentPath: string | undefined): Promise<string> {
+  async function start(key: string, agentPath: string | undefined): Promise<string> {
     const dir = sessionDir(key);
-    const port = await freePort();
-    const url = `http://127.0.0.1:${port}`;
     const [cmd, ...args] = opts.command;
     // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
     const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
     const proc = spawn(cmd, args, {
-      env: { ...inherited, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: String(port), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key },
-      stdio: ['ignore', 'inherit', 'inherit'],
+      env: { ...inherited, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key },
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
     });
-    const child: Child = { proc, url, stopping: false };
+    // The session binds its own port and reports it, so the parent never probes a port another process may own.
+    const child: Child = { proc, url: '', stopping: false };
     // A crash after startup restarts from the log (NFR-HAR-2), up to a budget so a process-level crash cannot loop;
     // past it the next request restarts the session. Startup crashes are reported to the caller instead.
     proc.once('exit', () => {
@@ -232,24 +205,13 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       if (recent.length <= CRASH_BUDGET) void ensure(key).catch(() => {});
     });
     try {
-      await waitHealthy(url, proc, opts.startTimeoutMs ?? 15_000);
+      child.url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
     } catch (err) {
       proc.kill('SIGKILL');
       throw err;
     }
     children.set(key, child);
-    return url;
-  }
-
-  // freePort is released before the child binds, so another process can take the port first; the child then exits and a fresh port is tried.
-  async function start(key: string, agentPath: string | undefined): Promise<string> {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await spawnOnce(key, agentPath);
-      } catch (err) {
-        if (attempt >= START_ATTEMPTS || !(err as Error).message.startsWith('session process exited')) throw err;
-      }
-    }
+    return child.url;
   }
 
   async function ensure(key: string, agent?: string): Promise<string> {
