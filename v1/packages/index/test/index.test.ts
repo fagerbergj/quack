@@ -16,7 +16,7 @@ import { defineWorkflow, outcomeOf, WorkflowDoc, workflowSessionExtensions } fro
 import pg from 'pg';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
-import type { Fact } from '../src/facts.ts';
+import { artifactFacts, type Fact } from '../src/facts.ts';
 import { createStore, openStore, indexRoutes, postgresBackend, rebuild, sqliteBackend, startPublisher, collectFacts, type IndexStore } from '../src/index.ts';
 
 const url = process.env.QUACK_TEST_DATABASE_URL;
@@ -375,4 +375,16 @@ test('forget drops one session rows and waiting sees only pending asks', async (
   assert.deepEqual([await store.waiting('a'), await store.waiting('b')], [true, false]);
   await store.forget('a');
   assert.deepEqual((await store.facts()).map((f) => f.session), ['b']);
+});
+
+test('an old artifact (no stored outcome) still takes a link attached after its earlier fact was stored', async () => {
+  const { store } = await freshSqlite();
+  const sealed = { kind: 'demo.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true } };
+  // The pre-change fact for a review with a verdict section: base 2 + outcome 2.
+  const [old] = artifactFacts({ kinds: { 'demo.review': { versions: [sealed] } } });
+  await store.upsert('s', [{ ...old, rev: 4 }]);
+  const link = { label: 'Posted', url: 'https://example.test/r' };
+  const [next] = artifactFacts({ kinds: { 'demo.review': { versions: [{ ...sealed, links: [link] }] } } });
+  await store.upsert('s', [next]);
+  assert.deepEqual((await store.facts())[0].data.links, [link]);
 });
