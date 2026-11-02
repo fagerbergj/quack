@@ -63,7 +63,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
       // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
       if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
       if (a.met) r.met! += 1 / r.units;
-      if (a.met === false && a.note) r.notes.push(`${unit.id}: ${a.note}`);
+      if (a.met === false && a.note) r.notes.push(unit.whole ? a.note : `${unit.id}: ${a.note}`);
     }
   }
   for (const r of results.values()) if (r.undecided) r.met = null;

@@ -20,11 +20,16 @@ export type Action<P extends TSchema = TSchema> = {
   start(params: Static<P>, ctx: ActionContext): Promise<{ session: string; title: string }>;
 };
 
+/** The slice of a deployment's config an extension may check its own config against. */
+export type DeploymentView = { providers: Record<string, { models: Record<string, { images?: boolean }> }> };
+
 /** What an extension package exports as `manifest`. `session` installs it for agents selecting `name` (every session if `deployment`); `env` is what it reads from the process. */
 export type ExtensionManifest = {
   name: string;
   session?: (config: unknown, workflows: ContributedWorkflows, actions: Action<any>[]) => Extension[] | Promise<Extension[]>;
   env?: readonly string[] | ((config: unknown, workflows: ContributedWorkflows, actions: Action<any>[]) => readonly string[]);
+  /** Problems with an agent's config for this extension, given the deployment; empty when it is fine. */
+  validate?: (config: unknown, deployment: DeploymentView) => string[];
   deployment?: boolean;
   /** Extensions this one cannot work without; an agent selecting it gets them too, loaded first. */
   requires?: string[];

@@ -166,7 +166,7 @@ export function reviewEvidence(repoDir = 'repo') {
     }
     const changeUnit = { id: 'change', state: { review: sealed.content, ...change } };
     return {
-      review: [{ id: 'review', state: { review: sealed.content } }],
+      review: [{ id: 'review', whole: true, state: { review: sealed.content } }],
       change: [changeUnit],
       // A question conditional on an approve has no unit on any other verdict, so it scores null instead of a vacuous miss.
       approve: r.verdict === 'approve' ? [changeUnit] : [],

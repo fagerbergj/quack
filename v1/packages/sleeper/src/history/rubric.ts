@@ -30,9 +30,9 @@ export function historyEvidence(f: HistoryFacts) {
   return async (_api: unknown, sealed: { content: string }): Promise<Evidence> => {
     const card = parse(sealed.content);
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: card.seasons.filter((s) => s.note).map((s) => ({ id: `season${s.season}`, state: { season: brief(s), note: s.note } as never })),
-      card: [{ id: 'card', state: { summary: card.summary, definitions: card.definitions, seasons: card.seasons.map((s) => ({ season: s.season, record: brief(s).record, eff: s.eff, note: s.note })) } as never }],
+      card: [{ id: 'card', whole: true as const, state: { summary: card.summary, definitions: card.definitions, seasons: card.seasons.map((s) => ({ season: s.season, record: brief(s).record, eff: s.eff, note: s.note })) } as never }],
     };
   };
 }

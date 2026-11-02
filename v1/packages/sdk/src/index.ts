@@ -5,5 +5,5 @@ export { agentModel, decide, modelResolver, parseDecision, prompt, sessionModel,
 export { Artifacts, artifactsExtension, attachLink, attachVerdict, seal, sealedVersion, type ArtifactKind, type ArtifactLink, type SealedArtifact } from './artifacts.ts';
 export { piPackage, piShutdown } from './pi-package.ts';
 export { gateGenerations, observeGeneration, onGeneration, onWaiting, statusNote, whileWaiting, type Generation, type GenerationGate, type GenerationRequest } from './signals.ts';
-export type { Action, ActionContext, ContributedWorkflow, ContributedWorkflows, EvalAdapter, EvalService, ExtensionManifest, RecordedSession } from './manifest.ts';
+export type { Action, ActionContext, ContributedWorkflow, ContributedWorkflows, DeploymentView, EvalAdapter, EvalService, ExtensionManifest, RecordedSession } from './manifest.ts';
 export { invocationRequest, safeEqual, serviceHttp, submitToSession, type SessionSubmission } from './http.ts';

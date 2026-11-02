@@ -67,10 +67,10 @@ export function waiversEvidence(f: WaiverFacts) {
     });
     const rows = card.candidates.map(unit);
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: rows,
       close: card.candidates.filter((r) => (r.news?.length ?? 0) > 0).map(unit),
-      card: [{ id: 'card', state: { summary: card.summary, waiver_type: f.waiverType, rows: card.candidates.map((r) => ({ rank: r.rank, add: r.player.name, drop: r.drop.player.name, why: r.why })), table: f.table } as never }],
+      card: [{ id: 'card', whole: true as const, state: { summary: card.summary, waiver_type: f.waiverType, rows: card.candidates.map((r) => ({ rank: r.rank, add: r.player.name, drop: r.drop.player.name, why: r.why })), table: f.table } as never }],
     };
   };
 }

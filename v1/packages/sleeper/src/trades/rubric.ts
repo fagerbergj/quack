@@ -48,13 +48,13 @@ export function tradeEvidence(f: TradeFacts) {
   return async (_api: unknown, sealed: { content: string }): Promise<Evidence> => {
     const card = parse(sealed.content);
     const rows = rowsOf(card);
-    const cardUnit = { id: 'card', state: { summary: card.summary, league_teams: f.teams, rows: rows.map(brief) } as never };
+    const cardUnit = { id: 'card', whole: true as const, state: { summary: card.summary, league_teams: f.teams, rows: rows.map(brief) } as never };
     const unit = (r: Row) => {
       const partner = f.partners.find((p) => p.rosterId === r.partner);
       return { id: r.id, state: { row: brief(r), counter: r.counter ?? null, news: r.news, designations: names(r), league_teams: f.teams, you: { stance: f.mine.stance, needs: f.mine.needs, surplus: f.mine.surplus }, partner: partner && { team: partner.team, record: partner.record, stance: partner.stance, needs: partner.needs, surplus: partner.surplus } } as never };
     };
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: rows.map(unit),
       consolidation: rows.filter((r) => multi(r) || (r.counter && multi(r.counter))).map(unit),
       card: [cardUnit],

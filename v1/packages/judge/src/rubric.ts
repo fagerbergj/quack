@@ -1,7 +1,8 @@
 import type { JsonObject } from '@earendil-works/pi-durable';
 
 /** A focused piece of evidence a check is judged on; small enough for a decision model where possible. */
-export type Unit = { id: string; state: JsonObject };
+/** `whole` marks a unit that is the entire artifact, so its notes carry no unit prefix. */
+export type Unit = { id: string; state: JsonObject; whole?: true };
 
 /** Evidence units by scope name; the domain defines its scopes (e.g. the review alone, the review with its diff, each finding). */
 export type Evidence = Record<string, Unit[]>;
@@ -16,7 +17,7 @@ export type Check = {
   /** Plain words for what went wrong when this fails, shown to the user in place of the id. */
   label: string;
   weight: number | 'gate';
-  /** The evidence scope a model check is judged on, once per unit; defaults to 'review'. */
+  /** The evidence scope a model check is judged on, once per unit; required on a check with a question. */
   scope?: string;
   question?: string;
   code?: (artifact: string, evidence: Evidence) => CodeResult;
@@ -43,7 +44,8 @@ export type CheckResult = {
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };
 
 export function unitsFor(scope: string | undefined, evidence: Evidence): Unit[] {
-  return evidence[scope ?? 'review'] ?? [];
+  if (!scope) throw new Error('a check with a question must name its evidence scope');
+  return evidence[scope] ?? [];
 }
 
 // Earned points over possible points; checks that apply to no unit count toward neither.

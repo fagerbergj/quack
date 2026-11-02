@@ -11,7 +11,7 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { feedback, judge, score, type Evidence, type Rubric } from '../src/index.ts';
+import { feedback, judge, score, unitsFor, type Evidence, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -42,7 +42,7 @@ const review: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md
 async function evidence(_api: unknown, sealed: { content: string }): Promise<Evidence> {
   const findings = sealed.content.split('\n').filter((l) => /^- (blocking|nit):/.test(l))
     .map((line, i) => ({ id: `f${i + 1}`, blocking: line.startsWith('- blocking:'), state: { unit: `f${i + 1}`, finding: line } }));
-  return { review: [{ id: 'review', state: { unit: 'review', review: sealed.content } }], finding: findings, blocking: findings.filter((f) => f.blocking) };
+  return { review: [{ id: 'review', whole: true, state: { unit: 'review', review: sealed.content } }], finding: findings, blocking: findings.filter((f) => f.blocking) };
 }
 
 const hasVerdict = (a: string) => /## Verdict/.test(a);
@@ -142,4 +142,18 @@ test('an undecided check is unscored, never unmet', () => {
   const ok = { criterion: 'c', id: 'j', label: 'j', weight: 2, met: 1, units: 1, resolvers: { code: 1 }, notes: [] };
   assert.deepEqual(score({ name: 'x', version: 1, threshold: 0.8, criteria: [] }, [r, ok]), { score: 1, gatesFailed: [], passed: true });
   assert.deepEqual(feedback([r]), []);
+});
+
+test('a whole-artifact unit adds no prefix to its notes, another unit keeps its id', async () => {
+  const no = fauxAssistantMessage('{"choice": "no", "confidence": 0.9, "reason": "too long"}');
+  const content = '## Takeaway\nLooks good.\n## Verdict\napprove\n## Findings\n- nit: src/y.ts:3 rename\n';
+  const { versions } = await run(undefined, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), no, no, fauxAssistantMessage('Done.')]);
+  const notes = (id: string) => versions[0].checks.find((c: any) => c.id === id).notes;
+  assert.deepEqual(notes('takeaway_actionable'), ['too long']);
+  assert.deepEqual(notes('says_why'), ['f1: too long']);
+});
+
+test('a check without a scope is an error, not a default scope', () => {
+  assert.throws(() => unitsFor(undefined, { review: [] }), /name its evidence scope/);
+  assert.deepEqual(unitsFor('review', { review: [] }), []);
 });

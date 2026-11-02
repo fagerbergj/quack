@@ -47,3 +47,13 @@ test('every loaded manifest\'s actions reach the home extension, and a name two 
   await buildCatalog([...manifests, probe]).catalog.probe({});
   assert.deepEqual(seen[0].sort(), ['research_question', 'review_pull_request', 'run_job']);
 });
+
+test('the workflows entry refuses a vision model not declared with images: true', () => {
+  const deployment = (images?: boolean) => ({ providers: { local: { baseUrl: 'http://x/v1', models: { omni: { contextWindow: 8192, maxTokens: 512, ...(images && { images }) } } } } });
+  const config = (modelId: string) => ({ visionModel: { provider: 'local', modelId } });
+  const validate = catalog.workflows.validate!;
+  assert.deepEqual(validate(config('omni'), deployment(true)), []);
+  assert.match(validate(config('omni'), deployment())[0], /visionModel local\/omni must be configured .* images: true/);
+  assert.match(validate(config('missing'), deployment(true))[0], /visionModel local\/missing/);
+  assert.deepEqual(validate({ workflow: 'x' }, deployment()), []);
+});

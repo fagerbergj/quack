@@ -16,7 +16,7 @@ export async function loadManifests(list: string[] = extensionList()): Promise<E
 
 const entry = (m: ExtensionManifest, workflows: ContributedWorkflows, actions: Action<any>[]): CatalogEntry => {
   const { env } = m;
-  return Object.assign((config: unknown) => m.session!(config, workflows, actions), { env: typeof env === 'function' ? (config: unknown) => env(config, workflows, actions) : env, requires: m.requires, optional: m.optional });
+  return Object.assign((config: unknown) => m.session!(config, workflows, actions), { validate: m.validate, env: typeof env === 'function' ? (config: unknown) => env(config, workflows, actions) : env, requires: m.requires, optional: m.optional });
 };
 
 /** Entries by the name agent definitions select them with (A8), and the extensions every session gets, from the manifests. */
