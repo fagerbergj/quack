@@ -17,3 +17,4 @@ export function researchSessionExtensions(config: ResearchConfig = {}, deps: { i
     judge({ kind: reportKind, rubric: researchRubric, evidence: reportEvidence(), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_report' }),
   ];
 }
+export { manifest } from './manifest.ts';
