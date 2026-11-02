@@ -133,7 +133,7 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
 });
 
 test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
-  const broken = { agents: async () => [], sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const broken = { agents: async () => [], sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -314,6 +314,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
   servers.push(() => new Promise((r) => stub.close(() => r())));
   const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
   const wakes = new Map<string, number>();
+  const touches = new Map<string, number>();
   const running = new Set<string>();
   const log: string[] = [];
   const driver = {
@@ -322,6 +323,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
     ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
     stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
     remove: async () => false,
+    touch: async (key: string, at: number) => void touches.set(key, at),
     setWake: async (key: string, at: number | undefined) => { if (at === undefined) wakes.delete(key); else wakes.set(key, at); },
     wakes: async () => [...wakes].map(([key, at]) => ({ key, at })),
     running: () => [...running],
@@ -348,7 +350,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
     servers.push(() => new Promise((r) => server.close(() => r())));
     return server;
   };
-  return { driver, wakes, log, advance, start, now: () => clock };
+  return { driver, wakes, touches, log, advance, start, now: () => clock };
 }
 
 const HOUR = 3_600_000;
@@ -367,6 +369,20 @@ test('the listing says which running sessions are mid-run, from the last sweep a
   status = 'Healthy';
   await server.sweep();
   assert.equal(await active(), false, 'alive but between runs');
+});
+
+test('a sweep that finds a session working records the touch, and an idle one does not', async () => {
+  let status = 'HealthyBusy';
+  const fleet = await fakeFleet(() => ({ status, waitingOnHuman: false, wake: {} }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/research%3Aa/ping`);
+  await server.sweep();
+  assert.equal(fleet.touches.get('research:a'), fleet.now());
+  fleet.advance(1000);
+  status = 'Healthy';
+  await server.sweep();
+  assert.equal(fleet.touches.get('research:a'), fleet.now() - 1000);
 });
 
 test('the listing carries a session\'s status note from its last ping, and drops it when the note clears', async () => {
@@ -506,7 +522,7 @@ test('an invocation held past undici\'s headers timeout is still proxied, not tu
   const session = createHttpServer((_req, res) => setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"answered"}'), 2_000)).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const previous = getGlobalDispatcher();
@@ -531,7 +547,7 @@ test('a client that hangs up mid-body does not take the distributor down', async
   }).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const port = (server.address() as AddressInfo).port;

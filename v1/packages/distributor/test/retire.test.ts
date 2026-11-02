@@ -16,7 +16,7 @@ async function start(opts: { running?: string[]; sleeping?: string[]; waiting?: 
   const forgotten: string[] = [];
   const driver = {
     running: () => opts.running ?? [], wakes: async () => (opts.sleeping ?? []).map((key) => ({ key, at: 1 })),
-    remove: async (key: string) => existing.delete(key), stop: async () => {}, setWake: async () => {},
+    remove: async (key: string) => existing.delete(key), stop: async () => {}, setWake: async () => {}, touch: async () => {},
   } as unknown as HostDriver;
   const server = createDistributor(driver, { retire: { token: TOKEN, waiting: async (k) => (opts.waiting ?? []).includes(k), forget: async (k) => void forgotten.push(k) } }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -69,7 +69,7 @@ test('an invocation racing a delete waits for it and then starts a fresh session
   servers.push(() => upstream.close());
   await new Promise((r) => upstream.once('listening', r));
   const driver = {
-    running: () => [], wakes: async () => [], stop: async () => {}, setWake: async () => {},
+    running: () => [], wakes: async () => [], stop: async () => {}, setWake: async () => {}, touch: async () => {},
     remove: async () => { await gate; log.push('remove'); return true; },
     ensure: async () => { log.push('ensure'); return `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`; },
   } as unknown as HostDriver;
@@ -89,4 +89,17 @@ test('an invocation racing a delete waits for it and then starts a fresh session
   assert.equal((await deleted).status, 200);
   assert.equal((await invoked).status, 200);
   assert.deepEqual(log, ['remove', 'ensure']);
+});
+
+test('a touch newer than the last log message is the session\'s last activity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'quack-touch-'));
+  servers.push(() => void rm(root, { recursive: true, force: true }));
+  const dataDir = join(root, 'data');
+  const dir = join(dataDir, sessionDirName('job'));
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'session-key'), 'job');
+  const driver = processDriver({ command: [], dataDir, agentsDir: join(root, 'agents') });
+  await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
+  const [session] = await driver.sessions();
+  assert.equal(session.lastActivity, '2026-11-02T12:00:00.000Z');
 });

@@ -30,6 +30,8 @@ export type HostDriver = {
   remove(key: string): Promise<boolean>;
   /** Records when a stopped session next needs a process (its earliest sleep); undefined clears it. */
   setWake(key: string, at: number | undefined): Promise<void>;
+  /** Records that the session was doing work at `at`, for runs that add no log messages. */
+  touch(key: string, at: number): Promise<void>;
   /** Every session with a recorded wake time. */
   wakes(): Promise<Array<{ key: string; at: number }>>;
   running(): string[];
@@ -58,7 +60,7 @@ export async function digest(dir: string): Promise<string> {
 
 const SNAPSHOT = 'agent-def';
 
-// Newest message time in the session's own log; file mtimes move on every restart and checkpoint.
+// Newest of the last log message and the last recorded touch; file mtimes move on every restart and checkpoint.
 async function lastActivity(dir: string): Promise<number> {
   let logged = 0;
   try {
@@ -72,7 +74,8 @@ async function lastActivity(dir: string): Promise<number> {
   } catch {
     // No log yet: fall back to when the session was created.
   }
-  return logged || (await stat(join(dir, 'session-key')).then((s) => s.mtimeMs, () => 0));
+  const touched = Number(await readText(join(dir, 'touched'))) || 0;
+  return Math.max(logged, touched) || (await stat(join(dir, 'session-key')).then((s) => s.mtimeMs, () => 0));
 }
 
 const TITLE_MAX = 120;
@@ -245,6 +248,8 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     return all.filter((s) => s !== undefined).sort((a, b) => b.at - a.at).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
   }
 
+  const touch = (key: string, at: number) => writeFile(join(sessionDir(key), 'touched'), String(at));
+
   async function setWake(key: string, at: number | undefined) {
     if (at === undefined) await rm(join(sessionDir(key), 'wake'), { force: true });
     else await writeFile(join(sessionDir(key), 'wake'), String(at));
@@ -276,5 +281,5 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     await exited;
   }
 
-  return { ensure, agents, sessions, stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
+  return { ensure, agents, sessions, stop, remove, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
 }

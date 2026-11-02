@@ -2,7 +2,22 @@ import type { SealedArtifact } from '../../api.ts';
 import { plain, sentence, type Extension } from '../../extension.ts';
 import { Sleeper } from './Sleeper.tsx';
 
-const KEY = /^sleeper:[^:]+:(\d+):(lineup|waivers)$/;
+const KEY = /^sleeper:[^:]+:(\d+):(lineup|waivers|history|trends|trade-finder|trade|digest|retro)(?::|$)/;
+
+type Job = { title: (week: string) => string; run: string; pass: (week: string) => string };
+const JOB: Record<string, Job> = {
+  lineup: { title: (w) => `Lineup · wk ${w}`, run: 'Checking your lineup', pass: () => 'Lineup picks ready' },
+  waivers: { title: (w) => `Waivers · wk ${w}`, run: 'Looking at waivers', pass: () => 'Waiver claims ready' },
+  history: { title: () => 'History', run: 'Reading league history', pass: () => 'League history ready' },
+  trends: { title: (w) => `Trends · wk ${w}`, run: 'Reading trends', pass: () => 'Trends ready' },
+  'trade-finder': { title: (w) => `Trade finder · wk ${w}`, run: 'Looking for trades', pass: () => 'Trade ideas ready' },
+  // The key carries only a roster number, so the title leaves the partner out.
+  trade: { title: (w) => `Trade · wk ${w}`, run: 'Looking for trades', pass: () => 'Trade ideas ready' },
+  digest: { title: (w) => `Recap · wk ${w}`, run: 'Writing the recap', pass: (w) => `Week ${w} recap ready` },
+  retro: { title: (w) => `Retro · wk ${w}`, run: 'Writing the retro', pass: (w) => `Week ${w} retro ready` },
+};
+
+const jobOf = (key: string) => { const [, week, job] = KEY.exec(key)!; return { week: week!, job: JOB[job!]! }; };
 
 const NAMES: Record<string, string> = { lineup: 'Lineup picks', waivers: 'Waiver claims', 'trade-finder': 'Trade ideas', trade: 'Trade check', trends: 'Trends', history: 'League history' };
 
@@ -22,10 +37,13 @@ export const sleeper: Extension = {
   session: {
     label: 'sleeper', match: (r) => KEY.test(r.key), icon: 'M8 4h8v5a4 4 0 0 1-8 0ZM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M9 20h6', tint: 'bg-success-bg text-success',
     name: (r) => {
-      const [, week, job] = KEY.exec(r.key)!;
-      return plain(`${sentence(job!)} · wk ${week}`);
+      const { week, job } = jobOf(r.key);
+      return plain(job.title(week));
     },
-    words: (r) => ({ kind: 'sleeper.cards', w: { run: 'Checking lineup', pass: KEY.exec(r.key)?.[2] === 'waivers' ? 'Waiver claims ready' : 'Lineup picks ready', fail: "Didn't pass its checks", none: 'Nothing yet' } }),
+    words: (r) => {
+      const { week, job } = jobOf(r.key);
+      return { kind: 'sleeper.cards', w: { run: job.run, pass: job.pass(week), fail: "Didn't pass its checks", none: 'Nothing yet' } };
+    },
   },
   nav: { route: 'sleeper', label: 'Sleeper', icon: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3', page: Sleeper },
 };
