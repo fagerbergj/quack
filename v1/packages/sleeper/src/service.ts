@@ -21,6 +21,8 @@ export type ServiceConfig = {
   /** Where on-demand jobs are submitted, and whose team they run for; both are needed to start one. */
   distributorUrl?: string;
   owner?: string;
+  /** The league the page's /apps/sleeper routes act on. */
+  league?: string;
   fetch?: typeof fetch;
 };
 
@@ -47,6 +49,8 @@ export function createSleeperService(config: ServiceConfig) {
   // GET /leagues/:id/snapshots[/latest|/YYYY-MM-DD] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
   async function route(method: string, url: URL): Promise<[number, unknown]> {
     const path = url.pathname;
+    if (path === '/apps/sleeper' && method === 'GET') return config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }];
+    if (path === '/apps/sleeper/lineup') return startOnDemand(startLineup, method, config.league, url.searchParams.get('week'));
     const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers|trends|digest|retro)$/.exec(path);
     if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
     const trade = /^\/leagues\/([^/]+)\/jobs\/(trade-finder|trade)$/.exec(path);
