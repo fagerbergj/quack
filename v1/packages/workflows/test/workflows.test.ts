@@ -336,7 +336,7 @@ test('a judged step whose judge model gives no answer fails the step and attache
       judge: () => ({ options: { kind: note, rubric: asked, evidence: async () => ({ review: [{ id: 'r', state: { text: 'x' } }] }), maxRevisions: 1 } }) }],
   });
   const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });
-  const s = await open(await tmp(), flow, reply('{"text": "ok"}', []), busy);
+  const s = await open(await tmp(), flow, reply('{"text": "ok"}', []), () => busy);
   const outcome = await runWorkflow(s.harness, s.root, flow, null);
   const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.note'].versions;
   await s.close();
