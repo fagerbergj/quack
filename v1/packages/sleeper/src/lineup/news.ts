@@ -24,7 +24,10 @@ export function credible(url: string): boolean {
   }
 }
 
-type Hit = { title?: string; url: string; publishedDate?: string };
+type Hit = { title?: string; url: string; publishedDate?: string; highlights?: Array<string | { text?: string }> };
+
+/** Exa matches by topic, so an item about a teammate or a team report can come back; keep one only if it names the player in full. */
+const names = (h: Hit, name: string) => `${h.title ?? ''} ${(h.highlights ?? []).map((x) => (typeof x === 'string' ? x : (x.text ?? ''))).join(' ')}`.toLowerCase().includes(name.toLowerCase());
 
 /** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup. */
 export function exaNews(config: { apiKey: string; url?: string }) {
@@ -34,14 +37,14 @@ export function exaNews(config: { apiKey: string; url?: string }) {
       const res = await fetch(`${config.url ?? 'https://api.exa.ai'}/search`, {
         method: 'POST',
         headers: { 'x-api-key': config.apiKey, 'content-type': 'application/json' },
-        body: JSON.stringify({ query: `${p.name} ${p.team ?? ''} ${p.pos} injury status news`, numResults: PER_PLAYER, category: 'news', includeDomains: NEWS_DOMAINS, startPublishedDate: new Date(since).toISOString() }),
+        body: JSON.stringify({ query: `${p.name} ${p.team ?? ''} ${p.pos} injury status news`, numResults: PER_PLAYER, category: 'news', contents: { highlights: true }, includeDomains: NEWS_DOMAINS, startPublishedDate: new Date(since).toISOString() }),
         signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) return [];
       const hits = ((await res.json()) as { results?: Hit[] }).results ?? [];
       // Exa's date filter is advisory, so the window and the allowlist are enforced here too.
       return hits
-        .filter((h) => credible(h.url))
+        .filter((h) => credible(h.url) && names(h, p.name))
         .map((h) => ({ title: h.title || h.url, url: h.url, date: h.publishedDate ?? '' }))
         .filter((n) => Date.parse(n.date) >= since && Date.parse(n.date) <= at)
         .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))

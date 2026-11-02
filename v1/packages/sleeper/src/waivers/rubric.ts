@@ -1,6 +1,6 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
 import type { Candidate, WaiversCard } from './card.ts';
-import type { WaiverFacts } from './facts.ts';
+import { worth, type WaiverFacts } from './facts.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
 const parse = (artifact: string) => JSON.parse(artifact) as WaiversCard;
@@ -19,6 +19,16 @@ function dropRoleMatchesRoster(artifact: string, ev: Evidence): CodeResult {
   const rows = parse(artifact).candidates;
   const bad = rows.filter((r) => f.roster[r.drop.player.id]?.role !== r.drop.role || (r.drop.role === 'starter' && !/starter|starting/i.test(r.why)));
   return share(rows.length - bad.length, rows.length, `the drop of ${bad.map((r) => r.drop.player.name).join(', ')} is mislabeled or a starter not stated as one`);
+}
+
+// Makes add-minus-drop checkable from the facts, never the card; a player with no figure is not compared.
+function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
+  const f = factsOf(ev);
+  const rows = parse(artifact).candidates;
+  const pair = (r: Candidate) => [worth(f.roster[r.drop.player.id]), worth(f.free[r.player.id])] as const;
+  const bad = rows.filter((r) => { const [d, a] = pair(r); return d !== null && a !== null && d > a; });
+  const detail = bad.map((r) => `${r.drop.player.name} (${pair(r)[0]}) is worth more than ${r.player.name} (${pair(r)[1]})`).join('; ');
+  return share(rows.length - bad.length, rows.length, `the drop costs more than the add: ${detail}`);
 }
 
 function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
@@ -63,12 +73,13 @@ export function waiversEvidence(f: WaiverFacts) {
 // The audit's waivers table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 2,
+  version: 3,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
       { id: 'context_fields_match', weight: 'gate', code: contextFieldsMatch },
       { id: 'drop_role_matches_roster', weight: 'gate', code: dropRoleMatchesRoster },
+      { id: 'drop_not_worth_more', weight: 'gate', code: dropNotWorthMore },
       { id: 'widely_owned_accounted', weight: 'gate', code: widelyOwnedAccounted },
     ] },
     { id: 'claims_are_reasoned', checks: [

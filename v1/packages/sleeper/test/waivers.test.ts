@@ -15,7 +15,7 @@ import {
   buildSnapshot, buildWaiverFacts, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
   type WaiverFacts, type WaiversCard,
 } from '../src/index.ts';
-import { closeCalls } from '../src/waivers/facts.ts';
+import { closeCalls, worth } from '../src/waivers/facts.ts';
 import type { WaiverDecision } from '../src/waivers/card.ts';
 
 type Fixtures = Record<string, any>;
@@ -55,7 +55,7 @@ const gate = async (id: string, f: WaiverFacts, c: unknown) => {
   const content = JSON.stringify(c);
   return check.code!(content, await waiversEvidence(f)(null, { content }));
 };
-const GATES = ['context_fields_match', 'drop_role_matches_roster', 'widely_owned_accounted', 'faab_language_on_rolling'];
+const GATES = ['context_fields_match', 'drop_role_matches_roster', 'drop_not_worth_more', 'widely_owned_accounted', 'faab_language_on_rolling'];
 
 test('facts hold the waiver context, the competition table, bucketed free agents and the roster roles from the recorded week', async () => {
   const f = await factsOf();
@@ -68,7 +68,7 @@ test('facts hold the waiver context, the competition table, bucketed free agents
   assert.deepEqual(f.buckets.WR, ['302', '303']);
   assert.deepEqual(f.widely, ['300', '302', '303']);
   assert.ok(!('310' in f.free) && !('311' in f.free), 'a retired player and a lineman are not free agents');
-  assert.deepEqual(f.free['300'], { id: '300', name: 'Felix Free', pos: 'RB', team: 'KC', inj: null, proj: 12.4, bye: null, owned: 61.2, adds: 4200 });
+  assert.deepEqual(f.free['300'], { id: '300', name: 'Felix Free', pos: 'RB', team: 'KC', inj: null, proj: 12.4, bye: null, ppg: 12, owned: 61.2, adds: 4200 });
   assert.equal(f.free['303'].inj, 'Out');
   assert.deepEqual([f.roster['101'].role, f.roster['103'].role, f.roster['106'].role], ['starter', 'bench', 'starter']);
   assert.equal(f.roster['106'].bye, 10);
@@ -139,6 +139,40 @@ test('drop_role_matches_roster fails a mislabeled role and a starter drop not st
   assert.match((await gate('drop_role_matches_roster', f, starter)).detail!, /Rob Rowe/);
   const said = buildWaiversCard(f, { ...rollingDecision, claims: [{ add: '300', drop: '102', why: 'Drops your starting RB2, Questionable.' }] });
   assert.equal((await gate('drop_role_matches_roster', f, said)).met, 1);
+});
+
+test('drop_not_worth_more fails a drop worth more than its add, naming both, by season rate when the week has no projection', async () => {
+  const { f } = await card();
+  // A McCaffrey: no projection this week (bye or injury) but a 15-a-game season.
+  const star = { ...f, roster: { ...f.roster, '101': { ...f.roster['101'], proj: 0 } } };
+  const bad = buildWaiversCard(star, { ...rollingDecision, claims: [{ add: '304', drop: '101', why: 'Tim claims the TE bye.' }] });
+  const r = await gate('drop_not_worth_more', star, bad);
+  assert.equal(r.met, 0);
+  assert.match(r.detail!, /Ray Rush \(15\) is worth more than Tim Tight \(7\)/);
+  assert.equal((await gate('drop_not_worth_more', f, buildWaiversCard(f, rollingDecision))).met, 1);
+});
+
+test('a drop who is Out or on IR is worth his week, not his season rate, so the gate does not block dropping him', () => {
+  const rb = { id: '1', name: 'Ray Rush', pos: 'RB', team: 'SF', proj: 0, bye: 14, ppg: 20.6 };
+  assert.equal(worth({ ...rb, inj: 'IR' } as never), null);
+  assert.equal(worth({ ...rb, inj: 'Out', proj: 3 } as never), 3);
+  assert.equal(worth({ ...rb, inj: 'Questionable' } as never), 20.6);
+});
+
+test('empty season stats still build the facts, omit the season rate and compare on proj alone', async () => {
+  const empty = { ...base, '/v1/stats/nfl/regular/2026': {} };
+  const f = await factsOf(empty);
+  assert.ok(Object.values(f.roster).every((p) => p.ppg === undefined));
+  assert.ok(!/season/.test(JSON.stringify(f)));
+  const { card: c } = await card(empty);
+  assert.equal((await gate('drop_not_worth_more', f, c)).met, 1);
+  const bad = buildWaiversCard(f, { ...rollingDecision, claims: [{ add: '304', drop: '101', why: 'Tim claims the TE bye.' }] });
+  assert.match((await gate('drop_not_worth_more', f, bad)).detail!, /Ray Rush \(15.4\) is worth more than Tim Tight \(7\)/);
+  const none = { ...f, roster: { ...f.roster, '101': { ...f.roster['101'], proj: 0 } } };
+  assert.equal((await gate('drop_not_worth_more', none, bad)).met, 1);
+  const { '/v1/stats/nfl/regular/2026': _s, ...noStats } = base;
+  const gone = factsOf(noStats);
+  assert.ok(Object.values((await gone).roster).every((p) => p.ppg === undefined));
 });
 
 test('widely_owned_accounted fails a card that neither claims nor passes over a player above the cut', async () => {
@@ -218,7 +252,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
   const { sealed, judged, verdict } = await runWaivers(base, rollingDecision);
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@2', [], true, ['close-call news not checked: no news source']]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@3', [], true, ['close-call news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(verdict.checks.some((k) => k.id === 'faab_language_on_rolling'));
   assert.ok(judged.some((q) => /queue position spent/.test(q)));
@@ -227,7 +261,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
 test('the workflow seals a FAAB card with its bids, and with a news source the close calls are scored', async () => {
   const { sealed, verdict, judged } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@2', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@3', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });

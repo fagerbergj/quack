@@ -1,13 +1,20 @@
-import type { Json, SleeperClient } from '../client.ts';
+import { NotFound, type Json, type SleeperClient } from '../client.ts';
 import { ownerTeam, ptsKey, round2, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import type { Searchable } from '../lineup/news.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
 
 export type WaiverType = 'rolling' | 'reverse_standings' | 'faab';
 export type WPlayer = { id: string; name: string; pos: string; team: string | null; inj: string | null; proj: number; bye: number | null };
+/** `ppg` is season points per game played in the league's scoring: the value that survives a bye, an injury or a quiet week, which `proj` does not. */
+export type Valued = WPlayer & { ppg?: number };
+// A player now Out or on IR may never repeat his season rate, so he is worth his week (usually nothing, so not compared).
+const SEASON_RATE_VOID = new Set(['Out', 'IR']);
+/** What a player is worth to compare an add with a drop: the better of his season rate and this week's projection. */
+export const worth = (p: Valued): number | null =>
+  p.ppg === undefined || SEASON_RATE_VOID.has(p.inj ?? '') ? p.proj || null : Math.max(p.ppg, p.proj);
 /** `owned` is Sleeper's platform-wide ownership percent and `adds` its 24-hour add count, null when the player is not on the trending list: scarcity signals, not value. */
-export type FreeAgent = WPlayer & { owned: number | null; adds: number | null };
-export type Mine = WPlayer & { role: 'starter' | 'bench' | 'ir' };
+export type FreeAgent = Valued & { owned: number | null; adds: number | null };
+export type Mine = Valued & { role: 'starter' | 'bench' | 'ir' };
 export type Bye = { week: number; pos: string; out: number };
 /** One league-competition row: what the team lacks, what it can spend and where a bye leaves it short. */
 export type TeamRow = { rosterId: number; team: string; mine: boolean; priority: number | null; faabLeft: number | null; needs: Record<string, number>; byes: Bye[] };
@@ -95,7 +102,7 @@ function teamRows(rosters: Json[], users: Json[], deps: { type: WaiverType; budg
   });
 }
 
-function freeAgents(dump: Json, taken: Set<string>, positions: string[], wp: (id: string) => WPlayer, trending: Map<string, number>, research: Json) {
+function freeAgents(dump: Json, taken: Set<string>, positions: string[], wp: (id: string) => Valued, trending: Map<string, number>, research: Json) {
   const free: Record<string, FreeAgent> = {};
   for (const [id, p] of Object.entries<Json>(dump)) {
     if (taken.has(id) || p.active === false || !positions.includes(p.position)) continue;
@@ -115,14 +122,14 @@ export async function buildWaiverFacts(deps: WaiverDeps, snap: Json, input: Line
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
-  const [dump, proj, schedule, adds, research] = await Promise.all([
-    client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.trending('add', 24, TRENDING_LIMIT), client.research(league.season, input.week),
+  const [dump, proj, schedule, adds, research, stats] = await Promise.all([
+    client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.trending('add', 24, TRENDING_LIMIT), client.research(league.season, input.week), client.seasonStats(league.season).catch((e) => { if (e instanceof NotFound) return {}; throw e; }),
   ]);
   const type = WAIVER_TYPES[league.settings?.waiver_type ?? 0];
   if (!type) throw new Error(`sleeper: unknown waiver_type ${league.settings?.waiver_type}`);
   const key = ptsKey(league.scoring_settings?.rec);
   const byes = byeWeeks(schedule);
-  const wp = (id: string) => wplayer(id, dump, proj, key, byes);
+  const wp = (id: string): Valued => ({ ...wplayer(id, dump, proj, key, byes), ...(stats[id]?.gp > 0 && Number.isFinite(stats[id][key]) ? { ppg: round2(stats[id][key] / stats[id].gp) } : {}) });
   const slots = lineupSlots(league.roster_positions);
   const positions = POSITIONS.filter((pos) => slots.some((s) => fits(s, pos)));
   const budget = league.settings?.waiver_budget ?? 0;
