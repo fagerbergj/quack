@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -124,19 +123,15 @@ test('a rejection reaches the model and the tool never runs', async () => {
   await session.close();
 });
 
-const freePort = () => new Promise<number>((r) => { const s = createServer().listen(0, () => { const { port } = s.address() as AddressInfo; s.close(() => r(port)); }); });
-
 test('an approved action killed mid-execution is reported on restart, never re-run', async () => {
   posted.length = 0;
   const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
   dirs.push(dir);
   const effects = join(dir, 'side-effects');
-  const port = await freePort();
-  const base = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/gated-session.ts', import.meta.url))], { env: { ...process.env, PORT: String(port), QUACK_SESSION_DIR: dir, SIDE_EFFECTS: effects }, stdio: 'inherit' });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/gated-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir, SIDE_EFFECTS: effects }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
   const exited = new Promise((r) => child.once('exit', r));
   try {
-    await until(() => fetch(`${base}/ping`).then(() => true, () => undefined));
+    const base = `http://127.0.0.1:${await new Promise<number>((r) => child.once('message', (m) => r((m as { port: number }).port)))}`;
     await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'Approve this PR', requestId: 'run-3' }) });
     const [item] = await until(async () => { const l = (await (await fetch(`${base}/approvals`)).json()).approvals; return l.length ? l : undefined; });
     await fetch(`${base}/approvals/${item.id}`, { method: 'POST', body: JSON.stringify({ decision: 'approve', by: 'jf' }) });
