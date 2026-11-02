@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
+import { noticeFor } from '../src/notice.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -17,6 +18,8 @@ async function listen(server: Server) {
 
 // A fake GitHub API that verifies the app JWT the way GitHub does: RS256 over header.body, issuer = app id.
 const calls: Array<{ method: string; path: string; auth: string; body: any }> = [];
+const commented: string[] = [];
+const commentWaiters: Array<() => void> = [];
 function jwtValid(auth: string) {
   const [head, body, sig] = auth.replace(/^Bearer /, '').split('.');
   const ok = createVerify('RSA-SHA256').update(`${head}.${body}`).verify(publicKey, Buffer.from(sig, 'base64url'));
@@ -29,29 +32,47 @@ const github = await listen(
     const auth = String(req.headers.authorization);
     calls.push({ method: req.method!, path: req.url!, auth, body: raw ? JSON.parse(raw) : undefined });
     const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-    if (req.url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
-    if (req.url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
-    if (req.url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
-    if (req.url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
-    if (req.url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
+    // GitHub's API is case-insensitive: a mixed-case owner reaches the same repository.
+    const url = req.url!.replace(/^\/repos\/ACME\//, '/repos/acme/');
+    if (url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
+    if (url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
+    if (url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
     // Every page full: a commit whose check runs never end.
-    if (req.url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
-    if (req.url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
-    const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(req.url!);
+    if (url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
+    if (url === '/repos/acme/widgets/issues/7/comments') {
+      commented.push(calls.at(-1)!.body.body);
+      commentWaiters.splice(0).forEach((f) => f());
+      return reply(201, {});
+    }
+    if (url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
+    const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(url);
     // 150 check runs: the only failing one is on the second page.
     if (page) return reply(200, { check_runs: Array.from({ length: page[1] === '1' ? 100 : 50 }, (_, i) => ({ name: `c${page[1]}-${i}`, status: 'completed', conclusion: page[1] === '2' && i === 49 ? 'failure' : 'success' })) });
-    if (req.url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
     reply(404, {});
   }),
 );
 
 const invocations: Array<{ path: string; body: any }> = [];
+const watchers: string[] = [];
+const watcherWaiters: Array<() => void> = [];
+const holds: Record<string, Promise<void>> = {};
+const outcomes: Record<string, unknown> = {};
 const distributor = await listen(
   createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
     if (req.url === '/agents') return res.writeHead(200).end(JSON.stringify({ agents: [{ name: 'reviewer', version: 1, status: 'promoted' }, { name: 'researcher', version: 1, status: 'draft' }] }));
-    invocations.push({ path: decodeURIComponent(req.url!), body: JSON.parse(raw) });
+    const body = JSON.parse(raw);
+    if (body.wait) {
+      watchers.push(body.requestId);
+      watcherWaiters.splice(0).forEach((f) => f());
+      await holds[body.requestId];
+      return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
+    }
+    invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
 );
@@ -79,6 +100,13 @@ test('verified webhooks start a review in the PR session, keyed by the delivery 
   assert.match(invocations[0].body.input, /Review pull request acme\/widgets#7 \(label quack:review\)/);
   assert.match(invocations[0].body.input, /Head: abc123 on fix; base: main/);
   assert.equal(invocations[0].body.title, 'Fix the cache');
+});
+
+test('no notice when a review was posted, and none for a run that is not final', () => {
+  assert.equal(noticeFor({ status: 'unanswered', reason: 'run_failed' }, true), undefined);
+  assert.equal(noticeFor({ status: 'done' }, true), undefined);
+  assert.equal(noticeFor({}, false), undefined);
+  assert.match(noticeFor({ status: 'done' }, false)!, /ended without a review being posted/);
 });
 
 test('/review starts a review only from a trusted commenter', async () => {
@@ -158,3 +186,41 @@ test('a redelivered event carries the original delivery id, so it is one submiss
   assert.equal(await deliver('pull_request', event, { id: 'd-redo' }), 202);
   assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-redo', 'github-delivery:d-redo']);
 });
+
+test('a run that fails says so on the PR once, even when its delivery arrives twice', async () => {
+  commented.length = 0;
+  watchers.length = 0;
+  outcomes['github-delivery:d-fail'] = { status: 'unanswered', reason: 'run_failed', detail: 'model refused the call' };
+  const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository };
+  const noted = new Promise<void>((r) => commentWaiters.push(r));
+  assert.equal(await deliver('pull_request', labeled, { id: 'd-fail' }), 202);
+  assert.equal(await deliver('pull_request', labeled, { id: 'd-fail' }), 202);
+  await noted;
+  assert.deepEqual(commented, ['The review could not be completed (run_failed: model refused the call). Comment `/review` to try again.']);
+  assert.equal(watchers.filter((w) => w === 'github-delivery:d-fail').length, 1);
+});
+
+// Holds a run's wait, posts a review for the PR as the session would, releases it, then runs a failing sentinel:
+// its notice is the only comment if the delivered run was suppressed.
+async function deliveredRunIsSilent(webhookOwner: string, id: string) {
+  commented.length = 0;
+  let release!: () => void;
+  holds[`github-delivery:${id}`] = new Promise<void>((r) => (release = r));
+  outcomes[`github-delivery:${id}`] = { status: 'done' };
+  const started = new Promise<void>((r) => watcherWaiters.push(r));
+  const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository: { ...repository, owner: { login: webhookOwner } } };
+  assert.equal(await deliver('pull_request', labeled, { id }), 202);
+  await started;
+  const review = { owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' };
+  assert.equal((await fetch(`${service}/reviews`, { method: 'POST', headers: { authorization: 'Bearer svc-secret' }, body: JSON.stringify(review) })).status, 201);
+  release();
+  outcomes[`github-delivery:${id}-sentinel`] = { status: 'unanswered', reason: 'run_failed' };
+  const noted = new Promise<void>((r) => commentWaiters.push(r));
+  assert.equal(await deliver('pull_request', { ...labeled, repository }, { id: `${id}-sentinel` }), 202);
+  await noted;
+  assert.deepEqual(commented, ['The review could not be completed (run_failed). Comment `/review` to try again.']);
+}
+
+test('a run that delivered a review gets no notice', () => deliveredRunIsSilent('acme', 'd-delivered'));
+
+test('a review counts for the run however the webhook cases the owner', () => deliveredRunIsSilent('ACME', 'd-delivered-case'));

@@ -1,0 +1,27 @@
+import { request } from 'node:http';
+
+export type RunOutcome = { status?: string; reason?: string; detail?: unknown };
+
+// node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
+export function settled(url: string, body: unknown): Promise<RunOutcome> {
+  return new Promise((resolve, reject) => {
+    const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+      let text = '';
+      res.on('data', (c) => (text += c)).on('error', reject).on('end', () => {
+        try { resolve(JSON.parse(text)); } catch (err) { reject(err); }
+      });
+    });
+    req.on('error', reject).end(JSON.stringify(body));
+  });
+}
+
+const RETRY = 'Comment `/review` to try again.';
+const short = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v)).replace(/\s+/g, ' ').slice(0, 200);
+
+/** What to tell the PR when a run ended without a review; undefined when it delivered one or the outcome is not final. */
+export function noticeFor(outcome: RunOutcome, delivered: boolean): string | undefined {
+  if (delivered) return undefined;
+  if (outcome.status === 'unanswered') return `The review could not be completed (${outcome.reason ?? 'unknown'}${outcome.detail === undefined ? '' : `: ${short(outcome.detail)}`}). ${RETRY}`;
+  if (outcome.status === 'done') return `The review ended without a review being posted. ${RETRY}`;
+  return undefined;
+}
