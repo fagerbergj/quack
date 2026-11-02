@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 
@@ -98,8 +99,15 @@ test('a touch newer than the last log message is the session\'s last activity', 
   const dir = join(dataDir, sessionDirName('job'));
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'session-key'), 'job');
+  // An older log message, so the newer touch has to win over it.
+  const db = new DatabaseSync(join(dir, 'session.sqlite'));
+  db.exec('CREATE TABLE entries (record TEXT)');
+  db.prepare('INSERT INTO entries VALUES (?)').run(JSON.stringify({ model: [{ timestamp: Date.parse('2026-11-01T12:00:00Z') }] }));
+  db.close();
   const driver = processDriver({ command: [], dataDir, agentsDir: join(root, 'agents') });
   await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
   const [session] = await driver.sessions();
   assert.equal(session.lastActivity, '2026-11-02T12:00:00.000Z');
+  await driver.touch('job', Date.parse('2026-10-31T12:00:00Z'));
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-01T12:00:00.000Z', 'a log message newer than the touch wins');
 });

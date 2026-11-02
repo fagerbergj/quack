@@ -105,6 +105,12 @@ test('each kind of session shows its own title and state, and search finds it by
     sess('ui:r1', { agent: 'researcher', title: 'What changed in v4?' }),
     sess('sleeper:123:8:lineup', { agent: 'sleeper-lineup' }),
     sess('sleeper:123:8:waivers', { agent: 'sleeper-waivers' }),
+    sess('sleeper:123:8:history', { agent: 'sleeper-x' }),
+    sess('sleeper:123:8:trends', { agent: 'sleeper-x' }),
+    sess('sleeper:123:8:trade-finder', { agent: 'sleeper-x' }),
+    sess('sleeper:123:8:trade:4:12+13:99', { agent: 'sleeper-x' }),
+    sess('sleeper:123:8:digest', { agent: 'sleeper-x' }),
+    sess('sleeper:123:8:retro', { agent: 'sleeper-x' }),
     sess('remarkable:doc1', { agent: 'remarkable-ingest', title: 'Campaign Notes' }),
     sess('ui:x', { agent: 'coder' }),
     sess('github:o/r#11', { title: 'Tie on version' }),
@@ -119,6 +125,12 @@ test('each kind of session shows its own title and state, and search finds it by
     indexed('ui:r1', 'research.report', true),
     indexed('sleeper:123:8:lineup', 'sleeper.cards', true),
     indexed('sleeper:123:8:waivers', 'sleeper.cards', true),
+    indexed('sleeper:123:8:history', 'sleeper.cards', true),
+    indexed('sleeper:123:8:trends', 'sleeper.cards', true),
+    indexed('sleeper:123:8:trade-finder', 'sleeper.cards', true),
+    indexed('sleeper:123:8:trade:4:12+13:99', 'sleeper.cards', true),
+    indexed('sleeper:123:8:digest', 'sleeper.cards', true),
+    indexed('sleeper:123:8:retro', 'sleeper.cards', true),
     indexed('remarkable:doc1', 'remarkable.transcript', false),
   ] };
   render(<App />);
@@ -129,6 +141,12 @@ test('each kind of session shows its own title and state, and search finds it by
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
   expect((await row(/Lineup · wk 8/)).getByText('Lineup picks ready')).toBeInTheDocument();
   expect((await row(/Waivers · wk 8/)).getByText('Waiver claims ready')).toBeInTheDocument();
+  expect((await row(/^History/)).getByText('League history ready')).toBeInTheDocument();
+  expect((await row(/^Trends · wk 8/)).getByText('Trends ready')).toBeInTheDocument();
+  expect((await row(/^Trade finder · wk 8/)).getByText('Trade ideas ready')).toBeInTheDocument();
+  expect((await row(/^Trade · wk 8/)).getByText('Trade ideas ready')).toBeInTheDocument();
+  expect((await row(/^Recap · wk 8/)).getByText('Week 8 recap ready')).toBeInTheDocument();
+  expect((await row(/^Retro · wk 8/)).getByText('Week 8 retro ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText(/^Didn't pass its checks/)).toBeInTheDocument();
   expect((await row(/#11 Tie on version/)).getByText('Approved ✓')).toBeInTheDocument();
   const alive = await row(/#10 Sleeper waivers job/);
