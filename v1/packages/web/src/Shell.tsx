@@ -8,10 +8,6 @@ const ICONS: Record<string, string> = {
   sessions: 'M3 12h4l3 8 4-16 3 8h4',
   inbox: 'M3 13h5l2 3h4l2-3h5M5 5h14l2 8v6H3v-6z',
   artifacts: 'M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6',
-  memory: 'M6 3h12v18l-6-4-6 4z',
-  agents: 'M4 8h16v11H4zM12 4v4M9 13h.01M15 13h.01',
-  evals: 'M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3',
-  schedules: 'M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0zM12 8v4l3 2',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
 };
 
@@ -24,12 +20,6 @@ export const MAIN: Item[] = [
 export const GROUPS: { title: string; items: Item[] }[] = [
   { title: 'Apps', items: [
     ...EXTENSIONS.flatMap((e) => e.nav ?? []).map((n): Item => ({ route: n.route, label: n.label, href: `#/${n.route}` })),
-    { route: 'memory', label: 'Memory', href: '#/memory' },
-  ] },
-  { title: 'Operate', items: [
-    { route: 'agents', label: 'Agents', href: '#/agents' },
-    { route: 'evals', label: 'Evals', href: '#/evals' },
-    { route: 'schedules', label: 'Schedules', href: '#/schedules' },
   ] },
 ];
 const TITLES = Object.fromEntries([{ route: 'more', label: 'More' }, ...MAIN, ...GROUPS.flatMap((g) => g.items)].map((n) => [n.route, n.label])) as Record<Route, string>;

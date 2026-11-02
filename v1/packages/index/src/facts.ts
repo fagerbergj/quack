@@ -20,12 +20,10 @@ const verdictOf = (v: { verdict: unknown }) => (v.verdict ? { passed: (v.verdict
 
 const linksOf = (v: SealedArtifact) => v.links ?? [];
 
-// The "## Verdict" section's first word, lowercased: the rule github's parseReview posts by, so a row reads what was posted without the list fetching content.
-export const outcomeOf = (v: Pick<SealedArtifact, 'content'>) => /^## verdict\b[^\n]*\n\s*(\S+)/im.exec(v.content)?.[1]?.toLowerCase();
-
-function artifactFacts(artifacts: { kinds: Record<string, { versions: SealedArtifact[] }> } | undefined): Fact[] {
+/** The rev always carries the outcome's +2, even when absent, so facts emitted before `outcome` was stored (which had it) are never outranked by the re-emit. */
+export function artifactFacts(artifacts: { kinds: Record<string, { versions: SealedArtifact[] }> } | undefined): Fact[] {
   return Object.entries(artifacts?.kinds ?? {}).flatMap(([kind, { versions }]) =>
-    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length + (outcomeOf(v) ? 2 : 0), at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v), outcome: outcomeOf(v) ?? null } })));
+    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length + 2, at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v), outcome: v.outcome ?? null } })));
 }
 
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {

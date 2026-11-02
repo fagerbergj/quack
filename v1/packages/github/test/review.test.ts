@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseReview, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
+import { parseReview, reviewKind, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
 import { claimedNames, misquotes, quotedCode } from '../src/review.ts';
 
@@ -195,4 +195,9 @@ test('a long first sentence stays whole in the inline comment and is shortened o
   const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
   assert.equal(comments[0].body, `**nit**: ${long}\n\nThen more.`);
   assert.match(body, /- nit: Rename .*…\n## Verified/);
+});
+
+test('the review kind reads its outcome from the verdict, as the review is posted', () => {
+  assert.equal(reviewKind.outcome?.(review), 'request_changes');
+  assert.equal(reviewKind.outcome?.('# Review\nfine\n'), undefined);
 });

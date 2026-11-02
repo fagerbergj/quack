@@ -301,7 +301,7 @@ test('user messages render markdown inside the bubble', async () => {
   expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
 });
 
-test('markdown tool output renders with a toggle to raw; a posted review links out from its tool row', async () => {
+test('markdown tool output renders with a toggle to raw; the delivery link is not read from its tool text', async () => {
   const ws = await openSession();
   const call = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: { version: 1 } });
   const res = (id: string, name: string, text: string) => entry(`r${id}`, [{ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text }], isError: false, timestamp: 2 }]);
@@ -315,8 +315,8 @@ test('markdown tool output renders with a toggle to raw; a posted review links o
   expect(within(submit).getByRole('heading', { name: 'Takeaway' })).toBeInTheDocument();
   await userEvent.click(within(submit).getByRole('button', { name: 'Raw' }));
   expect(submit.querySelectorAll('pre')[1]).toHaveTextContent('## Takeaway');
-  // The tool row's link comes from the result; the artifact line's comes from the artifact, below.
-  expect(within(submit).getByRole('link', { name: 'Posted ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
+  // Delivery links come from the artifact's links (next test), never from a tool's result text.
+  expect(screen.queryByRole('link', { name: 'Posted ↗' })).toBeNull();
 });
 
 test('an artifact line renders the links stored with the version, with no stream entries to read', async () => {
@@ -550,7 +550,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable', '#/memory', '#/agents', '#/evals', '#/schedules']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable']);
   expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Inbox' }));
   expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
@@ -665,6 +665,15 @@ test('a trailing slash on #/new/ shows the landing page on phone and desktop ali
     expect(await screen.findByRole('heading', { name: 'What should quack work on?' })).toBeInTheDocument();
     unmount();
   }
+});
+
+test('the landing page offers the suggestions its extensions supply and fills the composer with their prompt', async () => {
+  routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 2 }] };
+  location.hash = '#/new';
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Research a question' }));
+  expect(screen.getByRole('textbox', { name: 'Question or task' })).toHaveValue('Research: ');
+  expect(screen.getByRole('button', { name: 'Review a pull request' })).toBeInTheDocument();
 });
 
 const pendingIndex = { approvals: [{ session: 'gh:3', id: 'a/1', tool: 'github_post_review', state: 'pending', decision: null, by: null, at: 1 }] };

@@ -46,6 +46,7 @@ export const github: Extension = {
     const records = meta as readonly PrMeta[];
     return o && createElement(PrCard, { o, meta: o.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head) });
   },
+  suggestion: { label: 'Review a pull request', prompt: 'Review this pull request: ' },
   start: { prefix: 'github', label: 'GitHub' },
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {

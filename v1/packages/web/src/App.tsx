@@ -35,7 +35,7 @@ function useHash() {
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
 const PLACEHOLDERS: Record<Route, string> = {
-  more: 'More', inbox: 'Inbox', artifacts: 'Artifacts', memory: 'Memory', agents: 'Agents', evals: 'Evals', schedules: 'Schedules',
+  more: 'More', inbox: 'Inbox', artifacts: 'Artifacts',
   ...Object.fromEntries(NAVS.map((n) => [n.route, n.label])),
 };
 

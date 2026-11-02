@@ -30,6 +30,8 @@ export type Extension = {
   card?: (a: SealedArtifact) => ReactNode | undefined;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */
   opening?: (text: string, meta: readonly Record<string, unknown>[]) => ReactNode | undefined;
+  /** A starter the home screen offers: the pill shows `label`, a click fills the composer with `prompt`. */
+  suggestion?: { label: string; prompt: string };
   /** An outside page for a session, shown as a header link. */
   link?: (key: string) => { url: string; label: string } | undefined;
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
