@@ -55,3 +55,9 @@ export function sessionTitle(s: SessionSummary & { multiRepo?: boolean }): Sessi
   const l = look({ multiRepo: false, ...s, approvals: [], questions: [], failures: [], artifacts: [] });
   return { repo: l.repo, number: l.num, text: l.title, full: l.full, icon: l.icon, kind: l.label };
 }
+
+/** How the Artifacts page names a session's artifacts: the kind's noun and the filter chip it falls under. */
+export function artifactKind(r: Row | undefined): { noun: string; group: string } {
+  const k = r && KINDS.find((x) => x.match(r));
+  return { noun: (r && k?.noun?.(r)) || '', group: k?.group ?? 'Other' };
+}

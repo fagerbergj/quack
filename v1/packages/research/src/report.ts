@@ -17,7 +17,16 @@ export function validateReport(text: string): string[] {
   return problems;
 }
 
-export const reportKind: ArtifactKind = { kind: 'research.report', path: 'artifacts/report.md', validate: validateReport };
+const unmark = (s: string) => s.replace(/\s*\[s\d+\]/g, '').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
+
+/** The first line of "## Summary", else the first heading; source marks and markdown are stripped. */
+export function summarizeReport(text: string): string {
+  const body = /^## Summary\s*$([\s\S]*?)(?=^## |(?![\s\S]))/im.exec(text)?.[1] ?? '';
+  const line = body.split('\n').map(unmark).find(Boolean);
+  return line ?? unmark(/^#+ .+$/m.exec(text)?.[0] ?? '');
+}
+
+export const reportKind: ArtifactKind = { kind: 'research.report', path: 'artifacts/report.md', validate: validateReport, summarize: summarizeReport };
 
 /** The bullets under "## Findings", each with its first line (what a mark points at) and any continuation lines. */
 export function findingItems(report: string): Array<{ first: string; text: string }> {

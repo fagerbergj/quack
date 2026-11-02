@@ -50,7 +50,20 @@ export function validateReview(text: string): string[] {
   return problems;
 }
 
-export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', validate: validateReview, outcome: (text) => parseReview(text).verdict };
+const VERDICT_NAMES: Record<string, string> = { approve: 'Approve', comment: 'Comment', request_changes: 'Request changes' };
+const PLURAL: Record<string, string> = { blocking: 'blocking', suggestion: 'suggestions', nit: 'nits', question: 'questions' };
+
+/** "Approve · 1 nit": the verdict, then finding counts by severity. */
+export function summarizeReview(text: string): string {
+  const r = parseReview(text);
+  const counts = LABELS.flatMap((l) => {
+    const n = r.findings.filter((f) => f.label === l).length;
+    return n ? [`${n} ${n === 1 ? l : PLURAL[l]}`] : [];
+  });
+  return [VERDICT_NAMES[r.verdict ?? ''] ?? 'Review', counts.join(', ') || 'no findings'].join(' · ');
+}
+
+export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', validate: validateReview, outcome: (text) => parseReview(text).verdict, summarize: summarizeReview };
 
 const EXCERPT_LINES = 20;
 const MAX_DIFF_CHARS = 120_000;

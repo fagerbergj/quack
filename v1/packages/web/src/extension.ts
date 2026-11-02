@@ -10,6 +10,9 @@ export type Named = { title: string; full: string; num?: string; repo?: string }
 /** How one family of sessions reads in lists and headers; the first kind whose `match` hits names the row. */
 export type SessionKind = {
   label: string;
+  /** What this kind's artifacts are called on the Artifacts page ("Review"), and the filter chip that groups them ("Reviews"). */
+  noun?: (r: Row) => string;
+  group?: string;
   match: (r: Row) => boolean;
   icon: string;
   tint: string;

@@ -7,7 +7,7 @@ export type Check = { criterion: string; id: string; label: string; weight: numb
 export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? c.met < 1 : c.met > 0);
 export type Verdict = { passed: boolean; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[] };
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[]; summary?: string };
 
 export async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
@@ -34,7 +34,7 @@ export const deleteSession = (key: string) => housekeep(`${base(key)}/delete`, '
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
 export type IndexApproval = { session: string; id: string; tool: string; at: number };
-export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; sealedAt: number };
+export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; summary?: string; sealedAt: number };
 
 // The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
 async function indexRead<T>(path: string, field: string): Promise<T[] | undefined> {

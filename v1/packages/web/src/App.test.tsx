@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
+import { statusOf } from './ArtifactList.tsx';
 
 class FakeSocket {
   static all: FakeSocket[] = [];
@@ -839,14 +840,40 @@ test('Artifacts lists sealed versions from the index and opens one in the Work d
   location.hash = '#/artifacts';
   render(<App />);
   const open = await screen.findByRole('button', { name: 'Open Old work' });
-  expect(open).toHaveTextContent('Double-checked');
-  expect(open).toHaveTextContent('2 versions');
+  expect(within(open).getByRole('img', { name: 'Passed' })).toBeInTheDocument();
+  expect(open).not.toHaveTextContent(/versions|Double-checked/);
   expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);
   await userEvent.click(open);
   expect(await screen.findByText('final review')).toBeInTheDocument();
   await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '1');
   expect(screen.getByText('first draft')).toBeInTheDocument();
   expect(screen.getByRole('dialog', { name: 'Work' })).toBeInTheDocument();
+});
+
+test('Artifacts rows say what each is and what it concluded, and chips filter by kind', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:o/r#7', { title: 'feat: Declare requires' }), sess('ui:r1', { agent: 'researcher', title: 'Why is it slow?', running: true, active: true })] };
+  routes['GET /index/artifacts'] = { artifacts: [
+    { session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', verdict: { passed: true }, summary: 'Approve · 1 nit', sealedAt: 2 },
+    { session: 'ui:r1', kind: 'research.report', version: 1, hash: 'g', verdict: { passed: false }, summary: 'Cold caches dominate', sealedAt: 1 },
+    { session: 'ui:old', kind: 'research.report', version: 1, hash: 'o', verdict: null, sealedAt: 1 },
+  ] };
+  location.hash = '#/artifacts';
+  render(<App />);
+  const review = await screen.findByRole('button', { name: 'Open #7 Declare requires' });
+  expect(review).toHaveTextContent('Review · Approve · 1 nit');
+  const research = screen.getByRole('button', { name: 'Open Why is it slow?' });
+  expect(research).toHaveTextContent('Research report · Cold caches dominate');
+  expect(within(research).getByRole('img', { name: 'Revising' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Open ui:old' })).not.toHaveTextContent('·');
+  await userEvent.click(screen.getByRole('button', { name: 'Reviews' }));
+  expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);
+});
+
+test('a failed newest version reads as revising while its session runs, and as not passed once idle', () => {
+  expect(statusOf({ passed: false }, true).label).toBe('Revising');
+  expect(statusOf({ passed: false }, false).label).toBe("Didn't pass");
+  expect(statusOf({ passed: true }, true).label).toBe('Passed');
+  expect(statusOf(null, false).label).toBe('Not checked');
 });
 
 test('Artifacts says so when the index is off', async () => {
