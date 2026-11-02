@@ -13,6 +13,8 @@ export type CodeResult = { met: number; detail?: string; marks?: string[] };
 // a negative weight is a pitfall that subtracts its share where present.
 export type Check = {
   id: string;
+  /** Plain words for what went wrong when this fails, shown to the user in place of the id. */
+  label: string;
   weight: number | 'gate';
   /** The evidence scope a model check is judged on, once per unit; defaults to 'review'. */
   scope?: string;
@@ -27,6 +29,7 @@ export type Rubric = { name: string; version: number; threshold: number; criteri
 export type CheckResult = {
   criterion: string;
   id: string;
+  label: string;
   weight: number | 'gate';
   met: number | null;
   units: number;

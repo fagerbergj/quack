@@ -52,11 +52,11 @@ const rubric: Rubric = {
   threshold: 0.8,
   criteria: [
     { id: 'structured_verdict', checks: [
-      { id: 'verdict_present', weight: 'gate', code: (a) => ({ met: hasVerdict(a) ? 1 : 0, detail: hasVerdict(a) ? undefined : 'no ## Verdict section' }) },
-      { id: 'takeaway_actionable', weight: 2, scope: 'review', question: 'Is the takeaway one sentence a reader can act on?' },
+      { id: 'verdict_present', label: 'L verdict_present', weight: 'gate', code: (a) => ({ met: hasVerdict(a) ? 1 : 0, detail: hasVerdict(a) ? undefined : 'no ## Verdict section' }) },
+      { id: 'takeaway_actionable', label: 'L takeaway_actionable', weight: 2, scope: 'review', question: 'Is the takeaway one sentence a reader can act on?' },
     ] },
-    { id: 'constructive_actionable', checks: [{ id: 'says_why', weight: 3, scope: 'finding', question: 'Does this finding say why it matters?' }] },
-    { id: 'severity_grounded', checks: [{ id: 'preference_only', weight: -3, scope: 'blocking', question: 'Does this blocking finding rest only on preference?' }] },
+    { id: 'constructive_actionable', checks: [{ id: 'says_why', label: 'L says_why', weight: 3, scope: 'finding', question: 'Does this finding say why it matters?' }] },
+    { id: 'severity_grounded', checks: [{ id: 'preference_only', label: 'L preference_only', weight: -3, scope: 'blocking', question: 'Does this blocking finding rest only on preference?' }] },
   ],
 };
 

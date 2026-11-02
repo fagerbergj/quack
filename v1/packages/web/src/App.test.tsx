@@ -123,10 +123,10 @@ test('each kind of session shows its own title and state, and search finds it by
   const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));
   expect((await row(/#7 Fix the cache/)).getByText('Reviewing')).toBeInTheDocument();
   expect((await row(/#8 Add retries/)).getByText('Approved ✓')).toBeInTheDocument();
-  expect((await row(/#9 Drop the flag/)).getByText('Checks failed')).toBeInTheDocument();
+  expect((await row(/#9 Drop the flag/)).getByText("Didn't pass its checks")).toBeInTheDocument();
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
   expect((await row(/Lineup · wk 8/)).getByText('Card ready')).toBeInTheDocument();
-  expect((await row(/Campaign Notes/)).getByText(/^Failed/)).toBeInTheDocument();
+  expect((await row(/Campaign Notes/)).getByText(/^Didn't pass its checks/)).toBeInTheDocument();
   expect((await row(/#11 Tie on version/)).getByText('Approved ✓')).toBeInTheDocument();
   const alive = await row(/#10 Sleeper waivers job/);
   expect(alive.getByText('Approved ✓')).toBeInTheDocument();
@@ -454,7 +454,7 @@ test('a dropped socket reconnects with backoff and the new snapshot replaces the
 });
 
 test('lists artifacts with their check status and failing criteria', async () => {
-  const check = (criterion: string, id: string, met: number | null) => ({ criterion, id, met, notes: [] });
+  const check = (criterion: string, id: string, met: number | null) => ({ criterion, id, label: `Label ${id}`, weight: 2, met, notes: [] });
   routes['GET /sessions/ui%3Au1/artifacts'] = {
     artifacts: [
       { kind: 'github.review', version: 1, hash: 'h1', content: 'draft one', sealedAt: 1, verdict: { passed: false, gatesFailed: ['cites.lines'], score: 0.4, checks: [check('cites', 'lines', 0), check('tone', 'polite', 1), check('misc', 'na', null)] } },
@@ -467,10 +467,10 @@ test('lists artifacts with their check status and failing criteria', async () =>
   expect(within(section).getAllByRole('listitem')).toHaveLength(1);
   await userEvent.click(within(section).getByRole('button', { name: '1 earlier version' }));
   const items = within(section).getAllByRole('listitem');
-  expect(items[0]).toHaveTextContent('Review v1 sealed · 1 check failed');
-  expect(items[1]).toHaveTextContent('Review v2 sealed · checks passed');
+  expect(items[0]).toHaveTextContent("Review · Didn't pass its checks");
+  expect(items[1]).not.toHaveTextContent("Didn't pass");
   expect(screen.queryByRole('dialog')).toBeNull();
-  await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review v2' }));
+  await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review version 2' }));
   expect(within(screen.getByRole('dialog', { name: 'Work' })).getByText('final review')).toBeInTheDocument();
 });
 test('api and ws urls resolve under a /v1/ page path', async () => {
@@ -547,20 +547,21 @@ test('assistant text renders as markdown with a table, highlighted code and cita
 test('the Work drawer opens from the status line, shows report then checks, traps focus and closes on Esc', async () => {
   routes['GET /sessions/ui%3Au1/artifacts'] = {
     artifacts: [
-      { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', met: 1, notes: [] }] } },
+      { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', label: 'Cites a source that does not say it', weight: 3, met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', label: 'A claim has no date', weight: 2, met: 1, notes: [] }] } },
     ],
   };
   const ws = await openSession();
   ws.frame(snapshot());
   expect(screen.queryByRole('dialog')).toBeNull();
-  const open = await screen.findByRole('button', { name: 'Open research.report v2' });
+  const open = await screen.findByRole('button', { name: 'Open research.report version 2' });
   await userEvent.click(open);
   const work = screen.getByRole('dialog', { name: 'Work' });
   expect(within(work).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
-  expect(work).toHaveTextContent('v2');
   expect(within(work).getByRole('button', { name: 'Close' })).toHaveFocus();
   await userEvent.click(within(work).getByRole('tab', { name: 'Checks' }));
-  expect(work).toHaveTextContent('citations.support');
+  expect(work).toHaveTextContent('Cites a source that does not say it');
+  expect(work).not.toHaveTextContent('citations.support');
+  await userEvent.click(within(work).getByText('Why'));
   expect(work).toHaveTextContent('S7 does not mention TP');
   expect(within(work).getByText('Fail')).toBeInTheDocument();
   expect(within(work).getByText('Pass')).toBeInTheDocument();
@@ -576,7 +577,7 @@ test('the Work tabs are wired for assistive tech and switch with the arrow keys'
   routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }] };
   const ws = await openSession();
   ws.frame(snapshot());
-  await userEvent.click(await screen.findByRole('button', { name: 'Open research.report v1' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Open research.report' }));
   const report = screen.getByRole('tab', { name: 'Report' });
   const checks = screen.getByRole('tab', { name: 'Checks' });
   expect(report).toHaveAttribute('tabindex', '0');
@@ -732,8 +733,8 @@ test('Artifacts lists sealed versions from the index and opens one in the Work d
   ] };
   location.hash = '#/artifacts';
   render(<App />);
-  const open = await screen.findByRole('button', { name: 'Open github.review v2 of Old work' });
-  expect(open).toHaveTextContent('Passed');
+  const open = await screen.findByRole('button', { name: 'Open github.review of Old work' });
+  expect(open).toHaveTextContent('Double-checked');
   expect(open).toHaveTextContent('2 versions');
   expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);
   await userEvent.click(open);
@@ -789,8 +790,9 @@ test('Sleeper leads with the week strip and renders a passed lineup card', async
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 1, checks: [] })]);
   const strip = await screen.findByRole('region', { name: 'This week' });
   expect(await within(strip).findByText(/Lineup · week 8 · locks Sun/)).toBeInTheDocument();
-  expect(within(strip).getByText('checked')).toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByText('v1 · checked')).toBeInTheDocument();
+  expect(within(strip).getByTitle('Double-checked')).toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByTitle('Double-checked')).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(/v1 ·|sealed|not checked/);
   const card = screen.getByRole('article', { name: 'Week 8 lineup' });
   expect(within(card).getByText('Allen')).toBeInTheDocument();
   expect(within(card).getByText('START')).toBeInTheDocument();
@@ -802,38 +804,72 @@ test('Sleeper leads with the week strip and renders a passed lineup card', async
   expect(within(card).getByRole('link', { name: 'Ask about this card' })).toHaveAttribute('href', `#/s/${encodeURIComponent(KEY)}`);
 });
 
-test('a failed lineup card names its failing checks', async () => {
-  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: ['Summary says nothing about the swap'] }] };
+const chk = (id: string, label: string, weight: number | 'gate', met: number | null, notes: string[] = []) => ({ criterion: 'c', id, label, weight, met, notes });
+
+test('a failed lineup card names its failing checks by label, with the reason behind Why', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('summary_names_changes', 'Summary skips a lineup change', 'gate', 0, ['RB2: Summary says nothing about the swap. It also omits FLEX.'])] };
   await openSleeper([sealed(lineup(), null, 1), sealed(lineup(), failed, 2)]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  expect(within(card).getByText('v2 · checks failed')).toBeInTheDocument();
-  const check = within(card).getByText('Summary names changes');
-  expect(check).toHaveAttribute('title', 'gates.summary_names_changes');
-  expect(check.closest('details')).toHaveTextContent('Summary says nothing about the swap');
+  expect(within(card).getByText("Didn't pass its checks")).toBeInTheDocument();
+  const label = within(card).getByText('Summary skips a lineup change');
+  expect(label).toHaveAttribute('title', 'c.summary_names_changes');
+  expect(card).not.toHaveTextContent('Summary names changes');
+  await userEvent.click(within(card).getByText('Why'));
+  expect(within(card).getByText('RB2')).toBeInTheDocument();
+  expect(card).not.toHaveTextContent('RB2:');
+  expect(card).toHaveTextContent('Summary says nothing about the swap.');
+  expect(card).not.toHaveTextContent('It also omits FLEX');
+  await userEvent.click(within(card).getByRole('button', { name: 'More' }));
+  expect(card).toHaveTextContent('It also omits FLEX');
+});
+
+test('a note about the whole card drops its "card:" prefix and renders backticks as code', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('x', 'Misses the news', 3, 0, ['card: Does not use `why` for the news.'])] };
+  await openSleeper([sealed(lineup(), failed)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  await userEvent.click(within(card).getByText('Why'));
+  expect(card).not.toHaveTextContent('card:');
+  expect(card.querySelector('code')).toHaveTextContent('why');
+});
+
+test('a passed pitfall is not shown as failed, a triggered pitfall and a missed positive check are', async () => {
+  const checks = [chk('weather', 'Blames weather for a call weather did not change', -2, 0), chk('bye', 'Misses a bye week in the plan', -2, 1), chk('news', 'A close call does not cite the news', 3, 0.5), chk('na', 'Not applicable one', -2, null)];
+  await openSleeper([sealed(lineup(), { passed: false, gatesFailed: [], score: 0.5, checks })]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(card).not.toHaveTextContent('Blames weather');
+  expect(card).not.toHaveTextContent('Not applicable one');
+  expect(card).toHaveTextContent('Misses a bye week in the plan');
+  expect(card).toHaveTextContent('A close call does not cite the news');
+});
+
+test('a passed card shows no red boxes; partial misses are one collapsed minor note', async () => {
+  const checks = [chk('news', 'A close call does not cite the news', 3, 0.6, ['RB2: Only half the report is cited.'])];
+  await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 0.9, checks })]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByTitle('Double-checked')).toBeInTheDocument();
+  expect(card).not.toHaveTextContent("Didn't pass");
+  const note = within(card).getByText('1 minor note').closest('details')!;
+  expect(note).not.toHaveAttribute('open');
+  expect(card.querySelector('.text-danger')).toBeNull();
+});
+
+test('a failing check with no judge note says so', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('s', 'Summary skips a lineup change', 'gate', 0)] };
+  await openSleeper([sealed(lineup(), failed)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  await userEvent.click(within(card).getByText('Why'));
+  expect(card).toHaveTextContent('No note from the judge.');
+});
+
+test('a card with no verdict yet shows no status text', async () => {
+  await openSleeper([sealed(lineup(), null)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(card).not.toHaveTextContent(/checked|v1/);
 });
 
 test('a card with no changes shows the calm banner, not the change summary', async () => {
   await openSleeper([sealed(lineup({ summary: 'No changes.', starters: [row('Jefferson')] }), null)]);
   expect(await screen.findAllByText('No changes: your lineup stands')).toHaveLength(2);
-});
-
-test('a failed verdict with no failing check shows the judge tally', async () => {
-  const checks = [{ criterion: 'gates', id: 'a', met: 1, notes: [] }, { criterion: 'pitfalls', id: 'b', met: 1, notes: [] }, { criterion: 'x', id: 'c', met: null, notes: [] }];
-  await openSleeper([sealed(lineup(), { passed: false, gatesFailed: [], score: 0.7, checks })]);
-  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  expect(within(card).getByText('Judge: 2 of 2 checks passed')).toBeInTheDocument();
-});
-
-test('a failing check with no judge note says so', async () => {
-  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: [] }] };
-  await openSleeper([sealed(lineup(), failed)]);
-  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  expect(within(card).getByText('Summary names changes').closest('details')).toHaveTextContent('No note from the judge.');
-});
-
-test('an unchecked card is labelled not checked', async () => {
-  await openSleeper([sealed(lineup(), null)]);
-  expect(await screen.findAllByText('v1 · not checked')).not.toHaveLength(0);
 });
 
 test('Run now posts to the distributor route, which carries no token', async () => {

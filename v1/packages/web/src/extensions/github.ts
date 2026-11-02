@@ -19,7 +19,7 @@ export const github: Extension = {
       const full = prTitle(r, repo!);
       return { title: cut(full), full, num: `#${n}`, ...(r.multiRepo && { repo: `${owner}/${repo}` }) };
     },
-    words: () => ({ kind: 'github.review', w: { run: 'Reviewing', pass: 'Approved ✓', fail: 'Checks failed', none: 'Not reviewed yet' } }),
+    words: () => ({ kind: 'github.review', w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
   },
   start: { prefix: 'github', label: 'GitHub' },
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.

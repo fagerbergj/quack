@@ -43,15 +43,15 @@ export const historyRubric: Rubric = {
   version: 1,
   threshold: 0.8,
   criteria: [
-    { id: 'faithful_to_tools', checks: [{ id: 'figures_from_tools', weight: 'gate', code: figuresFromTools }] },
+    { id: 'faithful_to_tools', checks: [{ id: 'figures_from_tools', label: "Numbers differ from the league data", weight: 'gate', code: figuresFromTools }] },
     { id: 'net_position_is_reasoned', checks: [
-      { id: 'luck_process_split', weight: 3, scope: 'card', question: 'Does it separate lineup execution and the draft, which the manager controls, from schedule luck (points against) and player-outcome luck?' },
-      { id: 'aggregated_not_scolded', weight: 3, scope: 'row', question: 'Is each criticism backed by a pattern across weeks, naming the player, pick or week and the number from this season\'s figures?' },
-      { id: 'decision_time_grading', weight: 2, scope: 'row', question: 'Is a pre-kickoff call judged on what was knowable then, not on how the game turned out?' },
+      { id: 'luck_process_split', label: "Mixes luck up with decisions", weight: 3, scope: 'card', question: 'Does it separate lineup execution and the draft, which the manager controls, from schedule luck (points against) and player-outcome luck?' },
+      { id: 'aggregated_not_scolded', label: "Criticizes without a pattern across weeks", weight: 3, scope: 'row', question: 'Is each criticism backed by a pattern across weeks, naming the player, pick or week and the number from this season\'s figures?' },
+      { id: 'decision_time_grading', label: "Judges a call by how the game ended", weight: 2, scope: 'row', question: 'Is a pre-kickoff call judged on what was knowable then, not on how the game turned out?' },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'single_week_as_pattern', weight: -3, scope: 'row', question: 'Is one week, one bust or one trade offered as evidence of a bad manager?' },
-      { id: 'efficiency_as_record', weight: -2, scope: 'card', question: 'Does it equate lineup efficiency with winning or losing?' },
+      { id: 'single_week_as_pattern', label: "Treats one bad week as a pattern", weight: -3, scope: 'row', question: 'Is one week, one bust or one trade offered as evidence of a bad manager?' },
+      { id: 'efficiency_as_record', label: "Confuses lineup efficiency with winning", weight: -2, scope: 'card', question: 'Does it equate lineup efficiency with winning or losing?' },
     ] },
   ],
 };

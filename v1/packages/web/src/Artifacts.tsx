@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
 import { listArtifacts, type SealedArtifact } from './api.ts';
 
-// Checks that did not fully hold; a score under the threshold can fail a version with none listed.
-export const failing = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1).map((c) => `${c.criterion}.${c.id}`);
-
+// A pass is a tick with a tooltip, a fail an x; no verdict yet shows nothing.
 export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
-  const [glyph, tone] = !verdict ? ['•', 'bg-soft text-muted'] : verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
-  return <span aria-hidden="true" className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
+  if (!verdict) return null;
+  const [glyph, tone] = verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
+  return <span role="img" aria-label={verdict.passed ? 'Double-checked' : "Didn't pass its checks"} title={verdict.passed ? 'Double-checked' : undefined} className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
 }
 
 const label = (kind: string) => {
@@ -14,22 +13,20 @@ const label = (kind: string) => {
   return name.charAt(0).toUpperCase() + name.slice(1);
 };
 
-// Sealed, checked, posted: one muted status line each. The drawer's Checks tab holds the detail.
+// One muted line per artifact; the drawer's Checks tab holds the detail.
 function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void }) {
-  const n = failing(a).length;
-  const status = !a.verdict ? 'not checked' : a.verdict.passed ? 'checks passed' : `${n || ''} ${n === 1 ? 'check' : 'checks'} failed`.trim();
   const link = 'flex min-h-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
   return (
     <li className="flex items-center gap-2 text-[13px] text-muted">
       <StatusIcon verdict={a.verdict} />
-      <span className="min-w-0 truncate">{`${label(a.kind)} v${a.version} sealed · ${status}`}</span>
-      <button type="button" aria-label={`Open ${a.kind} v${a.version}`} onClick={() => onOpen(a)} className={link}>Open</button>
+      <span className="min-w-0 truncate">{a.verdict?.passed === false ? `${label(a.kind)} · Didn't pass its checks` : label(a.kind)}</span>
+      <button type="button" aria-label={`Open ${a.kind}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
       {a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
     </li>
   );
 }
 
-// `refresh` changes whenever the session saw tool activity, which is when a version can be sealed or checked.
+// `refresh` changes whenever the session saw tool activity, which is when a version can be ready or checked.
 export function useArtifacts(sessionKey: string, refresh: number) {
   const [items, setItems] = useState<SealedArtifact[]>([]);
   const [error, setError] = useState('');

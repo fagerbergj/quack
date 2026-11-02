@@ -81,21 +81,21 @@ export const lineupRubric: Rubric = {
   threshold: 0.8,
   criteria: [
     { id: 'legal_and_complete', checks: [
-      { id: 'every_slot_decided', weight: 'gate', code: everySlotDecided },
-      { id: 'one_player_per_slot', weight: 'gate', code: onePlayerPerSlot },
-      { id: 'no_locked_swap', weight: 'gate', code: noLockedSwap },
-      { id: 'figures_match_tools', weight: 'gate', code: figuresMatchTools },
-      { id: 'summary_names_changes', weight: 'gate', code: summaryNamesChanges },
+      { id: 'every_slot_decided', label: "A lineup slot is left unset", weight: 'gate', code: everySlotDecided },
+      { id: 'one_player_per_slot', label: "A slot has the wrong number of players", weight: 'gate', code: onePlayerPerSlot },
+      { id: 'no_locked_swap', label: "Swaps a player who is already locked", weight: 'gate', code: noLockedSwap },
+      { id: 'figures_match_tools', label: "Numbers differ from the league data", weight: 'gate', code: figuresMatchTools },
+      { id: 'summary_names_changes', label: "Summary skips a lineup change", weight: 'gate', code: summaryNamesChanges },
     ] },
     { id: 'calls_are_reasoned', checks: [
-      { id: 'names_baseline_it_beats', weight: 3, scope: 'differs', question: 'This change starts a player the best-by-projection baseline does not. Does `why` name the baseline player and what changed the call?' },
-      { id: 'close_call_news', weight: 3, scope: 'close', question: 'This is a Questionable or limited-practice starter, or a bench player within the FLEX tie-break gap. Does `why` reflect the attached `news`, naming the right player for each report and the Sleeper `designations`?' },
-      { id: 'designation_weighted', weight: 3, scope: 'designated', question: 'Does the call treat an injury designation as a play rate, not as in or out?' },
-      { id: 'picks_an_action', weight: 2, scope: 'row', question: 'Does the row start, sit or keep a player, rather than leave the slot open?' },
+      { id: 'names_baseline_it_beats', label: "Doesn't say who the swap beats", weight: 3, scope: 'differs', question: 'This change starts a player the best-by-projection baseline does not. Does `why` name the baseline player and what changed the call?' },
+      { id: 'close_call_news', label: "A close call doesn't cite the news", weight: 3, scope: 'close', question: 'This is a Questionable or limited-practice starter, or a bench player within the FLEX tie-break gap. Does `why` reflect the attached `news`, naming the right player for each report and the Sleeper `designations`?' },
+      { id: 'designation_weighted', label: "Treats an injury tag as in or out", weight: 3, scope: 'designated', question: 'Does the call treat an injury designation as a play rate, not as in or out?' },
+      { id: 'picks_an_action', label: "A slot has no start or sit call", weight: 2, scope: 'row', question: 'Does the row start, sit or keep a player, rather than leave the slot open?' },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'matchup_overrides_talent', weight: -4, scope: 'changed', question: 'Does this change bench a clearly better healthy player for matchup alone?' },
-      { id: 'weather_mentioned_unmoved', weight: -2, scope: 'card', question: 'Does the card mention weather for a call that weather did not move?' },
+      { id: 'matchup_overrides_talent', label: "Benches a better player over matchup", weight: -4, scope: 'changed', question: 'Does this change bench a clearly better healthy player for matchup alone?' },
+      { id: 'weather_mentioned_unmoved', label: "Blames weather for a call weather didn't change", weight: -2, scope: 'card', question: 'Does the card mention weather for a call that weather did not move?' },
     ] },
   ],
 };

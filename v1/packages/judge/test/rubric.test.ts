@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { feedback, score, type CheckResult, type Rubric } from '../src/index.ts';
 
 const rubric: Rubric = { name: 'r', version: 1, threshold: 0.8, criteria: [] };
-const r = (id: string, weight: number | 'gate', met: number | null, units = 1, notes: string[] = []): CheckResult => ({ criterion: 'c', id, weight, met, units, resolvers: {}, notes });
+const r = (id: string, weight: number | 'gate', met: number | null, units = 1, notes: string[] = []): CheckResult => ({ criterion: 'c', id, label: id, weight, met, units, resolvers: {}, notes });
 
 test('scores earned over possible points, and pitfalls subtract', () => {
   assert.deepEqual(score(rubric, [r('a', 4, 1), r('b', 2, 0.5), r('c', 2, 1)]), { score: 7 / 8, gatesFailed: [], passed: true });
