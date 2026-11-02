@@ -58,16 +58,16 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
   if (!config.baseUrl || !config.publicKey || !config.secretKey) return [];
   const sender = new Sender(`${config.baseUrl.replace(/\/+$/, '')}/api/public/ingestion`, `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`);
   const traceId = config.sessionKey ?? crypto.randomUUID();
-  const pending = new Map<number, unknown>();
+  const pending = new Map<number, { input: unknown; start: number }>();
   return [defineExtension({
     name: 'traces',
     hooks: [hook(GenerationTask, {
       beforeRequest(request, api) {
-        pending.set(api.taskId, request.messages);
+        pending.set(api.taskId, { input: request.messages, start: Date.now() });
         return undefined;
       },
       afterResponse(message, api) {
-        const input = pending.get(api.taskId);
+        const { input, start } = pending.get(api.taskId) ?? { input: undefined, start: message.timestamp };
         pending.delete(api.taskId);
         const now = new Date().toISOString();
         const { usage } = message;
@@ -84,7 +84,7 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
               model: message.model,
               input,
               output: message.content,
-              startTime: new Date(message.timestamp).toISOString(),
+              startTime: new Date(start).toISOString(),
               endTime: now,
               level: message.stopReason === 'error' ? 'ERROR' : 'DEFAULT',
               statusMessage: message.errorMessage,

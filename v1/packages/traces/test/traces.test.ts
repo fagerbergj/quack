@@ -32,7 +32,7 @@ async function fakeLangfuse(status = 207) {
 
 async function generate(extensions: ReturnType<typeof tracesSessionExtensions>, text: string) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
-  faux.setResponses([fauxAssistantMessage(text)]);
+  faux.setResponses([async () => (await new Promise((r) => setTimeout(r, 20)), fauxAssistantMessage(text))]);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -57,7 +57,7 @@ test('a generation sends one Langfuse generation event with model, input, output
   assert.match(JSON.stringify(g.output), /Hi there\./);
   assert.equal(typeof g.usageDetails.total, 'number');
   assert.equal(typeof g.costDetails.total, 'number');
-  assert.ok(Date.parse(g.endTime) >= Date.parse(g.startTime));
+  assert.ok(Date.parse(g.endTime) > Date.parse(g.startTime));
   assert.equal(g.metadata.agent, 'reviewer');
   assert.equal(g.metadata.version, '3');
   assert.deepEqual(batch.find((e) => e.type === 'trace-create')!.body, { id: 'sess-1', sessionId: 'sess-1', name: 'reviewer' });
