@@ -65,7 +65,7 @@ async function transcribePage(c: StepContext, deps: IngestDeps, n: number, count
   if (!model) throw new Error('the vision model is not available');
   const data = Buffer.from(await must(c.api.env!.readBinaryFile(pageFile(n), c.ctx), pageFile(n))).toString('base64');
   const content = [{ type: 'text' as const, text: `Page ${n} of ${count}.` }, { type: 'image' as const, data, mimeType: 'image/jpeg' }];
-  const reply = await observeGeneration({ systemPrompt: agent.instructions ?? undefined, messages: [{ role: 'user', content, timestamp: c.api.now() }] }, (r) => c.api.models.completeSimple(model, r, { signal: c.signal }));
+  const reply = await observeGeneration({ provider: model.provider, signal: c.signal, systemPrompt: agent.instructions ?? undefined, messages: [{ role: 'user', content, timestamp: c.api.now() }] }, (r) => c.api.models.completeSimple(model, r, { signal: c.signal }));
   // The vision call bypasses pi's usage tracking, so its spend lands on the step's cost.
   await c.report({ cost: reply.usage?.cost?.total ?? 0 });
   const page = contentText(reply.content).trim();
@@ -116,7 +116,7 @@ async function propose(c: StepContext): Promise<string> {
   const ask = `Name the topic of this handwritten document in 2 to 4 words, such as "home renovation" or "quarterly planning". Existing topics, none of which fit: ${existing.join(', ') || 'none'}. Answer with the name only.\n\n${text(c).slice(0, EXCERPT_CHARS)}`;
   const made = await c.api.memo<string>('topic-proposal', c.ctx);
   if (made !== undefined) return made;
-  const reply = await observeGeneration({ messages: [{ role: 'user', content: ask, timestamp: c.api.now() }] }, (r) => c.api.models.completeSimple(model, r, { signal: c.signal }));
+  const reply = await observeGeneration({ provider: model.provider, signal: c.signal, messages: [{ role: 'user', content: ask, timestamp: c.api.now() }] }, (r) => c.api.models.completeSimple(model, r, { signal: c.signal }));
   return c.api.memo<string>('topic-proposal', parseTopic(contentText(reply.content), existing), c.ctx);
 }
 

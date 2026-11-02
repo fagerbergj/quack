@@ -25,7 +25,8 @@ export async function whileWaiting<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export type GenerationRequest = { systemPrompt?: string; messages: Message[] };
+/** `provider` names the model endpoint a gate may need to hold capacity on; `signal` lets that wait be cancelled. */
+export type GenerationRequest = { systemPrompt?: string; messages: Message[]; provider?: string; signal?: AbortSignal };
 export type Generation = GenerationRequest & { start: number; message: AssistantMessage };
 const generationListeners = new Set<(g: Generation) => void>();
 /** Hears every completion made through `observeGeneration`, for callers that bypass the session's own generation task. */
@@ -33,11 +34,31 @@ export function onGeneration(listener: (g: Generation) => void): () => void {
   generationListeners.add(listener);
   return () => void generationListeners.delete(listener);
 }
+/** Capacity held around each direct completion (a resource gate such as slots implements it); `after` runs even when the completion throws. */
+export type GenerationGate = { before(provider: string, signal?: AbortSignal): Promise<void>; after(): void };
+const generationGates = new Set<GenerationGate>();
+export function gateGenerations(gate: GenerationGate): () => void {
+  generationGates.add(gate);
+  return () => void generationGates.delete(gate);
+}
+
 /** Runs one completion and tells `onGeneration` listeners its request, start time (ms) and reply; a listener error never reaches the caller. */
 export async function observeGeneration(request: GenerationRequest, complete: (request: GenerationRequest) => Promise<AssistantMessage>): Promise<AssistantMessage> {
   const start = Date.now();
   const sent = [...request.messages];
-  const message = await complete(request);
+  const held: GenerationGate[] = [];
+  let message: AssistantMessage;
+  try {
+    if (request.provider) {
+      for (const g of generationGates) {
+        await g.before(request.provider, request.signal);
+        held.push(g);
+      }
+    }
+    message = await complete(request);
+  } finally {
+    held.forEach((g) => g.after());
+  }
   for (const l of generationListeners) {
     try {
       l({ systemPrompt: request.systemPrompt, messages: sent, start, message });

@@ -106,7 +106,7 @@ export function modelResolver(provider: string, modelId: string): Resolver {
     async resolve(point, api, ctx) {
       const model = api.models.getModel(provider, modelId);
       if (!model) return undefined;
-      const reply = await observeGeneration({ messages: [{ role: 'user', content: prompt(point), timestamp: api.now() }] }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal }));
+      const reply = await observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages: [{ role: 'user', content: prompt(point), timestamp: api.now() }] }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal }));
       if (reply.stopReason === 'error') console.error(`decide: ${provider}/${modelId} answered with an error: ${reply.errorMessage}`);
       return parseDecision(contentText(reply.content), point);
     },

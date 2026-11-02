@@ -73,7 +73,7 @@ async function converse<B = undefined>(step: Ask, c: StepContext, messages: Mess
   if (!model) throw new Error(`step ${step.name}: model is not available`);
   let cost = 0;
   for (let repairs = 0; ; repairs++) {
-    const reply = await observeGeneration({ systemPrompt: agent.instructions ?? undefined, messages }, (r) => c.api.models.completeSimple(model, r, { signal: c.signal }));
+    const reply = await observeGeneration({ provider: model.provider, signal: c.signal, systemPrompt: agent.instructions ?? undefined, messages }, (r) => c.api.models.completeSimple(model, r, { signal: c.signal }));
     // A refused or failed call comes back as an empty reply with the host's error; without this it reads as "no JSON object".
     if (reply.stopReason === 'error') throw new Error(`step ${step.name}: model call failed: ${reply.errorMessage ?? 'no error given'}`);
     cost += reply.usage?.cost?.total ?? 0;
