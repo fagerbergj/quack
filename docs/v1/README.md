@@ -9,3 +9,11 @@ The rewrite's requirements and design, in the order they are signed off. No code
 ## Evidence for v1 pull requests
 
 Until v1 runs somewhere it can be rigged, a v1 pull request into the `v1` trunk shows green v1 CI (typecheck, tests, sloplint) and, for any change on the model path, a 1-3 item smoke test against local llm-swap, with the commands and output in the PR. v0's QA rig in `AGENTS.md.local` covers v0 only.
+
+## Checking a rollout
+
+Before `compose up` with a new image, run its validator against the prod config, agents and data volume, mounted read-only. It loads every bundle and every session's pinned `agent-def/agent.json` with the deployment-level extensions (unset extension env gets placeholders, nothing is contacted), prints `FAIL <path>: <error>` per failure and `N loaded, M failed`, and exits non-zero on any failure:
+
+```
+docker run --rm -v <data>:/data:ro -v <config>:/config/deployment.json:ro -e QUACK_CONFIG=/config/deployment.json -e QUACK_AGENTS_DIR=/app/agents -e QUACK_DATA_DIR=/data <new-image> node packages/runtime/src/validate.ts
+```
