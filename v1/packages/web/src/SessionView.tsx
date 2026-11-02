@@ -1,6 +1,6 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, socketUrl, type Failure, type Question, type SealedArtifact } from './api.ts';
+import { abortRun, getMeta, socketUrl, type Failure, type Question, type SealedArtifact } from './api.ts';
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
@@ -73,30 +73,53 @@ function useSocket(key: string, agent: string | undefined) {
   return { view, state, error, setError, approvalTick, standing, send };
 }
 
-const seg = (on: boolean) =>
-  `h-11 cursor-pointer rounded-[14px] border-0 px-2.5 text-[12.5px] max-lg:flex-1 lg:h-[30px] ${on ? 'bg-surface font-semibold text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
+const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
+
+// A message sent while a run works waits here, and goes out when the run ends; Send now steers it into the run instead.
+// shortcut: the queue lives in this tab, so closing it drops the unsent messages; move it server-side if that bites.
+function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void; onRemove: () => void }) {
+  return (
+    <div className="pointer-events-auto flex max-w-[92%] items-center gap-1 self-end rounded-2xl border border-line-strong bg-soft py-0.5 pr-0.5 pl-3">
+      <span className="flex-none text-[12px] text-muted">Queued</span>
+      <span className="min-w-0 truncate text-[13.5px]">{text}</span>
+      <button type="button" onClick={onNow} className={`${chipBtn} px-2.5 text-link`}>Send now</button>
+      <button type="button" aria-label="Remove queued message" onClick={onRemove} className={`${chipBtn} grid w-11 place-items-center text-muted hover:text-ink lg:w-8`}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      </button>
+    </div>
+  );
+}
 
 function Composer({ busy, disabled, send, input, setInput }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; input: string; setInput: (s: string) => void }) {
-  const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
+  const [queue, setQueue] = useState<string[]>([]);
+  useEffect(() => {
+    if (busy || disabled || !queue.length) return;
+    const [first, ...rest] = queue;
+    if (send(first!)) {
+      rest.forEach((q) => send(q, 'followUp'));
+      setQueue([]);
+    }
+  }, [busy, disabled, queue]);
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    if (send(input, busy ? mode : undefined)) setInput('');
+    if (busy) {
+      setQueue([...queue, input]);
+      setInput('');
+    } else if (send(input)) setInput('');
   };
+  const now = (i: number) => send(queue[i]!, 'steer') && setQueue(queue.filter((_, j) => j !== i));
   return (
-    <form onSubmit={submit} className="flex flex-wrap items-center gap-x-2 rounded-[22px] border border-line-strong bg-surface py-1.5 pr-1.5 pl-3.5 shadow-card transition focus-within:border-ink-2/40 focus-within:shadow-ring lg:pl-2">
-      {busy && (
-        <div role="group" aria-label="While the agent is working" className="mt-1 inline-flex rounded-2xl bg-soft p-0.5 max-lg:basis-full lg:mt-0">
-          <button type="button" aria-pressed={mode === 'steer'} onClick={() => setMode('steer')} className={seg(mode === 'steer')}>Steer now</button>
-          <button type="button" aria-pressed={mode === 'followUp'} onClick={() => setMode('followUp')} className={seg(mode === 'followUp')}>Queue next</button>
-        </div>
-      )}
-      <label htmlFor="steer" className="sr-only">Message</label>
-      <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Steer this run…' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-      <button type="submit" disabled={disabled} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
-      </button>
-    </form>
+    <>
+      {queue.map((q, i) => <QueuedChip key={i} text={q} onNow={() => now(i)} onRemove={() => setQueue(queue.filter((_, j) => j !== i))} />)}
+      <form onSubmit={submit} className="pointer-events-auto flex items-center gap-2 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-4 shadow-lift ring-1 ring-line-strong transition focus-within:ring-ink-2/40">
+        <label htmlFor="steer" className="sr-only">Message</label>
+        <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
+        <button type="submit" disabled={disabled} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+        </button>
+      </form>
+    </>
   );
 }
 
@@ -223,25 +246,30 @@ export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
+  const [meta, setMeta] = useState<Array<Record<string, unknown>>>([]);
+  // A new invocation records its meta before its run starts, so a run starting is when to look again.
+  useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header name={name} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} />
       </Header>
-      <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 py-5 sm:px-5" aria-live="polite">
-        <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
-          {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
-          <Transcript view={view} />
-          <Artifacts items={items} error={artifactsError} running={tone === 'run'} onOpen={setWork} />
-          <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
-          <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
-          <SessionFailures sessionKey={sessionKey} items={standing.failures} />
-          {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
+          <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+            {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
+            <Transcript view={view} meta={meta} />
+            <Artifacts items={items} error={artifactsError} running={tone === 'run'} onOpen={setWork} />
+            <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
+            <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
+            <SessionFailures sessionKey={sessionKey} items={standing.failures} />
+            {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
+          </div>
         </div>
-      </div>
-      <div className="border-t border-line bg-canvas/90 px-3 pt-2 pb-[max(1.25rem,var(--safe-b))] backdrop-blur-md sm:px-4 lg:border-t-0 lg:pt-2.5 lg:pb-5">
-        <div className="mx-auto max-w-[720px]">
-          <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
+          <div className="mx-auto flex max-w-[720px] flex-col gap-2">
+            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} />
+          </div>
         </div>
       </div>
       {work && <Work artifact={work} onClose={() => setWork(null)} />}

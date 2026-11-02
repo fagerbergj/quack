@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
@@ -118,6 +118,14 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     // The caller's name for the session (a PR title); the first one sticks, and the distributor lists it ahead of the first message.
     async recordTitle(title: string) {
       await writeFile(join(opts.dir, 'title'), title.replace(/\s+/g, ' ').trim().slice(0, 200), { flag: 'wx' }).catch(() => undefined);
+    },
+    // Data the UI reads beside the transcript (a PR's files and checks); one record per `id`, a later one replacing the earlier.
+    async recordMeta(record: Record<string, unknown>) {
+      const kept = (await this.meta()).filter((r) => r.id !== record.id);
+      await writeFile(join(opts.dir, 'meta.json'), JSON.stringify([...kept, record]));
+    },
+    async meta(): Promise<Array<Record<string, unknown>>> {
+      return JSON.parse(await readFile(join(opts.dir, 'meta.json'), 'utf8').catch(() => '[]'));
     },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       if (dispatch) return dispatch({ harness, root }, input, requestId, wait);

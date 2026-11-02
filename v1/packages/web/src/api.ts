@@ -24,6 +24,8 @@ export const listApprovals = async (key: string) => (await json<{ approvals: App
 const named = (a: SealedArtifact): SealedArtifact =>
   a.verdict ? { ...a, verdict: { ...a.verdict, checks: a.verdict.checks.map((c) => ({ ...c, label: c.label ?? c.id.replace(/_/g, ' ') })) } } : a;
 export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts.map(named);
+// Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.
+export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await fetch(`${base(key)}/meta`))).meta;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
 export type IndexApproval = { session: string; id: string; tool: string; at: number };

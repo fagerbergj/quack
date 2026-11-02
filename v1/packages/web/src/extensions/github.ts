@@ -1,5 +1,8 @@
+import { createElement } from 'react';
 import { BLUE, cut, sentence, type Delivered, type Extension } from '../extension.ts';
 import type { Row } from '../sessions.ts';
+import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
+import { reviewCard } from './ReviewCard.tsx';
 
 const KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
 // Sessions opened before titles were recorded carry the trigger prompt as their title; the PR's own title follows "Title: ".
@@ -36,6 +39,13 @@ export const github: Extension = {
     words: () => ({ kind: KIND, w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
   },
   artifact: (a, running) => (a.kind === KIND ? { name: 'Review', posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length) } : undefined),
+  card: (a) => (a.kind === KIND ? reviewCard(a) : undefined),
+  // The card's extras are keyed by head sha; a review started by a comment has no head in its text and takes the newest.
+  opening: (text, meta) => {
+    const o = parseOpening(text);
+    const records = meta as readonly PrMeta[];
+    return o && createElement(PrCard, { o, meta: o.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head) });
+  },
   start: { prefix: 'github', label: 'GitHub' },
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {

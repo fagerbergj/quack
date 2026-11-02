@@ -48,6 +48,13 @@ test('answers over the container contract and survives a restart', async () => {
   assert.equal(await readFile(join(dir, 'title'), 'utf8'), 'Fix the cache');
   assert.equal((await http.post({ input: 'x', title: 7 })).status, 400);
 
+  // Meta rides beside the input; a record with the same id replaces the earlier one.
+  await http.post({ input: 'm1', meta: { id: 'a', files: [] }, requestId: 'q-4', wait: true });
+  await http.post({ input: 'm2', meta: { id: 'b' }, requestId: 'q-5', wait: true });
+  await http.post({ input: 'm3', meta: { id: 'a', files: [1] }, requestId: 'q-6', wait: true });
+  assert.deepEqual(await fetch(`${http.base}/meta`).then((r) => r.json()), { meta: [{ id: 'b' }, { id: 'a', files: [1] }] });
+  assert.equal((await http.post({ input: 'x', meta: { files: [] } })).status, 400);
+
   const rejected = await http.post({ input: '' });
   assert.equal(rejected.status, 400);
 
