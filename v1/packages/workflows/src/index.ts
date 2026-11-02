@@ -122,9 +122,13 @@ export async function resumeWorkflow(harness: Harness, root: Conversation, workf
     const doc = await tx.doc(WorkflowDoc, root.id);
     // Another resume or run got there first.
     if (doc.task !== seen.task) return doc.task;
-    const created = String(await tx.createTask(workflow.task, { input, resume: { phase: failed.name, results: doc.kept ?? {} } }, { ownership: { kind: 'conversation' } }));
+    // A run that failed before `kept` existed has none: restart at the first earlier step with no stored result (null counts as a result).
+    const kept = doc.kept ?? {};
+    const missing = workflow.steps.slice(0, from).findIndex((s) => !Object.hasOwn(kept, s.name));
+    const start = missing < 0 ? from : missing;
+    const created = String(await tx.createTask(workflow.task, { input, resume: { phase: workflow.steps[start].name, results: kept } }, { ownership: { kind: 'conversation' } }));
     doc.task = created;
-    doc.steps.splice(from, doc.steps.length, ...workflow.steps.slice(from).map(pending));
+    doc.steps.splice(start, doc.steps.length, ...workflow.steps.slice(start).map(pending));
     (await tx.doc(Failures, root.id)).items[failed.name] = { error: null, run: Number(created), at: 0 };
     return created;
   }, ctx);
