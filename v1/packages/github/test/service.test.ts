@@ -32,29 +32,33 @@ const github = await listen(
     const auth = String(req.headers.authorization);
     calls.push({ method: req.method!, path: req.url!, auth, body: raw ? JSON.parse(raw) : undefined });
     const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-    if (req.url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
-    if (req.url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
-    if (req.url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
-    if (req.url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
-    if (req.url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
+    // GitHub's API is case-insensitive: a mixed-case owner reaches the same repository.
+    const url = req.url!.replace(/^\/repos\/ACME\//, '/repos/acme/');
+    if (url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
+    if (url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
+    if (url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
     // Every page full: a commit whose check runs never end.
-    if (req.url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
-    if (req.url === '/repos/acme/widgets/issues/7/comments') {
+    if (url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
+    if (url === '/repos/acme/widgets/issues/7/comments') {
       commented.push(calls.at(-1)!.body.body);
       commentWaiters.splice(0).forEach((f) => f());
       return reply(201, {});
     }
-    if (req.url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
-    const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(req.url!);
+    if (url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
+    const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(url);
     // 150 check runs: the only failing one is on the second page.
     if (page) return reply(200, { check_runs: Array.from({ length: page[1] === '1' ? 100 : 50 }, (_, i) => ({ name: `c${page[1]}-${i}`, status: 'completed', conclusion: page[1] === '2' && i === 49 ? 'failure' : 'success' })) });
-    if (req.url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
     reply(404, {});
   }),
 );
 
 const invocations: Array<{ path: string; body: any }> = [];
 const watchers: string[] = [];
+const watcherWaiters: Array<() => void> = [];
+const holds: Record<string, Promise<void>> = {};
 const outcomes: Record<string, unknown> = {};
 const distributor = await listen(
   createServer(async (req, res) => {
@@ -64,6 +68,8 @@ const distributor = await listen(
     const body = JSON.parse(raw);
     if (body.wait) {
       watchers.push(body.requestId);
+      watcherWaiters.splice(0).forEach((f) => f());
+      await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
     invocations.push({ path: decodeURIComponent(req.url!), body });
@@ -193,3 +199,28 @@ test('a run that fails says so on the PR once, even when its delivery arrives tw
   assert.deepEqual(commented, ['The review could not be completed (run_failed: model refused the call). Comment `/review` to try again.']);
   assert.equal(watchers.filter((w) => w === 'github-delivery:d-fail').length, 1);
 });
+
+// Holds a run's wait, posts a review for the PR as the session would, releases it, then runs a failing sentinel:
+// its notice is the only comment if the delivered run was suppressed.
+async function deliveredRunIsSilent(webhookOwner: string, id: string) {
+  commented.length = 0;
+  let release!: () => void;
+  holds[`github-delivery:${id}`] = new Promise<void>((r) => (release = r));
+  outcomes[`github-delivery:${id}`] = { status: 'done' };
+  const started = new Promise<void>((r) => watcherWaiters.push(r));
+  const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository: { ...repository, owner: { login: webhookOwner } } };
+  assert.equal(await deliver('pull_request', labeled, { id }), 202);
+  await started;
+  const review = { owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' };
+  assert.equal((await fetch(`${service}/reviews`, { method: 'POST', headers: { authorization: 'Bearer svc-secret' }, body: JSON.stringify(review) })).status, 201);
+  release();
+  outcomes[`github-delivery:${id}-sentinel`] = { status: 'unanswered', reason: 'run_failed' };
+  const noted = new Promise<void>((r) => commentWaiters.push(r));
+  assert.equal(await deliver('pull_request', { ...labeled, repository }, { id: `${id}-sentinel` }), 202);
+  await noted;
+  assert.deepEqual(commented, ['The review could not be completed (run_failed). Comment `/review` to try again.']);
+}
+
+test('a run that delivered a review gets no notice', () => deliveredRunIsSilent('acme', 'd-delivered'));
+
+test('a review counts for the run however the webhook cases the owner', () => deliveredRunIsSilent('ACME', 'd-delivered-case'));

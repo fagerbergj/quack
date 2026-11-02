@@ -21,7 +21,7 @@ const short = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v)).re
 /** What to tell the PR when a run ended without a review; undefined when it delivered one or the outcome is not final. */
 export function noticeFor(outcome: RunOutcome, delivered: boolean): string | undefined {
   if (delivered) return undefined;
-  if (outcome.status === 'unanswered') return `The review could not be completed (${outcome.reason}${outcome.detail === undefined ? '' : `: ${short(outcome.detail)}`}). ${RETRY}`;
+  if (outcome.status === 'unanswered') return `The review could not be completed (${outcome.reason ?? 'unknown'}${outcome.detail === undefined ? '' : `: ${short(outcome.detail)}`}). ${RETRY}`;
   if (outcome.status === 'done') return `The review ended without a review being posted. ${RETRY}`;
   return undefined;
 }

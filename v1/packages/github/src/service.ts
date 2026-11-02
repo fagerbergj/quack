@@ -70,7 +70,8 @@ export function ownerRepo(raw: string): { owner: string; repo: string } | undefi
 
 // Reviews posted per PR, and the runs already watched: a run is watched once, so no run notes twice.
 type RunState = { posted: Map<string, number>; watched: Set<string> };
-const prKey = (owner: string, repo: string, number: number) => `${owner}/${repo}#${number}`;
+// Lowercased like the installation cache: the webhook and the session may case the same repository differently.
+const prKey = (owner: string, repo: string, number: number) => `${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`;
 
 // Waits out a run the webhook started and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
 async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number) {
