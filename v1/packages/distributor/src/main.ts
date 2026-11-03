@@ -8,6 +8,8 @@ import { dockerApi, parseDockerHost } from './docker-api.ts';
 import { dockerLauncher, reapSessions } from './docker-driver.ts';
 import { parseHostConfig } from './host-config.ts';
 import { sessionEnv } from '@quack/runtime';
+import { loadManifests } from '@quack/runtime/catalog';
+import { rubricFrom } from './rubrics.ts';
 import { appsProxy, parseApps } from './apps.ts';
 
 function env(name: string, fallback?: string): string {
@@ -24,11 +26,12 @@ const token = randomBytes(24).toString('hex');
 const { store } = openStore({ QUACK_INDEX_DATABASE_URL: process.env.QUACK_INDEX_DATABASE_URL, QUACK_DATA_DIR: dataDir });
 void store.ensure().catch((err) => console.error('index migrations will retry:', err.message));
 const broker = credentialBroker();
+const manifests = await loadManifests();
 
 // QUACK_SESSION_DRIVER picks where sessions run (A11): child processes here (default) or one gVisor/Kata container each.
 function sessionDriver(): HostDriver {
   const config = parseHostConfig(process.env);
-  const base = { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR };
+  const base = { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests) };
   if (config.driver === 'process') {
     // shortcut: process sessions share this container and its secrets; the docker driver is the isolated one.
     return processDriver({ ...base, command: [process.execPath, runtime], startTimeoutMs: 60_000, env: { QUACK_INDEX_URL: `http://127.0.0.1:${port}`, QUACK_INDEX_TOKEN: token }, inherit: (agentPath) => sessionEnv(agentPath) });

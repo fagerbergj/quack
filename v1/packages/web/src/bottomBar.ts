@@ -7,6 +7,7 @@ export const HOME: Item = { route: 'home', label: 'Home', href: '#/' };
 export const CORE: Item[] = [
   { route: 'sessions', label: 'Sessions', href: '#/sessions' },
   { route: 'artifacts', label: 'Artifacts', href: '#/artifacts' },
+  { route: 'agents', label: 'Agents', href: '#/agents' },
 ];
 // The pages the bottom bar can hold; extension pages join as they register.
 export const PAGES: Item[] = [...CORE, ...EXTENSIONS.flatMap((e) => e.nav ?? []).map((n): Item => ({ route: n.route, label: n.label, href: `#/${n.route}` }))];
@@ -14,8 +15,8 @@ export const MAX_PICKS = 3;
 
 const KEY = 'quack:bottom-bar';
 const CHANGED = 'quack:bottom-bar-changed';
-// Sleeper is an extension page; when it is absent the next available page fills its place.
-const DEFAULT = [...new Set([...['sessions', 'artifacts', 'sleeper'].filter((r) => PAGES.some((p) => p.route === r)), ...PAGES.map((p) => p.route)])].slice(0, MAX_PICKS);
+// Agents is a choice, never a default. Sleeper is an extension page; when it is absent the next available page fills its place.
+const DEFAULT = [...new Set([...['sessions', 'artifacts', 'sleeper'].filter((r) => PAGES.some((p) => p.route === r)), ...PAGES.map((p) => p.route).filter((r) => r !== 'agents')])].slice(0, MAX_PICKS);
 
 // Per device; unreadable or stale storage reads as the default.
 export function storedBar(): string[] {

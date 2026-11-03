@@ -26,7 +26,21 @@ const TITLES = Object.fromEntries([{ route: 'more', label: 'More' }, ...MAIN, ..
 const NAV_ICONS = Object.fromEntries(EXTENSIONS.flatMap((e) => e.nav ?? []).map((n) => [n.route, n.icon]));
 export const MORE = GROUPS.flatMap((g) => g.items);
 
+// The logo duck's shapes in currentColor, so the Agents tab colours like the stroked icons; the eye is cut out in the canvas colour.
+function DuckGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="4 11 80 80" fill="currentColor" aria-hidden="true" className="flex-none">
+      <ellipse cx="52" cy="62" rx="26" ry="14" />
+      <circle cx="38" cy="40" r="14" />
+      <path d="M26 37 L9 42 L26 47 Z" />
+      <path d="M70 56 Q80 52 78 62" />
+      <circle cx="34" cy="36" r="3" style={{ fill: 'var(--color-canvas)' }} />
+    </svg>
+  );
+}
+
 export function Icon({ route }: { route: Route }) {
+  if (route === 'agents') return <DuckGlyph />;
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none">
       <path d={ICONS[route] ?? NAV_ICONS[route]} />

@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode, type SubmitEvent } from 'react';
 
 const btn = 'min-h-11 cursor-pointer rounded-full border px-4 text-[14px] font-medium lg:min-h-9';
 
-function Modal({ title, onClose, onSubmit, children, action, danger, busy, error }: { title: string; onClose: () => void; onSubmit: () => void; children: ReactNode; action: string; danger?: boolean; busy: boolean; error: string }) {
+export function Modal({ title, onClose, onSubmit, children, action, danger, busy, error }: { title: string; onClose: () => void; onSubmit: () => void; children: ReactNode; action: string; danger?: boolean; busy: boolean; error: string }) {
   const id = useId();
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
@@ -25,7 +25,7 @@ function Modal({ title, onClose, onSubmit, children, action, danger, busy, error
 }
 
 // Runs the server call; a refusal stays in the dialog so the person sees why.
-function useAction(run: () => Promise<unknown>, done: () => void) {
+export function useAction(run: () => Promise<unknown>, done: () => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const go = () => {
