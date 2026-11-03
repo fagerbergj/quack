@@ -45,4 +45,9 @@ COPY --from=web /app/packages/web/dist /app/web
 # npm ci runs before the sources exist, so it links no bin for the workspace CLI.
 RUN printf '#!/bin/sh\nexec node /app/packages/cli/src/main.ts "$@"\n' > /usr/local/bin/quack && chmod +x /usr/local/bin/quack
 ENV QUACK_WEB_DIR=/app/web
+# Declared last so a new commit invalidates no earlier layer; unset in local builds.
+ARG QUACK_COMMIT
+ARG QUACK_BUILT_AT
+ENV QUACK_COMMIT=$QUACK_COMMIT QUACK_BUILT_AT=$QUACK_BUILT_AT
+LABEL org.opencontainers.image.revision=$QUACK_COMMIT
 USER node

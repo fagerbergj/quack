@@ -48,7 +48,7 @@ async function serveStatic(root: string, pathname: string, req: IncomingMessage,
 async function serveWeb(root: string | undefined, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   if (!root || req.method !== 'GET') return false;
   const { pathname } = new URL(req.url ?? '', 'http://distributor');
-  return !/^\/(sessions|agents)(\/|$)/.test(pathname) && serveStatic(root, pathname, req, res);
+  return !/^\/(sessions|agents|version)(\/|$)/.test(pathname) && serveStatic(root, pathname, req, res);
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
@@ -258,7 +258,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   }
 
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
+    if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents' && req.url !== '/version')) return false;
+    if (req.url === '/version') return send(res, 200, { commit: process.env.QUACK_COMMIT || null, builtAt: process.env.QUACK_BUILT_AT || null }), true;
     send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }) })) });
     return true;
   }

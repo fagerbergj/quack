@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { BottomBarSetting } from './BottomBarSetting.tsx';
 import { NotificationsSetting } from './NotificationsSetting.tsx';
 import { storedTheme, THEME_KEY } from './Shell.tsx';
+import { shortCommit, useVersion } from './useVersion.ts';
 
 const CHOICES = [
   { value: 'system', label: 'System' },
@@ -20,6 +21,22 @@ function applyTheme(choice: string) {
   }
   if (choice === 'system') delete root.dataset.theme;
   else root.dataset.theme = choice;
+}
+
+function About() {
+  const v = useVersion();
+  if (!v) return null;
+  return (
+    <section aria-labelledby="about" className="m-0 rounded-[18px] border border-line bg-surface p-3.5 shadow-card">
+      <h2 id="about" className="m-0 px-1 text-xs font-semibold tracking-wider text-muted uppercase">About</h2>
+      <p className="m-0 mt-2 px-1 text-[15px] text-ink">
+        {v.commit ? (
+          <>quack v1 · <a href={`https://github.com/fagerbergj/quack/commit/${v.commit}`} className="font-mono text-accent">{shortCommit(v.commit)}</a></>
+        ) : 'quack v1 · development build'}
+      </p>
+      {v.builtAt && <p className="m-0 mt-1 px-1 text-[13px] text-muted">Built {new Date(v.builtAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</p>}
+    </section>
+  );
 }
 
 export function Settings() {
@@ -48,6 +65,7 @@ export function Settings() {
       </fieldset>
       <NotificationsSetting />
       <BottomBarSetting />
+      <About />
     </div>
   );
 }

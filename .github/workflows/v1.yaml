@@ -63,10 +63,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - id: built
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
         with:
           context: v1
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/quack:v1-${{ github.sha }}
+          build-args: |
+            QUACK_COMMIT=${{ github.sha }}
+            QUACK_BUILT_AT=${{ steps.built.outputs.at }}
           cache-from: type=gha,scope=quack-v1
           cache-to: type=gha,mode=max,scope=quack-v1

@@ -90,3 +90,9 @@ export function socketUrl(key: string, agent?: string) {
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.href;
 }
+
+export type Version = { commit: string | null; builtAt: string | null };
+let version: Promise<Version | null> | undefined;
+// One request per page load; a failure resolves to null so the UI shows nothing.
+export const getVersion = () => (version ??= fetch('version').then((r) => json<Version>(r)).catch(() => null));
+export const forgetVersion = () => { version = undefined; };
