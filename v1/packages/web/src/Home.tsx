@@ -6,12 +6,12 @@ import { Needs } from './Needs.tsx';
 import { age, group, pendingInput, titleOf, type Row } from './sessions.ts';
 
 const HOME_AGENT = 'quack';
-// The New session buttons send this; Home answers by focusing its box.
+// A #/new link (old bookmarks) sends this; Home answers by focusing its box.
 // The one standing conversation; every Home send lands in it.
 export const HOME_KEY = 'home:main';
 export const FOCUS_ASK = 'quack:focus-ask';
 
-// Same hand-off as the New session page: the text waits for the session's socket to open.
+// Same hand-off as a #/new link: the text waits for the session's socket to open.
 function Ask({ failed }: { failed: boolean }) {
   const [input, setInput] = useState('');
   const attach = useAttachments();

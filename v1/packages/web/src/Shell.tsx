@@ -108,7 +108,6 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           <Duck size={30} className="bob" />
           quack
         </a>
-        <a href="#/new" className="mx-3 mb-2 inline-flex h-9 items-center justify-center rounded-full bg-ink px-3 text-[13px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
         <nav aria-label="Main" className="flex flex-none flex-col gap-0.5 px-3 pb-2 text-[13.5px]">
           {[HOME, ...tabs].map((n) => link(n, linkBase))}
           {/* Opens on its own when the current page is in it, so the rail always shows where you are. */}
@@ -127,11 +126,6 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>
         <Duck size={30} />
         {route === 'home' ? <span className="wordmark text-xl">quack</span> : route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}
-        {route === 'sessions' && (
-          <a href="#/new" aria-label="New session" className="ml-auto grid h-11 w-11 place-items-center rounded-full bg-ink text-on-ink no-underline hover:bg-ink-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          </a>
-        )}
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
       </div>
