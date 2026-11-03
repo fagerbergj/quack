@@ -159,7 +159,7 @@ export function webSearchTool(config: ResearchConfig) {
   const search = async (query: string, count: number): Promise<string> => {
     // Body reads are inside the try: a malformed or dropped body fails this query, not the batch.
     try {
-      const res = await fetch(`${config.exaUrl ?? 'https://api.exa.ai'}/search`, {
+      const res = await fetch(`${config.exaUrl ?? process.env.QUACK_EXA_URL ?? 'https://api.exa.ai'}/search`, {
         method: 'POST',
         headers: { 'x-api-key': apiKey!, 'content-type': 'application/json' },
         body: JSON.stringify({ query, numResults: count, contents: { text: { maxCharacters: 400 } } }),

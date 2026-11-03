@@ -27,7 +27,7 @@ test('a live session container cannot see the distributor environment or other s
     await writeFile(join(dataDir, sessionDirName('other'), 'private'), 'other session');
     const api = dockerApi(parseDockerHost(process.env.QUACK_DOCKER_HOST ?? '/var/run/docker.sock'));
     const launch = dockerLauncher({
-      api, broker: credentialBroker(), image: image!, runtime: runtime!, network: process.env.QUACK_LIVE_NETWORK ?? 'bridge', hostDataDir: dataDir, distributorUrl: 'http://distributor:8080',
+      api, broker: credentialBroker(), image: image!, runtime: runtime!, network: process.env.QUACK_LIVE_NETWORK ?? 'bridge', data: { hostDir: dataDir }, distributorUrl: 'http://distributor:8080',
       inherit: () => ({ QUACK_GH_SERVICE_URL: 'http://gh', QUACK_GH_SERVICE_TOKEN: 'long-lived' }), command: ['node', '-e', probe], urlFor: () => process.env.QUACK_LIVE_URL ?? 'http://127.0.0.1:8080', startTimeoutMs: 120_000,
     });
     const driver = sessionHost({ dataDir }, launch);
