@@ -7,6 +7,7 @@ import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
+import { SessionKeyContext } from './extension.ts';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
@@ -297,7 +298,9 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <Transcript view={view} meta={meta} load={load} />
-            <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
+            <SessionKeyContext value={sessionKey}>
+              <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
+            </SessionKeyContext>
             <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
@@ -310,7 +313,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           </div>
         </div>
       </div>
-      {work && <Work artifact={work} onClose={() => setWork(null)} />}
+      {work && <Work artifact={work} session={sessionKey} onClose={() => setWork(null)} />}
     </div>
   );
 }

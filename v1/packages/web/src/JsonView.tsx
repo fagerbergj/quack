@@ -48,7 +48,8 @@ function Node({ k, v, depth }: { k: string; v: Json; depth: number }) {
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 lg:min-h-7 [&::-webkit-details-marker]:hidden">
         <span aria-hidden="true" className="text-[10px] text-muted">▸</span>
         <Key k={k} />
-        {hint && <span className="min-w-0 truncate text-[13px] text-ink">{hint}</span>}
+        {/* The open node shows the named field itself, so the hint is for the folded one. */}
+        {hint && <span className="min-w-0 truncate text-[13px] text-ink [details[open]>summary>&]:hidden">{hint}</span>}
         <span className="ml-auto flex-none text-[11px] text-muted">{`${items.length} ${unit}${items.length === 1 ? '' : 's'}`}</span>
       </summary>
       <div className="ml-1.5 border-l border-line pl-3">
@@ -72,5 +73,6 @@ export function Content({ text }: { text: string }): ReactNode {
 /** Tool-call or approval arguments in a soft box; a non-object value shows as a single scalar. */
 export function Args({ value }: { value: unknown }) {
   const v = value as Json | undefined;
+  if (typeof v === 'object' && v !== null && !Object.keys(v).length) return null;
   return <div className="max-h-60 min-w-0 overflow-y-auto rounded-lg bg-soft p-2.5">{typeof v === 'object' && v !== null ? <JsonView value={v} /> : <Scalar v={v === undefined ? null : v} />}</div>;
 }

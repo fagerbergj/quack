@@ -379,6 +379,15 @@ test('an artifact line renders the links stored with the version, with no stream
   expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
 });
 
+test('a Sleeper card in a session links back to that session, in the list and the Work drawer', async () => {
+  const lineup = (await import('./extensions/sleeper/fixtures/8-lineup.json')).default as { content: string };
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const asks = await screen.findAllByRole('link', { name: 'Ask about this' });
+  for (const a of asks) expect(a).toHaveAttribute('href', '#/s/ui%3Au1');
+});
+
 test('the header shows the token total and Waiting on you for a pending approval', async () => {
   routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }] };
   const ws = await openSession();
