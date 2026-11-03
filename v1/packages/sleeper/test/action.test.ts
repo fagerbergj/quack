@@ -15,6 +15,9 @@ test('run_job posts to the service\'s on-demand endpoint with the service token 
   assert.deepEqual(seen, [{ url: 'http://sleeper/leagues/L%201/jobs/waivers?week=9', method: 'POST', auth: 'Bearer secret' }]);
   await runJob.start({ job: 'lineup', league: 'L1' }, { distributorUrl: 'http://d', fetch: fetchStub, env });
   assert.equal(seen[1].url, 'http://sleeper/leagues/L1/jobs/lineup');
+  const unnamed = await runJob.start({ job: 'waivers', week: 9 }, { distributorUrl: 'http://d', fetch: fetchStub, env });
+  assert.equal(seen[2].url, 'http://sleeper/apps/sleeper/waivers?week=9', 'no league runs in the configured one');
+  assert.equal(unnamed.title, 'Sleeper waivers, week 9');
 });
 
 test('run_job surfaces the service\'s refusal and a missing configuration', async () => {
