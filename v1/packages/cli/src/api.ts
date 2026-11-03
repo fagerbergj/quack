@@ -9,8 +9,9 @@ export class ApiError extends Error {
 
 export type Client = ReturnType<typeof client>;
 type Json = any;
+const SOCKET_MS = 10_000;
 
-export function client(root: string, adminToken?: string) {
+export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) {
   root = root.replace(/\/+$/, '');
   const path = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
@@ -30,7 +31,8 @@ export function client(root: string, adminToken?: string) {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
-      const fail = (m: string) => { ws.close(); reject(new ApiError(m, 0)); };
+      const fail = (m: string) => { clearTimeout(timer); ws.close(); reject(new ApiError(m, 0)); };
+      const timer = setTimeout(() => fail(`cannot reach ${url.origin}: no answer in ${socketMs / 1000}s`), socketMs);
       ws.onopen = () => onOpen?.(ws);
       ws.onerror = () => fail(`cannot reach ${url.origin}`);
       ws.onclose = () => fail('connection closed before the server answered');
@@ -39,6 +41,7 @@ export function client(root: string, adminToken?: string) {
         if (frame.type === 'error') return fail(frame.error);
         const got = want(frame);
         if (got === undefined) return;
+        clearTimeout(timer);
         ws.onclose = null;
         ws.close();
         resolve(got);

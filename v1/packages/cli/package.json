@@ -5,6 +5,9 @@
   "bin": {
     "quack": "./src/main.ts"
   },
+  "devDependencies": {
+    "ws": "8.21.3"
+  },
   "scripts": {
     "start": "node src/main.ts"
   }

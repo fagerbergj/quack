@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { WebSocketServer } from 'ws';
+import { client } from '../src/api.ts';
 import { run } from '../src/main.ts';
 
 const sessions = [
@@ -41,7 +42,7 @@ before(async () => {
     if (path.endsWith('/artifacts')) return reply(200, { artifacts: sealed });
     if (path.endsWith('/questions')) return reply(200, { questions: [{ id: 'q1', question: 'Which?' }] });
     if (path.endsWith('/approvals')) return reply(200, { approvals: [{ id: 'ap1', tool: 'bash' }] });
-    if (path.endsWith('/approvals/ap9')) return reply(404, { error: 'no such approval' });
+    if (path.endsWith('/approvals/ap9')) return reply(409, { error: 'unknown or already decided' });
     if (path.endsWith('/delete') && path.includes('ui:b')) return reply(409, { error: 'session is running' });
     reply(200, { key: 'ok' });
   });
@@ -151,8 +152,12 @@ describe('quack', () => {
     await cli(['approve', 'ui:b', 'ap1']);
     await cli(['reject', 'ui:b', 'ap1', 'too', 'risky']);
     assert.deepEqual(calls.filter((c) => c.method === 'POST').map((c) => c.body), [{ decision: 'approve' }, { decision: 'reject', reason: 'too risky' }]);
-    const missing = await cli(['approve', 'ui:b', 'ap9']);
-    assert.equal(missing.code, 2);
+    const stale = await cli(['approve', 'ui:b', 'ap9']);
+    assert.equal(stale.code, 1);
+    assert.match(stale.stderr, /unknown or already decided/);
+    calls = [];
+    for (const verb of ['approve', 'reject']) assert.equal((await cli([verb, 'ui:typo', 'ap1'])).code, 2);
+    assert.deepEqual(calls.map((c) => c.method), ['GET', 'GET']);
   });
 
   it('artifacts lists and artifact prints the newest or a given version', async () => {
@@ -171,6 +176,16 @@ describe('quack', () => {
   it('sends QUACK_ADMIN_TOKEN when set and honors --url', async () => {
     await cli(['agents', '--url', url], { QUACK_ADMIN_TOKEN: 'tok', QUACK_URL: 'http://127.0.0.1:1' });
     assert.equal(calls[0]!.auth, 'Bearer tok');
+  });
+
+  it('gives up on a socket that never answers', async () => {
+    const mute = createServer();
+    mute.on('upgrade', () => {});
+    await new Promise<void>((r) => mute.listen(0, '127.0.0.1', r));
+    const c = client(`http://127.0.0.1:${(mute.address() as AddressInfo).port}`, undefined, 50);
+    await assert.rejects(c.snapshot('ui:a'), /cannot reach/);
+    mute.closeAllConnections();
+    mute.close();
   });
 
   it('exits 1 on usage errors and an unreachable server', async () => {
