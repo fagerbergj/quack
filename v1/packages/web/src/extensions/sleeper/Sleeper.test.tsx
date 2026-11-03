@@ -304,3 +304,18 @@ test('trend prose keeps years but loses player ids', async () => {
   expect(card).not.toHaveTextContent('4881');
   SEALED['8:trends'] = trends8;
 });
+
+test('a run past the end of the week track is labelled Next, so it is not read as today', async () => {
+  live = 8;
+  // Now is Sun 10:00 AM ET; the track runs to next Sun midnight, so Sun 9:00 AM next week falls past it.
+  RUNS.push({ job: 'history', at: '2026-11-08T14:00:00.000Z' });
+  try {
+    page(ALL.filter((r) => !r.key.endsWith(':9:lineup')));
+    const strip = await screen.findByRole('region', { name: 'This week' });
+    const row = (await within(strip).findByText('History')).closest('li')!;
+    expect(row).toHaveTextContent(/Next Sun/);
+    expect(within(strip).getByText('Trade finder').closest('li')).not.toHaveTextContent(/Next/);
+  } finally {
+    RUNS.pop();
+  }
+});

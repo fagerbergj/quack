@@ -88,7 +88,7 @@ const toneOf = (job: string) => TONE[job] ?? 'bg-muted';
 // The duck art faces left; mirrored so it faces forward in time.
 function Duck() {
   return (
-    <svg role="img" aria-label="Today" width="26" height="20" viewBox="0 0 64 48" style={{ transform: 'scaleX(-1)' }}><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" /><circle cx="20" cy="18" r="10" fill="#1f7a63" /><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" /><circle cx="17" cy="15" r="1.8" fill="#0b0f0e" /></svg>
+    <svg role="img" aria-label="Today" width="26" height="20" viewBox="0 0 64 48" style={{ transform: 'scaleX(-1)' }}><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".35" strokeWidth="2" /><circle cx="20" cy="18" r="10" fill="#1f7a63" /><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" /><circle cx="17" cy="15" r="1.8" fill="#0b0f0e" /></svg>
   );
 }
 
@@ -136,7 +136,11 @@ function Track({ start, now, items }: { start: number; now: number; items: Item[
 
 const DAYS_AHEAD = [0, 1, 2, 3, 4, 5, 6];
 
+// A run past the end of the track falls on the same weekday as today, so it says which one.
+const listTime = (ms: number, end: number) => (ms >= end ? `Next ${slot(ms)}` : slot(ms));
+
 function WeekStrip({ lock, now, runs }: { lock?: number; now: number; runs: Run[] }) {
+  const end = dayStart(now) + 7 * DAY;
   const items: Item[] = [...pins(runs, now), ...(lock === undefined ? [] : [{ at: lock, tone: 'bg-danger', label: lock > now ? 'Lineup locks' : 'Lineup locked', lock: true }])].sort((a, b) => a.at - b.at);
   return (
     <section aria-label="This week" className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
@@ -146,7 +150,7 @@ function WeekStrip({ lock, now, runs }: { lock?: number; now: number; runs: Run[
           <li key={`${m.lock}${m.at}`} className={`flex items-center gap-2 ${m.lock ? 'font-semibold' : ''} ${m.at < now ? 'opacity-60' : ''}`}>
             <span aria-hidden="true" className={`flex-none ${m.lock ? 'h-3.5 w-1 rounded-full' : 'h-2.5 w-2.5 rounded-full'} ${m.tone}`} />
             <span className="min-w-0 flex-1 break-words">{m.label}</span>
-            <span className={m.lock ? 'text-danger' : 'text-ink-2'}>{slot(m.at)}</span>
+            <span className={m.lock ? 'text-danger' : 'text-ink-2'}>{listTime(m.at, end)}</span>
           </li>
         ))}
       </ul>
