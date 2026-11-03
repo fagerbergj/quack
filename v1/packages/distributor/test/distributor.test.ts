@@ -277,6 +277,7 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
   await mkdir(join(web, 'assets'));
   await writeFile(join(web, 'index.html'), '<h1>quack</h1>');
   await writeFile(join(web, 'assets', 'app.js'), 'x');
+  await writeFile(join(web, 'manifest.webmanifest'), '{}');
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir: web, defaultAgent: '' });
   const server = createDistributor(driver, { webDir: web }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -288,6 +289,7 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
   assert.match(index.headers.get('content-type')!, /^text\/html/);
   assert.equal(await index.text(), '<h1>quack</h1>');
   assert.match((await fetch(`${base}/assets/app.js`)).headers.get('content-type')!, /^text\/javascript/);
+  assert.equal((await fetch(`${base}/manifest.webmanifest`)).headers.get('content-type'), 'application/manifest+json');
   assert.equal((await fetch(`${base}/assets/`)).status, 404);
   assert.equal((await fetch(`${base}/missing.js`)).status, 404);
   // fetch normalizes dot segments, so the traversal goes out as a raw request line.
