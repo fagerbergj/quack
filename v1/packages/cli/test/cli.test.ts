@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, describe, it } from 'node:test';
@@ -39,6 +42,7 @@ before(async () => {
     if (path === '/sessions') return reply(200, { sessions });
     if (path === '/agents') return reply(200, { agents: [{ name: 'chat', version: 3 }] });
     if (idx) return indexOff ? reply(404, { error: 'not found' }) : reply(200, { [idx[1]!]: index[idx[1]!] });
+    if (path.endsWith('/export')) return reply(200, { session: sessions[0], transcript: [], artifacts: sealed });
     if (path.endsWith('/artifacts')) return reply(200, { artifacts: sealed });
     if (path.endsWith('/questions')) return reply(200, { questions: [{ id: 'q1', question: 'Which?' }] });
     if (path.endsWith('/approvals')) return reply(200, { approvals: [{ id: 'ap1', tool: 'bash' }] });
@@ -71,7 +75,7 @@ describe('quack', () => {
   it('lists commands for --help', async () => {
     const r = await cli(['--help']);
     assert.equal(r.code, 0);
-    for (const c of ['sessions', 'show', 'send', 'stop', 'resume', 'rename', 'archive', 'delete', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
+    for (const c of ['sessions', 'show', 'send', 'stop', 'resume', 'rename', 'archive', 'delete', 'export', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
   });
 
   it('sessions prints the API JSON unchanged with --json and filters by agent', async () => {
@@ -138,6 +142,23 @@ describe('quack', () => {
       ['PATCH', '/sessions/ui:a', { archived: true }],
       ['POST', '/sessions/ui:a/delete', {}],
     ]);
+  });
+
+  it('export writes the session file, named from the key by default', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'quack-export-'));
+    const named = join(dir, 'out.json');
+    const r = await cli(['export', 'ui:a', named]);
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(await readFile(named, 'utf8')).artifacts, sealed);
+    assert.equal((await cli(['export', 'ui:nope', named])).code, 2);
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      assert.match((await cli(['export', 'ui:a'])).stdout, /wrote quack-ui-a\.json/);
+      await readFile(join(dir, 'quack-ui-a.json'));
+    } finally {
+      process.chdir(cwd);
+    }
   });
 
   it('turns an API refusal into exit 1 with its message', async () => {

@@ -1307,6 +1307,15 @@ test('Archive posts the flag from the session menu', async () => {
   expect(sent('PATCH')).toEqual([['sessions/ui%3Au1', { archived: true }]]);
 });
 
+test('Export is a download link to the session file', async () => {
+  withRow();
+  await openSession();
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  const link = screen.getByRole('menuitem', { name: 'Export' });
+  expect(link).toHaveAttribute('href', 'sessions/ui%3Au1/export');
+  expect(link).toHaveAttribute('download');
+});
+
 test('an archived session is still readable and offers Unarchive', async () => {
   withRow({ archived: true });
   const ws = await openSession();
@@ -1589,4 +1598,27 @@ describe('images', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close image' }));
     expect(screen.queryByRole('img', { name: 'Full size' })).toBeNull();
   });
+});
+
+test('on desktop, #/sessions shows the list as the page, not Home, and the sidebar takes it back once a session opens', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Alpha' })] };
+  location.hash = '#/sessions';
+  render(<App />);
+  expect(await screen.findAllByRole('region', { name: 'Sessions' })).toHaveLength(1);
+  expect(screen.getByRole('main')).toContainElement(screen.getByRole('region', { name: 'Sessions' }));
+  expect(screen.queryByRole('region', { name: 'Running' })).toBeNull();
+  location.hash = '#/s/gh%3A1';
+  dispatchEvent(new HashChangeEvent('hashchange'));
+  await waitFor(() => expect(screen.getByRole('main')).not.toContainElement(screen.getByRole('region', { name: 'Sessions' })));
+});
+
+test('a Home approval card says what it will do, from the args the index carries', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Fix the typo' })] };
+  const args = { summary: 'Push 1 commit(s) to fix-typo of o/r#1: docs: fix typo', commits: 'abc1234 docs: fix typo' };
+  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'deliver', args, state: 'pending', decision: null, by: null, at: 1 }] };
+  phoneAt('#/');
+  render(<App />);
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByText(args.summary)).toBeInTheDocument();
+  expect(within(needs).getByText(/abc1234 docs: fix typo/)).toBeInTheDocument();
 });

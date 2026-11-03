@@ -39,9 +39,11 @@ const housekeep = async (path: string, method: string, body: object) =>
 export const renameSession = (key: string, title: string) => housekeep(base(key), 'PATCH', { title });
 export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { archived });
 export const deleteSession = (key: string) => housekeep(`${base(key)}/delete`, 'POST', {});
+/** Where the session downloads as one JSON file; a plain link, so the browser saves it. */
+export const exportUrl = (key: string) => `${base(key)}/export`;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
-export type IndexApproval = { session: string; id: string; tool: string; at: number };
+export type IndexApproval = { session: string; id: string; tool: string; args?: unknown; at: number };
 export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; summary?: string; sealedAt: number };
 
 // The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
