@@ -1707,3 +1707,14 @@ test('the session menu runs from harmless to destructive', async () => {
   const names = items.map((i) => i.textContent);
   expect(names).toEqual(['Stop', 'Open review', 'Rename', 'Export', 'Archive', 'Delete']);
 });
+
+test('nothing above the nav duplicates Home: no link to #/new on desktop or on the phone Sessions header', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  location.hash = '#/sessions';
+  const { unmount } = render(<App />);
+  expect(document.querySelector('a[href="#/new"]')).toBeNull();
+  unmount();
+  stubViewport(false);
+  render(<App />);
+  expect(document.querySelector('a[href="#/new"]')).toBeNull();
+});
