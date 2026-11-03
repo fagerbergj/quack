@@ -1686,3 +1686,13 @@ test('a running session waiting for a model slot says so on its row, instead of 
   expect(await screen.findByRole('link', { name: /Queued one/ })).toHaveTextContent('Waiting for a model slot (2 ahead)');
   expect(screen.getByRole('link', { name: /Working one/ })).not.toHaveTextContent('Waiting for a model slot');
 });
+
+test('the session menu names what it opens: Open review, not Work', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Open review' }));
+  expect(screen.getByRole('dialog', { name: 'Work' })).toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: 'Work' })).toBeNull();
+});

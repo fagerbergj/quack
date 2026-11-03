@@ -5,7 +5,7 @@ import { AttachButton, Pending, useAttachments, type Attachments, type Img } fro
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
-import { Artifacts, useArtifacts } from './Artifacts.tsx';
+import { artifactName, Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
@@ -184,7 +184,7 @@ function Title({ name }: { name: SessionTitle }) {
 
 type Manage = { archived: boolean; changed: () => void };
 
-// Abort, the Work drawer and housekeeping live behind one quiet menu; it is absent when none applies.
+// Abort, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
 function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void } }) {
   const [open, setOpen] = useState(false);
   if (!running && !latest && !manage) return null;
@@ -195,7 +195,7 @@ function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; 
       <button type="button" aria-label="More actions" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
       {open && (
         <div role="menu" className="absolute right-0 z-20 mt-1 min-w-40 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
-          {latest && <button type="button" role="menuitem" onClick={pick(() => onOpen(latest))} className={`${item} text-ink`}>Work</button>}
+          {latest && <button type="button" role="menuitem" onClick={pick(() => onOpen(latest))} className={`${item} text-ink`}>{`Open ${artifactName(latest).toLowerCase()}`}</button>}
           {running && <button type="button" role="menuitem" onClick={pick(onAbort)} className={`${item} text-danger`}>Abort</button>}
           {manage && <button type="button" role="menuitem" onClick={pick(manage.rename)} className={`${item} text-ink`}>Rename</button>}
           {manage && <button type="button" role="menuitem" onClick={pick(manage.archive)} className={`${item} text-ink`}>{manage.archived ? 'Unarchive' : 'Archive'}</button>}
