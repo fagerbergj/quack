@@ -18,11 +18,14 @@ export type DecisionPoint = {
   optionDescriptions?: Record<string, string>;
   /** Index into `options` of the recommended one. */
   suggested?: number;
+  /** Lets the person answer in their own words, or add a note to an option; only for callers that read `text` and `note`. */
+  freeText?: boolean;
   /** Below this confidence a resolver's answer escalates to the next resolver. */
   minConfidence?: number;
 };
 
-export type Decision = { choice: string; confidence: number; reason: string; resolver: string };
+/** `text` is a free-text answer (then `choice` repeats it); `note` rides with a listed choice. */
+export type Decision = { choice: string; confidence: number; reason: string; resolver: string; note?: string; text?: string };
 
 export type Resolver = {
   id: string;

@@ -239,6 +239,10 @@ test('a decision step waits for a person across a restart and resumes on the ans
 
   const b = await open(dir, build());
   assert.equal(await answerQuestion(b.root, ask.id, 'Maybe', 'jf', ctx), 'bad-choice', 'only a listed option answers');
+  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, 'jf', ctx), 'bad-choice', 'a decision step takes labels only');
+  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, 'jf', ctx), 'bad-choice', 'and no note');
+  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, 'jf', ctx), 'bad-choice', 'a decision step takes labels only');
+  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, 'jf', ctx), 'bad-choice', 'and no note');
   assert.equal(await answerQuestion(b.root, ask.id, 'Pollard', 'jf', ctx), 'ok');
   assert.equal(await answerQuestion(b.root, ask.id, 'Stevenson', 'jf', ctx), 'answered', 'the first answer stands');
   const outcome = await runWorkflow(b.harness, b.root, build(), null);
@@ -384,4 +388,38 @@ test('a judged step whose builder keeps throwing fails with its message after th
   assert.equal(outcome.status, 'failed');
   assert.match(JSON.stringify(outcome), /the card builder rejects this/);
   assert.equal(seen.length, 3);
+});
+
+test('a free-text decision takes a trimmed, bounded text or a note on a label, and the answer carries them', async () => {
+  const build = () => defineWorkflow({
+    name: 'free',
+    steps: [{ name: 'pick', kind: 'decision', point: () => ({ question: 'Who starts?', options: ['Pollard', 'Stevenson'], freeText: true }), resolvers: [{ id: 'unsure', resolve: async () => undefined }] }],
+  });
+  const s = await open(await tmp(), build());
+  const running = runWorkflow(s.harness, s.root, build(), null);
+  const [ask] = await asked(s);
+  assert.equal(await answerQuestion(s.root, ask.id, { text: '   ' }, 'jf', ctx), 'bad-choice', 'empty text');
+  assert.equal(await answerQuestion(s.root, ask.id, { text: 'x'.repeat(2001) }, 'jf', ctx), 'bad-choice', 'too long');
+  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Pollard', text: 'both' }, 'jf', ctx), 'bad-choice', 'choice and text together');
+  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Maybe', note: 'x' }, 'jf', ctx), 'bad-choice', 'a note does not excuse an unlisted choice');
+  assert.equal(await answerQuestion(s.root, ask.id, { text: '  Neither, rest both  ' }, 'jf', ctx), 'ok');
+  const stored = (await s.harness.snapshot(Questions, s.root.id, ctx))!.items[ask.id]!.answer;
+  assert.deepEqual([stored?.text, stored?.choice], ['Neither, rest both', 'Neither, rest both']);
+  await running;
+  await s.close();
+});
+
+test('a note rides with a listed choice and is trimmed', async () => {
+  const build = () => defineWorkflow({
+    name: 'note',
+    steps: [{ name: 'pick', kind: 'decision', point: () => ({ question: 'Who starts?', options: ['Pollard', 'Stevenson'], freeText: true }), resolvers: [{ id: 'unsure', resolve: async () => undefined }] }],
+  });
+  const s = await open(await tmp(), build());
+  const running = runWorkflow(s.harness, s.root, build(), null);
+  const [ask] = await asked(s);
+  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Pollard', note: '  indoor game  ' }, 'jf', ctx), 'ok');
+  const stored = (await s.harness.snapshot(Questions, s.root.id, ctx))!.items[ask.id]!.answer;
+  assert.deepEqual([stored?.choice, stored?.note, stored?.text], ['Pollard', 'indoor game', undefined]);
+  await running;
+  await s.close();
 });

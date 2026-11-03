@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { answerQuestion, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, serviceHttp } from '@quack/sdk';
+import { answerQuestion, type AnswerInput, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, serviceHttp } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
@@ -38,15 +38,16 @@ type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) =>
 const ANSWER_STATUS = { ok: 200, 'not-asking': 404, answered: 409, 'bad-choice': 400 } as const;
 
 async function answer(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
-  const { choice } = (await readJson(req)) as Record<string, unknown> | null ?? {};
-  if (typeof choice !== 'string') return [400, { error: 'choice must be a string' }];
+  const body = (await readJson(req)) as Record<string, unknown> | null ?? {};
+  const { choice, note, text } = body;
+  if ([choice, note, text].some((v) => v !== undefined && typeof v !== 'string') || (choice === undefined && text === undefined)) return [400, { error: 'choice or text must be a string' }];
   let id: string;
   try {
     id = decodeURIComponent(match[1]);
   } catch {
     return [400, { error: 'malformed question id' }];
   }
-  const result = await answerQuestion(session.root, id, choice, decider(req), ctx);
+  const result = await answerQuestion(session.root, id, { choice, note, text } as AnswerInput, decider(req), ctx);
   return [ANSWER_STATUS[result], result === 'ok' ? { answered: true } : { error: result }];
 }
 

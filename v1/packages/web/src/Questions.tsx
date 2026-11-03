@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { answerQuestion, type Question } from './api.ts';
+import { answerQuestion, type Answer, type Question } from './api.ts';
 import { Markdown } from './Markdown.tsx';
 import { age } from './sessions.ts';
 
@@ -12,14 +12,22 @@ function Headline({ text }: { text: string }) {
 
 const rowClass = 'flex min-h-11 w-full cursor-pointer flex-col items-start justify-center gap-0.5 rounded-xl border border-line-strong bg-surface px-3 py-2 text-left text-ink hover:bg-soft';
 
-function Options({ d, busy, choose }: { d: Question; busy: boolean; choose: (c: string) => void }) {
+const linkBtn = 'min-h-11 cursor-pointer self-start bg-transparent px-1 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline';
+const field = 'w-full rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
+
+// With a note open an option is selected rather than sent, so a plain answer stays one click.
+function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Answer) => void }) {
+  const [mode, setMode] = useState<'' | 'note' | 'text'>('');
+  const [picked, setPicked] = useState('');
+  const [value, setValue] = useState('');
   const pick = d.suggested ?? -1;
   const labels = pick > 0 && pick < d.options.length ? [d.options[pick]!, ...d.options.filter((_, i) => i !== pick)] : d.options;
-  const decide = labels.includes(YOU_DECIDE);
+  const choose = (o: string) => (mode === 'note' ? setPicked(o) : send({ choice: o }));
+  const toggle = (m: 'note' | 'text') => { setMode(mode === m ? '' : m); setPicked(''); setValue(''); };
   return (
     <div className="flex flex-col gap-2">
       {labels.filter((o) => o !== YOU_DECIDE).map((o) => (
-        <button key={o} type="button" disabled={busy} onClick={() => choose(o)} className={rowClass}>
+        <button key={o} type="button" disabled={busy} aria-pressed={mode === 'note' ? picked === o : undefined} onClick={() => choose(o)} className={`${rowClass} ${picked === o ? 'border-ink' : ''}`}>
           <span className="flex flex-wrap items-center gap-2 text-sm font-semibold [overflow-wrap:anywhere]">
             {o}
             {pick >= 0 && o === d.options[pick] && <span className="rounded-full bg-soft px-2 py-0.5 text-[11px] font-medium text-ink-2">Suggested</span>}
@@ -27,11 +35,17 @@ function Options({ d, busy, choose }: { d: Question; busy: boolean; choose: (c: 
           {d.optionDescriptions?.[o] && <span className="text-[13px] font-normal text-muted [overflow-wrap:anywhere]">{d.optionDescriptions[o]}</span>}
         </button>
       ))}
-      {decide && <button type="button" disabled={busy} onClick={() => choose(YOU_DECIDE)} className="min-h-11 cursor-pointer self-start bg-transparent px-1 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline">{YOU_DECIDE}</button>}
+      <div className="flex flex-wrap gap-x-3">
+        {labels.includes(YOU_DECIDE) && <button type="button" disabled={busy} aria-pressed={mode === 'note' ? picked === YOU_DECIDE : undefined} onClick={() => choose(YOU_DECIDE)} className={linkBtn}>{YOU_DECIDE}</button>}
+        {d.freeText && <button type="button" onClick={() => toggle('note')} className={linkBtn}>Add a note</button>}
+        {d.freeText && <button type="button" onClick={() => toggle('text')} className={linkBtn}>Something else…</button>}
+      </div>
+      {mode === 'note' && <input aria-label="Note" maxLength={2000} value={value} onChange={(e) => setValue(e.target.value)} className={`${field} min-h-11`} />}
+      {mode === 'text' && <textarea aria-label="Your answer" maxLength={2000} rows={3} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
+      {mode && <button type="button" disabled={busy || (mode === 'note' ? !picked : !value.trim())} onClick={() => send(mode === 'note' ? { choice: picked, note: value } : { text: value })} className="min-h-11 cursor-pointer self-start rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:opacity-50">Send</button>}
     </div>
   );
 }
-
 
 function EvidenceFold({ d, rich }: { d: Question; rich: boolean }) {
   if (!d.evidence) return null;
@@ -48,13 +62,13 @@ export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [answered, setAnswered] = useState<number>();
-  const choose = (choice: string) => {
+  const choose = (answer: Answer) => {
     if (busy) return;
     setBusy(true);
     setError('');
-    void answerQuestion(sessionKey, d.id, choice).then(() => { setAnswered(d.askedAt); done?.(); }, (e: Error) => setError(e.message)).finally(() => setBusy(false));
+    void answerQuestion(sessionKey, d.id, answer).then(() => { setAnswered(d.askedAt); done?.(); }, (e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
-  const rich = !!(d.header || d.title || d.detail || d.suggested != null || Object.keys(d.optionDescriptions ?? {}).length);
+  const rich = !!(d.header || d.title || d.detail || d.suggested != null || d.freeText || Object.keys(d.optionDescriptions ?? {}).length);
   if (answered === d.askedAt) return null; // a re-ask has a newer askedAt
   return (
     <section aria-label="Question" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm/60 p-3.5">
@@ -68,10 +82,10 @@ export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: 
       {title && <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="line-clamp-2 text-[13px] text-link max-lg:-my-2 max-lg:py-3 [overflow-wrap:anywhere]">{title}</a>}
       <EvidenceFold d={d} rich={rich} />
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
-      {rich ? <Options d={d} busy={busy} choose={choose} /> : (
+      {rich ? <Options d={d} busy={busy} send={choose} /> : (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2">
           {d.options.map((o) => (
-            <button key={o} type="button" disabled={busy} onClick={() => choose(o)} className="min-h-11 cursor-pointer rounded-xl border border-line-strong bg-surface px-3 text-sm font-medium text-ink [overflow-wrap:anywhere] hover:bg-soft">{o}</button>
+            <button key={o} type="button" disabled={busy} onClick={() => choose({ choice: o })} className="min-h-11 cursor-pointer rounded-xl border border-line-strong bg-surface px-3 text-sm font-medium text-ink [overflow-wrap:anywhere] hover:bg-soft">{o}</button>
           ))}
         </div>
       )}

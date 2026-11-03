@@ -27,9 +27,10 @@ export const askQuestionTool = defineTool({
     const trade = alternatives.map((a) => `- ${a.answer}: ${a.tradeoff}`).join('\n');
     const evidence = `${matters}\n\nSuggested: ${suggested}${trade ? `\n\nAlternatives:\n${trade}` : ''}`;
     const optionDescriptions = Object.fromEntries([[suggested, suggestedTradeoff], ...alternatives.map((a) => [a.answer, a.tradeoff])].filter((e): e is [string, string] => !!e[1]));
-    const d = await decide(api, { name: id, question, options, evidence, header, title, detail, optionDescriptions, suggested: 0 }, [person(ctx.abortSignal)], ctx);
+    const d = await decide(api, { name: id, question, options, evidence, header, title, detail, optionDescriptions, suggested: 0, freeText: true }, [person(ctx.abortSignal)], ctx);
     if (!d) return { output: [{ type: 'text', text: 'Nobody answered.' }], isError: true };
+    if (d.text) return { output: [{ type: 'text', text: `Answer in their own words: ${d.text}\nCite it in a why with source "answer", ref "${question}" (the question exactly as asked) and text "${d.text}".` }] };
     const answer = d.choice === YOU_DECIDE ? `${YOU_DECIDE}: use the suggested "${suggested}" and say in the why that the person delegated it` : d.choice;
-    return { output: [{ type: 'text', text: `Answer: ${answer}\nCite it in a why with source "answer", ref "${question}" (the question exactly as asked) and text "${answer}".` }] };
+    return { output: [{ type: 'text', text: `Answer: ${answer}${d.note ? `. Note: ${d.note}` : ''}\nCite it in a why with source "answer", ref "${question}" (the question exactly as asked) and text "${answer}".` }] };
   },
 });
