@@ -1,5 +1,7 @@
 // Every call to the distributor, so its contract lives in one place.
 export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string };
+/** What a session has spent: tokens by kind, and `cost` in dollars at the deployment's cloud-equivalent prices (0 when unpriced). */
+export type Spend = { cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
 export type AgentSummary = { name: string; version: number };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[]; scope?: string };
@@ -52,6 +54,7 @@ export type Failure = { step: string; error: string };
 export type IndexFailure = Failure & { session: string; at: number };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
 export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
+export const indexSessions = () => indexRead<{ key: string } & Spend>('index/sessions', 'sessions');
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 

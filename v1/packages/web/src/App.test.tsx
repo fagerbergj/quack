@@ -1415,3 +1415,23 @@ test('archived sessions stay out of Home', async () => {
   expect(await screen.findByRole('link', { name: /Live one/ })).toBeInTheDocument();
   expect(screen.queryByText(/Shelved/)).toBeNull();
 });
+
+test('the header shows the cost with tokens on hover when the model is priced, and never a $0', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot({ usage: { models: { 'p/m': { input: 1200, output: 300, cacheRead: 5, cost: { total: 0.4162 } } }, tools: {} } }));
+  const chip = await screen.findByText('$0.42');
+  expect(chip).toHaveAttribute('title', '1,200 in · 300 out · 5 cached');
+  ws.frame(snapshot({ usage: { models: { 'p/m': { input: 1200, output: 300, cost: { total: 0 } } }, tools: {} } }));
+  expect(await screen.findByText('2k tokens')).toBeInTheDocument();
+  expect(screen.queryByText(/\$/)).toBeNull();
+});
+
+test('session rows show the index spend: dollars when priced, tokens when not, nothing when idle', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Priced' }), sess('gh:2', { title: 'Unpriced' }), sess('gh:3', { title: 'Fresh' })] };
+  const tokens = (input: number) => ({ input, output: 0, cacheRead: 0, cacheWrite: 0 });
+  routes['GET /index/sessions'] = { sessions: [{ key: 'gh:1', cost: 0.42, tokens: tokens(9000) }, { key: 'gh:2', cost: 0, tokens: tokens(12000) }, { key: 'gh:3', cost: 0, tokens: tokens(0) }] };
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Priced/ })).toHaveTextContent('$0.42');
+  expect(screen.getByRole('link', { name: /Unpriced/ })).toHaveTextContent('12k tokens');
+  expect(screen.getByRole('link', { name: /Fresh/ })).not.toHaveTextContent(/tokens|\$/);
+});

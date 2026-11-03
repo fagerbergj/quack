@@ -213,3 +213,9 @@ test('observeGeneration without listeners returns the reply, and a throwing list
   assert.equal(await observeGeneration({ messages: [] }, async () => reply), reply);
   off();
 });
+
+test('a priced generation span carries the same cost parts the index sums', () => {
+  const usage = { input: 10, output: 5, cacheRead: 100, cacheWrite: 0, totalTokens: 115, cost: { input: 0.1, output: 0.2, cacheRead: 0.01, cacheWrite: 0, total: 0.31 } };
+  const span = generationSpan({ baseUrl: 'http://x', publicKey: 'p', secretKey: 's' } as never, 'k', [], 0, { role: 'assistant', content: [], model: 'm', provider: 'local', stopReason: 'stop', usage } as never);
+  assert.deepEqual(JSON.parse(attrs(span as never)['langfuse.observation.cost_details']), { input: 0.1, output: 0.2, cache_read: 0.01, cache_write: 0, total: 0.31 });
+});
