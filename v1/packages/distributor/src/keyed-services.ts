@@ -4,10 +4,7 @@ import type { CredentialBroker } from './credentials.ts';
 type Proxy = { broker: CredentialBroker; distributorUrl: string; token: string };
 const route = (p: Proxy, name: string) => `${p.distributorUrl}/svc/${name}`;
 
-/**
- * Services that take an API key instead of a quack service token. The session gets the broker route in place of the
- * URL and its own launch token in place of the key, in whatever slot its client already reads; the real key is added server-side.
- */
+/** Services that take an API key: the session gets the broker route and its launch token in the slots its client reads; the real key is added server-side. */
 export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy): Record<string, string> {
   const env: Record<string, string> = {};
   if (inherited.QUACK_EXA_API_KEY) {
@@ -23,10 +20,7 @@ export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy): Reco
   return env;
 }
 
-/**
- * A copy of the deployment config in which every provider whose API key is set points at a broker route; the key variable
- * then carries the launch token. A provider with no key set (local models) is left as it is.
- */
+/** The deployment config with each keyed provider pointed at a broker route (its key variable carries the launch token); keyless providers stay as they are. */
 export function proxyProviders(config: { providers?: Record<string, { baseUrl: string; apiKeyEnv?: string }> }, inherited: NodeJS.ProcessEnv, p: Proxy) {
   const env: Record<string, string> = {};
   const providers = Object.fromEntries(Object.entries(config.providers ?? {}).map(([id, provider]) => {
