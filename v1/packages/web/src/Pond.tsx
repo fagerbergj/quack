@@ -31,7 +31,8 @@ export function Pond({ children, still }: { children: ReactNode; still?: boolean
             <circle cx="20" cy="18" r="10" fill="#1f7a63" />
             <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
             <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
-            <circle cx="17" cy="15" r="1.8" fill="#fff" />
+            <circle cx="17" cy="15" r="1.9" fill="#0f1513" />
+            <circle cx="16.4" cy="14.4" r="0.6" fill="#fff" />
             <path d="M50 28 Q60 24 58 34" fill="#fdfcf7" />
           </svg>
           <span className="mb-1 flex gap-1">{duckling}{duckling}{duckling}</span>

@@ -79,6 +79,12 @@ async function artifacts(session: Session): Promise<[number, unknown]> {
   return [200, { artifacts: Object.values(doc?.kinds ?? {}).flatMap((k) => k.versions) }];
 }
 
+// The whole session as the distributor's export route needs it; it adds the session's metadata.
+async function exported(session: Session): Promise<[number, unknown]> {
+  const [, { artifacts: sealed }] = await artifacts(session) as [number, { artifacts: unknown[] }];
+  return [200, { transcript: await session.transcript(), artifacts: sealed }];
+}
+
 async function abort(session: Session): Promise<[number, unknown]> {
   await session.root.abort(ctx);
   await closeQuestions(session.root, ctx);
@@ -102,6 +108,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/meta$/, async (s) => [200, { meta: await s.meta() }]],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],
+  ['GET', /^\/export$/, exported],
   ['POST', /^\/abort$/, abort],
   ['POST', /^\/resume$/, resume],
   ['POST', /^\/approvals\/([^/]+)$/, decide],

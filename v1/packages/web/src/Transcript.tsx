@@ -4,6 +4,7 @@ import { Thumbs, type Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { ledger, LedgerItem } from './Artifacts.tsx';
 import type { SealedArtifact } from './api.ts';
+import { Args } from './JsonView.tsx';
 import { Markdown } from './Markdown.tsx';
 import type { View } from './view.ts';
 
@@ -74,7 +75,7 @@ function CallRow({ call, result }: { call: Call; result?: ToolResultMessage }) {
         <span className={`whitespace-nowrap ${result?.isError ? 'text-danger' : meta}`}>{note}</span>
       </summary>
       <div className="mb-2 ml-[18px] flex flex-col gap-2">
-        <Body body={call.argumentsError ?? JSON.stringify(call.arguments, null, 2)} />
+        {call.argumentsError === undefined ? <Args value={call.arguments} /> : <Body body={call.argumentsError} />}
         {out !== undefined && <Body body={out} markdown={!result!.isError && MD_START.test(out)} />}
       </div>
     </details>
