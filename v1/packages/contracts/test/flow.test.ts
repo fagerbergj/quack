@@ -87,6 +87,7 @@ test('the question flow asks one at a time and seals version 1 only after the an
   assert.equal(done.status === 'done' && done.answer, 'Spec version 1 is sealed.');
   const [v1] = await versions(s);
   assert.equal(v1.summary, 'Sleeper schedule endpoint, version 1');
+  assert.equal(v1.outcome, 'v1');
   assert.equal((v1.verdict as { passed: boolean }).passed, true);
   const spec = JSON.parse(v1.content) as ContractSpec;
   assert.deepEqual(spec.choices.flatMap((c) => c.why.filter((w) => w.source === 'answer').map((w) => w.ref)), [q1.question, q2.question]);
@@ -182,7 +183,8 @@ test('a rejected proposal records the change request and feeds the reason back t
 });
 
 test('a decision whose record was lost in a crash is written once when propose_contract next runs', async () => {
-  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), () => fauxAssistantMessage('Asked again.')]);
+  let seen = '';
+  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Done.'))]);
   const { run } = await defineV1(s);
   const first = await pendingProposal(s);
   await resolveApproval(s.root, first.id, { decision: 'approve', by: 'jf' }, ctx);
@@ -190,15 +192,13 @@ test('a decision whose record was lost in a crash is written once when propose_c
   // The crash window: the verdict is stored, the record is not.
   await s.root.commit(async (tx) => { (await tx.doc(Artifacts, s.root.id)).kinds['contract.approved'].versions.length = 0; }, ctx);
   assert.equal((await kindOf(s, 'contract.approved')).length, 0);
-  const again = s.submit('Propose it again', 'r-2', true);
-  const second = await pendingProposal(s);
-  assert.notEqual(second.id, first.id);
+  await s.submit('Propose it again', 'r-2', true);
   const recovered = await kindOf(s, 'contract.approved');
-  assert.equal(recovered.length, 1, 'the lost approval is written once, before anything new is asked');
+  assert.equal(recovered.length, 1, 'the lost approval is written once');
   assert.equal(JSON.parse(recovered[0].content).approval, first.id);
-  await resolveApproval(s.root, second.id, { decision: 'reject', reason: 'later', by: 'jf' }, ctx);
-  await again;
-  assert.equal((await kindOf(s, 'contract.approved')).length, 1, 'a second pass does not write it twice');
+  assert.match(recovered[0].hash, /^[0-9a-f]{64}$/);
+  assert.match(seen, /Version 1 is already approved; write version 2/);
+  assert.equal((await pendingApprovals(s.root, ctx)).length, 0, 'an approved version is not asked again');
   await s.close();
 });
 

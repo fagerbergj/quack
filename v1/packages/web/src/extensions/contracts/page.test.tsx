@@ -6,7 +6,7 @@ import type { Row } from '../../sessions.ts';
 import { Contracts } from './Contracts.tsx';
 
 const art = (kind: string, version: number, over: Partial<IndexArtifact> = {}): IndexArtifact => ({ session: 's', kind, version, verdict: null, sealedAt: 1, ...over });
-const spec = (version: number, title = 'Sleeper schedule endpoint') => art('contract.spec', version, { verdict: { passed: true }, summary: `${title}, version ${version}` });
+const spec = (version: number, title = 'Sleeper schedule endpoint') => art('contract.spec', version, { verdict: { passed: true }, summary: `${title}, version ${version}`.slice(0, 80), outcome: `v${version}` });
 const row = (id: string, over: Partial<Row> = {}): Row => ({ key: `contracts:${id}`, agent: 'contracts', title: `Draft ${id}`, running: false, active: false, createdAt: '', lastActivity: '', approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false, ...over });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -31,6 +31,13 @@ test('each contract reads as drafting, awaiting approval, approved or changes re
   expect(by('Trades')).toHaveTextContent('Changes requested');
   expect(items[0]).toHaveTextContent('Awaiting your approval');
   expect(within(by('Waivers')).getByRole('link')).toHaveAttribute('href', '#/s/contracts%3Ac');
+});
+
+test('a title over 80 characters keeps its version, and Changes requested shows the reason', () => {
+  const long = 'A very long contract title that runs well past the eighty character summary limit of the index';
+  const rows = [row('l', { artifacts: [spec(3, long), art('contract.changes', 1, { outcome: 'v3', summary: 'Use cursor pagination' })] })];
+  render(<Contracts rows={rows} />);
+  expect(screen.getByRole('listitem')).toHaveTextContent('REST · v3 · Use cursor paginationChanges requested');
 });
 
 test('with no contracts it says what one is', () => {

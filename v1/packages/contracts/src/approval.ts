@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
@@ -32,7 +33,8 @@ async function reconcile(api: ToolExecutionApi, ctx: Context) {
       const entry = doc.kinds[kind];
       if (entry.versions.some((v) => (JSON.parse(v.content) as { approval?: string }).approval === id)) continue;
       const note = ok ? `Approved version ${args.version}` : (a.verdict.reason ?? '');
-      const sealed: SealedArtifact = { kind, version: entry.versions.length + 1, hash: '', content: JSON.stringify({ version: args.version, note, approval: id }), sealedAt: api.now(), verdict: null, outcome: `v${args.version}`, summary: note.slice(0, 80) };
+      const content = JSON.stringify({ version: args.version, note, approval: id });
+      const sealed: SealedArtifact = { kind, version: entry.versions.length + 1, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, outcome: `v${args.version}`, summary: note.slice(0, 80) };
       entry.versions.push(sealed);
     }
   }, ctx);
@@ -50,7 +52,7 @@ async function evidence(api: ToolExecutionApi, ctx: Context) {
   const was = approved && (JSON.parse(approved.content) as { version: number }).version;
   const prev = specs.map((s) => s.spec).find((s): s is ContractSpec => typeof s !== 'string' && s.version === was);
   const kind = kinds[latest.kind];
-  return { spec: latest, findings: await kind.check(latest.document), breaks: prev ? await kind.diff(prev.document, latest.document) : [] };
+  return { spec: latest, approvedVersion: was, findings: await kind.check(latest.document), breaks: prev ? await kind.diff(prev.document, latest.document) : [] };
 }
 
 const approval = gated(defineTool({
@@ -70,7 +72,8 @@ export const proposeContractTool: ToolRegistration = defineTool({
     await reconcile(api, ctx);
     const found = await evidence(api, ctx);
     if (!found) return reply('No sealed spec version has passed its checks; write artifacts/spec.json and call submit_contract first.', true);
-    const { spec, findings, breaks } = found;
+    const { spec, findings, breaks, approvedVersion } = found;
+    if (approvedVersion === spec.version) return reply(`Version ${spec.version} is already approved; write version ${spec.version + 1} to change it.`, true);
     const summary = `Approve ${routesOf(spec.document) || spec.title} v${spec.version}`;
     const verdict = await approval.execute({ summary, title: spec.title, version: spec.version, findings, breaks } as never, api, ctx);
     const text = verdict.output?.map((p) => ('text' in p ? p.text : '')).join('') ?? '';
