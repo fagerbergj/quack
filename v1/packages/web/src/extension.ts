@@ -30,7 +30,9 @@ export type Extension = {
   /** What one of this extension's artifacts is called on the transcript line ("Review"), with a posted state when `posted`; undefined when it is not its artifact. */
   artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean } | undefined;
   /** A sealed artifact drawn as a card instead of a line; undefined when it is not this extension's or cannot be read as one. */
-  card?: (a: SealedArtifact) => ReactNode | undefined;
+  card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
+  /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
+  steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */
   opening?: (text: string, meta: readonly Record<string, unknown>[]) => ReactNode | undefined;
   /** A starter the home screen offers: the pill shows `label`, a click fills the composer with `prompt`. */

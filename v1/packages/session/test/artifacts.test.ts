@@ -16,6 +16,7 @@ after(() => rm(dir, { recursive: true, force: true }));
 const review: ArtifactKind = {
   kind: 'github.review',
   path: 'artifacts/review.md',
+  basis: async () => 'abc123',
   validate: (text) => [...(text.includes('## Verdict') ? [] : ['missing a "## Verdict" section']), ...(text.length > 20 ? [] : ['shorter than 20 characters'])],
 };
 
@@ -74,6 +75,7 @@ test('writes are validated early, and sealing snapshots the file into the log', 
   const versions = doc!.kinds['github.review'].versions;
   assert.equal(versions.length, 1);
   assert.equal(versions[0].content, good);
+  assert.equal(versions[0].basis, 'abc123', 'a kind records what the version was written against');
   assert.equal(await readFile(join(session.workspace, 'artifacts/review.md'), 'utf8'), good);
   await session.close();
 });

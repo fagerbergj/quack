@@ -1,5 +1,6 @@
 import { createElement } from 'react';
 import { BLUE, cut, sentence, type Delivered, type Extension } from '../extension.ts';
+import type { SealedArtifact } from '../api.ts';
 import type { Row } from '../sessions.ts';
 import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
 import { reviewCard } from './ReviewCard.tsx';
@@ -15,6 +16,12 @@ function prTitle(r: Row, fallback: string): string {
 }
 
 const KIND = 'github.review';
+
+// A draft is outdated while a run works on a newer head; the newest invocation's meta records that head.
+function outdated(a: SealedArtifact, now: Parameters<NonNullable<Extension['card']>>[1]): boolean {
+  const head = (now?.meta.at(-1) as PrMeta | undefined)?.headSha;
+  return Boolean(now?.running && a.basis && head && head !== a.basis);
+}
 const POSTED: Record<string, Delivered['tone']> = { 'Approved ✓': 'ok', 'Changes requested': 'warn', Commented: 'plain' };
 const VERDICT_WORDS: Record<string, string> = { approve: 'Approved ✓', request_changes: 'Changes requested', comment: 'Commented' };
 
@@ -40,7 +47,8 @@ export const github: Extension = {
     words: () => ({ kind: KIND, w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
   },
   artifact: (a, running) => (a.kind === KIND ? { name: 'Review', posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length) } : undefined),
-  card: (a) => (a.kind === KIND ? reviewCard(a) : undefined),
+  card: (a, now) => (a.kind === KIND ? reviewCard(a, outdated(a, now)) : undefined),
+  steps: { checkout_pr: () => 'Checking out the latest commit', submit_review: () => 'Waiting for the double-check' },
   // The card's extras are keyed by head sha; a review started by a comment has no head in its text and takes the newest.
   opening: (text, meta) => {
     const o = parseOpening(text);

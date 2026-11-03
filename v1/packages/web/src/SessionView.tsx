@@ -8,6 +8,7 @@ import { SessionFailures } from './Failures.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
+import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
@@ -261,11 +262,11 @@ export function SessionView({ sessionKey, agent, name, delivered, manage }: { se
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <Transcript view={view} meta={meta} />
-            <Artifacts items={items} error={artifactsError} running={tone === 'run'} onOpen={setWork} />
+            <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
             <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
-            {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
+            {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label={stepLabel(view)} />}
           </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">

@@ -2,7 +2,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { AgentEvent, MessageChange, SnapshotEvent } from '@earendil-works/pi-durable';
 
 // The snapshot carries every entry, so a late viewer rebuilds the whole transcript from it.
-export type View = { entries: SnapshotEvent['entries']; running: boolean; partial?: AssistantMessage; tokens?: number };
+export type View = { entries: SnapshotEvent['entries']; running: boolean; partial?: AssistantMessage; tokens?: number; /** The tool call in flight. */ tool?: { name: string; args: unknown } };
 
 export const emptyView: View = { entries: [], running: false };
 
@@ -31,12 +31,13 @@ function step(v: View, e: AgentEvent): View {
   switch (e.type) {
     case 'snapshot': return snapshotView(e);
     case 'run_start': return { ...v, running: true };
-    case 'run_end': return { ...v, running: false, partial: undefined };
-    case 'message_start': return e.message.role === 'assistant' ? { ...v, partial: e.message } : v;
+    case 'run_end': return { ...v, running: false, partial: undefined, tool: undefined };
+    case 'message_start': return e.message.role === 'assistant' ? { ...v, partial: e.message, tool: undefined } : v;
+    case 'tool_execution_start': return { ...v, tool: { name: e.toolName, args: e.args } };
     case 'message_update': return v.partial ? { ...v, partial: e.changes.reduce(change, v.partial) } : v;
     case 'message_end': return { ...v, entries: withEntry(v.entries, e.entry), partial: undefined };
     case 'entry_appended': return { ...v, entries: withEntry(v.entries, e.entry) };
-    case 'tool_execution_end': return e.entry ? { ...v, entries: withEntry(v.entries, e.entry) } : v;
+    case 'tool_execution_end': return { ...v, tool: undefined, entries: e.entry ? withEntry(v.entries, e.entry) : v.entries };
     default: return v;
   }
 }
