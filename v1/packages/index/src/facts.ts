@@ -16,7 +16,11 @@ export const Outbox = defineDoc<OutboxDoc>({
   initial: () => ({ acked: {}, status: { state: 'idle', seq: 0, at: 0 } }), checkpointWhen: () => false,
 });
 
-const verdictOf = (v: { verdict: unknown }) => (v.verdict ? { passed: (v.verdict as { passed?: boolean }).passed === true } : null);
+// limitReached marks a version released with its failures at the revision limit, which is final even though it did not pass.
+const verdictOf = (v: { verdict: unknown }) => {
+  const d = v.verdict as { passed?: boolean; limitReached?: boolean } | null;
+  return d ? { passed: d.passed === true, ...(d.limitReached === true && { limitReached: true }) } : null;
+};
 
 const linksOf = (v: SealedArtifact) => v.links ?? [];
 
