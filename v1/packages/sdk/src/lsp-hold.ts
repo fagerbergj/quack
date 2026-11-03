@@ -1,7 +1,12 @@
 // Stdio proxy `node lsp-hold.ts <server> [args]`: pi-lsp drops $/progress, so this holds references until the first load ends.
-// A server that never reports progress stalls them until pi-lsp's request timeout.
+// They are released after QUIET_MS without progress, so a server that reports none costs that, not pi-lsp's 30 s timeout.
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+
+/** Starts a timer and returns its cancel. */
+type Arm = (fn: () => void, ms: number) => () => void;
+// Held references go out after this long without a progress message.
+const QUIET_MS = 5000;
 
 type Message = { method?: string; params?: { token?: unknown; value?: { kind?: string } } };
 
@@ -24,18 +29,28 @@ export function frames(onFrame: (raw: Buffer, message: Message) => void): (chunk
 }
 
 /** The load state of one proxied server: references wait until its first progress cycle has opened and every open token has ended. */
-export function holder(toServer: (raw: Buffer) => void) {
+export function holder(toServer: (raw: Buffer) => void, quietMs = QUIET_MS, arm: Arm = (fn, ms) => { const t = setTimeout(fn, ms); return () => clearTimeout(t); }) {
   const loading = new Set<unknown>();
   let loaded = false;
+  let cancel: (() => void) | undefined;
   const held: Buffer[] = [];
+  const release = () => { cancel?.(); loaded = true; held.splice(0).forEach(toServer); };
+  // A server that reports no progress (typescript-language-server 5.x in the image sends none) must not stall every reference.
+  const wait = () => { cancel?.(); cancel = arm(release, quietMs); };
   return {
-    fromClient: (raw: Buffer, m: Message) => (m.method === 'textDocument/references' && !loaded ? held.push(raw) : toServer(raw)),
+    fromClient: (raw: Buffer, m: Message) => {
+      if (m.method !== 'textDocument/references' || loaded) return toServer(raw);
+      held.push(raw);
+      if (!cancel) wait();
+    },
     fromServer: (m: Message) => {
+      if (loaded) return;
+      const progress = m.method === 'window/workDoneProgress/create' || m.method === '$/progress';
       if (m.method === 'window/workDoneProgress/create') loading.add(m.params?.token);
       const ended = m.method === '$/progress' && m.params?.value?.kind === 'end';
       if (ended) loading.delete(m.params?.token);
-      loaded ||= ended && !loading.size;
-      if (loaded) held.splice(0).forEach(toServer);
+      if (ended && !loading.size) release();
+      else if (progress && held.length) wait();
     },
   };
 }
