@@ -64,11 +64,13 @@ function Placeholder({ title }: { title: string }) {
   );
 }
 
+const trimSlash = (h: string) => (h !== '#/' && h.endsWith('/') ? h.slice(0, -1) : h);
+
 export function App() {
   const raw = useHash();
-  const hash = raw !== '#/' && raw.endsWith('/') ? raw.slice(0, -1) : raw;
+  const hash = trimSlash(raw);
   const full = parseFull(hash);
-  const session = full ? { key: full.key } : parseHash(hash);
+  const session = full ?? parseHash(hash);
   // Inbox folded into Home; old links still land.
   useEffect(() => {
     if (hash === '#/inbox') location.replace('#/');
