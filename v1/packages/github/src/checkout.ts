@@ -45,8 +45,10 @@ export async function fetchRecord(config: SessionConfig, owner: string, repo: st
 }
 
 const alreadyPosted = (doc: { posted?: number[]; reviewed?: Record<string, string> } | undefined, sha: string) => !!doc?.posted?.some((v) => doc.reviewed?.[String(v)] === sha);
-const skipReason = (pr: PullRequestRecord, prior: Parameters<typeof alreadyPosted>[0]) =>
-  pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
+// What a review read besides the code: a new description or CI result is worth another look at the same head.
+const seen = (pr: PullRequestRecord | null | undefined) => JSON.stringify(pr && [pr.headSha, pr.body, pr.checks]);
+const skipReason = (pr: PullRequestRecord, prior: (Parameters<typeof alreadyPosted>[0] & { pr?: PullRequestRecord | null }) | undefined) =>
+  pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) && seen(prior?.pr) === seen(pr) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
 const staleNote = (asked: string | undefined, live: string) => (asked && asked !== live ? `The request was for ${asked}, an older head; this reviews the live head ${live}.` : '');
 
 async function atHead(api: ToolExecutionApi, dir: string, sha: string, config: SessionConfig, remote: string, ctx: Context): Promise<boolean> {
@@ -152,7 +154,7 @@ export function checkoutTool(config: SessionConfig) {
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const stale = staleNote(args.head, pr.headSha);
       // The same head with its tree still there needs no clone or fetch.
-      const reuse = prior?.checkout?.head === pr.headSha && prior.pr?.headSha === pr.headSha && (await atHead(api, dir, pr.headSha, config, remote, ctx));
+      const reuse = prior?.checkout?.head === pr.headSha && seen(prior.pr) === seen(pr) && (await atHead(api, dir, pr.headSha, config, remote, ctx));
       if (reuse) return { output: [{ type: 'text', text: [stale, prior!.checkout!.text].filter(Boolean).join('\n\n') }] };
       await syncTree(api, dir, pr, config, remote, ctx);
       await api.commit(async (tx) => {
