@@ -26,7 +26,7 @@ test('the innermost named symbol a change touches is the one measured', () => {
   assert.deepEqual(touchedSymbols(symbols, [[30, 30]]), []);
 });
 
-test('a references call that errors reports "unavailable", never "no references outside itself"', async () => {
+test('a references call that errors reports "unavailable", never "no references found"', async () => {
   const r = (a: number, b: number) => ({ start: { line: a, character: 0 }, end: { line: b, character: 0 } });
   const symbols = [{ name: 'add', kind: 12, range: r(0, 2), selectionRange: r(0, 0) }];
   const run = async (references: object) => {
@@ -39,7 +39,7 @@ test('a references call that errors reports "unavailable", never "no references 
   };
   assert.match(await run({ isError: true, diagnostics: [{ severity: 'error', message: 'ts: request timed out' }] }), /add: references unavailable: ts: request timed out$/);
   assert.match(await run({ structuredOutput: 'No matching LSP server for repo/x.ts' }), /references unavailable: No matching LSP server/);
-  assert.match(await run({ structuredOutput: 'No result' }), /no references outside itself/);
+  assert.match(await run({ structuredOutput: 'No result' }), /no references found in the files the language server has open \(the changed files\); callers in unchanged files may be missing/);
 });
 
 test('a wide PR is capped with a stated note, and the calls run in parallel but in order', async () => {

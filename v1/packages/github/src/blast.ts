@@ -68,8 +68,8 @@ function describe(sym: Symbol, file: string, refs: Location[] | string, root: st
   const callers = outside.filter((r) => !TEST_PATH.test(r.path));
   const list = (xs: typeof outside) => xs.slice(0, MAX_LISTED).map((r) => `${r.path}:${r.line}`).join(', ') + (xs.length > MAX_LISTED ? `, +${xs.length - MAX_LISTED} more` : '');
   const head = `- ${file}:${sym.at.line + 1} ${KINDS[sym.kind]} ${sym.name}`;
-  if (!outside.length) return `${head}: no references outside itself`;
-  return `${head}: ${callers.length} references${callers.length ? ` (${list(callers)})` : ''}; ${tests.length ? `tests: ${list(tests)}` : 'no tests reference it'}`;
+  if (!outside.length) return `${head}: no references found in the files the language server has open (the changed files); callers in unchanged files may be missing`;
+  return `${head}: ${callers.length} references${callers.length ? ` (${list(callers)})` : ''}; ${tests.length ? `tests: ${list(tests)}` : 'no tests found among them'}`;
 }
 
 async function lsp(api: ToolExecutionApi, tool: string, args: Record<string, unknown>, key: string, ctx: Context): Promise<unknown> {
