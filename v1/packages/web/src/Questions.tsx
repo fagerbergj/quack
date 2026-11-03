@@ -33,6 +33,16 @@ function Options({ d, busy, choose }: { d: Question; busy: boolean; choose: (c: 
 }
 
 
+function EvidenceFold({ d, rich }: { d: Question; rich: boolean }) {
+  if (!d.evidence) return null;
+  return (
+    <details className="text-[13px] text-ink-2">
+      <summary className="cursor-pointer">{rich ? 'Why this matters' : 'Evidence'}</summary>
+      <pre className="m-0 mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-lg bg-soft p-2.5 font-mono text-[12px] [overflow-wrap:anywhere]">{d.evidence}</pre>
+    </details>
+  );
+}
+
 /** A question an extension escalated to a person; each option is a button. */
 export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: string; d: Question; now: number; title?: string; done?: () => void }) {
   const [error, setError] = useState('');
@@ -56,12 +66,7 @@ export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: 
       <p className="m-0 text-[14.5px] font-semibold [overflow-wrap:anywhere]">{d.title ? <Headline text={d.title} /> : d.question}</p>
       {d.detail && <div className="text-[13.5px] text-ink-2"><Markdown text={d.detail} /></div>}
       {title && <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="line-clamp-2 text-[13px] text-link max-lg:-my-2 max-lg:py-3 [overflow-wrap:anywhere]">{title}</a>}
-      {d.evidence && (
-        <details className="text-[13px] text-ink-2">
-          <summary className="cursor-pointer">{rich ? 'Why this matters' : 'Evidence'}</summary>
-          <pre className="m-0 mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-lg bg-soft p-2.5 font-mono text-[12px] [overflow-wrap:anywhere]">{d.evidence}</pre>
-        </details>
-      )}
+      <EvidenceFold d={d} rich={rich} />
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       {rich ? <Options d={d} busy={busy} choose={choose} /> : (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2">
