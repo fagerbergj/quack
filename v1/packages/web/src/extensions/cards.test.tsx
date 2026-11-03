@@ -120,3 +120,21 @@ test('the opening card takes the record for its own head only; the newest record
   expect(show(text('ccc3333'))).toEqual([]);
   expect(show('Review pull request o/r#3 (/review by ann).\nTitle: T\n\nBody')).toEqual(['new/b.ts']);
 });
+
+test('a draft written against an earlier head is marked and dimmed while a run reviews the latest', () => {
+  const a = sealed(md('review-changes'), { basis: 'old' });
+  const marker = 'About an earlier commit · reviewing the latest';
+  const show = (head: string) => render(<>{github.card!(a, { running: true, meta: [{ id: 'x', headSha: 'old' }, { id: head, headSha: head }] })}</>);
+  const view = show('new');
+  expect(screen.getByText(marker)).toBeInTheDocument();
+  expect(screen.getByText('Blocking · defect').closest('.opacity-60')).not.toBeNull();
+  view.unmount();
+  show('old');
+  expect(screen.queryByText(marker)).toBeNull();
+});
+
+test('no marker once the run ends, or for a draft that never recorded its head', () => {
+  const meta = [{ id: 'new', headSha: 'new' }];
+  render(<>{github.card!(sealed(md('review-changes'), { basis: 'old' }), { running: false, meta })}{github.card!(sealed(md('review-changes')), { running: true, meta })}</>);
+  expect(screen.queryByText(/About an earlier commit/)).toBeNull();
+});

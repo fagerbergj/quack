@@ -11,7 +11,7 @@ export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) 
 }
 
 // An extension may draw its artifact as a card; undefined leaves the plain line.
-export const artifactCard = (a: SealedArtifact) => EXTENSIONS.map((e) => e.card?.(a)).find(Boolean);
+export const artifactCard = (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => EXTENSIONS.map((e) => e.card?.(a, now)).find(Boolean);
 
 // What an artifact is called anywhere it shows by name; the raw kind never does.
 export const artifactName = (a: SealedArtifact) => EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.name || 'Result';
@@ -26,10 +26,10 @@ function lineOf(a: SealedArtifact, named: ReturnType<typeof namedBy>): string {
 }
 
 // One muted line per artifact; the drawer's Checks tab holds the detail.
-function Item({ a, running, onOpen }: { a: SealedArtifact; running: boolean; onOpen: (a: SealedArtifact) => void }) {
+function Item({ a, running, meta, onOpen }: { a: SealedArtifact; running: boolean; meta: readonly Record<string, unknown>[]; onOpen: (a: SealedArtifact) => void }) {
   const named = namedBy(a, running);
   const hasCard = Boolean(artifactCard(a));
-  const card = named?.previous ? undefined : artifactCard(a);
+  const card = named?.previous ? undefined : artifactCard(a, { running, meta });
   const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
   return (
     <li className="flex flex-col gap-2 text-[13px] text-muted">
@@ -52,7 +52,7 @@ export function useArtifacts(sessionKey: string, refresh: number) {
   return { items, error };
 }
 
-export function Artifacts({ items, error, running = false, onOpen }: { items: SealedArtifact[]; error: string; running?: boolean; onOpen: (a: SealedArtifact) => void }) {
+export function Artifacts({ items, error, running = false, meta = [], onOpen }: { items: SealedArtifact[]; error: string; running?: boolean; meta?: readonly Record<string, unknown>[]; onOpen: (a: SealedArtifact) => void }) {
   const [all, setAll] = useState(false);
   if (!items.length && !error) return null;
   // Only the newest version of each kind shows; earlier ones stay a toggle away.
@@ -65,7 +65,7 @@ export function Artifacts({ items, error, running = false, onOpen }: { items: Se
       <h2 id="artifacts-h" className="sr-only">Artifacts</h2>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
-        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} running={running} onOpen={onOpen} />)}
+        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} running={running} meta={meta} onOpen={onOpen} />)}
       </ul>
       {(hidden > 0 || all) && (
         <button type="button" onClick={() => setAll(!all)} className="min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-[13px] text-muted hover:text-ink lg:min-h-0">

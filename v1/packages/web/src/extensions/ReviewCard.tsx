@@ -85,7 +85,7 @@ function Footer({ a, md }: { a: SealedArtifact; md: string }) {
   );
 }
 
-function Body({ r, a }: { r: Review; a: SealedArtifact }): ReactNode {
+function Body({ r, a, outdated }: { r: Review; a: SealedArtifact; outdated: boolean }): ReactNode {
   const v = VERDICT[r.verdict] ?? { label: cap(r.verdict.replace(/_/g, ' ')), tone: 'text-ink', band: 'bg-soft' };
   const posted = a.links?.[0];
   const line = counts(r.findings);
@@ -101,8 +101,9 @@ function Body({ r, a }: { r: Review; a: SealedArtifact }): ReactNode {
           </span>
         </span>
       </div>
+      {outdated && <p className="m-0 border-b border-line px-3.5 py-2 text-[12.5px] text-muted">About an earlier commit · reviewing the latest</p>}
       {r.takeaway && <div className="px-3.5 py-3 text-[14px] leading-normal text-ink [&_p]:m-0"><Markdown text={r.takeaway} /></div>}
-      {r.findings.map((f, i) => <FindingRow key={i} f={f} />)}
+      <div className={outdated ? 'opacity-60' : undefined}>{r.findings.map((f, i) => <FindingRow key={i} f={f} />)}</div>
       <List label="Verified" items={r.verified} />
       <List label="Notes" items={r.notes} />
       <Footer a={a} md={a.content} />
@@ -111,7 +112,7 @@ function Body({ r, a }: { r: Review; a: SealedArtifact }): ReactNode {
 }
 
 /** The review as a card; undefined for a sealed text that is not a review. */
-export function reviewCard(a: SealedArtifact): ReactNode | undefined {
+export function reviewCard(a: SealedArtifact, outdated = false): ReactNode | undefined {
   const r = parseReview(a.content);
-  return r && <Body r={r} a={a} />;
+  return r && <Body r={r} a={a} outdated={outdated} />;
 }

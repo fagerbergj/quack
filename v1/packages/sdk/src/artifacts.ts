@@ -11,6 +11,8 @@ export type ArtifactKind = {
   outcome?: (text: string) => string | undefined;
   /** One line saying what the content concluded, stored with the version so lists can show it without reading content; cut to SUMMARY_MAX. */
   summarize?: (content: string) => string;
+  /** What the version was written against (a review's head commit), stored on it so a viewer can tell when it has been overtaken. */
+  basis?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
 };
 
 export const SUMMARY_MAX = 80;
@@ -18,7 +20,7 @@ export const SUMMARY_MAX = 80;
 /** A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered. */
 export type ArtifactLink = { label: string; url: string };
 
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string };
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string; basis?: string };
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
 
@@ -55,6 +57,7 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
   const problems = kind.validate?.(content) ?? [];
   if (problems.length) throw new Error(`${kind.path} does not match ${kind.kind}:\n- ${problems.join('\n- ')}`);
   const hash = createHash('sha256').update(content).digest('hex');
+  const basis = await kind.basis?.(api, ctx);
   return api.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, api.conversationId);
     // Read back through the draft: `??=` yields the plain object assigned, and mutations to it are lost.
@@ -67,6 +70,7 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     if (outcome) sealed.outcome = outcome;
     const summary = summaryOf(kind, content);
     if (summary) sealed.summary = summary;
+    if (basis) sealed.basis = basis;
     entry.versions.push(sealed);
     return plain(sealed);
   }, ctx);
