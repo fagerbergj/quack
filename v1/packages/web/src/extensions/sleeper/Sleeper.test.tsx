@@ -61,7 +61,7 @@ test("the current week's lineup shows the live card and when it locks", async ()
   expect(lineup.getByText('Joe Burrow')).toBeInTheDocument();
   expect(lineup.getByText(/Bench · /)).toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'This week' })).toHaveTextContent(/Lineup lock(s|ed)Sun/);
-  expect(screen.getByLabelText('Today').closest('li')).toHaveTextContent('Sun');
+  expect(screen.getByLabelText('Today').closest('section')).toHaveTextContent('Sun');
 });
 
 test('waivers open to ranked claims, who to drop, why and the news', async () => {
@@ -238,6 +238,27 @@ test('the week strip lists the runs coming this week, grouped by time, and when 
   expect(within(strip).queryByText(/Trends/)).toBeNull();
   expect(within(strip).getByText(/Lineup lock/)).toBeInTheDocument();
   expect(within(strip).getByRole('img', { name: 'Today' }).tagName.toLowerCase()).toBe('svg');
+});
+
+test('the week is a timeline: the duck faces right, runs sit at their time, the list is time-sorted with stable colors', async () => {
+  live = 8;
+  page(ALL.filter((r) => !r.key.endsWith(':9:lineup')));
+  const strip = await screen.findByRole('region', { name: 'This week' });
+  await within(strip).findByText('Recap and retro');
+  expect(within(strip).getByRole('img', { name: 'Today' })).toHaveStyle({ transform: 'scaleX(-1)' });
+  expect(strip.querySelector('[data-marker="lock"]')).not.toBeNull();
+  const dots = [...strip.querySelectorAll<HTMLElement>('[data-marker="run"]')];
+  const lefts = dots.map((d) => parseFloat(d.style.left));
+  expect(lefts).toHaveLength(3);
+  expect(lefts).toEqual([...lefts].sort((a, b) => a - b));
+  // Tue 1:15 AM is next week's Tuesday: past the first day, not in today's column.
+  expect(lefts[0]).toBeGreaterThan(100 / 7);
+  const rows = within(strip).getAllByRole('listitem').map((li) => li.textContent);
+  expect(rows[0]).toMatch(/Lineup lock.*Sun/);
+  expect(rows.slice(1).map((r) => r!.replace(/.*(Tue|Wed).*/, '$1'))).toEqual(['Tue', 'Tue', 'Wed']);
+  const tone = (name: string) => within(strip).getByText(name).previousElementSibling!.className.match(/bg-\w+/)![0];
+  expect(tone('Waivers process')).toBe('bg-warning');
+  expect(tone('Trade finder')).toBe('bg-success');
 });
 
 test('a past week rows say what each result is, not just the week again', async () => {

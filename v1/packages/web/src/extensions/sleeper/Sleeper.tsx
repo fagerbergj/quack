@@ -79,44 +79,76 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
 }
 
 
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
+const DAY = 864e5;
 const NAME: Record<string, string> = { digest: 'Recap', retro: 'retro', waivers: 'Waivers process', 'trade-finder': 'Trade finder', lineup: 'lineup' };
-const TONE = ['bg-link', 'bg-warning', 'bg-success', 'bg-muted'];
+// One color per job so a run keeps its color week to week; tokens that read in both themes.
+const TONE: Record<string, string> = { lineup: 'bg-link', waivers: 'bg-warning', 'trade-finder': 'bg-success', digest: 'bg-muted', retro: 'bg-muted', history: 'bg-info' };
+const toneOf = (job: string) => TONE[job] ?? 'bg-muted';
 
+// The duck art faces left; mirrored so it faces forward in time.
 function Duck() {
   return (
-    <svg role="img" aria-label="Today" width="26" height="20" viewBox="0 0 64 48"><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" /><circle cx="20" cy="18" r="10" fill="#1f7a63" /><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" /><circle cx="17" cy="15" r="1.8" fill="#0b0f0e" /></svg>
+    <svg role="img" aria-label="Today" width="26" height="20" viewBox="0 0 64 48" style={{ transform: 'scaleX(-1)' }}><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" /><circle cx="20" cy="18" r="10" fill="#1f7a63" /><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" /><circle cx="17" cy="15" r="1.8" fill="#0b0f0e" /></svg>
   );
+}
+
+// Midnight today in the league zone; a DST change inside the day shifts it by an hour at most.
+function dayStart(now: number) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(now).map((x) => [x.type, Number(x.value)]));
+  return now - ((p.hour! * 60 + p.minute!) * 60 + p.second!) * 1000 - (now % 1000);
 }
 
 // Runs at the same moment share a pin and a line ("Recap and retro"); trends run daily and stay out of the week.
 function pins(runs: Run[], now: number) {
-  const week = runs.filter((r) => r.job !== 'trends' && Date.parse(r.at) > now && Date.parse(r.at) < now + 7 * 864e5);
-  return [...new Set(week.map((r) => r.at))].map((at, i) => ({ at: Date.parse(at), tone: TONE[i % TONE.length]!, label: week.filter((r) => r.at === at).map((r) => NAME[r.job] ?? r.job).join(' and ').replace(/^./, (c) => c.toUpperCase()) }));
+  const week = runs.filter((r) => r.job !== 'trends' && Date.parse(r.at) > now && Date.parse(r.at) < now + 7 * DAY);
+  return [...new Set(week.map((r) => r.at))].map((at) => {
+    const jobs = week.filter((r) => r.at === at).map((r) => r.job);
+    return { at: Date.parse(at), tone: toneOf(jobs[0]!), label: jobs.map((j) => NAME[j] ?? j).join(' and ').replace(/^./, (c) => c.toUpperCase()) };
+  });
 }
 
+type Item = { at: number; tone: string; label: string; lock?: boolean };
+
+function Track({ start, now, items }: { start: number; now: number; items: Item[] }) {
+  const pct = (ms: number) => `${(((ms - start) / (7 * DAY)) * 100).toFixed(2)}%`;
+  const inside = (ms: number) => ms >= start && ms < start + 7 * DAY;
+  return (
+    <div className="relative mx-3 h-14">
+      <div aria-hidden="true" className="absolute top-8 right-0 left-0 h-0.5 rounded-full bg-muted/60" />
+      <div aria-hidden="true" data-elapsed className="absolute top-8 left-0 h-0.5 rounded-full bg-line" style={{ width: pct(now) }} />
+      {DAYS_AHEAD.map((i) => {
+        const ms = start + i * DAY;
+        const name = weekday(ms + DAY / 2);
+        return (
+          <div key={i} aria-current={i === 0 ? 'date' : undefined} className="absolute top-0 flex flex-col items-start" style={{ left: pct(ms) }}>
+            <span className={`text-[12px] ${i === 0 ? 'font-semibold text-success' : 'text-muted'}`}><span aria-hidden="true" className="sm:hidden">{name[0]}</span><span className="max-sm:sr-only">{name}</span></span>
+            <span aria-hidden="true" className="mt-1 h-2.5 w-px bg-muted" />
+          </div>
+        );
+      })}
+      {items.filter((m) => inside(m.at)).map((m) => m.lock
+        ? <span key="lock" aria-hidden="true" data-marker="lock" className="absolute top-5 h-7 w-1 -translate-x-1/2 rounded-full bg-danger" style={{ left: pct(m.at) }} />
+        : <span key={m.at} aria-hidden="true" data-marker="run" className={`absolute top-[26px] h-3.5 w-3.5 -translate-x-1/2 rounded-full ${m.tone}`} style={{ left: pct(m.at) }} />)}
+      <div className="absolute top-[14px] -translate-x-1/2" style={{ left: pct(now) }}><Duck /></div>
+    </div>
+  );
+}
+
+const DAYS_AHEAD = [0, 1, 2, 3, 4, 5, 6];
+
 function WeekStrip({ lock, now, runs }: { lock?: number; now: number; runs: Run[] }) {
-  const today = DAYS.indexOf(weekday(now));
-  const marks = pins(runs, now);
-  const col = (ms: number) => DAYS.indexOf(weekday(ms));
+  const items: Item[] = [...pins(runs, now), ...(lock === undefined ? [] : [{ at: lock, tone: 'bg-danger', label: lock > now ? 'Lineup locks' : 'Lineup locked', lock: true }])].sort((a, b) => a.at - b.at);
   return (
     <section aria-label="This week" className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
-      <ol className="m-0 grid list-none grid-cols-7 p-0 text-center text-[12px]">
-        {DAYS.map((d, i) => (
-          <li key={d} aria-current={i === today ? 'date' : undefined} className="flex flex-col items-center gap-1">
-            <span className={i === today ? 'font-semibold text-success' : 'text-muted'}>{d}</span>
-            <span className="flex h-6 items-center gap-1">
-              {i === today && <Duck />}
-              {marks.filter((m) => col(m.at) === i).map((m) => <span key={m.at} aria-hidden="true" className={`h-3.5 w-3.5 rounded ${m.tone}`} />)}
-              {lock !== undefined && col(lock) === i && <span aria-hidden="true" className="h-5 w-1 rounded-full bg-danger" />}
-            </span>
+      <Track start={dayStart(now)} now={now} items={items} />
+      <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0 text-[14px]">
+        {items.map((m) => (
+          <li key={`${m.lock}${m.at}`} className={`flex items-center gap-2 ${m.lock ? 'font-semibold' : ''} ${m.at < now ? 'opacity-60' : ''}`}>
+            <span aria-hidden="true" className={`flex-none ${m.lock ? 'h-3.5 w-1 rounded-full' : 'h-2.5 w-2.5 rounded-full'} ${m.tone}`} />
+            <span className="min-w-0 flex-1 break-words">{m.label}</span>
+            <span className={m.lock ? 'text-danger' : 'text-ink-2'}>{slot(m.at)}</span>
           </li>
         ))}
-      </ol>
-      <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0 text-[14px]">
-        {marks.map((m) => <li key={m.at} className="flex items-center gap-2"><span aria-hidden="true" className={`h-2.5 w-2.5 flex-none rounded-full ${m.tone}`} /><span className="min-w-0 flex-1 break-words">{m.label}</span><span className="text-ink-2">{slot(m.at)}</span></li>)}
-        {lock !== undefined && <li className="flex items-center gap-2 font-semibold"><span aria-hidden="true" className="h-3.5 w-1 flex-none rounded-full bg-danger" /><span className="min-w-0 flex-1">{lock > now ? 'Lineup locks' : 'Lineup locked'}</span><span className="text-danger">{slot(lock)}</span></li>}
       </ul>
     </section>
   );
