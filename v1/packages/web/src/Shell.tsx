@@ -77,7 +77,10 @@ const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-
 // Below lg main is the only scroller, so the document never scrolls and the URL bar cannot collapse mid-scroll; `bare` drops the phone title bar.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
-  const tabs = useBar().flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
+  const bar = useBar();
+  const tabs = bar.flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
+  // The sidebar honours the same picks as the bottom bar; the rest sit under More, as on the More page.
+  const rest = [...CORE, ...MORE].filter((n) => !bar.includes(n.route));
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
     <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls}>
@@ -100,13 +103,13 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         </a>
         <a href="#/new" className="mx-3 mb-2 inline-flex h-9 items-center justify-center rounded-full bg-ink px-3 text-[13px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
         <nav aria-label="Main" className="flex flex-none flex-col gap-0.5 px-3 pb-2 text-[13.5px]">
-          {MAIN.map((n) => link(n, linkBase))}
+          {[HOME, ...tabs].map((n) => link(n, linkBase))}
           <details className="group">
             <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-soft hover:text-ink [&::-webkit-details-marker]:hidden">
               <Icon route="grid" />
               More
             </summary>
-            <div className="flex flex-col gap-0.5 pl-3">{MORE.map((n) => link(n, linkBase))}</div>
+            <div className="flex flex-col gap-0.5 pl-3">{rest.map((n) => link(n, linkBase))}</div>
           </details>
         </nav>
         <div className="flex min-h-0 flex-1 flex-col border-t border-line">{sidebar}</div>

@@ -605,7 +605,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/agents', '#/sleeper', '#/remarkable', '#/settings']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/settings']);
   expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Artifacts' }));
   expect(within(rail).getByRole('link', { name: 'Artifacts' })).toHaveAttribute('aria-current', 'page');
@@ -1435,6 +1435,18 @@ describe('bottom bar', () => {
     expect(JSON.parse(localStorage.getItem('quack:bottom-bar')!)).toEqual(['sleeper', 'artifacts']);
     goTo('#/more');
     expect(await within(screen.getByRole('main')).findByRole('link', { name: /Sessions/ })).toHaveAttribute('href', '#/sessions');
+  });
+
+  test('the desktop sidebar honours the same picks, with the rest under More', async () => {
+    localStorage.setItem('quack:bottom-bar', JSON.stringify(['remarkable', 'agents']));
+    location.hash = '#/settings';
+    render(<App />);
+    const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    const top = () => [...rail.querySelectorAll(':scope > a')].map((l) => l.textContent);
+    expect(top()).toEqual(['Home', 'reMarkable', 'Agents']);
+    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Settings']);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Sessions' }));
+    expect(top()).toEqual(['Home', 'reMarkable', 'Agents', 'Sessions']);
   });
 
   test('allows three pages and no more', async () => {
