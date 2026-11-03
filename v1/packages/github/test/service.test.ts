@@ -140,6 +140,20 @@ test('/review starts a review only from a trusted commenter', async () => {
   assert.match(invocations[0].body.input, /\/review by someone/);
 });
 
+test('/fix runs the implementer in the PR session only where one is configured; a deployment without it ignores /fix', async () => {
+  invocations.length = 0;
+  const fix = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/fix the cache test\nand the lint error', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
+  assert.equal(await deliver('issue_comment', fix, { id: 'd-fix0' }), 200);
+  const withFix = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' }));
+  const body = JSON.stringify(fix);
+  const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
+  const status = await fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix1' } }).then((r) => r.status);
+  assert.equal(status, 202);
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
+  assert.match(invocations[0].body.input, /Instruction: the cache test\nand the lint error/);
+});
+
 test('git credentials are minted per repository and cached until near expiry', async () => {
   const get = (url: string, token = 'svc-secret') =>
     fetch(`${service}/git-credential?url=${encodeURIComponent(url)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: await r.json() }));
