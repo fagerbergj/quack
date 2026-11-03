@@ -1770,7 +1770,7 @@ describe('the session page as a ledger', () => {
     const done = within(two).getByText(/Double-check passed · 100%/).closest('details')!;
     expect(done).not.toHaveAttribute('open');
     await userEvent.click(within(done).getByText(/Double-check passed/));
-    expect(within(done).getAllByText('Pass · 100%')).toHaveLength(2);
+    expect(within(done).getAllByText('Pass')).toHaveLength(2);
     expect(within(done).getByText('Label cites')).toBeInTheDocument();
   });
 
@@ -1795,7 +1795,7 @@ describe('the session page as a ledger', () => {
     expect(within(list).getAllByText('Checking')).toHaveLength(2);
     expect(screen.getByLabelText('Double-checking · 0 of 2 checked')).toBeInTheDocument();
     ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines', met: 0 }, { ...base, id: 'tone', label: 'Polite tone' }]));
-    expect(within(list).getByText('Fail · 0%')).toBeInTheDocument();
+    expect(within(list).getByText('Fail')).toBeInTheDocument();
     expect(within(list).getAllByText('Checking')).toHaveLength(1);
     expect(screen.getByLabelText('Double-checking · 1 of 2 checked')).toBeInTheDocument();
     expect(screen.queryByText('Waiting for the double-check')).toBeNull();
