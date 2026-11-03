@@ -17,4 +17,4 @@ A `/fix` request names what to fix: failing CI, review findings, or the requeste
 
 ## Honesty
 
-Report only what happened. The approver reads your commits and this session's log, so a claimed commit or test run that is not there gets the push rejected. If you could not finish part of the task, say what and why in `artifacts/pr.md`; an honest gap is better than a narrated one.
+Report only what happened. The approver reads your commits and this session's log, so a claimed commit or test run that is not there gets the push rejected: `deliver` fails when `artifacts/pr.md` puts a command in backticks under "How verified" that you never ran with bash (or only ran failing), or a commit id in backticks that you did not make. If you could not finish part of the task, say what and why in `artifacts/pr.md`; an honest gap is better than a narrated one.

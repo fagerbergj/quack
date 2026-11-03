@@ -3,6 +3,7 @@ import { int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { Artifacts, attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
 import { conventions, fetchRecord, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
+import { sessionRuns, unbackedClaims } from './claims.ts';
 import { parseReview } from './review.ts';
 
 const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
@@ -115,6 +116,7 @@ export function deliverTool(config: SessionConfig) {
       const text = await api.env!.readTextFile(PR_BODY, ctx);
       if (!text.ok) found.push(`${PR_BODY} cannot be read; write it first`);
       else if (!text.value.trim()) found.push(`${PR_BODY} is empty`);
+      if (text.ok) found.push(...unbackedClaims(text.value, await sessionRuns(api, ctx), (await out(r, 'log', '--format=%H', `${pr.headSha}..HEAD`)).split('\n')));
       if (found.length) return reply(`Not delivered; fix these and call deliver again:\n- ${found.join('\n- ')}`, true);
       const sealed = await seal(api, prBodyKind, ctx);
       const commits = await out(r, 'log', '--format=%h %s', `${pr.headSha}..HEAD`);
