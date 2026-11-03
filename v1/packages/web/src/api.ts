@@ -1,5 +1,5 @@
 // Every call to the distributor, so its contract lives in one place.
-export type SessionSummary = { key: string; agent: string; title?: string; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string };
+export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string };
 export type AgentSummary = { name: string; version: number };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[] };
@@ -26,6 +26,11 @@ const named = (a: SealedArtifact): SealedArtifact =>
 export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts.map(named);
 // Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.
 export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await fetch(`${base(key)}/meta`))).meta;
+const housekeep = async (path: string, method: string, body: object) =>
+  void (await json(await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
+export const renameSession = (key: string, title: string) => housekeep(base(key), 'PATCH', { title });
+export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { archived });
+export const deleteSession = (key: string) => housekeep(`${base(key)}/delete`, 'POST', {});
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
 export type IndexApproval = { session: string; id: string; tool: string; at: number };

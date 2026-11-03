@@ -1,6 +1,7 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, getMeta, socketUrl, type Failure, type Question, type SealedArtifact } from './api.ts';
+import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact } from './api.ts';
+import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
@@ -149,10 +150,12 @@ function Title({ name }: { name: SessionTitle }) {
 
 const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
-// Abort and the Work drawer live behind one quiet menu; it is absent when neither applies.
-function More({ running, onAbort, latest, onOpen }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void }) {
+type Manage = { archived: boolean; changed: () => void };
+
+// Abort, the Work drawer and housekeeping live behind one quiet menu; it is absent when none applies.
+function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: { archived: boolean; rename: () => void; archive: () => void; remove: () => void } }) {
   const [open, setOpen] = useState(false);
-  if (!running && !latest) return null;
+  if (!running && !latest && !manage) return null;
   const item = 'flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] hover:bg-soft lg:min-h-8';
   const pick = (fn: () => void) => () => { setOpen(false); fn(); };
   return (
@@ -162,6 +165,9 @@ function More({ running, onAbort, latest, onOpen }: { running: boolean; onAbort:
         <div role="menu" className="absolute right-0 z-20 mt-1 min-w-40 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
           {latest && <button type="button" role="menuitem" onClick={pick(() => onOpen(latest))} className={`${item} text-ink`}>Work</button>}
           {running && <button type="button" role="menuitem" onClick={pick(onAbort)} className={`${item} text-danger`}>Abort</button>}
+          {manage && <button type="button" role="menuitem" onClick={pick(manage.rename)} className={`${item} text-ink`}>Rename</button>}
+          {manage && <button type="button" role="menuitem" onClick={pick(manage.archive)} className={`${item} text-ink`}>{manage.archived ? 'Unarchive' : 'Archive'}</button>}
+          {manage && <button type="button" role="menuitem" onClick={pick(manage.remove)} className={`${item} text-danger`}>Delete</button>}
         </div>
       )}
     </div>
@@ -220,7 +226,7 @@ function usePaneStyle(): CSSProperties | undefined {
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
-export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look }) {
+export function SessionView({ sessionKey, agent, name, delivered, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; manage?: Manage }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
   // The landing composer's text seeds this composer.
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
@@ -230,6 +236,7 @@ export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey
   useEffect(() => {
     if (state === 'open' && input !== '' && input === initial && send(input)) setInput('');
   }, [state]);
+  const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
@@ -244,8 +251,11 @@ export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header name={name} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
-        <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} />
+        {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
+        <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
+      {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
+      {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">

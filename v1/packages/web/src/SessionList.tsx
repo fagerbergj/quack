@@ -70,6 +70,11 @@ function FilterSelects({ rows, filters, set }: { rows: Row[]; filters: Filters; 
         <option value="">Any start</option>
         {starts.map((s) => <option key={s}>{s}</option>)}
       </select>
+      <label className="sr-only" htmlFor="s-view">Show</label>
+      <select id="s-view" className={`${field} h-[30px] min-w-0 flex-1 cursor-pointer px-2`} value={filters.view} onChange={(e) => set({ ...filters, view: e.target.value as Filters['view'] })}>
+        <option value="">Active</option>
+        <option value="archived">Archived</option>
+      </select>
     </div>
   );
 }
@@ -81,7 +86,7 @@ function FilterButton({ open, toggle }: { open: boolean; toggle: () => void }) {
 }
 
 export function SessionList({ rows, selected, error, now }: { rows: Row[] | undefined; selected?: string; error: string; now: number }) {
-  const [filters, setFilters] = useState<Filters>({ text: '', agent: '', start: '' });
+  const [filters, setFilters] = useState<Filters>({ text: '', agent: '', start: '', view: '' });
   const [open, setOpen] = useState(false);
   const shown = (rows ?? []).filter((r) => matches(r, filters));
   const g = group(shown);

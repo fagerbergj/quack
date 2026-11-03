@@ -1148,3 +1148,90 @@ test('the transcript scroller is the containing block for absolute children, so 
   await openSession();
   expect(document.querySelector('[aria-live="polite"]')).toHaveClass('relative', 'overflow-y-auto');
 });
+
+const withRow = (over: object = {}) => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip', ...over })] };
+  routes['PATCH /sessions/ui%3Au1'] = { key: 'ui:u1' };
+  routes['POST /sessions/ui%3Au1/delete'] = { key: 'ui:u1' };
+};
+const menu = async (item: string) => {
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: item }));
+};
+const sent = (method: string) => fetchMock.mock.calls.filter(([, init]) => init?.method === method).map(([url, init]) => [url, JSON.parse(String(init?.body))]);
+
+test('Rename saves the title, reloads the list and the header shows the new name', async () => {
+  withRow();
+  await openSession();
+  await menu('Rename');
+  const dialog = screen.getByRole('dialog', { name: 'Rename session' });
+  const field = within(dialog).getByLabelText('Title');
+  expect(field).toHaveValue('Plan the trip');
+  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Book flights' })] };
+  await userEvent.clear(field);
+  await userEvent.type(field, 'Book flights');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  expect(sent('PATCH')).toEqual([['sessions/ui%3Au1', { title: 'Book flights' }]]);
+  expect(await screen.findByRole('heading', { level: 1, name: 'Book flights' })).toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+test('archived sessions leave the list and Home, and the Archived filter shows them', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip', archived: true, running: true, active: true }), sess('ui:u2', { title: 'Other' })] };
+  render(<App />);
+  await screen.findByRole('link', { name: /Other/ });
+  expect(screen.queryByRole('link', { name: /Plan the trip/ })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Running' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await userEvent.selectOptions(screen.getByLabelText('Show'), 'Archived');
+  expect(screen.getByRole('link', { name: /Plan the trip/ })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Other/ })).toBeNull();
+});
+
+test('Archive posts the flag from the session menu', async () => {
+  withRow();
+  await openSession();
+  await menu('Archive');
+  expect(sent('PATCH')).toEqual([['sessions/ui%3Au1', { archived: true }]]);
+});
+
+test('an archived session is still readable and offers Unarchive', async () => {
+  withRow({ archived: true });
+  const ws = await openSession();
+  ws.frame(snapshot());
+  expect(await screen.findByText('Archived')).toBeInTheDocument();
+  await menu('Unarchive');
+  expect(sent('PATCH')).toEqual([['sessions/ui%3Au1', { archived: false }]]);
+});
+
+test('a refused archive says why and the session stays', async () => {
+  withRow();
+  delete routes['PATCH /sessions/ui%3Au1'];
+  await openSession();
+  await menu('Archive');
+  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+});
+
+test('Delete asks first, names the session, and goes back to the list once confirmed', async () => {
+  withRow();
+  await openSession();
+  await menu('Delete');
+  const dialog = screen.getByRole('dialog', { name: 'Delete session?' });
+  expect(dialog).toHaveTextContent('Plan the trip');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(sent('POST')).toEqual([]);
+  await menu('Delete');
+  routes['GET /sessions'] = { sessions: [] };
+  await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(location.hash).toBe('#/'));
+  expect(sent('POST')).toEqual([['sessions/ui%3Au1/delete', {}]]);
+});
+
+test('a refused delete keeps the dialog open with the server reason', async () => {
+  withRow();
+  delete routes['POST /sessions/ui%3Au1/delete'];
+  await openSession();
+  await menu('Delete');
+  await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('not found');
+});
