@@ -67,6 +67,13 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
   }
 }
 
+// A /fix refused with 409 (the session is mid-run as another agent) is answered on the PR, never dropped.
+async function noticeBusyFix(app: GithubApp, t: Trigger, status: number): Promise<boolean> {
+  if (status !== 409 || t.role !== 'implementer') return false;
+  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: FIX_BUSY });
+  return true;
+}
+
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
@@ -84,10 +91,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
   const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload });
-  if (upstream.status === 409 && trigger.role === 'implementer') {
-    await app.asInstallation(trigger.repo.owner, trigger.repo.name, 'POST', `/repos/${trigger.repo.owner}/${trigger.repo.name}/issues/${trigger.number}/comments`, { body: FIX_BUSY });
-    return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
-  }
+  if (await noticeBusyFix(app, trigger, upstream.status)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
   if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
     state.watched.add(requestId);
