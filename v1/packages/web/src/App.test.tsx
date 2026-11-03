@@ -1458,6 +1458,15 @@ describe('bottom bar', () => {
     expect(top()).toEqual(['Home', 'reMarkable', 'Agents', 'Sessions']);
   });
 
+  test('on desktop, a page under More opens the sidebar More, so the current page shows', async () => {
+    location.hash = '#/agents';
+    routes['GET /agents'] = { agents: [] };
+    render(<App />);
+    const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    expect(rail.querySelector('details')).toHaveAttribute('open');
+    expect(within(rail).getByRole('link', { name: 'Agents' })).toHaveAttribute('aria-current', 'page');
+  });
+
   test('allows three pages and no more', async () => {
     phoneAt('#/settings');
     render(<App />);

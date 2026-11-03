@@ -104,7 +104,8 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         <a href="#/new" className="mx-3 mb-2 inline-flex h-9 items-center justify-center rounded-full bg-ink px-3 text-[13px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
         <nav aria-label="Main" className="flex flex-none flex-col gap-0.5 px-3 pb-2 text-[13.5px]">
           {[HOME, ...tabs].map((n) => link(n, linkBase))}
-          <details className="group">
+          {/* Opens on its own when the current page is in it, so the rail always shows where you are. */}
+          <details className="group" open={rest.some((n) => n.route === route) || undefined}>
             <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-soft hover:text-ink [&::-webkit-details-marker]:hidden">
               <Icon route="grid" />
               More
