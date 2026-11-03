@@ -53,6 +53,18 @@ test('a pinned snapshot that still has maxTurns loads, with one warning', () => 
   }
 });
 
+test('a pinned snapshot that selects a removed extension loads without it, with one warning', () => {
+  const warn = mock.method(console, 'error', () => {});
+  try {
+    const def = parseDefinition({ name: 'reviewer', version: 6, status: 'promoted', model: 'local/qwen3.8-27b', prompt: 'prompt.md', extensions: { coding: {}, lsp: { servers: [] } } }, parseDeployment(deployment), catalog);
+    assert.deepEqual(Object.keys(def.extensions), ['coding']);
+    assert.equal(warn.mock.callCount(), 1);
+    assert.match(String(warn.mock.calls[0].arguments[0]), /extension lsp was removed/);
+  } finally {
+    warn.mock.restore();
+  }
+});
+
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-def-'));
   try {

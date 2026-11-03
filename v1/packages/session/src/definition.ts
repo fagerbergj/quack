@@ -124,9 +124,20 @@ export function resolveExtensions(selected: readonly string[], catalog: Catalog)
   return { order, problems };
 }
 
+// Extensions a pinned snapshot may still select after they were removed; they load nothing.
+const REMOVED_EXTENSIONS: Record<string, string> = { lsp: 'cut 2026-11-03 (#2086)' };
+
+function withoutRemoved(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!isObject(raw.extensions)) return raw;
+  const gone = Object.keys(raw.extensions).filter((name) => name in REMOVED_EXTENSIONS);
+  for (const name of gone) console.error(`agent ${String(raw.name)}: extension ${name} was removed (${REMOVED_EXTENSIONS[name]}) and is ignored`);
+  return gone.length ? { ...raw, extensions: Object.fromEntries(Object.entries(raw.extensions).filter(([name]) => !gone.includes(name))) } : raw;
+}
+
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
-export function parseDefinition(raw: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
-  if (!isObject(raw)) throw new Error('invalid agent definition:\n- definition must be an object');
+export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
+  if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
+  const raw = withoutRemoved(input);
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
