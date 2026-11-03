@@ -111,6 +111,30 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
 });
 
+test('review rows carry their PR state from one lookup, and read plainly when the service is not connected', async () => {
+  const keys = encodeURIComponent('github:a/one#1,github:a/one#2,github:a/one#3');
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' }), sess('github:a/one#3', { title: 'fix: third' }), sess('gh:9', { title: 'Plain' })] };
+  routes[`GET /apps/github/pulls?keys=${keys}`] = { pulls: { 'a/one#1': { state: 'open', at: '2026-11-01T00:00:00Z' }, 'a/one#2': { state: 'merged', at: '2026-11-02T00:00:00Z' } } };
+  const view = render(<App />);
+  const row = async (name: RegExp) => await screen.findByRole('link', { name });
+  await waitFor(async () => expect(await row(/#2 Second/)).toHaveTextContent('Merged'));
+  expect(await row(/#1 First/)).toHaveTextContent('Open');
+  expect(await row(/#3 Third/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(1);
+  view.unmount();
+  delete routes[`GET /apps/github/pulls?keys=${keys}`];
+  render(<App />);
+  expect(await row(/#1 First/)).not.toHaveTextContent(/Open|Merged|Closed/);
+});
+
+test('a closed PR reads Closed on its row', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' })] };
+  routes[`GET /apps/github/pulls?keys=${encodeURIComponent('github:a/one#1')}`] = { pulls: { 'a/one#1': { state: 'closed', at: '2026-11-01T00:00:00Z' } } };
+  render(<App />);
+  await waitFor(async () => expect(await screen.findByRole('link', { name: /#1 First/ })).toHaveTextContent('Closed'));
+});
+
 test('review rows show their repo only when the list holds reviews from two repos', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' })] };
   const view = render(<App />);
@@ -614,7 +638,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/agents', '#/sleeper', '#/remarkable', '#/schedules', '#/contracts', '#/settings']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/schedules', '#/contracts', '#/settings']);
   expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Artifacts' }));
   expect(within(rail).getByRole('link', { name: 'Artifacts' })).toHaveAttribute('aria-current', 'page');
@@ -1453,6 +1477,27 @@ describe('bottom bar', () => {
     expect(JSON.parse(localStorage.getItem('quack:bottom-bar')!)).toEqual(['sleeper', 'artifacts']);
     goTo('#/more');
     expect(await within(screen.getByRole('main')).findByRole('link', { name: /Sessions/ })).toHaveAttribute('href', '#/sessions');
+  });
+
+  test('the desktop sidebar honours the same picks, with the rest under More', async () => {
+    localStorage.setItem('quack:bottom-bar', JSON.stringify(['remarkable', 'agents']));
+    location.hash = '#/settings';
+    render(<App />);
+    const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    const top = () => [...rail.querySelectorAll(':scope > a')].map((l) => l.textContent);
+    expect(top()).toEqual(['Home', 'reMarkable', 'Agents']);
+    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Schedules', 'Contracts', 'Settings']);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Sessions' }));
+    expect(top()).toEqual(['Home', 'reMarkable', 'Agents', 'Sessions']);
+  });
+
+  test('on desktop, a page under More opens the sidebar More, so the current page shows', async () => {
+    location.hash = '#/agents';
+    routes['GET /agents'] = { agents: [] };
+    render(<App />);
+    const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    expect(rail.querySelector('details')).toHaveAttribute('open');
+    expect(within(rail).getByRole('link', { name: 'Agents' })).toHaveAttribute('aria-current', 'page');
   });
 
   test('allows three pages and no more', async () => {

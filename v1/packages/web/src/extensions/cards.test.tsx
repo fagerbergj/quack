@@ -31,12 +31,16 @@ test('the review card shows the seal, counts, a posted link, findings with their
   const link = { label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' };
   render(<>{reviewCard(sealed(md('review-changes'), { links: [link], verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } }))}</>);
   const card = screen.getByRole('region', { name: 'Review' });
-  expect(within(card).getByText('Changes requested')).toBeInTheDocument();
+  // Red, not amber, so it can't be mistaken for an approval at a glance.
+  expect(within(card).getByText('Changes requested')).toHaveClass('text-danger');
   expect(card).toHaveTextContent('1 blocking · 1 suggestion');
   expect(within(card).getByRole('link', { name: 'Posted to GitHub ↗' })).toHaveAttribute('href', link.url);
   expect(within(card).getByText('Blocking · defect')).toBeInTheDocument();
   expect(within(card).getByText('v1/packages/index/src/publisher.ts:58')).toBeInTheDocument();
-  expect(within(card).getAllByText('Why and a fix')).toHaveLength(2);
+  // A finding with more to say is its own closed disclosure, with no label to read.
+  expect(within(card).getByText('Blocking · defect').closest('summary')?.parentElement?.tagName).toBe('DETAILS');
+  expect(within(card).queryByText('Why and a fix')).toBeNull();
+  expect(within(card).getByText('Suggestion').closest('summary')?.parentElement?.tagName).toBe('DETAILS');
   expect(within(card).getByText('Verified · 6')).toBeInTheDocument();
   expect(within(card).getByText('Notes · 3')).toBeInTheDocument();
   expect(card).toHaveTextContent('Double-checked');
@@ -145,4 +149,11 @@ test('a carried approval says it is the same change as the earlier review, with 
   const card = screen.getByRole('region', { name: 'Review' });
   expect(within(card).getByRole('link', { name: 'Same change as the approved review of abcdef12' })).toHaveAttribute('href', from.url);
   expect(card).not.toHaveTextContent('Double-checked');
+});
+
+test('a one-sentence finding has nothing to open, so it is a plain row with no chevron', () => {
+  render(<>{reviewCard(sealed(['## Takeaway', 'Fine.', '', '## Verdict', 'approve', '', '## Findings', '- nit: app/x.ts:1 — a single-sentence note.'].join('\n')))}</>);
+  const card = screen.getByRole('region', { name: 'Review' });
+  // The first match is the finding; the full review further down repeats it inside its own disclosure.
+  expect(within(card).getAllByText(/single-sentence note/)[0]!.closest('details')).toBeNull();
 });

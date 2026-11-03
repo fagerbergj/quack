@@ -21,6 +21,7 @@ const service = createGithubService(app, {
   label: env('QUACK_GH_LABEL', 'quack:review'),
   agent: env('QUACK_GH_AGENT', 'reviewer'),
   implementerAgent,
+  statesFile: join(process.env.QUACK_DATA_DIR ?? '.', 'github-pulls.json'),
 });
 service.listen(Number(env('PORT', '8090')));
 const stopRedelivery = startRedelivery(app, join(process.env.QUACK_DATA_DIR ?? '.', 'github-redeliver.json'));
