@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
 
+const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
+const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
+const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: 'error', error, requestId: requestOf(sock, i) });
+
 class FakeSocket {
   static all: FakeSocket[] = [];
   sent: unknown[] = [];
@@ -211,14 +215,16 @@ test('starting a session opens a home: key for quack and sends the untouched fir
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
   expect(sock.sent).toEqual([]);
   sock.open();
+  await waitFor(() => expect(sock.sent).toHaveLength(1));
+  accept(sock);
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
-  expect(sock.sent).toEqual([{ type: 'input', input: 'review it', whenBusy: 'followUp' }]);
+  expect(sock.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: 'review it', whenBusy: 'followUp' }]);
 });
 
 test('two Home sends go to the same home:main session, queued as follow-ups', async () => {
   await startFromHome('first');
   FakeSocket.all[0].open();
-  await waitFor(() => expect(FakeSocket.all[0].sent).toEqual([{ type: 'input', input: 'first', whenBusy: 'followUp' }]));
+  await waitFor(() => expect(FakeSocket.all[0].sent).toEqual([{ type: 'input', requestId: expect.any(String), input: 'first', whenBusy: 'followUp' }]));
   goTo('#/');
   await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'second');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -371,13 +377,16 @@ test('a send while a run works is a server-side follow-up shown as a chip; Send 
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   };
   await send('first');
-  expect(ws.sent).toEqual([{ type: 'input', input: 'first' }]);
+  expect(ws.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: 'first' }]);
+  accept(ws);
 
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
   expect(box()).toHaveAttribute('placeholder', 'Message · sends after this step');
   await send('turn left');
-  expect(ws.sent[1]).toEqual({ type: 'input', input: 'turn left', whenBusy: 'followUp' });
+  expect(ws.sent[1]).toEqual({ type: 'input', requestId: expect.any(String), input: 'turn left', whenBusy: 'followUp' });
+  accept(ws);
+  await waitFor(() => expect(box()).toHaveValue(''));
   expect(screen.queryByText('Queued')).toBeNull();
 
   // The chip is the server's queue: it shows when the session reports it, so a reload shows it too.
@@ -1447,4 +1456,90 @@ test('session rows show the index spend: dollars when priced, tokens when not, n
   expect(await screen.findByRole('link', { name: /Priced/ })).toHaveTextContent('$0.42');
   expect(screen.getByRole('link', { name: /Unpriced/ })).toHaveTextContent('12k tokens');
   expect(screen.getByRole('link', { name: /Fresh/ })).not.toHaveTextContent(/tokens|\$/);
+});
+
+describe('images', () => {
+  const photo = new File(['x'], 'cat.png', { type: 'image/png' });
+
+  beforeEach(() => {
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 4000, height: 1000, close() {} }));
+    HTMLCanvasElement.prototype.getContext = (() => ({ fillRect() {}, drawImage() {} })) as never;
+    HTMLCanvasElement.prototype.toDataURL = () => 'data:image/jpeg;base64,QUJD';
+  });
+
+  test('attaching shows a thumbnail with a remove button, and sending carries the image', async () => {
+    const ws = await openSession();
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    expect(await screen.findByRole('img', { name: 'Attached image 1' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove image 1' }));
+    expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull();
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    await screen.findByRole('img', { name: 'Attached image 1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(ws.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: '', images: [{ data: 'QUJD', mimeType: 'image/jpeg' }] }]);
+    accept(ws);
+    await waitFor(() => expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull());
+  });
+
+  test('a photo attached on Home seeds the home:main session and clears once accepted', async () => {
+    render(<App />);
+    await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'what is this?');
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    await screen.findByRole('img', { name: 'Attached image 1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Amain\/ws\?agent=quack$/));
+    const sock = FakeSocket.all[0];
+    expect(screen.getByRole('img', { name: 'Attached image 1' })).toBeInTheDocument();
+    sock.open();
+    await waitFor(() => expect(sock.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: 'what is this?', images: [{ data: 'QUJD', mimeType: 'image/jpeg' }], whenBusy: 'followUp' }]));
+    accept(sock);
+    await waitFor(() => expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull());
+  });
+
+  test('answers that cross resolve the send they name', async () => {
+    await startFromHome('review it');
+    const sock = FakeSocket.all[0];
+    sock.open();
+    await waitFor(() => expect(sock.sent).toHaveLength(1));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), ' now');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(sock.sent).toHaveLength(2);
+    reject(sock, 'nope', 1);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it now');
+    accept(sock, 0);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
+  });
+
+  test('a send the server rejects keeps the text and the thumbnails', async () => {
+    const ws = await openSession();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'what is this?');
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    await screen.findByRole('img', { name: 'Attached image 1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    reject(ws, 'Images need an image model: none');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Images need an image model');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('what is this?');
+    expect(screen.getByRole('img', { name: 'Attached image 1' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
+  });
+
+  test('a fifth image is refused with a message', async () => {
+    await openSession();
+    await userEvent.upload(screen.getByTestId('attach-input'), [photo, photo, photo, photo, photo]);
+    expect(await screen.findByRole('alert')).toHaveTextContent('At most 4 images per message.');
+    expect(screen.getAllByRole('img')).toHaveLength(4);
+  });
+
+  test('a snapshot with an image renders its thumbnail, and a tap opens it full size', async () => {
+    const ws = await openSession();
+    ws.frame(snapshot({ entries: [entry('e1', [{ role: 'user', content: [{ type: 'image', data: 'QUJD', mimeType: 'image/jpeg' }, { type: 'text', text: 'what is this?\n\n[Attached images attachments/1-1.jpg. You cannot see images.]' }], timestamp: 1 }])] }));
+    const you = screen.getByRole('article', { name: 'You' });
+    expect(you).toHaveTextContent('what is this?');
+    expect(you).not.toHaveTextContent('Attached images');
+    await userEvent.click(within(you).getByRole('button', { name: 'Open image 1' }));
+    expect(screen.getByRole('img', { name: 'Full size' })).toHaveAttribute('src', 'data:image/jpeg;base64,QUJD');
+    await userEvent.click(screen.getByRole('button', { name: 'Close image' }));
+    expect(screen.queryByRole('img', { name: 'Full size' })).toBeNull();
+  });
 });

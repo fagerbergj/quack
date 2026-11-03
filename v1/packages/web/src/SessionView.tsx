@@ -2,6 +2,7 @@ import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
+import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
@@ -17,7 +18,9 @@ import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } fro
 
 type Standing = { questions: Question[]; failures: Failure[] };
 type Queued = { id: string; text: string };
-type Frame = { type: 'queued'; items: Queued[] } | SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
+type Frame = { type: 'queued'; items: Queued[] } | SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
+
+let nextRequest = 0;
 
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
@@ -27,6 +30,12 @@ function useSocket(key: string, agent: string | undefined) {
   const [approvalTick, setTick] = useState(0);
   const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
   const [queued, setQueued] = useState<Queued[]>([]);
+  // One per input in flight, keyed by the requestId the server echoes on its `accepted` or `error`; it handles inputs concurrently, so answers can arrive out of order.
+  const acks = useRef(new Map<string, (ok: boolean) => void>());
+  const settle = (id: string | undefined, ok: boolean) => {
+    acks.current.get(id ?? '')?.(ok);
+    acks.current.delete(id ?? '');
+  };
   useEffect(() => {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -40,6 +49,8 @@ function useSocket(key: string, agent: string | undefined) {
       };
       // Every connect starts with a full snapshot that replaces the view, so a reconnect cannot duplicate lines.
       sock.onclose = () => {
+        acks.current.forEach((done) => done(false));
+        acks.current.clear();
         if (disposed) return;
         setState('reconnecting');
         timer = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 30_000));
@@ -57,7 +68,8 @@ function useSocket(key: string, agent: string | undefined) {
           if (touchesApprovals(frame.events)) setTick((t) => t + 1);
         } else if (frame.type === 'standing') setStanding(frame);
         else if (frame.type === 'queued') setQueued(frame.items);
-        else if (frame.type === 'error') setError(frame.error);
+        else if (frame.type === 'error') (setError(frame.error), settle(frame.requestId, false));
+        else if (frame.type === 'accepted') settle(frame.requestId, true);
       };
     };
     connect();
@@ -67,14 +79,18 @@ function useSocket(key: string, agent: string | undefined) {
       ws.current?.close();
     };
   }, [key, agent]);
-  const send = (input: string, whenBusy?: 'steer' | 'followUp') => {
+  // Resolves true once the server accepts the input, false when it rejects it or the socket drops, so a composer clears only on true.
+  const send = (input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []): Promise<boolean> => {
     if (ws.current?.readyState !== WebSocket.OPEN) {
       setError('Disconnected: reconnecting. Your message was not sent.');
-      return false;
+      return Promise.resolve(false);
     }
     setError('');
-    ws.current.send(JSON.stringify({ type: 'input', input, whenBusy }));
-    return true;
+    // Not randomUUID: it is missing on a page served over plain http.
+    const requestId = `${Date.now().toString(36)}-${(nextRequest += 1)}`;
+    const done = new Promise<boolean>((resolve) => acks.current.set(requestId, resolve));
+    ws.current.send(JSON.stringify({ type: 'input', requestId, input, images: images.length ? images : undefined, whenBusy }));
+    return done;
   };
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
   const unqueue = (type: 'withdraw' | 'steer', id: string) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }));
@@ -99,18 +115,26 @@ function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void
 
 type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
 
-function Composer({ busy, disabled, send, input, setInput, queued, unqueue }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue }) {
-  const submit = (e: SubmitEvent) => {
+function Composer({ busy, disabled, send, input, setInput, queued, unqueue, attach }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue; attach: Attachments }) {
+  const [sending, setSending] = useState(false);
+  const submit = async (e: SubmitEvent) => {
     e.preventDefault();
-    if (input.trim() && send(input, busy ? 'followUp' : undefined)) setInput('');
+    if (sending || (!input.trim() && !attach.images.length)) return;
+    setSending(true);
+    // A rejected send keeps the text and images so the person can fix it and send again.
+    if (await send(input, busy ? 'followUp' : undefined, attach.images)) (setInput(''), attach.clear());
+    setSending(false);
   };
+  const empty = !input.trim() && !attach.images.length;
   return (
     <>
       {queued.map((q) => <QueuedChip key={q.id} text={q.text} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
-      <form onSubmit={submit} className="pointer-events-auto flex items-center gap-2 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-4 shadow-lift ring-1 ring-line-strong transition focus-within:ring-ink-2/40">
+      <Pending attach={attach} />
+      <form onSubmit={submit} {...attach.handlers} className="pointer-events-auto flex items-center gap-1 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-1 shadow-lift ring-1 ring-line-strong transition focus-within:ring-ink-2/40">
+        <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <button type="submit" disabled={disabled} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="submit" disabled={disabled || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
       </form>
@@ -226,16 +250,22 @@ function usePaneStyle(): CSSProperties | undefined {
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
+// The landing composer's text and images seed this composer; they are sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while
+// the composer still holds the untouched seed, so an edit or a failed connect leaves them to the user.
+function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>) {
+  const [seed] = useState(() => pendingInput.get(sessionKey));
+  const [input, setInput] = useState(seed?.text ?? '');
+  const attach = useAttachments(seed?.images);
+  useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
+  useEffect(() => {
+    if (state === 'open' && seed && input === seed.text && attach.images === seed.images) void send(input, 'followUp', seed.images).then((ok) => ok && (setInput(''), attach.clear()));
+  }, [state]);
+  return { input, setInput, attach };
+}
+
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
-  // The landing composer's text seeds this composer.
-  const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
-  const [input, setInput] = useState(initial);
-  useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
-  // Sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
-  useEffect(() => {
-    if (state === 'open' && input !== '' && input === initial && send(input, 'followUp')) setInput('');
-  }, [state]);
+  const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
@@ -270,7 +300,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[720px] flex-col gap-2">
-            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} />
+            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
           </div>
         </div>
       </div>

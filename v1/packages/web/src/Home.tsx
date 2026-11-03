@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
+import { AttachButton, Pending, useAttachments } from './Attach.tsx';
 import { look } from './kinds.ts';
 import { Needs } from './Needs.tsx';
 import { age, group, pendingInput, titleOf, type Row } from './sessions.ts';
@@ -12,6 +13,7 @@ export const FOCUS_ASK = 'quack:focus-ask';
 // Same hand-off as the New session page: the text waits for the session's socket to open.
 function Ask() {
   const [input, setInput] = useState('');
+  const attach = useAttachments();
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const focus = () => box.current?.focus();
@@ -20,12 +22,12 @@ function Ask() {
   }, []);
   const send = (e: SubmitEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    pendingInput.set(HOME_KEY, input);
+    if (!input.trim() && !attach.images.length) return;
+    pendingInput.set(HOME_KEY, { text: input, images: attach.images });
     location.hash = `#/s/${encodeURIComponent(HOME_KEY)}?agent=${HOME_AGENT}`;
   };
   return (
-    <form onSubmit={send} className="flex flex-col gap-2.5">
+    <form onSubmit={send} {...attach.handlers} className="flex flex-col gap-2.5">
       <label htmlFor="ask" className="wordmark text-2xl leading-tight">What do you need?</label>
       <div className="flex flex-col gap-2.5 rounded-[22px] border border-line-strong bg-surface py-3 pr-3 pl-4 shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring">
         <textarea
@@ -37,9 +39,13 @@ function Ask() {
           placeholder="Ask about anything running, or start something new"
           className="resize-none bg-transparent text-[15.5px] leading-relaxed outline-none placeholder:text-muted"
         />
-        <button type="submit" disabled={!input.trim()} aria-label="Send" className="grid size-11 cursor-pointer place-items-center self-end rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+        <Pending attach={attach} />
+        <div className="flex items-center justify-between">
+        <AttachButton attach={attach} />
+        <button type="submit" disabled={!input.trim() && !attach.images.length} aria-label="Send" className="grid size-11 cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
+        </div>
       </div>
     </form>
   );

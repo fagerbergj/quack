@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
+import { Thumbs, type Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { Markdown } from './Markdown.tsx';
 import type { View } from './view.ts';
@@ -16,8 +17,8 @@ type Item =
   | { k: 'error'; key: string; text: string }
   | { k: 'work'; key: string; start: number; steps: Step[] };
 
-const text = (content: string | readonly { type: string; text?: string }[]) =>
-  typeof content === 'string' ? content : content.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('');
+const text = (content: string | readonly { type: string; text?: string }[], marks = true) =>
+  typeof content === 'string' ? content : content.map((c) => (c.type === 'text' ? c.text : marks ? `[${c.type}]` : '')).join('');
 
 const LIMIT = 2000;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
@@ -149,12 +150,14 @@ type Meta = readonly Record<string, unknown>[];
 function Row({ item, meta }: { item: Item; meta: Meta }): ReactNode {
   switch (item.k) {
     case 'user': {
-      const body = item.m.role === 'user' ? text(item.m.content) : '';
+      const body = item.m.role === 'user' ? text(item.m.content, false).replace(/\s*\[Attached images [^\]]*\]$/, '') : '';
+      const images = item.m.role === 'user' && typeof item.m.content !== 'string' ? item.m.content.filter((c): c is Img & { type: 'image' } => c.type === 'image') : [];
       const card = EXTENSIONS.map((e) => e.opening?.(body, meta)).find(Boolean);
       if (card) return card;
       return (
         <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 md-on-ink">
-          <Markdown text={body} />
+          {images.length > 0 && <Thumbs images={images} />}
+          {body && <Markdown text={body} />}
         </article>
       );
     }

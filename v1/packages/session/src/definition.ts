@@ -15,7 +15,7 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; models: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; timeZone?: string; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; timeZone?: string; /** A provider/model with `images: true` that answers questions about images for agents whose own model cannot see them. */ imageModel?: string; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
 /** Per agent (D48): its model as provider/model, a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
@@ -78,6 +78,15 @@ function validZone(z: unknown): boolean {
   }
 }
 
+function imageModelProblems(d: DeploymentConfig): string[] {
+  const ref = String(d.imageModel);
+  const limits = d.providers[ref.slice(0, ref.indexOf('/'))]?.models[ref.slice(ref.indexOf('/') + 1)];
+  return limits?.images ? [] : ['imageModel must be a provider/model of this config declared with images: true'];
+}
+
+/** The deployment's image model as pi-ai names it; absent when none is configured. */
+export const imageModelRef = (d: DeploymentConfig) => d.imageModel ? { provider: d.imageModel.slice(0, d.imageModel.indexOf('/')), modelId: d.imageModel.slice(d.imageModel.indexOf('/') + 1) } : undefined;
+
 /** Validates the deployment config, reporting every problem at once. */
 export function parseDeployment(raw: unknown): DeploymentConfig {
   const problems = !isObject(raw) || !isObject(raw.providers)
@@ -85,6 +94,7 @@ export function parseDeployment(raw: unknown): DeploymentConfig {
     : Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p));
   if (isObject(raw) && raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
   if (isObject(raw) && raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
+  if (isObject(raw) && raw.imageModel !== undefined) problems.push(...imageModelProblems(raw as DeploymentConfig));
   if (problems.length) throw new Error(`invalid deployment config:\n- ${problems.join('\n- ')}`);
   return raw as DeploymentConfig;
 }
