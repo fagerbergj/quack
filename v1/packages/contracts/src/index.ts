@@ -2,9 +2,10 @@ import { defineExtension, type Extension } from '@earendil-works/pi-durable';
 import { judge, type ClassifierRef, type ModelRef } from '@quack/judge';
 import { artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { contractRubric, specEvidence } from './rubric.ts';
-import { CONTRACT_KIND, CONTRACT_PATH, summarizeSpec, validateSpec } from './spec.ts';
+import { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec } from './spec.ts';
 import { contractTools } from './tools.ts';
 
+export { APPROVED_KIND, CHANGES_KIND, proposeContractTool, routesOf } from './approval.ts';
 export { defineContract } from './action.ts';
 export { askQuestionTool, YOU_DECIDE } from './ask.ts';
 export { kinds, restKind, type ContractKind } from './kinds.ts';
@@ -14,7 +15,10 @@ export { contractRubric, guideAnchors, specEvidence } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { manifest } from './manifest.ts';
 
-export const specKind: ArtifactKind = { kind: CONTRACT_KIND, path: CONTRACT_PATH, validate: validateSpec, summarize: summarizeSpec };
+// The version is data on the artifact: the summary is cut at 80 characters, which a long title would take it with.
+const specOutcome = (content: string) => { const s = parseSpec(content); return typeof s === 'string' ? undefined : `v${s.version}`; };
+
+export const specKind: ArtifactKind = { kind: CONTRACT_KIND, path: CONTRACT_PATH, validate: validateSpec, summarize: summarizeSpec, outcome: specOutcome };
 
 export type ContractsConfig = { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
 

@@ -638,7 +638,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/schedules', '#/settings']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/schedules', '#/contracts', '#/settings']);
   expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Artifacts' }));
   expect(within(rail).getByRole('link', { name: 'Artifacts' })).toHaveAttribute('aria-current', 'page');
@@ -1486,7 +1486,7 @@ describe('bottom bar', () => {
     const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
     const top = () => [...rail.querySelectorAll(':scope > a')].map((l) => l.textContent);
     expect(top()).toEqual(['Home', 'reMarkable', 'Agents']);
-    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Schedules', 'Settings']);
+    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Schedules', 'Contracts', 'Settings']);
     await userEvent.click(screen.getByRole('checkbox', { name: 'Sessions' }));
     expect(top()).toEqual(['Home', 'reMarkable', 'Agents', 'Sessions']);
   });
