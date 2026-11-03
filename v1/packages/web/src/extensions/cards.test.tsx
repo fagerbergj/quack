@@ -36,7 +36,9 @@ test('the review card shows the seal, counts, a posted link, findings with their
   expect(within(card).getByRole('link', { name: 'Posted to GitHub ↗' })).toHaveAttribute('href', link.url);
   expect(within(card).getByText('Blocking · defect')).toBeInTheDocument();
   expect(within(card).getByText('v1/packages/index/src/publisher.ts:58')).toBeInTheDocument();
-  expect(within(card).getAllByText('Why and a fix')).toHaveLength(2);
+  // A finding with more to say is its own closed disclosure, with no label to read.
+  expect(within(card).getByText('Blocking · defect').closest('summary')?.parentElement?.tagName).toBe('DETAILS');
+  expect(within(card).queryByText('Why and a fix')).toBeNull();
   expect(within(card).getByText('Verified · 6')).toBeInTheDocument();
   expect(within(card).getByText('Notes · 3')).toBeInTheDocument();
   expect(card).toHaveTextContent('Double-checked');

@@ -15,8 +15,8 @@ const ORDER = ['blocking', 'suggestion', 'question', 'nit'];
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const summary = 'flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[13px] text-muted hover:text-ink lg:min-h-8 [&::-webkit-details-marker]:hidden';
 
-function Chev() {
-  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
+function Chev({ className = '' }: { className?: string }) {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`chev flex-none transition-transform ${className}`}><path d="M9 6l6 6-6 6" /></svg>;
 }
 
 // Backtick spans in a one-line title read as code; nothing else is parsed.
@@ -43,19 +43,21 @@ function counts(findings: Finding[]): string[] {
   });
 }
 
+// A finding with more to say is itself the toggle; the chevron alone says it opens.
 function FindingRow({ f }: { f: Finding }) {
-  return (
-    <div className="flex flex-col gap-1.5 border-t border-line px-3.5 py-3">
+  const head = (
+    <span className="flex min-w-0 flex-1 flex-col gap-1.5">
       <span className={`inline-flex h-[22px] items-center self-start rounded-full px-2.5 text-[12px] font-semibold ${SEVERITY[f.severity] ?? 'bg-soft text-muted'}`}>{cap(f.severity) + (f.kind ? ` · ${f.kind}` : '')}</span>
       {f.loc && <code className="font-mono text-[12px] break-all text-link">{f.loc}</code>}
       <span className="text-[14px] leading-snug font-semibold"><Inline text={f.title} /></span>
-      {f.more && (
-        <details>
-          <summary className={summary}><span>Why and a fix</span><Chev /></summary>
-          <div className="text-[13px] text-ink-2"><Markdown text={f.more} /></div>
-        </details>
-      )}
-    </div>
+    </span>
+  );
+  if (!f.more) return <div className="flex border-t border-line px-3.5 py-3">{head}</div>;
+  return (
+    <details className="border-t border-line">
+      <summary className="flex min-h-11 cursor-pointer list-none items-start gap-2 px-3.5 py-3 text-ink hover:bg-soft [&::-webkit-details-marker]:hidden">{head}<Chev className="mt-1.5 text-muted" /></summary>
+      <div className="px-3.5 pb-3 text-[13px] text-ink-2"><Markdown text={f.more} /></div>
+    </details>
   );
 }
 
