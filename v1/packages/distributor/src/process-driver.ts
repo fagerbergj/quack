@@ -7,9 +7,11 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Readable, Writable } from 'node:stream';
 import { childPort, shellEnv } from '@quack/session';
+import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
 
 export type AgentStatus = 'draft' | 'promoted';
-export type AgentInfo = { name: string; version: number; status: AgentStatus };
+export type AgentInfo = { name: string; version: number; status: AgentStatus; model?: string; description?: string };
+export type AgentView = AgentDetail & { /** Every version the host holds a copy of, newest first: those it has loaded since the version store began, and those sessions pinned. */ versions: Array<{ version: number; status: AgentStatus }> };
 export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; archived?: boolean; running: boolean; createdAt: string; lastActivity: string };
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a session that already runs another. */
@@ -25,6 +27,10 @@ export type HostDriver = {
   /** Starts the session's process if it is not running and returns its base URL. A new session is bound to `agent` (default: the deployment's). */
   ensure(key: string, agent?: string): Promise<string>;
   agents(): Promise<AgentInfo[]>;
+  /** One agent's definition, prompt and rubric at `version` (default: current); undefined when the host holds no such copy. */
+  agent(name: string, version?: number): Promise<AgentView | undefined>;
+  /** Marks the agent's current definition promoted; refused (409) when `version` is not the current one. */
+  promote(name: string, version: number): Promise<AgentStatus>;
   /** Every session on disk, newest-created first. */
   sessions(): Promise<SessionInfo[]>;
   stop(key: string): Promise<void>;
@@ -55,7 +61,7 @@ export const sessionDirName = (key: string) => createHash('sha256').update(key).
 
 const exists = (path: string) => stat(path).then(() => true, () => false);
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
-const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'null') as { name?: unknown; version?: unknown; status?: unknown; retention?: { idleDays?: unknown } } | null;
+const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'null') as { name?: unknown; version?: unknown; status?: unknown; model?: unknown; description?: unknown; retention?: { idleDays?: unknown } } | null;
 
 // Content hash of a bundle directory (minus its version.lock), so two copies of one agent version can be compared.
 export async function digest(dir: string): Promise<string> {
@@ -169,7 +175,7 @@ const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
 // Shared host-driver logic: the session registry, directories and lifecycle bookkeeping; `launch` is the part that differs per host (A11).
-export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string }, launch: Launch): HostDriver {
+export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string; /** The rubric each agent runs with, stored beside each version so diffs cover it. */ rubricFor?: RubricFor }, launch: Launch): HostDriver {
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
@@ -189,16 +195,23 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   const sessionDir = (key: string) => join(opts.dataDir, sessionDirName(key));
 
   // Each agent.json is read fresh, so a new session binds to the newest definition; bind() then snapshots it for that session (DEP-3).
+  // Each version is copied into the data dir the first time it is loaded, so history outlives the image's agents dir; its promotion marker lives there too.
+  const kept = new Set<string>();
   async function registry(): Promise<Array<AgentInfo & { path: string; retention?: unknown }>> {
     const dirs = opts.agentsDir ? await readdir(opts.agentsDir, { withFileTypes: true }).catch(() => []) : [];
     const found = await Promise.all(dirs.filter((d) => d.isDirectory()).map(async (d) => {
-      const path = join(opts.agentsDir!, d.name, 'agent.json');
+      const dir = join(opts.agentsDir!, d.name);
+      const path = join(dir, 'agent.json');
       const def = await readJson(path).catch(() => null);
-      const status: AgentStatus = def?.status === 'promoted' ? 'promoted' : 'draft';
-      return typeof def?.name === 'string' && typeof def.version === 'number' ? { name: def.name, version: def.version, status, path, retention: def.retention?.idleDays } : undefined;
+      if (typeof def?.name !== 'string' || typeof def.version !== 'number' || !SAFE_NAME.test(def.name)) return undefined;
+      const id = `${def.name}@${def.version}`;
+      if (!kept.has(id)) await keepVersion(opts.dataDir, dir, opts.rubricFor).then(() => kept.add(id), () => undefined);
+      const status: AgentStatus = def.status === 'promoted' || (await exists(join(versionDir(opts.dataDir, def.name, def.version), 'promoted'))) ? 'promoted' : 'draft';
+      return { name: def.name, version: def.version, status, path, retention: def.retention?.idleDays, ...(typeof def.model === 'string' && { model: def.model }), ...(typeof def.description === 'string' && { description: def.description }) };
     }));
     return found.filter((a) => a !== undefined);
   }
+  void registry();
 
   const defaultPath = opts.defaultAgent ?? process.env.QUACK_AGENT;
   async function defaultName() {
@@ -276,7 +289,29 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return pending;
   }
 
-  const agents = async () => (await registry()).map(({ name, version, status }) => ({ name, version, status }));
+  const agents = async () => (await registry()).map(({ name, version, status, model, description }) => ({ name, version, status, ...(model && { model }), ...(description && { description }) }));
+
+  // Stored versions come first (they carry the rubric); a version only a session pinned fills in beneath.
+  async function agent(name: string, version?: number): Promise<AgentView | undefined> {
+    if (!SAFE_NAME.test(name)) return undefined;
+    const current = (await registry()).find((a) => a.name === name);
+    const stored = await readdir(join(opts.dataDir, STORE, name)).catch(() => []);
+    const pinned = (await readdir(opts.dataDir).catch(() => [])).filter((d) => d !== STORE).map((d) => join(opts.dataDir, d, SNAPSHOT));
+    const dirs = [...stored.map((v) => join(opts.dataDir, STORE, name, v)), ...pinned];
+    const held = (await Promise.all(dirs.map((d) => readBundle(d).catch(() => undefined)))).filter((b) => b?.name === name) as AgentDetail[];
+    const versions = [...new Map(held.reverse().map((b) => [b.version, b])).values()].sort((a, b) => b.version - a.version);
+    const want = versions.find((b) => b.version === (version ?? current?.version ?? versions[0]?.version));
+    return want && { ...want, versions: versions.map((b) => ({ version: b.version, status: b.status })) };
+  }
+
+  // The image's agents dir is replaced on deploy, so promotion is a marker in the version store, which the registry overlays.
+  async function promote(name: string, version: number): Promise<AgentStatus> {
+    const current = (await registry()).find((a) => a.name === name);
+    if (!current) throw new AgentError(404, `unknown agent ${name}`);
+    if (current.version !== version) throw new AgentError(409, `agent ${name} is now at version ${current.version}`);
+    await writeFile(join(versionDir(opts.dataDir, name, version), 'promoted'), '');
+    return 'promoted';
+  }
 
   async function sessions(): Promise<SessionInfo[]> {
     const dirs = await readdir(opts.dataDir).catch(() => []);
@@ -341,11 +376,11 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     await child.launched.stop();
   }
 
-  return { ensure, agents, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
+  return { ensure, agents, agent, promote, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
 }
 
 /** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */
-export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
+export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }
 

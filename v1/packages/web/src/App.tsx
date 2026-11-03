@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AgentsRoute } from './Agents.tsx';
 import { ArtifactList } from './ArtifactList.tsx';
 import { FOCUS_ASK } from './Home.tsx';
 import { More } from './More.tsx';
@@ -36,13 +37,13 @@ function useHash() {
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
 const PLACEHOLDERS: Record<Route, string> = {
-  more: 'More', artifacts: 'Artifacts', settings: 'Settings',
+  more: 'More', artifacts: 'Artifacts', agents: 'Agents', settings: 'Settings',
   ...Object.fromEntries(NAVS.map((n) => [n.route, n.label])),
 };
 
 function navRoute(hash: string): Route {
   if (hash === '#/' || hash === '' || hash === '#/new') return 'home';
-  const name = /^#\/(\w+)\/?$/.exec(hash)?.[1];
+  const name = /^#\/(\w+)(?:\/[^/?]+)?\/?$/.exec(hash)?.[1];
   return name && Object.hasOwn(PLACEHOLDERS, name) ? name : 'sessions';
 }
 
@@ -78,6 +79,7 @@ export function App() {
       {Page ? <Page rows={data.rows} />
         : nav === 'more' ? <More />
         : nav === 'settings' ? <Settings />
+        : nav === 'agents' ? <AgentsRoute hash={hash} />
         : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
         : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={desktop ? undefined : list} />}
     </Shell>

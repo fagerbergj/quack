@@ -229,6 +229,24 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     return true;
   }
 
+  // One agent's definition at a version, and promotion of its current draft; same boundary as housekeeping.
+  async function agentRoutes(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const match = /^\/agents\/([^/?]+)(\/promote|\?version=(\d+))?$/.exec(req.url ?? '');
+    const name = match && safeDecode(match[1]!);
+    if (!name || (req.method === 'GET' ? match[2]?.startsWith('/') : match[2] !== '/promote')) return false;
+    if (req.method === 'GET') {
+      const found = await driver.agent(name, match[3] ? Number(match[3]) : undefined);
+      return send(res, found ? 200 : 404, found ?? { error: 'no such agent version' }), true;
+    }
+    if (!req.headers['content-type']?.startsWith('application/json')) return send(res, 415, { error: 'send JSON' }), true;
+    const { version } = ((await json(req).catch(() => null)) ?? {}) as { version?: unknown };
+    if (typeof version !== 'number') return send(res, 400, { error: 'version must be a number' }), true;
+    const status = await driver.promote(name, version);
+    console.log(`agent ${name} version ${version} promoted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
+    send(res, 200, { name, version, status });
+    return true;
+  }
+
   // Mechanism only: which sessions are worth deleting is the caller's policy.
   async function retire(key: string, res: ServerResponse) {
     let done = () => {};
@@ -300,7 +318,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     return true;
   }
 
-  const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res));
+  const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res)) || (await agentRoutes(req, res));
 
   const server = createServer(async (req, res) => {
     try {

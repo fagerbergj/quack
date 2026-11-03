@@ -2,7 +2,10 @@
 export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string };
 /** What a session has spent: tokens by kind, and `cost` in dollars at the deployment's cloud-equivalent prices (0 when unpriced). */
 export type Spend = { cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
-export type AgentSummary = { name: string; version: number };
+export type AgentSummary = { name: string; version: number; status: 'draft' | 'promoted'; model?: string; description?: string };
+export type RubricCheck = { label?: string; weight?: number | 'gate' };
+export type AgentRubric = { criteria: Array<{ id: string; checks: RubricCheck[] }> };
+export type AgentDetail = { name: string; version: number; status: 'draft' | 'promoted'; definition: Record<string, unknown>; prompt: string; rubric?: AgentRubric; versions: Array<{ version: number; status: 'draft' | 'promoted' }> };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[]; scope?: string };
 // Gates and positive checks fail when not fully met; a pitfall (negative weight) fails when it showed up. Not applicable never fails.
@@ -21,6 +24,9 @@ const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
 export const listSessions = async () => (await json<{ sessions: SessionSummary[] }>(await fetch('sessions'))).sessions;
 export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
+export const getAgent = async (name: string, version?: number) => json<AgentDetail>(await fetch(`agents/${encodeURIComponent(name)}${version === undefined ? '' : `?version=${version}`}`));
+export const promoteAgent = async (name: string, version: number) =>
+  void (await json(await fetch(`agents/${encodeURIComponent(name)}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version }) })));
 export const listApprovals = async (key: string) => (await json<{ approvals: Approval[] }>(await fetch(`${base(key)}/approvals`))).approvals;
 // Verdicts sealed before checks carried a label have none; their id reads well enough.
 const named = (a: SealedArtifact): SealedArtifact =>
