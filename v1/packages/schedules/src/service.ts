@@ -47,6 +47,12 @@ async function body(req: IncomingMessage): Promise<any> {
   }
 }
 
+// The page reaches this service through the distributor's /apps/schedules proxy, which keeps the path; reads and deletes only, so the page cannot register.
+function routePath(req: IncomingMessage): string {
+  const raw = new URL(req.url ?? '', 'http://x').pathname;
+  return req.method === 'GET' || req.method === 'DELETE' ? raw.replace(/^\/apps\/schedules(?=\/|$)/, '/schedules') : raw;
+}
+
 export function createSchedulesService(config: ServiceConfig) {
   const now = config.now ?? (() => new Date());
   const doFetch = config.fetch ?? fetch;
@@ -168,12 +174,15 @@ export function createSchedulesService(config: ServiceConfig) {
     return { status: 201, body: { id: s.id } };
   }
 
+  function removeApi(id: string, res: ServerResponse) {
+    const removed = db.prepare(`DELETE FROM schedules WHERE id = ? AND source = 'api'`).run(id).changes;
+    send(res, removed ? 200 : 404, removed ? { id } : { error: 'no such api schedule' });
+  }
+
   const server = createServer(async (req, res) => {
     try {
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
-      // The page reaches this service through the distributor's /apps/schedules proxy, which keeps the path; reads and deletes only, so the page cannot register.
-      const raw = new URL(req.url ?? '', 'http://x').pathname;
-      const path = req.method === 'GET' || req.method === 'DELETE' ? raw.replace(/^\/apps\/schedules(?=\/|$)/, '/schedules') : raw;
+      const path = routePath(req);
       if (req.method === 'GET' && path === '/schedules') return send(res, 200, { schedules: list() });
       if (req.method === 'POST' && path === '/schedules') {
         const { status, body: out } = register(await body(req));
@@ -181,11 +190,7 @@ export function createSchedulesService(config: ServiceConfig) {
       }
       if (req.method === 'POST' && path === '/retention/sweep') return send(res, 200, await sweepRetention(dryRunOf(req)));
       const one = /^\/schedules\/(.+)$/.exec(path);
-      if (req.method === 'DELETE' && one) {
-        const id = decodeURIComponent(one[1]);
-        const removed = db.prepare(`DELETE FROM schedules WHERE id = ? AND source = 'api'`).run(id).changes;
-        return send(res, removed ? 200 : 404, removed ? { id } : { error: 'no such api schedule' });
-      }
+      if (req.method === 'DELETE' && one) return removeApi(decodeURIComponent(one[1]), res);
       send(res, 404, { error: 'not found' });
     } catch (err) {
       send(res, err instanceof BadRequest ? 400 : 500, { error: (err as Error).message });
