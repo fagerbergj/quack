@@ -242,18 +242,22 @@ function usePaneStyle(): CSSProperties | undefined {
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
-export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
-  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
-  // The landing composer's text seeds this composer.
+// The landing composer's text and images seed this composer; they are sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while
+// the composer still holds the untouched seed, so an edit or a failed connect leaves them to the user.
+function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>) {
   const [seed] = useState(() => pendingInput.get(sessionKey));
-  const initial = seed?.text ?? '';
-  const [input, setInput] = useState(initial);
+  const [input, setInput] = useState(seed?.text ?? '');
   const attach = useAttachments(seed?.images);
   useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
-  // Sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
   useEffect(() => {
-    if (state === 'open' && seed && (input !== '' || attach.images.length) && input === initial && attach.images === seed.images) void send(input, 'followUp', seed.images).then((ok) => ok && (setInput(''), attach.clear()));
+    if (state === 'open' && seed && input === seed.text && attach.images === seed.images) void send(input, 'followUp', seed.images).then((ok) => ok && (setInput(''), attach.clear()));
   }, [state]);
+  return { input, setInput, attach };
+}
+
+export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
+  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
+  const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
