@@ -5,9 +5,11 @@ import { age, group, pendingInput, titleOf, type Row } from './sessions.ts';
 
 const HOME_AGENT = 'quack';
 // The New session buttons send this; Home answers by focusing its box.
+// The one standing conversation; every Home send lands in it.
+export const HOME_KEY = 'home:main';
 export const FOCUS_ASK = 'quack:focus-ask';
 
-// Same hand-off as the New session page: the text waits for the new session's socket to open.
+// Same hand-off as the New session page: the text waits for the session's socket to open.
 function Ask() {
   const [input, setInput] = useState('');
   const box = useRef<HTMLTextAreaElement>(null);
@@ -19,9 +21,8 @@ function Ask() {
   const send = (e: SubmitEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    const key = `home:${crypto.randomUUID()}`;
-    pendingInput.set(key, input);
-    location.hash = `#/s/${encodeURIComponent(key)}?agent=${HOME_AGENT}`;
+    pendingInput.set(HOME_KEY, input);
+    location.hash = `#/s/${encodeURIComponent(HOME_KEY)}?agent=${HOME_AGENT}`;
   };
   return (
     <form onSubmit={send} className="flex flex-col gap-2.5">
@@ -51,7 +52,7 @@ function SessionLink({ r, now }: { r: Row; now: number }) {
       <span aria-hidden="true" className="pulse-dot size-2 flex-none rounded-full bg-accent-ink" />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[14.5px] font-semibold">{titleOf(r)}</span>
-        <span className="truncate text-[12.5px] text-muted">{[l.label, l.line, age(r.createdAt, now)].filter(Boolean).join(' · ')}</span>
+        <span className="truncate text-[12.5px] text-muted">{[...new Set([l.label, l.line, age(r.createdAt, now)])].filter(Boolean).join(' · ')}</span>
       </span>
       <span aria-hidden="true" className="text-muted">›</span>
     </a>
@@ -76,6 +77,7 @@ export function Home({ rows, error, now, reload }: { rows: Row[] | undefined; er
   return (
     <div className="mx-auto flex w-full max-w-[640px] flex-col gap-6 px-4 py-6 lg:py-12">
       <Ask />
+      {rows?.some((r) => r.key === HOME_KEY) && <a href={`#/s/${encodeURIComponent(HOME_KEY)}`} className="grid min-h-11 place-items-center self-start text-[13.5px] text-link no-underline">Open conversation</a>}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <Needs rows={rows ?? []} now={now} reload={reload} />
       <Running rows={g.running} now={now} />

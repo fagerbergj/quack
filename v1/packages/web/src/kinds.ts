@@ -7,7 +7,8 @@ export type { Tone };
 
 export type Look = { delivered?: boolean; link?: Delivered['link']; label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
 
-const DOT = 'M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0';
+const CHAT = 'M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM8 10h8M8 13h5';
+const DOC = 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6';
 
 // The newest sealed version of a kind for this session, from the index.
 function newest(r: Row, kind: string): IndexArtifact | undefined {
@@ -26,9 +27,9 @@ function outcome(r: Row, kind: string, w: Words, delivered?: Delivered): Pick<Lo
   return v.passed ? { line: w.pass, tone: 'ok' } : { line: w.fail, tone: 'bad' };
 }
 
-const FALLBACK: SessionKind = { label: '', match: () => true, icon: DOT, tint: BLUE, name: (r) => plain(r.title ?? r.key), words: () => undefined };
-// Conversations started from Home; the agent is quack, so the row says Chat rather than naming it.
-const HOME: SessionKind = { label: 'Chat', match: (r) => r.key.startsWith('home:'), icon: DOT, tint: BLUE, name: (r) => plain(r.title ?? 'Chat with quack'), words: () => undefined };
+const FALLBACK: SessionKind = { label: '', match: () => true, icon: DOC, tint: BLUE, name: (r) => plain(r.title ?? r.key), words: () => undefined };
+// Conversations started from Home; the row says Chat or Working, never the agent's name.
+const HOME: SessionKind = { label: 'Chat', match: (r) => r.key.startsWith('home:'), icon: CHAT, tint: BLUE, name: (r) => plain(r.title ?? 'Chat with quack'), words: () => ({ kind: 'chat', w: { run: 'Working', pass: 'Chat', fail: 'Chat', none: 'Chat' } }) };
 const KINDS: SessionKind[] = [...EXTENSIONS.flatMap((e) => e.session ?? []), HOME, FALLBACK];
 
 const approvals = (n: number) => (n > 1 ? `${n} waiting for your approval` : 'Waiting for your approval');

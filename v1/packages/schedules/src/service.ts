@@ -115,7 +115,8 @@ export function createSchedulesService(config: ServiceConfig) {
   // Policy for D24: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.
   async function sweepRetention(dryRun: boolean) {
     const { sessions } = (await (await doFetch(`${config.distributorUrl}/sessions`)).json()) as { sessions: Array<{ key: string; running: boolean; lastActivity: string; retention?: { idleDays: number } }> };
-    const due = sessions.filter((s) => s.retention && !s.running && +now() - Date.parse(s.lastActivity) > s.retention.idleDays * DAY_MS).map((s) => s.key);
+    // home:main is the standing Home conversation and must outlive any idle stretch.
+    const due = sessions.filter((s) => s.key !== 'home:main' && s.retention && !s.running && +now() - Date.parse(s.lastActivity) > s.retention.idleDays * DAY_MS).map((s) => s.key);
     if (dryRun) return { dryRun, due };
     const deleted: string[] = [];
     const refused: Array<{ key: string; status: number }> = [];

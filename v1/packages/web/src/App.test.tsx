@@ -202,7 +202,7 @@ async function startFromHome(text: string) {
   render(<App />);
   await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), text);
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Auuid-1\/ws\?agent=quack$/));
+  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Amain\/ws\?agent=quack$/));
 }
 
 test('starting a session opens a home: key for quack and sends the untouched first message once on open', async () => {
@@ -212,7 +212,20 @@ test('starting a session opens a home: key for quack and sends the untouched fir
   expect(sock.sent).toEqual([]);
   sock.open();
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
-  expect(sock.sent).toEqual([{ type: 'input', input: 'review it' }]);
+  expect(sock.sent).toEqual([{ type: 'input', input: 'review it', whenBusy: 'followUp' }]);
+});
+
+test('two Home sends go to the same home:main session, queued as follow-ups', async () => {
+  await startFromHome('first');
+  FakeSocket.all[0].open();
+  await waitFor(() => expect(FakeSocket.all[0].sent).toEqual([{ type: 'input', input: 'first', whenBusy: 'followUp' }]));
+  goTo('#/');
+  await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'second');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(FakeSocket.all).toHaveLength(2));
+  const urls = FakeSocket.all.map((w) => w.url.replace(/\?.*/, ''));
+  expect(new Set(urls).size).toBe(1);
+  expect(urls[0]).toMatch(/home%3Amain\/ws$/);
 });
 
 test('a seed the user edited is not sent on open, and a socket that never opens leaves the text', async () => {
@@ -1327,7 +1340,7 @@ test('the Home box opens a home: session for the quack agent and seeds its first
   expect(send).toBeDisabled();
   await userEvent.type(screen.getByRole('textbox', { name: 'What do you need?' }), 'how did the review go?');
   await userEvent.click(send);
-  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Auuid-1\/ws\?agent=quack$/));
+  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Amain\/ws\?agent=quack$/));
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('how did the review go?');
   expect(screen.getByRole('heading', { name: 'quack' })).toBeInTheDocument();
   expect(document.querySelector('a[aria-label="Home"]')).toHaveAttribute('href', '#/');

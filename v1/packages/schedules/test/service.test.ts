@@ -256,6 +256,7 @@ test('the retention sweep deletes only sessions idle past their agent retention,
     { key: 'old', running: false, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
     { key: 'recent', running: false, lastActivity: '2026-01-20T00:00:00Z', retention: { idleDays: 14 } },
     { key: 'keep-forever', running: false, lastActivity: '2025-01-01T00:00:00Z' },
+    { key: 'home:main', running: false, lastActivity: '2025-01-01T00:00:00Z', retention: { idleDays: 14 } },
     { key: 'running', running: true, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
   ];
   const deletes: string[] = [];
