@@ -171,7 +171,9 @@ export function createSchedulesService(config: ServiceConfig) {
   const server = createServer(async (req, res) => {
     try {
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
-      const path = new URL(req.url ?? '', 'http://x').pathname;
+      // The page reaches this service through the distributor's /apps/schedules proxy, which keeps the path; reads and deletes only, so the page cannot register.
+      const raw = new URL(req.url ?? '', 'http://x').pathname;
+      const path = req.method === 'GET' || req.method === 'DELETE' ? raw.replace(/^\/apps\/schedules(?=\/|$)/, '/schedules') : raw;
       if (req.method === 'GET' && path === '/schedules') return send(res, 200, { schedules: list() });
       if (req.method === 'POST' && path === '/schedules') {
         const { status, body: out } = register(await body(req));
