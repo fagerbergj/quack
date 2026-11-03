@@ -60,6 +60,7 @@ export function createStore(backend: Backend) {
     async questions(state?: string) {
       return (await facts(['question'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
         session: f.session, id: f.id.slice('question:'.length), question: field(f, 'question'), options: field(f, 'options'), evidence: field(f, 'evidence'),
+        header: field(f, 'header') ?? null, title: field(f, 'title') ?? null, detail: field(f, 'detail') ?? null, optionDescriptions: field(f, 'optionDescriptions') ?? {}, suggested: field(f, 'suggested') ?? null,
         state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: field(f, 'askedAt'),
       }));
     },

@@ -9,6 +9,15 @@ export type DecisionPoint = {
   question: string;
   options: string[];
   evidence?: string;
+  /** Card copy; `options` stay the plain labels an answer must match, so these only change how the question reads. */
+  /** Mirrors Claude Code's AskUserQuestion: `header` chip, options as label + description. */
+  header?: string;
+  title?: string;
+  detail?: string;
+  /** One-line description (the trade-off) per option label. */
+  optionDescriptions?: Record<string, string>;
+  /** Index into `options` of the recommended one. */
+  suggested?: number;
   /** Below this confidence a resolver's answer escalates to the next resolver. */
   minConfidence?: number;
 };

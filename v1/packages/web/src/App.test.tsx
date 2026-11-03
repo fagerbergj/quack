@@ -867,6 +867,42 @@ test('Home shows a workflow question with its options, and an option answers it'
   expect(screen.queryByRole('region', { name: 'Question' })).toBeNull();
 });
 
+test('a structured question renders title, Markdown detail, suggested option first, You decide as a text button, and a Why fold', async () => {
+  const q = { ...pendingDecision.questions[0]!, header: 'Errors', title: 'Error body for `404`?', detail: 'Callers parse **problem+json** today, see `errors.ts`.', options: ['Plain text', 'Problem JSON', 'You decide'], optionDescriptions: { 'Plain text': 'Smallest change.', 'Problem JSON': 'Typed, one more field.' }, suggested: 1 };
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/questions?state=pending'] = { questions: [q] };
+  stubViewport(false);
+  location.hash = '#/';
+  render(<App />);
+  const card = await screen.findByRole('region', { name: 'Question' });
+  expect(within(card).getByText('Errors')).toBeInTheDocument();
+  expect(within(card).getByText('404').tagName).toBe('CODE');
+  expect(within(card).getByText('problem+json').tagName).toBe('STRONG');
+  expect(within(card).getByText('errors.ts').tagName).toBe('CODE');
+  const rows = within(card).getAllByRole('button');
+  expect(rows.map((b) => b.textContent)).toEqual(['Problem JSONSuggestedTyped, one more field.', 'Plain textSmallest change.', 'You decide']);
+  expect(rows[0]).toHaveClass('text-left', 'w-full', 'min-h-11');
+  expect(rows[2]).not.toHaveClass('border');
+  expect(within(card).getByText('Why this matters')).toBeInTheDocument();
+  routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
+  await userEvent.click(rows[0]!);
+  expect(JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string)).toEqual({ choice: 'Problem JSON' });
+});
+
+test('a question without title keeps the plain layout and Evidence fold', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/questions?state=pending'] = pendingDecision;
+  stubViewport(false);
+  location.hash = '#/';
+  render(<App />);
+  const card = await screen.findByRole('region', { name: 'Question' });
+  expect(within(card).getByText('Evidence')).toBeInTheDocument();
+  expect(within(card).queryByText('Suggested')).toBeNull();
+  expect(within(card).getByRole('button', { name: 'meeting' })).not.toHaveClass('text-left');
+});
+
 test('a re-asked question with a newer askedAt shows again after the first was answered', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };

@@ -8,6 +8,12 @@ export type Question = {
   question: string;
   options: string[];
   evidence: string | null;
+  // Absent in questions stored before these existed; readers treat undefined as null / {}.
+  header?: string | null;
+  title?: string | null;
+  detail?: string | null;
+  optionDescriptions?: Record<string, string>;
+  suggested?: number | null;
   askedAt: number;
   answer: { choice: string; by: string; at: number } | null;
   /** The run that asked ended without an answer, so nobody is waiting on it. */
@@ -62,7 +68,7 @@ export function person(signal?: AbortSignal): Resolver {
       const id = `${String(api.taskId)}:${point.name}`;
       await api.commit(async (tx) => {
         const doc = await tx.doc(Questions, api.conversationId);
-        doc.items[id] ??= { question: point.question, options: point.options, evidence: point.evidence ?? null, askedAt: api.now(), answer: null, closed: false };
+        doc.items[id] ??= { question: point.question, options: point.options, evidence: point.evidence ?? null, header: point.header ?? null, title: point.title ?? null, detail: point.detail ?? null, optionDescriptions: point.optionDescriptions ?? {}, suggested: point.suggested ?? null, askedAt: api.now(), answer: null, closed: false };
       }, ctx);
       const watch = await api.watchDoc(Questions, api.conversationId, ctx);
       if (!watch) throw new Error('question state is unavailable');

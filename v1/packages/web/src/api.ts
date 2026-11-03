@@ -52,7 +52,7 @@ async function indexRead<T>(path: string, field: string): Promise<T[] | undefine
   return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
 }
 /** A question an extension escalated to a person; `askedAt` is when it was asked. */
-export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number };
+export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number; header?: string | null; title?: string | null; detail?: string | null; optionDescriptions?: Record<string, string>; suggested?: number | null };
 export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: number };
 export const indexQuestions = () => indexRead<IndexQuestion>('index/questions?state=pending', 'questions');
 export const listQuestions = async (key: string) => (await json<{ questions: Question[] }>(await fetch(`${base(key)}/questions`))).questions;
