@@ -34,6 +34,8 @@
   --color-danger-line: light-dark(#f5c2c0, #6b2a26);
   --color-link: light-dark(#2f5fb3, #8fb3ff);
   --color-link-bg: light-dark(#eaf1ff, #16233c);
+  --color-merged: light-dark(#6b3fb0, #c9a8ff);
+  --color-merged-bg: light-dark(#f1eaff, #261a3f);
   /* The reMarkable page stock is paper in both themes. */
   --color-paper: #f3efe6;
   --color-paper-ink: #2f3a36;

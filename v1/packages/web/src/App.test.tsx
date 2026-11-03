@@ -111,6 +111,30 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
 });
 
+test('review rows carry their PR state from one lookup, and read plainly when the service is not connected', async () => {
+  const keys = encodeURIComponent('github:a/one#1,github:a/one#2,github:a/one#3');
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' }), sess('github:a/one#3', { title: 'fix: third' }), sess('gh:9', { title: 'Plain' })] };
+  routes[`GET /apps/github/pulls?keys=${keys}`] = { pulls: { 'a/one#1': { state: 'open', at: '2026-11-01T00:00:00Z' }, 'a/one#2': { state: 'merged', at: '2026-11-02T00:00:00Z' } } };
+  const view = render(<App />);
+  const row = async (name: RegExp) => await screen.findByRole('link', { name });
+  await waitFor(async () => expect(await row(/#2 Second/)).toHaveTextContent('Merged'));
+  expect(await row(/#1 First/)).toHaveTextContent('Open');
+  expect(await row(/#3 Third/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(1);
+  view.unmount();
+  delete routes[`GET /apps/github/pulls?keys=${keys}`];
+  render(<App />);
+  expect(await row(/#1 First/)).not.toHaveTextContent(/Open|Merged|Closed/);
+});
+
+test('a closed PR reads Closed on its row', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' })] };
+  routes[`GET /apps/github/pulls?keys=${encodeURIComponent('github:a/one#1')}`] = { pulls: { 'a/one#1': { state: 'closed', at: '2026-11-01T00:00:00Z' } } };
+  render(<App />);
+  await waitFor(async () => expect(await screen.findByRole('link', { name: /#1 First/ })).toHaveTextContent('Closed'));
+});
+
 test('review rows show their repo only when the list holds reviews from two repos', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' })] };
   const view = render(<App />);

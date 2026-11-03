@@ -39,6 +39,9 @@ const github = await listen(
     if (url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
     if (url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
     if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/9') return reply(200, { number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z' });
+    if (url === '/repos/acme/widgets/pulls/10') return reply(200, { number: 10, state: 'closed', merged: false, closed_at: '2026-11-02T00:00:00Z' });
+    if (url === '/repos/acme/widgets/pulls/11') return reply(200, { number: 11, state: 'open', updated_at: '2026-11-03T00:00:00Z' });
     if (url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
     // Every page full: a commit whose check runs never end.
     if (url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
@@ -333,4 +336,38 @@ test('a review posts its inline comments on the right side, mentions stripped; a
   const down = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'x', fallbackBody: 'y', comments: [{ path: 'down.ts', line: 1, body: 'n' }] }), headers: { authorization: 'Bearer svc-secret' } });
   assert.equal(down.status, 502);
   assert.equal(posts() - before, 3);
+});
+
+const pulls = (keys: string, token = 'svc-secret') =>
+  fetch(`${service}/apps/github/pulls?keys=${encodeURIComponent(keys)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: (await r.json()) as any }));
+const reads = (n: number) => calls.filter((c) => c.path === `/repos/acme/widgets/pulls/${n}`).length;
+
+test('closed and reopened webhooks record the PR state and start no run', async () => {
+  invocations.length = 0;
+  const closed = (n: number, merged: boolean) => ({ action: 'closed', pull_request: { ...pr, number: n, state: 'closed', merged, merged_at: merged ? '2026-11-03T10:00:00Z' : null, closed_at: '2026-11-03T10:00:00Z', labels: [{ name: 'quack:review' }] }, repository });
+  assert.equal(await deliver('pull_request', closed(20, true), { id: 'd-c1' }), 200);
+  assert.equal(await deliver('pull_request', closed(21, false), { id: 'd-c2' }), 200);
+  assert.equal(await deliver('pull_request', { action: 'reopened', pull_request: { ...pr, number: 22, state: 'open' }, repository }, { id: 'd-c3' }), 200);
+  assert.equal(invocations.length, 0);
+  const closedThenReopened = [closed(23, false), { action: 'reopened', pull_request: { ...pr, number: 23, state: 'open' }, repository }];
+  for (const [i, p] of closedThenReopened.entries()) await deliver('pull_request', p, { id: `d-r${i}` });
+  const before = calls.length;
+  const { body } = await pulls('github:acme/widgets#20,ACME/widgets#21,acme/widgets#22,acme/widgets#23');
+  assert.equal(calls.length, before, 'recorded states need no GitHub read');
+  const states = Object.fromEntries(Object.entries(body.pulls).map(([k, v]: any) => [k, v.state]));
+  assert.deepEqual(states, { 'acme/widgets#20': 'merged', 'ACME/widgets#21': 'closed', 'acme/widgets#22': 'open', 'acme/widgets#23': 'open' });
+  assert.equal(body.pulls['acme/widgets#20'].at, '2026-11-03T10:00:00Z');
+});
+
+test('an unseen PR is read from GitHub once; merged and closed stay cached', async () => {
+  const keys = 'github:acme/widgets#9,github:acme/widgets#10,github:acme/widgets#11';
+  const first = await pulls(keys);
+  assert.deepEqual(Object.fromEntries(Object.entries(first.body.pulls).map(([k, v]: any) => [k, v.state])), { 'acme/widgets#9': 'merged', 'acme/widgets#10': 'closed', 'acme/widgets#11': 'open' });
+  await pulls(keys);
+  assert.deepEqual([reads(9), reads(10), reads(11)], [1, 1, 1]);
+});
+
+test('a PR the app cannot read is left out, and the route needs the service token', async () => {
+  assert.deepEqual((await pulls('github:acme/private#1,not-a-key')).body, { pulls: {} });
+  assert.equal((await pulls('github:acme/widgets#9', 'wrong')).status, 401);
 });
