@@ -10,6 +10,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, pendingApprovals, resolveApproval } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
+import { claimedCommands } from '../src/claims.ts';
 import { cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
@@ -180,6 +181,25 @@ test('a claimed pass whose only run exited non-zero fails deliver', async () => 
   await run;
   assert.match(seen.at(-1)!, /`ls nonexistent-dir` passed, but every run of it exited non-zero/);
   await session.close();
+});
+
+test('a claim whose line says it failed is backed by a failed run', async () => {
+  const { session, run, seen } = await claiming('ls nonexistent-dir', ['ls nonexistent-dir'], ' It failed as expected.');
+  await answer(session, 'approve');
+  assert.equal((await run).status, 'done');
+  assert.doesNotMatch(seen.at(-1)!, /Not delivered/);
+  await session.close();
+});
+
+test('a failure word must be a word: "redo" does not excuse a claimed pass whose runs all failed', async () => {
+  const { session, run, seen } = await claiming('ls nonexistent-dir', ['ls nonexistent-dir'], ' After a redo of the codegen step.');
+  await run;
+  assert.match(seen.at(-1)!, /`ls nonexistent-dir` passed, but every run of it exited non-zero/);
+  await session.close();
+});
+
+test('a claim on the last line keeps its last character when pr.md ends without a newline', () => {
+  assert.deepEqual(claimedCommands('# t\n\nHow verified: `npm test` broke').map((c) => c.line), ['How verified: `npm test` broke']);
 });
 
 test('a backticked commit id outside the commits made since checkout fails deliver', async () => {

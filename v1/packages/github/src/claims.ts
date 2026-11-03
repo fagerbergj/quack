@@ -9,7 +9,9 @@ type Tx = Parameters<Parameters<ToolExecutionApi['commit']>[0]>[0];
 // shortcut: a backticked span with a space counts as a command and matching is by normalized substring, so prose like `a = 3` can false-flag and a command run inside a script is missed; upgrade by having the agent list its runs in a structured block.
 const norm = (s: string) => s.replace(/['"]/g, '').replace(/(^|&&|;)\s*cd\s+\S+\s*&&/g, '$1').replace(/\s+/g, ' ').trim();
 
-const spans = (text: string) => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => ({ code: m[1].trim(), line: text.slice(text.lastIndexOf('\n', m.index) + 1, text.indexOf('\n', m.index)) }));
+// The whole line around index i; the last line may have no newline after it.
+const lineAt = (t: string, i: number) => { const end = t.indexOf('\n', i); return t.slice(t.lastIndexOf('\n', i) + 1, end < 0 ? undefined : end); };
+const spans = (text: string) => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => ({ code: m[1].trim(), line: lineAt(text, m.index) }));
 
 /** Backticked commands in the "How verified" part of the PR text, with the line that claims them. */
 export function claimedCommands(text: string) {
@@ -43,7 +45,7 @@ export function unbackedClaims(text: string, runs: Run[], commits: string[]): st
   const found = claimedCommands(text).flatMap(({ code, line }) => {
     const hits = runs.filter((r) => norm(r.command).includes(norm(code)));
     if (!hits.length) return [`${PR} says you ran \`${code}\`, but this session never ran it`];
-    if (hits.every((r) => r.failed) && !/fail|red|error|broke/i.test(line)) return [`${PR} says \`${code}\` passed, but every run of it exited non-zero`];
+    if (hits.every((r) => r.failed) && !/\bfail|\bred\b|\berror|\bbroke/i.test(line)) return [`${PR} says \`${code}\` passed, but every run of it exited non-zero`];
     return [];
   });
   const missing = claimedShas(text).filter((s) => !commits.some((c) => c.startsWith(s)));
