@@ -18,7 +18,7 @@ export type PullRequestRecord = {
 };
 
 /** reviewed: the head each version was first judged under, so a version never posts against a later checkout. posted: versions of the review already sent, so none goes out twice; postedThisCheckout: the one a run sent. */
-export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number; reviewed?: Record<string, string>; checkout?: { head: string; text: string } }>({
+export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number; reviewed?: Record<string, string>; checkout?: { head: string; text: string }; /** Why the last checkout found nothing to review; submit_review refuses while it stands. */ skipped?: string }>({
   kind: 'github.pr', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ pr: null }), checkpointWhen: () => false,
 });
 
@@ -83,7 +83,11 @@ export function checkoutTool(config: SessionConfig) {
       const pr = await fetchRecord(config, owner, repo, args.number);
       const prior = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
       const skip = skipReason(pr, prior);
-      if (skip) return { output: [{ type: 'text', text: skip }] };
+      if (skip) {
+        await api.commit(async (tx) => { (await tx.doc(PullRequestDoc, api.conversationId)).skipped = skip; }, ctx);
+        return { output: [{ type: 'text', text: skip }] };
+      }
+      if (prior?.skipped) await api.commit(async (tx) => { delete (await tx.doc(PullRequestDoc, api.conversationId)).skipped; }, ctx);
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const stale = staleNote(args.head, pr.headSha);
       // The same head with its tree still there needs no clone or fetch.
