@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
-import { Artifacts, gated, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, gated, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
@@ -18,15 +18,23 @@ export function routesOf(document: unknown): string {
   return ops.length > 2 ? `${ops.slice(0, 2).join(', ')} +${ops.length - 2}` : ops.join(', ');
 }
 
-// Appends a small decision artifact; its summary and outcome reach the index, so the Contracts page needs no content.
-async function record(api: ToolExecutionApi, kind: string, spec: ContractSpec, note: string, ctx: Context) {
+// Writes the artifact for every decided proposal that has none, keyed by approval id, so a crash between the verdict and the record loses nothing.
+async function reconcile(api: ToolExecutionApi, ctx: Context) {
   await api.commit(async (tx) => {
+    const { items } = await tx.doc(Approvals, api.conversationId);
     const doc = await tx.doc(Artifacts, api.conversationId);
-    doc.kinds[kind] ??= { versions: [] };
-    const entry = doc.kinds[kind];
-    const content = JSON.stringify({ version: spec.version, note });
-    const item: SealedArtifact = { kind, version: entry.versions.length + 1, hash: '', content, sealedAt: api.now(), verdict: null, outcome: `v${spec.version}`, summary: note.slice(0, 80) };
-    entry.versions.push(item);
+    for (const [id, a] of Object.entries(items)) {
+      if (a.tool !== 'propose_contract' || !a.verdict) continue;
+      const args = a.args as { version: number };
+      const ok = a.verdict.decision === 'approve';
+      const kind = ok ? APPROVED_KIND : CHANGES_KIND;
+      doc.kinds[kind] ??= { versions: [] };
+      const entry = doc.kinds[kind];
+      if (entry.versions.some((v) => (JSON.parse(v.content) as { approval?: string }).approval === id)) continue;
+      const note = ok ? `Approved version ${args.version}` : (a.verdict.reason ?? '');
+      const sealed: SealedArtifact = { kind, version: entry.versions.length + 1, hash: '', content: JSON.stringify({ version: args.version, note, approval: id }), sealedAt: api.now(), verdict: null, outcome: `v${args.version}`, summary: note.slice(0, 80) };
+      entry.versions.push(sealed);
+    }
   }, ctx);
 }
 
@@ -59,18 +67,18 @@ export const proposeContractTool: ToolRegistration = defineTool({
   parameters: obj({}, { open: true }),
   replay: 'safe',
   async execute(_args, api, ctx) {
+    await reconcile(api, ctx);
     const found = await evidence(api, ctx);
     if (!found) return reply('No sealed spec version has passed its checks; write artifacts/spec.json and call submit_contract first.', true);
     const { spec, findings, breaks } = found;
     const summary = `Approve ${routesOf(spec.document) || spec.title} v${spec.version}`;
     const verdict = await approval.execute({ summary, title: spec.title, version: spec.version, findings, breaks } as never, api, ctx);
     const text = verdict.output?.map((p) => ('text' in p ? p.text : '')).join('') ?? '';
+    await reconcile(api, ctx);
     if (!verdict.isError) {
-      await record(api, APPROVED_KIND, spec, `Approved version ${spec.version}`, ctx);
       return reply(`Version ${spec.version} is approved.`);
     }
     if (!text.startsWith('Rejected by')) return verdict;
-    await record(api, CHANGES_KIND, spec, text.replace(/^Rejected by [^:]*:?\s*/, ''), ctx);
     return reply(`${text}. Treat the reason as a change request: ask about anything it leaves open, write version ${spec.version + 1} with its changes and compatibility, call submit_contract, then propose_contract again.`, true);
   },
 }) as ToolRegistration;

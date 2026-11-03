@@ -181,6 +181,27 @@ test('a rejected proposal records the change request and feeds the reason back t
   await s.close();
 });
 
+test('a decision whose record was lost in a crash is written once when propose_contract next runs', async () => {
+  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), () => fauxAssistantMessage('Asked again.')]);
+  const { run } = await defineV1(s);
+  const first = await pendingProposal(s);
+  await resolveApproval(s.root, first.id, { decision: 'approve', by: 'jf' }, ctx);
+  await run;
+  // The crash window: the verdict is stored, the record is not.
+  await s.root.commit(async (tx) => { (await tx.doc(Artifacts, s.root.id)).kinds['contract.approved'].versions.length = 0; }, ctx);
+  assert.equal((await kindOf(s, 'contract.approved')).length, 0);
+  const again = s.submit('Propose it again', 'r-2', true);
+  const second = await pendingProposal(s);
+  assert.notEqual(second.id, first.id);
+  const recovered = await kindOf(s, 'contract.approved');
+  assert.equal(recovered.length, 1, 'the lost approval is written once, before anything new is asked');
+  assert.equal(JSON.parse(recovered[0].content).approval, first.id);
+  await resolveApproval(s.root, second.id, { decision: 'reject', reason: 'later', by: 'jf' }, ctx);
+  await again;
+  assert.equal((await kindOf(s, 'contract.approved')).length, 1, 'a second pass does not write it twice');
+  await s.close();
+});
+
 test('propose_contract refuses when no spec has passed', async () => {
   let seen = '';
   const s = await open([call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('ok'))]);
