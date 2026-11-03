@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { invocationRequest, serviceHttp, submitToSession } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
 import { fixRefused, noticeFor, settled } from './notice.ts';
+import { prStateKey, pullStates, stateOf } from './pulls.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
@@ -14,6 +15,8 @@ export type ServiceConfig = {
   agent: string;
   /** The agent that backs `/fix`; without it `/fix` is ignored, so a deployment opts in. */
   implementerAgent?: string;
+  /** Where PR states persist; without it they live in memory and are re-read after a restart. */
+  statesFile?: string;
 };
 
 const BACKOFF_CAP_MS = 30_000;
@@ -75,10 +78,24 @@ async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response):
   return true;
 }
 
-async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState) {
+type States = ReturnType<typeof pullStates>;
+
+// A close or reopen only updates the PR's recorded state; it never starts a run.
+function recordState(states: States, p: Record<string, any>): boolean {
+  const pr = p.pull_request;
+  if (!pr || !p.repository || (p.action !== 'closed' && p.action !== 'reopened')) return false;
+  const at = pr.merged_at ?? pr.closed_at ?? pr.updated_at ?? new Date().toISOString();
+  states.record(prStateKey(p.repository.owner.login, p.repository.name, pr.number), p.action === 'reopened' ? 'open' : stateOf(pr), at);
+  return true;
+}
+
+async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
-  const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label, await app.slug());
+  const event = req.headers['x-github-event'] as string | undefined;
+  const hook = JSON.parse(body.toString('utf8'));
+  if (event === 'pull_request' && recordState(states, hook)) return send(res, 200, { recorded: true });
+  const trigger = triggerFor(event, hook, config.label, await app.slug());
   const agent = trigger?.role === 'implementer' ? config.implementerAgent : config.agent;
   if (!trigger || !agent) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
@@ -209,11 +226,16 @@ export async function invocationMeta(app: GithubApp, owner: string, repo: string
 
 export function createGithubService(app: GithubApp, config: ServiceConfig) {
   const state: RunState = { posted: new Map(), watched: new Set() };
+  const states = pullStates(config.statesFile);
   return createServer(async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;
-      if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state);
+      if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state, states);
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
+      if (req.method === 'GET' && path === '/apps/github/pulls') {
+        const keys = (new URL(req.url ?? '', 'http://x').searchParams.get('keys') ?? '').split(',').filter(Boolean);
+        return send(res, 200, { pulls: await states.lookup(app, keys) });
+      }
       if (req.method === 'GET' && path === '/git-credential') return await gitCredential(req, res, app);
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app) }[path] : undefined;
       if (post) return await post();

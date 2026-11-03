@@ -9,3 +9,4 @@ export { evalService } from './eval.ts';
 export { fileStore, redeliverFailed, startRedelivery } from './redeliver.ts';
 export { manifest } from './manifest.ts';
 export { checkoutTaskTool, deliverTool, prBodyKind } from './task.ts';
+export { type PrState } from './pulls.ts';
