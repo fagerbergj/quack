@@ -1616,6 +1616,7 @@ test('a Home approval card says what it will do, from the args the index carries
   phoneAt('#/');
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
-  expect(within(needs).getByText(args.summary)).toBeInTheDocument();
+  // The headline, then again in the Details tree.
+  expect(within(needs).getAllByText(args.summary)[0]).toBeInTheDocument();
   expect(within(needs).getByText(/abc1234 docs: fix typo/)).toBeInTheDocument();
 });
