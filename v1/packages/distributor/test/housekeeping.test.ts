@@ -18,7 +18,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
     await mkdir(join(dataDir, sessionDirName(key)), { recursive: true });
     await writeFile(join(dataDir, sessionDirName(key), 'session-key'), key);
   }
-  const upstream = createServer((_req, res) => res.end(JSON.stringify({ status: 'HealthyBusy' }))).listen(0);
+  const upstream = createServer((req, res) => res.end(JSON.stringify(req.url === '/export' ? { transcript: [], artifacts: [] } : { status: 'HealthyBusy' }))).listen(0);
   cleanups.push(() => upstream.close());
   const real = processDriver({ command: [], dataDir });
   const driver: HostDriver = { ...real, running: () => (opts.busy ? [opts.busy] : []), ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, touch: async () => {}, setWake: async () => {} };
@@ -32,7 +32,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
     return { status: res.status, body: (await res.json()) as { error?: string } };
   };
   const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; archived?: boolean }> }).sessions;
-  return { call, listed, forgotten, dataDir, sweep: () => server.sweep() };
+  return { url, call, listed, forgotten, dataDir, sweep: () => server.sweep() };
 }
 
 test('renaming sets the title, and an empty title restores the default', async () => {
@@ -77,4 +77,15 @@ test('an unknown key is 404, a bad body 400, and a non-JSON caller 415', async (
   assert.equal((await call('PATCH', '/sessions/idle', { title: 5 })).status, 400);
   assert.equal((await call('PATCH', '/sessions/idle', {})).status, 400);
   assert.equal((await call('POST', '/sessions/idle/delete', {}, { 'content-type': 'text/plain' })).status, 415);
+});
+
+test('export downloads one file with the session metadata and what the process returns, and 404s an unknown key', async () => {
+  const { url } = await start();
+  const res = await fetch(url('/sessions/idle/export'));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-disposition'), 'attachment; filename="quack-idle.json"');
+  const body = (await res.json()) as { session: { key: string; running?: boolean } };
+  assert.equal(body.session.key, 'idle');
+  assert.equal('running' in body.session, false);
+  assert.equal((await fetch(url('/sessions/nope/export'))).status, 404);
 });
