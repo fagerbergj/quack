@@ -15,3 +15,11 @@ test('define_contract starts the contracts agent on the description in a session
   assert.equal(sent[0].body.input, 'Define GET /x   for the page');
   await assert.rejects(defineContract.start({ description: 'q' }, { distributorUrl: 'http://d', fetch: (async () => new Response('{}', { status: 500 })) as unknown as typeof fetch, env: {} }), /HTTP 500/);
 });
+
+test('a working title is the first clause of the description, cut at a word near 60 characters', async () => {
+  const { draftTitle } = await import('../src/action.ts');
+  assert.equal(draftTitle('GET /apps/sleeper/schedule: the Sleeper page reads which jobs run this week.'), 'GET /apps/sleeper/schedule');
+  assert.equal(draftTitle('The quack v1 distributor HTTP API (contract distributor.http in issue #2135): the routes'), 'The quack v1 distributor HTTP API');
+  const long = draftTitle('A contract for the long list of things that the reMarkable page asks the service about when it loads');
+  assert.ok(long.length <= 61 && long.endsWith('…') && !long.endsWith(' …'), long);
+});

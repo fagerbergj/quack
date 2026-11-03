@@ -1732,3 +1732,13 @@ test('a running session waiting for a model slot says so on its row, instead of 
   expect(await screen.findByRole('link', { name: /Queued one/ })).toHaveTextContent('Waiting for a model slot (2 ahead)');
   expect(screen.getByRole('link', { name: /Working one/ })).not.toHaveTextContent('Waiting for a model slot');
 });
+
+test('a contract session is named by its latest spec in the list, not by the text that started it', async () => {
+  routes['GET /sessions'] = { sessions: [sess('contracts:c1', { title: 'The quack v1 distributor HTTP API (contract distributor.http in…' })] };
+  routes['GET /index/artifacts'] = { artifacts: [{ session: 'contracts:c1', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Distributor HTTP API, version 1', outcome: 'v1' }] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Distributor HTTP API/ })).toHaveAttribute('href', '#/s/contracts%3Ac1');
+  expect(screen.queryByText(/contract distributor\.http in/)).toBeNull();
+});

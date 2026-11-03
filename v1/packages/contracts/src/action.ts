@@ -12,9 +12,15 @@ export const defineContract: Action<typeof params> = {
   async start({ description }, ctx) {
     const id = randomUUID();
     const session = `contracts:${id}`;
-    const title = description.replace(/\s+/g, ' ').trim().slice(0, 80);
+    const title = draftTitle(description);
     const res = await submitToSession(ctx.distributorUrl, { key: session, agent: 'contracts', title, requestId: `home-contract:${id}`, input: description }, ctx.fetch);
     if (!res.ok) throw new Error(`the distributor refused the contract: HTTP ${res.status}`);
     return { session, title };
   },
 };
+
+// A working title from the description's first clause, cut at a word; the spec's own title takes over once it exists.
+export function draftTitle(description: string): string {
+  const first = description.replace(/\s+/g, ' ').trim().split(/(?<=[^\s]):\s|\.\s|\s\(/)[0]!;
+  return first.length <= 60 ? first : `${first.slice(0, 60).replace(/\s+\S*$/, '')}…`;
+}
