@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { CORE, HOME, PAGES, useBar, type Item } from './bottomBar.ts';
 import { EXTENSIONS } from './extensions/index.ts';
+import { shortCommit, useVersion } from './useVersion.ts';
 
 export type Route = string;
 
@@ -61,6 +62,12 @@ function Duck({ size, className = '' }: { size: number; className?: string }) {
   );
 }
 
+// Links to Settings, where the full version and build time live.
+export function VersionLink({ className }: { className: string }) {
+  const v = useVersion();
+  return v?.commit ? <a href="#/settings" className={className}>{`Version ${shortCommit(v.commit)}`}</a> : null;
+}
+
 export const THEME_KEY = 'quack:theme';
 
 export function storedTheme() {
@@ -77,7 +84,10 @@ const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-
 // Below lg main is the only scroller, so the document never scrolls and the URL bar cannot collapse mid-scroll; `bare` drops the phone title bar.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
-  const tabs = useBar().flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
+  const bar = useBar();
+  const tabs = bar.flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
+  // The sidebar honours the same picks as the bottom bar; the rest sit under More, as on the More page.
+  const rest = [...CORE, ...MORE].filter((n) => !bar.includes(n.route));
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
     <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls}>
@@ -100,16 +110,18 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         </a>
         <a href="#/new" className="mx-3 mb-2 inline-flex h-9 items-center justify-center rounded-full bg-ink px-3 text-[13px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
         <nav aria-label="Main" className="flex flex-none flex-col gap-0.5 px-3 pb-2 text-[13.5px]">
-          {MAIN.map((n) => link(n, linkBase))}
-          <details className="group">
+          {[HOME, ...tabs].map((n) => link(n, linkBase))}
+          {/* Opens on its own when the current page is in it, so the rail always shows where you are. */}
+          <details className="group" open={rest.some((n) => n.route === route) || undefined}>
             <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-soft hover:text-ink [&::-webkit-details-marker]:hidden">
               <Icon route="grid" />
               More
             </summary>
-            <div className="flex flex-col gap-0.5 pl-3">{MORE.map((n) => link(n, linkBase))}</div>
+            <div className="flex flex-col gap-0.5 pl-3">{rest.map((n) => link(n, linkBase))}</div>
           </details>
         </nav>
         <div className="flex min-h-0 flex-1 flex-col border-t border-line">{sidebar}</div>
+        <VersionLink className="px-5 py-2 font-mono text-[11px] text-muted no-underline hover:text-ink" />
       </aside>
       <div className="fixed inset-x-0 top-0 bottom-[calc(48px+var(--safe-b))] flex flex-col lg:contents">
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>

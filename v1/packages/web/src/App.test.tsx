@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
+import { forgetVersion } from './api.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
@@ -60,6 +61,7 @@ beforeEach(() => {
   FakeSocket.all = [];
   routes = { 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
   fetchMock.mockClear();
+  forgetVersion();
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
@@ -109,6 +111,30 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   render(<App />);
   const link = await screen.findByRole('link', { name: /#1885 Review the shell/ });
   expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
+});
+
+test('review rows carry their PR state from one lookup, and read plainly when the service is not connected', async () => {
+  const keys = encodeURIComponent('github:a/one#1,github:a/one#2,github:a/one#3');
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' }), sess('github:a/one#3', { title: 'fix: third' }), sess('gh:9', { title: 'Plain' })] };
+  routes[`GET /apps/github/pulls?keys=${keys}`] = { pulls: { 'a/one#1': { state: 'open', at: '2026-11-01T00:00:00Z' }, 'a/one#2': { state: 'merged', at: '2026-11-02T00:00:00Z' } } };
+  const view = render(<App />);
+  const row = async (name: RegExp) => await screen.findByRole('link', { name });
+  await waitFor(async () => expect(await row(/#2 Second/)).toHaveTextContent('Merged'));
+  expect(await row(/#1 First/)).toHaveTextContent('Open');
+  expect(await row(/#3 Third/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(1);
+  view.unmount();
+  delete routes[`GET /apps/github/pulls?keys=${keys}`];
+  render(<App />);
+  expect(await row(/#1 First/)).not.toHaveTextContent(/Open|Merged|Closed/);
+});
+
+test('a closed PR reads Closed on its row', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' })] };
+  routes[`GET /apps/github/pulls?keys=${encodeURIComponent('github:a/one#1')}`] = { pulls: { 'a/one#1': { state: 'closed', at: '2026-11-01T00:00:00Z' } } };
+  render(<App />);
+  await waitFor(async () => expect(await screen.findByRole('link', { name: /#1 First/ })).toHaveTextContent('Closed'));
 });
 
 test('review rows show their repo only when the list holds reviews from two repos', async () => {
@@ -613,7 +639,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/agents', '#/sleeper', '#/remarkable', '#/schedules', '#/settings']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/schedules', '#/contracts', '#/settings']);
   expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Artifacts' }));
   expect(within(rail).getByRole('link', { name: 'Artifacts' })).toHaveAttribute('aria-current', 'page');
@@ -639,6 +665,50 @@ test('the Settings page picks the theme: Dark persists, System clears it', async
   await userEvent.click(screen.getByRole('radio', { name: 'System' }));
   expect(document.documentElement.dataset.theme).toBeUndefined();
   expect(localStorage.getItem('quack:theme')).toBeNull();
+});
+
+const BUILD = { commit: 'abc1234def5678', builtAt: '2026-11-03T12:00:00Z' };
+
+test('About shows the short commit linked to GitHub and the build time', async () => {
+  routes['GET /version'] = BUILD;
+  location.hash = '#/settings';
+  render(<App />);
+  const about = within(await screen.findByRole('region', { name: 'About' }));
+  expect(about.getByRole('link', { name: 'abc1234' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/commit/abc1234def5678');
+  expect(screen.getByText(/^Built /)).toBeInTheDocument();
+});
+
+test('About reads development build when the image carries no commit', async () => {
+  routes['GET /version'] = { commit: null, builtAt: null };
+  location.hash = '#/settings';
+  render(<App />);
+  expect(await screen.findByText('quack v1 · development build')).toBeInTheDocument();
+  expect(screen.queryByText(/^Built /)).toBeNull();
+});
+
+test('the sidebar footer shows the short commit and links to Settings', async () => {
+  routes['GET /version'] = BUILD;
+  render(<App />);
+  const rail = screen.getAllByRole('complementary')[0];
+  expect(await within(rail).findByRole('link', { name: 'Version abc1234' })).toHaveAttribute('href', '#/settings');
+  expect(fetchMock.mock.calls.filter(([u]) => u === 'version')).toHaveLength(1);
+});
+
+test('More lists the short commit on a phone', async () => {
+  routes['GET /version'] = BUILD;
+  stubViewport(false);
+  location.hash = '#/more';
+  render(<App />);
+  expect((await screen.findAllByRole('link', { name: 'Version abc1234' })).length).toBeGreaterThan(0);
+});
+
+test('a failed version fetch shows nothing', async () => {
+  location.hash = '#/settings';
+  render(<App />);
+  expect(await screen.findByRole('group', { name: 'Appearance' })).toBeInTheDocument();
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === 'version')).toBe(true));
+  expect(screen.queryByText(/quack v1/)).toBeNull();
+  expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).toBeNull();
 });
 
 test('More lists Settings and no longer carries the theme toggle', async () => {
@@ -1452,6 +1522,27 @@ describe('bottom bar', () => {
     expect(JSON.parse(localStorage.getItem('quack:bottom-bar')!)).toEqual(['sleeper', 'artifacts']);
     goTo('#/more');
     expect(await within(screen.getByRole('main')).findByRole('link', { name: /Sessions/ })).toHaveAttribute('href', '#/sessions');
+  });
+
+  test('the desktop sidebar honours the same picks, with the rest under More', async () => {
+    localStorage.setItem('quack:bottom-bar', JSON.stringify(['remarkable', 'agents']));
+    location.hash = '#/settings';
+    render(<App />);
+    const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    const top = () => [...rail.querySelectorAll(':scope > a')].map((l) => l.textContent);
+    expect(top()).toEqual(['Home', 'reMarkable', 'Agents']);
+    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Schedules', 'Contracts', 'Settings']);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Sessions' }));
+    expect(top()).toEqual(['Home', 'reMarkable', 'Agents', 'Sessions']);
+  });
+
+  test('on desktop, a page under More opens the sidebar More, so the current page shows', async () => {
+    location.hash = '#/agents';
+    routes['GET /agents'] = { agents: [] };
+    render(<App />);
+    const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
+    expect(rail.querySelector('details')).toHaveAttribute('open');
+    expect(within(rail).getByRole('link', { name: 'Agents' })).toHaveAttribute('aria-current', 'page');
   });
 
   test('allows three pages and no more', async () => {

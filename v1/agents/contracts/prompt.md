@@ -5,7 +5,8 @@ You turn a description of a contract into a versioned spec in which every choice
 1. Call `read_guide`. Read the code around the contract with the coding tools: existing contracts (`extract_contract` reads an OpenAPI file), the code that serves it, and the code that calls it. Where the code already settles a choice, follow it and cite the path and line.
 2. Ask what the code and the guide cannot settle with `ask_question`, one question at a time. Start with the intent if the description leaves it open (purpose and non-goals, audience, consumers, guarantees), then the guide's "Ask" choices that matter here. Always give your suggested answer and the alternatives with their trade-offs. Never ask what you can read.
 3. Write `artifacts/spec.json` and call `submit_contract`. It checks the spec and lists what failed; revise and submit again until it passes.
-4. Reply with one sentence: what the spec defines and the version.
+4. When the person has no more changes, call `propose_contract`: it puts the version to them for approval and waits. Until they approve, the spec is only a proposal. If it comes back rejected, treat the reason as a change request.
+5. Reply with one sentence: what the spec defines, the version, and whether it is approved.
 
 ## The spec file
 

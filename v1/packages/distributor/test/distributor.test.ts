@@ -331,6 +331,23 @@ test('promoting a version does not fork it, but any other edit without a bump do
   assert.equal((await invoke('github:p#3', { input: 'hi', wait: true }, 'reviewer')).status, 409);
 });
 
+test('GET /version reports the build from the environment, null when unset', async () => {
+  const { base } = await startDistributor(60_000);
+  const saved = [process.env.QUACK_COMMIT, process.env.QUACK_BUILT_AT];
+  try {
+    delete process.env.QUACK_COMMIT;
+    delete process.env.QUACK_BUILT_AT;
+    assert.deepEqual(await (await fetch(`${base}/version`)).json(), { commit: null, builtAt: null });
+    process.env.QUACK_COMMIT = 'abc1234def';
+    process.env.QUACK_BUILT_AT = '2026-11-03T12:00:00Z';
+    assert.deepEqual(await (await fetch(`${base}/version`)).json(), { commit: 'abc1234def', builtAt: '2026-11-03T12:00:00Z' });
+  } finally {
+    for (const [k, v] of [['QUACK_COMMIT', saved[0]], ['QUACK_BUILT_AT', saved[1]]] as const) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
 test('GET /agents reports a promoted agent as promoted', async () => {
   const dir = await agentsDirAt(3, 'reviewer');
   await writeFile(join(dir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, status: 'promoted', prompt: 'prompt.md' }));

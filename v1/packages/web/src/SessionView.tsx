@@ -13,6 +13,7 @@ import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
+import { PrChip } from './prState.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
@@ -219,7 +220,7 @@ function Result({ result }: { result: Look }) {
   );
 }
 
-function Header({ name, back, status, tone, spend, link, result, children }: { name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
+function Header({ sessionKey, name, back, status, tone, spend, link, result, children }: { sessionKey: string; name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
         <a href={back.href} aria-label={back.label} className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
@@ -233,6 +234,7 @@ function Header({ name, back, status, tone, spend, link, result, children }: { n
           <StatusChip text={status} tone={tone} />
           {result && <Result result={result} />}
         </div>
+        <PrChip sessionKey={sessionKey} />
         <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
         {link && (
           <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
@@ -303,14 +305,14 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
   useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
+        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             {artifactsError && <p role="alert" className="m-0 text-[13px] text-danger">{artifactsError}</p>}
@@ -324,7 +326,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
-          <div className="mx-auto flex max-w-[720px] flex-col gap-2">
+          <div className="mx-auto flex max-w-[860px] flex-col gap-2">
             <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
           </div>
         </div>

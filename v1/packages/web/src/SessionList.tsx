@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { look, type Look, type Tone } from './kinds.ts';
 import { age, group, matches, startOf, type Filters, type Row } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
+import { PrChip } from './prState.tsx';
 
 const field = 'rounded-full border border-line bg-soft text-[12.5px] outline-none';
 
@@ -40,6 +41,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
         </span>
         <span className="flex gap-2">
           <span className={`min-w-0 flex-1 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
+          <PrChip sessionKey={r.key} />
           <SpendChip spend={r.spend} className="text-xs text-muted" />
         </span>
       </span>

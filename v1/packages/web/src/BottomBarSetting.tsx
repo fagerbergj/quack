@@ -20,8 +20,8 @@ export function BottomBarSetting() {
   const full = picked.length >= MAX_PICKS;
   return (
     <fieldset className="m-0 min-w-0 rounded-[18px] border border-line bg-surface p-3.5 shadow-card">
-      <legend className="px-1 text-xs font-semibold tracking-wider text-muted uppercase">Bottom bar</legend>
-      <p className="m-0 mb-2 text-[13.5px] text-ink-2">Pick up to three. Home and More are always there.</p>
+      <legend className="px-1 text-xs font-semibold tracking-wider text-muted uppercase">Navigation</legend>
+      <p className="m-0 mb-2 text-[13.5px] text-ink-2">Pick up to three for the sidebar on desktop and the bottom bar on a phone. Home and More are always there.</p>
       <div className="overflow-hidden rounded-xl border border-line">
         <div className={fixed}><span className="flex-1">Home</span><span className="text-[12.5px]">Always first</span></div>
         {picked.map((route, i) => (

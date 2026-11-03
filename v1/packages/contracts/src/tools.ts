@@ -1,5 +1,6 @@
 import { obj, oneOf, opt, str } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
+import { proposeContractTool } from './approval.ts';
 import { askQuestionTool } from './ask.ts';
 import { kinds } from './kinds.ts';
 
@@ -27,4 +28,4 @@ const guideTool = defineTool({
   },
 });
 
-export const contractTools = [askQuestionTool, extractTool, guideTool];
+export const contractTools = [askQuestionTool, extractTool, guideTool, proposeContractTool];

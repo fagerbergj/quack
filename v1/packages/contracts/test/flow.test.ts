@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { answerQuestion, Artifacts, pendingQuestions, Questions } from '@quack/sdk';
+import { answerQuestion, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { contractsSessionExtensions, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
@@ -87,6 +87,7 @@ test('the question flow asks one at a time and seals version 1 only after the an
   assert.equal(done.status === 'done' && done.answer, 'Spec version 1 is sealed.');
   const [v1] = await versions(s);
   assert.equal(v1.summary, 'Sleeper schedule endpoint, version 1');
+  assert.equal(v1.outcome, 'v1');
   assert.equal((v1.verdict as { passed: boolean }).passed, true);
   const spec = JSON.parse(v1.content) as ContractSpec;
   assert.deepEqual(spec.choices.flatMap((c) => c.why.filter((w) => w.source === 'answer').map((w) => w.ref)), [q1.question, q2.question]);
@@ -136,5 +137,75 @@ test('end to end: GET /apps/sleeper/schedule through version 1 and a version 2 t
   assert.equal(spec.version, 2);
   assert.match(spec.compatibility!.breaking[0].callers[0], /Sleeper page/);
   assert.equal(spec.changes![0].choice, 'time-format');
+  await s.close();
+});
+
+async function pendingProposal(s: Open) {
+  for (let i = 0; i < 400; i++) {
+    const [item] = await pendingApprovals(s.root, ctx);
+    if (item) return item;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return assert.fail('no approval was requested');
+}
+const kindOf = async (s: Open, kind: string) => (await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds[kind]?.versions ?? [];
+
+test('propose_contract asks to approve the version, with its findings, and approval is recorded', async () => {
+  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), () => fauxAssistantMessage('Version 1 is approved.')]);
+  const { run } = await defineV1(s);
+  const item = await pendingProposal(s);
+  const args = item.args as { summary: string; version: number; findings: unknown[]; breaks: unknown[] };
+  assert.equal(args.summary, 'Approve GET /apps/sleeper/schedule v1');
+  assert.equal(args.version, 1);
+  assert.ok(Array.isArray(args.findings) && Array.isArray(args.breaks));
+  assert.equal((await kindOf(s, 'contract.approved')).length, 0, 'nothing is approved before the person says so');
+  assert.equal(await resolveApproval(s.root, item.id, { decision: 'approve', by: 'jf' }, ctx), true);
+  assert.equal((await run).status, 'done');
+  const [approved] = await kindOf(s, 'contract.approved');
+  assert.equal(approved.outcome, 'v1');
+  assert.equal(approved.summary, 'Approved version 1');
+  await s.close();
+});
+
+test('a rejected proposal records the change request and feeds the reason back to the agent', async () => {
+  let seen = '';
+  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Revising.'))]);
+  const { run } = await defineV1(s);
+  const item = await pendingProposal(s);
+  await resolveApproval(s.root, item.id, { decision: 'reject', reason: 'Use cursor pagination', by: 'jf' }, ctx);
+  await run;
+  assert.match(seen, /Rejected by jf: Use cursor pagination/);
+  assert.match(seen, /write version 2/);
+  assert.equal((await kindOf(s, 'contract.approved')).length, 0);
+  const [changes] = await kindOf(s, 'contract.changes');
+  assert.deepEqual([changes.outcome, changes.summary], ['v1', 'Use cursor pagination']);
+  await s.close();
+});
+
+test('a decision whose record was lost in a crash is written once when propose_contract next runs', async () => {
+  let seen = '';
+  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Done.'))]);
+  const { run } = await defineV1(s);
+  const first = await pendingProposal(s);
+  await resolveApproval(s.root, first.id, { decision: 'approve', by: 'jf' }, ctx);
+  await run;
+  // The crash window: the verdict is stored, the record is not.
+  await s.root.commit(async (tx) => { (await tx.doc(Artifacts, s.root.id)).kinds['contract.approved'].versions.length = 0; }, ctx);
+  assert.equal((await kindOf(s, 'contract.approved')).length, 0);
+  await s.submit('Propose it again', 'r-2', true);
+  const recovered = await kindOf(s, 'contract.approved');
+  assert.equal(recovered.length, 1, 'the lost approval is written once');
+  assert.equal(JSON.parse(recovered[0].content).approval, first.id);
+  assert.match(recovered[0].hash, /^[0-9a-f]{64}$/);
+  assert.match(seen, /Version 1 is already approved; write version 2/);
+  assert.equal((await pendingApprovals(s.root, ctx)).length, 0, 'an approved version is not asked again');
+  await s.close();
+});
+
+test('propose_contract refuses when no spec has passed', async () => {
+  let seen = '';
+  const s = await open([call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('ok'))]);
+  await s.submit('Define it', 'r-1', true);
+  assert.match(seen, /No sealed spec version has passed/);
   await s.close();
 });
