@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
@@ -184,23 +184,47 @@ function Title({ name }: { name: SessionTitle }) {
 
 type Manage = { archived: boolean; changed: () => void };
 
-// Abort, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
-function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void } }) {
+type Entry = { label: string; hint: string; run?: () => void; href?: string; danger?: boolean };
+
+// One menu row: the label is its name, the hint says what it does without being read as part of the name.
+function MenuEntry({ e, close }: { e: Entry; close: () => void }) {
+  const id = useId();
+  const cls = `flex min-h-11 w-full cursor-pointer flex-col items-start justify-center gap-0.5 border-0 bg-transparent px-3 py-1.5 text-left no-underline hover:bg-soft lg:min-h-8 ${e.danger ? 'text-danger' : 'text-ink'}`;
+  const body = <><span id={`${id}l`} className="text-[13px]">{e.label}</span><span id={`${id}h`} className="text-[11.5px] text-muted">{e.hint}</span></>;
+  const aria = { role: 'menuitem', 'aria-labelledby': `${id}l`, 'aria-describedby': `${id}h` } as const;
+  return e.href
+    ? <a {...aria} href={e.href} download onClick={close} className={cls}>{body}</a>
+    : <button type="button" {...aria} onClick={() => { close(); e.run?.(); }} className={cls}>{body}</button>;
+}
+
+type MenuActions = { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void };
+
+// Grouped from harmless to destructive: stop the run, everyday actions, reversible archive, then delete last.
+function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort: () => void, onOpen: (a: SealedArtifact) => void, manage?: MenuActions): Entry[][] {
+  return [
+    running ? [{ label: 'Stop run', hint: 'End this run; the session stays', run: onAbort }] : [],
+    [
+      ...(latest ? [{ label: `Open ${artifactName(latest).toLowerCase()}`, hint: 'Latest output and earlier versions', run: () => onOpen(latest) }] : []),
+      ...(manage ? [{ label: 'Rename', hint: 'Change the title in lists', run: manage.rename }, { label: 'Export', hint: 'Download it all as one JSON file', href: manage.exportHref }] : []),
+    ],
+    manage ? [manage.archived ? { label: 'Unarchive', hint: 'Show it in lists again', run: manage.archive } : { label: 'Archive', hint: 'Hide from lists; undo any time', run: manage.archive }] : [],
+    manage ? [{ label: 'Delete', hint: 'Remove it and its workspace for good', run: manage.remove, danger: true }] : [],
+  ].filter((g) => g.length);
+}
+
+// Stopping the run, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
+function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions }) {
   const [open, setOpen] = useState(false);
   if (!running && !latest && !manage) return null;
-  const item = 'flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] hover:bg-soft lg:min-h-8';
-  const pick = (fn: () => void) => () => { setOpen(false); fn(); };
+  const close = () => setOpen(false);
   return (
     <div className="relative">
       <button type="button" aria-label="More actions" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-40 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
-          {latest && <button type="button" role="menuitem" onClick={pick(() => onOpen(latest))} className={`${item} text-ink`}>{`Open ${artifactName(latest).toLowerCase()}`}</button>}
-          {running && <button type="button" role="menuitem" onClick={pick(onAbort)} className={`${item} text-danger`}>Abort</button>}
-          {manage && <button type="button" role="menuitem" onClick={pick(manage.rename)} className={`${item} text-ink`}>Rename</button>}
-          {manage && <button type="button" role="menuitem" onClick={pick(manage.archive)} className={`${item} text-ink`}>{manage.archived ? 'Unarchive' : 'Archive'}</button>}
-          {manage && <a role="menuitem" href={manage.exportHref} download onClick={() => setOpen(false)} className={`${item} text-ink no-underline`}>Export</a>}
-          {manage && <button type="button" role="menuitem" onClick={pick(manage.remove)} className={`${item} text-danger`}>Delete</button>}
+        <div role="menu" className="absolute right-0 z-20 mt-1 w-72 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
+          {groupsOf(running, latest, onAbort, onOpen, manage).map((g, i) => (
+            <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={close} />)}</div>
+          ))}
         </div>
       )}
     </div>
