@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Context } from '@earendil-works/chord/context';
 import type { ExecutionError, Result, ShellExecOptions, ShellExecResult } from '@earendil-works/pi-durable/env';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
@@ -9,6 +11,8 @@ export type ExecPolicy = {
   /** Cap on one command; the model may ask for less. */
   timeoutSeconds?: number;
   limits?: { addressSpaceMb?: number; maxProcs?: number; maxFileSizeMb?: number };
+  /** Run every command in a bubblewrap sandbox (own workspace and home only, own PID namespace). Default: on when QUACK_SANDBOX=1, which the image sets since it carries bwrap. */
+  sandbox?: boolean;
 };
 
 export const DEFAULT_EXEC_TIMEOUT_SECONDS = 600;
@@ -29,15 +33,34 @@ export function limitPrefix(limits: NonNullable<ExecPolicy['limits']>): string {
   return set('v', limits.addressSpaceMb, 1024) + set('f', limits.maxFileSizeMb, 1024) + set('u', limits.maxProcs);
 }
 
+// Read-only system paths a build needs; /app is left out except node_modules, which holds the toolchain the shell runs.
+const SANDBOX_RO = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc', '/opt', '/app/node_modules'];
+
+/**
+ * bwrap argv that shows a command only the system paths, `sessionDir`'s workspace and home, and a private /tmp, /dev and /proc.
+ * The new PID namespace plus fresh /proc hides the session process (and its environ); other sessions' directories and the image's /app are absent.
+ */
+export function bwrapArgv(sessionDir: string, cwd: string, extraRo: string[] = []): string[] {
+  const ro = [...SANDBOX_RO, ...extraRo].flatMap((p) => ['--ro-bind-try', p, p]);
+  const rw = ['workspace', 'home'].flatMap((d) => ['--bind', join(sessionDir, d), join(sessionDir, d)]);
+  return ['bwrap', '--die-with-parent', '--new-session', '--unshare-pid', '--unshare-ipc', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', ...ro, ...rw, '--chdir', cwd, '--'];
+}
+
 /** The one place agent shells start: a scrubbed environment, a timeout cap and resource limits on every command. */
 export class PolicyExecutionEnv extends NodeExecutionEnv {
   private policy: ExecPolicy;
   private source: NodeJS.ProcessEnv;
+  private sandboxDir?: string;
 
-  constructor(options: { cwd: string; policy?: ExecPolicy; source?: NodeJS.ProcessEnv }) {
+  /** `sessionDir` holds the session's `workspace`; with the sandbox on, that and its `home` are all a command can write. */
+  constructor(options: { cwd: string; policy?: ExecPolicy; source?: NodeJS.ProcessEnv; sessionDir?: string }) {
     super({ cwd: options.cwd });
     this.policy = options.policy ?? {};
     this.source = options.source ?? process.env;
+    if (options.sessionDir && (this.policy.sandbox ?? this.source.QUACK_SANDBOX === '1')) {
+      this.sandboxDir = options.sessionDir;
+      for (const d of ['workspace', 'home']) mkdirSync(join(options.sessionDir, d), { recursive: true });
+    }
   }
 
   override async exec(command: string | readonly string[], options: ShellExecOptions | undefined, context: Context): Promise<Result<ShellExecResult, ExecutionError>> {
@@ -45,8 +68,9 @@ export class PolicyExecutionEnv extends NodeExecutionEnv {
     const timeout = Math.min(options?.timeout ?? cap, cap);
     const limits = limitPrefix(this.policy.limits ?? DEFAULT_EXEC_LIMITS);
     // An argv form has no shell to carry ulimit, so it runs through bash, which execs it.
-    const wrapped = typeof command === 'string' ? limits + command : ['bash', '-c', `${limits}exec "$@"`, 'bash', ...command];
-    const env = { ...shellEnv(this.source, this.policy.env), ...options?.env };
+    const script = typeof command === 'string' ? ['bash', '-c', limits + command] : ['bash', '-c', `${limits}exec "$@"`, 'bash', ...command];
+    const env: Record<string, string> = { ...shellEnv(this.source, this.policy.env), ...(this.sandboxDir && { HOME: join(this.sandboxDir, 'home') }), ...options?.env };
+    const wrapped = this.sandboxDir ? [...bwrapArgv(this.sandboxDir, this.cwd, env.GIT_ASKPASS ? [env.GIT_ASKPASS] : []), ...script] : typeof command === 'string' ? limits + command : script;
     // cwd is dropped so every command starts in the workspace; a `cd` lives and dies with its own process.
     const { cwd: _ignored, ...rest } = options ?? {};
     const result = await super.exec(wrapped, { ...rest, timeout, inheritEnv: false, env }, context);

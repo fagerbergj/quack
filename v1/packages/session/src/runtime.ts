@@ -64,7 +64,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
-  const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
+  const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, sessionDir: opts.dir, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
   const log = opts.log ?? console.error;
   const onReport = (error: unknown, info: ReportInfo) => {
     const line = reportLine(error, info);

@@ -57,6 +57,7 @@ function execProblems(at: string, e: unknown, deployment: boolean): string[] {
     for (const key of Object.keys(e)) if (key !== 'timeoutSeconds') problems.push(`${at}.${key} is set by the deployment, not an agent`);
     return problems;
   }
+  if (e.sandbox !== undefined && typeof e.sandbox !== 'boolean') problems.push(`${at}.sandbox must be true or false`);
   if (e.env !== undefined && !(Array.isArray(e.env) && e.env.every((n) => typeof n === 'string'))) problems.push(`${at}.env must be a list of variable names`);
   const limits = e.limits;
   const known = ['addressSpaceMb', 'maxProcs', 'maxFileSizeMb'];

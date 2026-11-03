@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { PolicyExecutionEnv, sessionPolicy, shellEnv, type ExecPolicy } from '../src/index.ts';
 
 const cwd = await mkdtemp(join(tmpdir(), 'quack-exec-'));
@@ -88,4 +88,24 @@ test('the file-size limit is in megabytes: a write up to it succeeds and one byt
   assert.ok(atLimit.result.ok && atLimit.result.value.exitCode === 0, atLimit.output);
   const past = await run('head -c 1048577 /dev/zero > past', { limits });
   assert.ok(past.result.ok && past.result.value.exitCode !== 0);
+});
+
+const sandboxed = spawnSync('bwrap', ['--ro-bind', '/', '/', '--unshare-pid', '--proc', '/proc', 'true']).status === 0;
+
+test('a sandboxed shell reads neither the parent environ, another session, nor the host paths, and still works in its workspace', { skip: !sandboxed && 'bwrap is not usable here' }, async () => {
+  const data = await mkdtemp(join(tmpdir(), 'quack-sbx-'));
+  after(() => rm(data, { recursive: true, force: true }));
+  const mine = join(data, 'mine');
+  await mkdir(join(data, 'other'), { recursive: true });
+  await writeFile(join(data, 'other', 'log'), 'theirs');
+  const parent = spawn('sleep', ['30'], { env: { SERVICE_SECRET: 'hunter2' } });
+  after(() => parent.kill());
+  const env = new PolicyExecutionEnv({ cwd: join(mine, 'workspace'), sessionDir: mine, policy: { sandbox: true }, source });
+  let out = '';
+  const script = `echo ok > note && cat note; cat /proc/${parent.pid}/environ; cat /proc/*/environ; cat ${join(data, 'other', 'log')}; ls ${data}; echo "$HOME"; ls /app /data`;
+  const result = await env.exec(script, { onOutput: (t) => { out += t; } }, ctx);
+  assert.ok(result.ok);
+  assert.match(out, /^ok$/m);
+  assert.match(out, new RegExp(`^${mine}/home$`, 'm'));
+  assert.doesNotMatch(out, /hunter2|theirs|QUACK_|-secret/);
 });

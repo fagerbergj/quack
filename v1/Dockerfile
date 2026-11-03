@@ -29,7 +29,7 @@ COPY packages/web packages/web
 RUN npm run build -w packages/web
 
 FROM node:26.13-trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 python3-venv && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap git ca-certificates python3 python3-venv && rm -rf /var/lib/apt/lists/*
 # rmc draws reMarkable notebooks (packages/remarkable); its venv comes first on PATH so python3 finds it.
 COPY packages/remarkable/requirements.txt /tmp/rm-requirements.txt
 RUN python3 -m venv /opt/rmc && /opt/rmc/bin/pip install --no-cache-dir --no-deps -r /tmp/rm-requirements.txt && rm /tmp/rm-requirements.txt
@@ -41,4 +41,6 @@ COPY --from=deps /app/node_modules node_modules
 COPY . .
 COPY --from=web /app/packages/web/dist /app/web
 ENV QUACK_WEB_DIR=/app/web
+# Session shells run in bubblewrap, so compose must allow user namespaces (see PolicyExecutionEnv).
+ENV QUACK_SANDBOX=1
 USER node
