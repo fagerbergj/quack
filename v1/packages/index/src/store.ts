@@ -70,7 +70,7 @@ export function createStore(backend: Backend) {
     },
     async approvals(state?: string) {
       return (await facts(['approval'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
-        session: f.session, id: f.id.slice('approval:'.length), tool: field(f, 'tool'), state: field(f, 'state'), decision: field(f, 'decision'), by: field(f, 'by'), at: f.at,
+        session: f.session, id: f.id.slice('approval:'.length), tool: field(f, 'tool'), state: field(f, 'state'), decision: field(f, 'decision'), by: field(f, 'by'), args: field(f, 'args'), at: f.at,
       }));
     },
   };

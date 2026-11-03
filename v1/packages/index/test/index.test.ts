@@ -122,7 +122,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
 
   down = false;
   await publisher.flush();
-  assert.deepEqual((await get('/index/approvals?state=pending')).approvals.map((a) => [a.session, a.id, a.tool, a.state]), [['chat:1', approval.id, 'post', 'pending']]);
+  assert.deepEqual((await get('/index/approvals?state=pending')).approvals.map((a) => [a.session, a.id, a.tool, a.state, a.args]), [['chat:1', approval.id, 'post', 'pending', approval.args]]);
   // A link added after sealing rides with the artifact and leaves the sealed hash alone.
   assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict, a.links, a.outcome, a.summary, a.hash]),
     [['chat:1', 'demo.review', 1, { passed: true }, [{ label: 'Posted', url: 'https://example.test/r/1' }], 'approve', '# Review · sealed', createHash('sha256').update('# Review\n\n## Verdict\napprove\n\n## Findings\nNone.\n').digest('hex')]]);

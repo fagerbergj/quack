@@ -33,7 +33,7 @@ export function artifactFacts(artifacts: { kinds: Record<string, { versions: Sea
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {
   return Object.entries(approvals?.items ?? {}).map(([id, a]): Fact => {
     const v = a.verdict;
-    return { id: `approval:${id}`, kind: 'approval', rev: v ? 2 : 1, at: v?.at ?? a.requestedAt, data: { tool: a.tool, state: v ? 'resolved' : 'pending', decision: v?.decision ?? null, by: v?.by ?? null } };
+    return { id: `approval:${id}`, kind: 'approval', rev: v ? 2 : 1, at: v?.at ?? a.requestedAt, data: { tool: a.tool, state: v ? 'resolved' : 'pending', decision: v?.decision ?? null, by: v?.by ?? null, args: v ? null : a.args } };
   });
 }
 
