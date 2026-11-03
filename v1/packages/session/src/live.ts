@@ -37,6 +37,16 @@ function parseInput({ input, images, requestId, whenBusy }: Record<string, unkno
   return { type: 'input', input, images: attached, requestId, whenBusy };
 }
 
+// The client's id for an input, echoed on its answer so the client matches answers that cross; undefined when the frame has none.
+function requestIdOf(data: string): string | undefined {
+  try {
+    const { requestId } = JSON.parse(data);
+    return typeof requestId === 'string' ? requestId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Open questions and failures raise no stream event, so their documents ride the socket as a `standing` frame instead of being polled.
 async function watchStanding(session: Session, ws: WebSocket) {
   const { harness, root } = session;
@@ -64,14 +74,15 @@ async function stream(session: Session, ws: WebSocket) {
   ws.on('close', () => void events.stop());
   ws.on('message', async (data) => {
     const input = parseClient(data.toString());
-    if (typeof input === 'string') return ws.send(JSON.stringify({ type: 'error', error: input }));
+    const requestId = requestIdOf(data.toString());
+    if (typeof input === 'string') return ws.send(JSON.stringify({ type: 'error', error: input, requestId }));
     // A rejection here would be unhandled, and Node ends the process on those, taking every viewer with it.
     try {
       if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer'));
       const result = await session.submit(input.input, input.requestId, false, input.whenBusy, input.images);
-      ws.send(JSON.stringify({ type: 'accepted', ...result }));
+      ws.send(JSON.stringify({ type: 'accepted', ...result, requestId }));
     } catch (err) {
-      ws.send(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err) }));
+      ws.send(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err), requestId }));
     }
   });
   await watchStanding(session, ws);

@@ -7,7 +7,9 @@ export const MAX_IMAGES = 4;
 const MAX_CHARS = 3 * 1024 * 1024;
 const LONG_EDGE = 2048;
 
-export const dataUrl = (i: Img) => `data:${i.mimeType};base64,${i.data}`;
+// Cached per image: a data URL is a multi-MB string, and the transcript rebuilds it on every render.
+const urls = new WeakMap<Img, string>();
+export const dataUrl = (i: Img) => urls.get(i) ?? (urls.set(i, `data:${i.mimeType};base64,${i.data}`), urls.get(i)!);
 
 // Re-encoded as JPEG at a sane size: phone photos are several MB, and canvas also applies the EXIF rotation.
 async function downscale(file: File): Promise<Img> {

@@ -22,7 +22,6 @@ export type AgentSpec = {
   turnCeiling?: number;
 };
 
-
 export type SubmitResult =
   | { submissionId: string; status: 'queued' | 'placed' }
   | { submissionId: string; status: 'done'; answer: string }

@@ -65,7 +65,7 @@ test('a text-only model with no image model rejects the message', async () => {
 test('the count and size caps are enforced', () => {
   assert.match(String(parseImages(Array(MAX_IMAGES + 1).fill(image))), /at most 4 images/);
   assert.match(String(parseImages([{ ...image, data: 'A'.repeat(3 * 1024 * 1024 + 1) }])), /over 3 MB/);
-  assert.match(String(parseImages([{ data: 'x', mimeType: 'image/svg+xml' }])), /png, jpeg/);
+  assert.match(String(parseImages([{ data: 'x', mimeType: 'image/gif' }])), /png, jpeg/);
   assert.equal((parseImages([image]) as unknown[]).length, 1);
 });
 
@@ -77,10 +77,14 @@ test('the socket takes images with an input, and answers a message with too many
   const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
   await nextFrame(ws, (f) => f.type === 'snapshot');
   const bad = nextFrame(ws, (f) => f.type === 'error');
-  ws.send(JSON.stringify({ type: 'input', input: 'x', images: Array(MAX_IMAGES + 1).fill(image) }));
-  assert.match((await bad).error, /at most 4 images/);
+  ws.send(JSON.stringify({ type: 'input', requestId: 'r-bad', input: 'x', images: Array(MAX_IMAGES + 1).fill(image) }));
+  const failed = await bad;
+  assert.match(failed.error, /at most 4 images/);
+  assert.equal(failed.requestId, 'r-bad');
   const ended = nextFrame(ws, runEnded);
-  ws.send(JSON.stringify({ type: 'input', input: '', images: [image] }));
+  const accepted = nextFrame(ws, (f) => f.type === 'accepted');
+  ws.send(JSON.stringify({ type: 'input', requestId: 'r-ok', input: '', images: [image] }));
+  assert.equal((await accepted).requestId, 'r-ok');
   assert.match(JSON.stringify((await ended).events), /seen/);
   ws.close();
   await new Promise((r) => server.close(r));

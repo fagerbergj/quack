@@ -18,7 +18,9 @@ import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } fro
 
 type Standing = { questions: Question[]; failures: Failure[] };
 type Queued = { id: string; text: string };
-type Frame = { type: 'queued'; items: Queued[] } | SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
+type Frame = { type: 'queued'; items: Queued[] } | SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
+
+let nextRequest = 0;
 
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
@@ -28,9 +30,12 @@ function useSocket(key: string, agent: string | undefined) {
   const [approvalTick, setTick] = useState(0);
   const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
   const [queued, setQueued] = useState<Queued[]>([]);
-  // One per input in flight: the server answers each with `accepted` or `error`, in order.
-  const acks = useRef<Array<(ok: boolean) => void>>([]);
-  const settle = (ok: boolean) => acks.current.shift()?.(ok);
+  // One per input in flight, keyed by the requestId the server echoes on its `accepted` or `error`; it handles inputs concurrently, so answers can arrive out of order.
+  const acks = useRef(new Map<string, (ok: boolean) => void>());
+  const settle = (id: string | undefined, ok: boolean) => {
+    acks.current.get(id ?? '')?.(ok);
+    acks.current.delete(id ?? '');
+  };
   useEffect(() => {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -44,7 +49,8 @@ function useSocket(key: string, agent: string | undefined) {
       };
       // Every connect starts with a full snapshot that replaces the view, so a reconnect cannot duplicate lines.
       sock.onclose = () => {
-        acks.current.splice(0).forEach((done) => done(false));
+        acks.current.forEach((done) => done(false));
+        acks.current.clear();
         if (disposed) return;
         setState('reconnecting');
         timer = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 30_000));
@@ -62,8 +68,8 @@ function useSocket(key: string, agent: string | undefined) {
           if (touchesApprovals(frame.events)) setTick((t) => t + 1);
         } else if (frame.type === 'standing') setStanding(frame);
         else if (frame.type === 'queued') setQueued(frame.items);
-        else if (frame.type === 'error') (setError(frame.error), settle(false));
-        else if (frame.type === 'accepted') settle(true);
+        else if (frame.type === 'error') (setError(frame.error), settle(frame.requestId, false));
+        else if (frame.type === 'accepted') settle(frame.requestId, true);
       };
     };
     connect();
@@ -80,8 +86,10 @@ function useSocket(key: string, agent: string | undefined) {
       return Promise.resolve(false);
     }
     setError('');
-    const done = new Promise<boolean>((resolve) => acks.current.push(resolve));
-    ws.current.send(JSON.stringify({ type: 'input', input, images: images.length ? images : undefined, whenBusy }));
+    // Not randomUUID: it is missing on a page served over plain http.
+    const requestId = `${Date.now().toString(36)}-${(nextRequest += 1)}`;
+    const done = new Promise<boolean>((resolve) => acks.current.set(requestId, resolve));
+    ws.current.send(JSON.stringify({ type: 'input', requestId, input, images: images.length ? images : undefined, whenBusy }));
     return done;
   };
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
