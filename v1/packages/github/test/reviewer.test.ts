@@ -52,7 +52,7 @@ approve
 async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[], pr: Record<string, unknown> = {}) {
   process.env.QUACK_CLEF_KEY = 'none';
   const { base, head } = await remotes();
-  const live = { headSha: head, ...pr };
+  const live: Record<string, unknown> = { headSha: head, ...pr };
   const service = await fakeService(head, live);
   // Pushes a second commit to the PR (a file the review does not touch) and makes it the live head.
   const advance = () => {
@@ -71,7 +71,7 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
-  return { done, seen, service, head, session };
+  return { done, seen, service, head, session, live };
 }
 
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
@@ -172,9 +172,9 @@ test('a request naming an old head reviews the live head and says so', async () 
   await session.close();
 });
 
-test('a second passing version on the same checkout is not posted; a later request for the reviewed head ends without checkout, judging or posting', async () => {
+test('a second passing version on the same checkout is not posted; a later request for the reviewed head ends without checkout unless the description or CI changed', async () => {
   const revised = review.replace('approve.', 'approve, with one nit.');
-  const { done, seen, service, session } = await reviewRun((seen) => {
+  const { done, seen, service, session, live } = await reviewRun((seen) => {
     const step = recorder(seen);
     return [
       checkout(),
@@ -185,6 +185,8 @@ test('a second passing version on the same checkout is not posted; a later reque
       step(fauxAssistantMessage('Posted.')),
       checkout(),
       step(fauxAssistantMessage('Nothing to do.')),
+      checkout(),
+      step(fauxAssistantMessage('Looking again.')),
     ];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
@@ -197,6 +199,10 @@ test('a second passing version on the same checkout is not posted; a later reque
   assert.match(seen[5], /already reviewed \w{40}: nothing to do this turn/);
   assert.doesNotMatch(seen[5], /Checked out/);
   assert.equal(service.posted.length, 1);
+
+  live.body = 'Fixes #3, described right this time';
+  await session.submit('/review', 'gh-3', true);
+  assert.match(seen[6], /Checked out \w{40}.*described right this time/);
   await session.close();
 });
 
