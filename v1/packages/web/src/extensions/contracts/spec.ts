@@ -15,10 +15,13 @@ export type ContractSpec = {
 // An OpenAPI document is walked loosely; the backend lane's checks own its validity.
 export type Json = { [k: string]: any };
 
+const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null;
+
+// A spec whose document has no paths object is not drawable; the card then falls back to plain text.
 export function parseSpec(content: string): ContractSpec | undefined {
   try {
     const s = JSON.parse(content) as Partial<ContractSpec>;
-    return s && s.kind === 'rest' && typeof s.document === 'object' && Array.isArray(s.choices) && s.intent ? (s as ContractSpec) : undefined;
+    return isObject(s) && s.kind === 'rest' && isObject(s.document) && isObject((s.document as Json).paths) && Array.isArray(s.choices) && isObject(s.intent) ? (s as ContractSpec) : undefined;
   } catch {
     return undefined;
   }
@@ -36,13 +39,14 @@ export function operations(doc: Json): Operation[] {
   );
 }
 
-// Follows a local $ref; the pointer then names the referenced schema, where its choices live.
-export function resolve(doc: Json, schema: Json | undefined, at: string): { schema: Json; ptr: string } | undefined {
+// Follows a local $ref; the pointer then names the referenced schema, where its choices live. A chain of refs that loops resolves to nothing.
+export function resolve(doc: Json, schema: Json | undefined, at: string, seen: string[] = []): { schema: Json; ptr: string } | undefined {
   if (!schema) return undefined;
   const ref = schema.$ref;
   if (typeof ref !== 'string' || !ref.startsWith('#/')) return { schema, ptr: at };
+  if (seen.includes(ref)) return undefined;
   const target = ref.slice(2).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~')).reduce<Json | undefined>((n, k) => n?.[k], doc);
-  return resolve(doc, target, ref.slice(1));
+  return resolve(doc, target, ref.slice(1), [...seen, ref]);
 }
 
 export type Field = { name: string; type: string; required: boolean; desc?: string; depth: number; ptr: string; where?: string; facts: Array<[string, string]> };
@@ -56,17 +60,33 @@ function facts(s: Json): Field['facts'] {
     .map(([k, v]) => [k as string, Array.isArray(v) ? v.map(show).join(' · ') : show(v)]);
 }
 
-// Flattens a schema into the rows its tree shows; an array of objects continues into the item's properties.
-export function fields(doc: Json, schema: Json | undefined, at: string, depth = 0): Field[] {
-  const r = resolve(doc, schema, at);
-  if (!r) return [];
-  const base = resolve(doc, r.schema.type === 'array' ? r.schema.items : undefined, `${r.ptr}/items`) ?? r;
-  const required = new Set<string>(base.schema.required ?? []);
-  return Object.entries((base.schema.properties ?? {}) as Json).flatMap(([name, child]) => {
-    const own = `${base.ptr}/properties/${esc(name)}`;
-    const c = resolve(doc, child, own)!;
-    const f: Field = { name, type: typeOf(c.schema), required: required.has(name), desc: c.schema.description, depth, ptr: own, facts: facts(c.schema) };
-    return [f, ...fields(doc, c.schema, own, depth + 1)];
+type Step = { r: { schema: Json; ptr: string }; seen: string[] } | { cycle: string } | undefined;
+
+// One hop into a schema; a $ref already on the way down is a cycle, named by its last segment.
+function step(doc: Json, raw: Json | undefined, at: string, seen: string[]): Step {
+  const ref = typeof raw?.$ref === 'string' ? raw.$ref : undefined;
+  if (ref && seen.includes(ref)) return { cycle: ref.split('/').pop()! };
+  const r = resolve(doc, raw, at);
+  return r && { r, seen: ref ? [...seen, ref] : seen };
+}
+
+const cycleRow = (name: string, type: string, depth: number, ptr: string): Field => ({ name, type, required: false, desc: `${type}, see above`, depth, ptr, facts: [] });
+
+// Flattens a schema into the rows its tree shows; an array of objects continues into the item's properties, and a schema met again further down is a named reference.
+export function fields(doc: Json, schema: Json | undefined, at: string, depth = 0, seen: string[] = []): Field[] {
+  const top = step(doc, schema, at, seen);
+  if (!top || 'cycle' in top) return [];
+  const items = top.r.schema.type === 'array' ? step(doc, top.r.schema.items, `${top.r.ptr}/items`, top.seen) : undefined;
+  if (items && 'cycle' in items) return [cycleRow('each item', items.cycle, depth, `${top.r.ptr}/items`)];
+  const base = items ?? top;
+  const required = new Set<string>(base.r.schema.required ?? []);
+  return Object.entries((base.r.schema.properties ?? {}) as Json).flatMap(([name, child]) => {
+    const own = `${base.r.ptr}/properties/${esc(name)}`;
+    const c = step(doc, child, own, base.seen);
+    if (!c) return [];
+    if ('cycle' in c) return [{ ...cycleRow(name, c.cycle, depth, own), required: required.has(name) }];
+    const f: Field = { name, type: typeOf(c.r.schema), required: required.has(name), desc: c.r.schema.description, depth, ptr: own, facts: facts(c.r.schema) };
+    return [f, ...fields(doc, c.r.schema, own, depth + 1, c.seen)];
   });
 }
 

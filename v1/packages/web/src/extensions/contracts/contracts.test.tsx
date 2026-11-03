@@ -1,16 +1,17 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
+import { artifactCard } from '../../Artifacts.tsx';
 import { ArtifactPage } from '../../ArtifactPage.tsx';
 import { delivered, versionOf } from '../../delivered.ts';
 import { SessionKeyContext } from '../../extension.ts';
 import type { SealedArtifact } from '../../api.ts';
 import { contracts } from './index.ts';
+import v1 from './fixtures/sleeper-schedule-v1.json';
+import v2 from './fixtures/sleeper-schedule-v2.json';
 import { fields, parseSpec, toYaml, type ContractSpec } from './spec.ts';
 
-const raw = (v: number) => readFileSync(join(process.cwd(), 'src/extensions/contracts/fixtures', `sleeper-schedule-v${v}.json`), 'utf8');
+const raw = (v: number) => JSON.stringify(v === 1 ? v1 : v2);
 const sealed = (content: string, over: Partial<SealedArtifact> = {}): SealedArtifact => ({ kind: 'contract.spec', version: 1, hash: 'h', content, sealedAt: 1, verdict: null, ...over });
 const show = (v: number) => render(<>{contracts.card!(sealed(raw(v), { version: v }))}</>);
 
@@ -33,7 +34,7 @@ test('version 1 shows the route, its fields with type and required, and an examp
 
 test('a why chip opens the reasons for its own choice, by source', async () => {
   show(1);
-  const ok = screen.getByText('503 Schedules service unreachable'.slice(4)).closest('div.rounded-xl') as HTMLElement;
+  const ok = screen.getByText('Schedules service unreachable').closest('div.rounded-xl') as HTMLElement;
   await userEvent.click(within(ok).getByRole('button', { name: 'Why: 503 when schedules is down' }));
   const panel = screen.getByRole('region', { name: 'Why: 503 when schedules is down' });
   const items = within(panel).getAllByRole('listitem').map((li) => li.textContent);
@@ -116,6 +117,7 @@ test('the card links to its own page for its session; the page has no such link 
   expect(screen.getByRole('link', { name: '‹ Back to the session' })).toHaveAttribute('href', '#/s/home%3Amain');
   await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '2');
   expect(screen.getByText('1 route · version 2')).toBeInTheDocument();
+  expect(location.hash).toBe('#/s/home%3Amain/spec?v=2');
   vi.unstubAllGlobals();
 });
 
@@ -133,4 +135,31 @@ test('a rejected attempt shares its spec version: the picker and page follow con
   expect(screen.queryByText('Rejected draft')).toBeNull();
   expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
   vi.unstubAllGlobals();
+});
+
+test('a $ref that points back to itself, or round a loop, ends in a named reference', () => {
+  const doc = { components: { schemas: {
+    Node: { type: 'object', properties: { value: { type: 'string' }, next: { $ref: '#/components/schemas/Node' } } },
+    A: { type: 'object', properties: { b: { $ref: '#/components/schemas/B' } } },
+    B: { type: 'object', properties: { a: { $ref: '#/components/schemas/A' } } },
+    List: { type: 'array', items: { $ref: '#/components/schemas/List' } },
+    X: { $ref: '#/components/schemas/Y' },
+    Y: { $ref: '#/components/schemas/X' },
+  } } };
+  const rows = (name: string) => fields(doc, { $ref: `#/components/schemas/${name}` }, '/x').map((f) => [f.name, f.type, f.desc]);
+  expect(rows('Node')).toEqual([['value', 'string', undefined], ['next', 'Node', 'Node, see above']]);
+  expect(rows('A')).toEqual([['b', 'object', undefined], ['a', 'A', 'A, see above']]);
+  expect(rows('List')).toEqual([['each item', 'List', 'List, see above']]);
+  expect(rows('X')).toEqual([]);
+});
+
+test('a spec without a usable document is not drawn, and one that throws while drawing falls back to its saved text', () => {
+  const bad = (document: unknown) => JSON.stringify({ ...v1, document });
+  for (const d of [null, 'x', {}, { paths: null }]) expect(parseSpec(bad(d))).toBeUndefined();
+  const broken = bad({ paths: { '/x': { get: { parameters: 5 } } } });
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  render(<>{artifactCard(sealed(broken))}</>);
+  expect(screen.getByRole('alert')).toHaveTextContent("This couldn't be drawn");
+  expect(screen.getByRole('alert')).toHaveTextContent('"parameters":5');
+  vi.restoreAllMocks();
 });

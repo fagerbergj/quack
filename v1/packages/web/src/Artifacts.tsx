@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ArtifactBoundary } from './ArtifactBoundary.tsx';
 import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { listArtifacts, type SealedArtifact } from './api.ts';
@@ -10,8 +11,11 @@ export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) 
   return <span role={verdict.passed ? 'img' : undefined} aria-label={verdict.passed ? 'Double-checked' : undefined} aria-hidden={verdict.passed ? undefined : true} title={verdict.passed ? 'Double-checked' : undefined} className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
 }
 
-// An extension may draw its artifact as a card; undefined leaves the plain line.
-export const artifactCard = (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => EXTENSIONS.map((e) => e.card?.(a, now)).find(Boolean);
+// An extension may draw its artifact as a card; undefined leaves the plain line. A card that throws falls back to the saved text.
+export function artifactCard(a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) {
+  const card = EXTENSIONS.map((e) => e.card?.(a, now)).find(Boolean);
+  return card && <ArtifactBoundary artifact={a}>{card}</ArtifactBoundary>;
+}
 
 // What an artifact is called anywhere it shows by name; the raw kind never does.
 export const artifactName = (a: SealedArtifact) => EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.name || 'Result';
