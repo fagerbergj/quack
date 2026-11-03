@@ -1622,3 +1622,12 @@ test('a Home approval card says what it will do, from the args the index carries
   expect(within(needs).getByText(args.summary)).toBeInTheDocument();
   expect(within(needs).getByText(/abc1234 docs: fix typo/)).toBeInTheDocument();
 });
+
+test('a running session waiting for a model slot says so on its row, instead of looking like it works', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Queued one', running: true, active: true, note: 'Waiting for a model slot (2 ahead)' }), sess('gh:2', { title: 'Working one', running: true, active: true })] };
+  location.hash = '#/sessions';
+  stubViewport(false);
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Queued one/ })).toHaveTextContent('Waiting for a model slot (2 ahead)');
+  expect(screen.getByRole('link', { name: /Working one/ })).not.toHaveTextContent('Waiting for a model slot');
+});
