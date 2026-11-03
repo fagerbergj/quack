@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { num, obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { failedRows, Failures } from '@quack/sdk';
 import { openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
@@ -16,7 +17,7 @@ after(() => rm(root, { recursive: true, force: true }));
 const step = (n: number) => (_c: unknown) => fauxAssistantMessage(fauxToolCall('probe', { n }), { stopReason: 'toolUse' });
 
 async function open(name: string, turnCeiling: number | undefined, steps: FauxResponseStep[]) {
-  const probe = defineTool({ name: 'probe', description: 'Looks something up', parameters: Type.Object({ n: Type.Number() }), execute: async (a) => ({ output: [{ type: 'text', text: `result ${a.n}` }] }) });
+  const probe = defineTool({ name: 'probe', description: 'Looks something up', parameters: obj({ n: num() }, { open: true }), execute: async (a) => ({ output: [{ type: 'text', text: `result ${a.n}` }] }) });
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(steps);
   const models = createModels();

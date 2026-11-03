@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { watchEvents } from '@earendil-works/pi-durable';
+import { ConversationTranscript, type TranscriptItem, type TranscriptView } from '@earendil-works/pi-durable';
 import { MAX_IMAGE_CHARS, MAX_IMAGES, parseImages } from './images.ts';
 import type { ImageContent } from '@earendil-works/pi-ai';
 import { failedRows, Failures, pendingQuestions, Questions } from '@quack/sdk';
@@ -12,7 +12,8 @@ import type { Session } from './runtime.ts';
 // for that and every in-budget input reaches the polite length check.
 const MAX_INPUT = 1 << 20;
 
-type ClientInput = { type: 'input'; input: string; images: ImageContent[]; requestId?: string; whenBusy?: 'steer' | 'followUp' } | { type: 'withdraw' | 'steer'; id: string };
+type Gap = Extract<TranscriptItem, { kind: 'gap' }>;
+type ClientInput = { type: 'input'; input: string; images: ImageContent[]; requestId?: string; whenBusy?: 'steer' | 'followUp' } | { type: 'withdraw' | 'steer'; id: string } | { type: 'earlier' } | { type: 'gap'; gap: Gap };
 
 function parseClient(data: string): ClientInput | string {
   let msg: unknown;
@@ -23,8 +24,15 @@ function parseClient(data: string): ClientInput | string {
   }
   const { type, id } = (msg ?? {}) as Record<string, unknown>;
   if (type === 'withdraw' || type === 'steer') return typeof id === 'string' && id ? { type, id } : 'id must be a queued message id';
-  if (type !== 'input') return 'type must be input, withdraw or steer';
+  if (type === 'earlier') return { type };
+  if (type === 'gap') return parseGap(msg as Record<string, unknown>);
+  if (type !== 'input') return 'type must be input, withdraw, steer, earlier or gap';
   return parseInput(msg as Record<string, unknown>);
+}
+
+function parseGap({ after, upTo }: Record<string, unknown>): ClientInput | string {
+  if (typeof after !== 'number' || typeof upTo !== 'number') return 'after and upTo must be entry ids';
+  return { type: 'gap', gap: { kind: 'gap', after: after as never, upTo: upTo as never } };
 }
 
 function parseInput({ input, images, requestId, whenBusy }: Record<string, unknown>): ClientInput | string {
@@ -59,25 +67,37 @@ async function watchStanding(session: Session, ws: WebSocket) {
   ws.on('close', () => void Promise.all([questions?.stop(), failures?.stop()]));
 }
 
-// Streams pi-durable's own events (snapshot, then deltas) with no quack vocabulary on top (A9).
+// Streams pi-durable's conversation view (A9): the transcript items when they change, the live, usage and inbox state on every change.
 async function stream(session: Session, ws: WebSocket) {
-  const events = await watchEvents(session.harness, session.root.id, BACKGROUND_CONTEXT);
-  ws.send(JSON.stringify(events.snapshot));
-  // The queued follow-ups ride the socket in full (the inbox event carries no text), so a reload shows them again.
+  const { root } = session;
+  const transcript = new ConversationTranscript((query, limit, c) => root.entries(query, limit, undefined, c));
+  let sentItems: unknown;
+  let inbox: string | undefined;
+  // The queued follow-ups ride the socket in full, so a reload shows them again; the frame follows each inbox change.
   const pushQueued = async () => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'queued', items: await session.queued() }));
-  events.start(async (batch) => {
+  const render = async (view: TranscriptView) => {
     if (ws.readyState !== ws.OPEN) return;
-    ws.send(JSON.stringify({ type: 'events', events: batch }));
-    if (batch.some((e) => e.type === 'inbox_update')) await pushQueued();
-  });
-  await pushQueued();
-  ws.on('close', () => void events.stop());
+    const { items, docs } = view;
+    ws.send(JSON.stringify({ type: 'view', items: items === sentItems ? undefined : items, live: docs['pi.live'] ?? {}, usage: docs['pi.usage'] }));
+    sentItems = items;
+    const queue = JSON.stringify(docs['pi.inbox'] ?? null);
+    if (queue !== inbox) {
+      inbox = queue;
+      await pushQueued();
+    }
+  };
+  const watch = await root.watch(BACKGROUND_CONTEXT);
+  await render(transcript.merge(watch.value));
+  watch.start(async (call) => { if (call.kind === 'value') await render(transcript.merge(call.value)); });
+  ws.on('close', () => void watch.stop());
   ws.on('message', async (data) => {
     const input = parseClient(data.toString());
     const requestId = requestIdOf(data.toString());
     if (typeof input === 'string') return ws.send(JSON.stringify({ type: 'error', error: input, requestId }));
     // A rejection here would be unhandled, and Node ends the process on those, taking every viewer with it.
     try {
+      if (input.type === 'earlier') return void (await render(await transcript.loadEarlier(BACKGROUND_CONTEXT)));
+      if (input.type === 'gap') return void (await render(await transcript.fillGap(input.gap, BACKGROUND_CONTEXT)));
       if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer'));
       const result = await session.submit(input.input, input.requestId, false, input.whenBusy, input.images);
       ws.send(JSON.stringify({ type: 'accepted', ...result, requestId }));

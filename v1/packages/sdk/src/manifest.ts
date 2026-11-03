@@ -1,5 +1,5 @@
 import type { Extension, JsonObject } from '@earendil-works/pi-durable';
-import type { Static, TSchema } from '@earendil-works/pi-ai';
+import type { Schema, Static } from '@earendil-works/pi-schema';
 import type { SealedArtifact } from './artifacts.ts';
 
 /** A workflow an extension contributes: how to build it from an agent's binding, and the variables it reads from the session process. */
@@ -10,7 +10,7 @@ export type ContributedWorkflows = Record<string, ContributedWorkflow>;
 export type ActionContext = { distributorUrl: string; fetch: typeof fetch; env: Record<string, string | undefined> };
 
 /** Work an extension can start on a person's behalf. The home agent offers `summary` to the model and to the person who confirms; `start` calls the owner's own service or the distributor. */
-export type Action<P extends TSchema = TSchema> = {
+export type Action<P extends Schema = Schema> = {
   name: string;
   /** One line: what starting it does. */
   summary: string;

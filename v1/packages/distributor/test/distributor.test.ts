@@ -120,11 +120,11 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
   const { driver, base } = await startDistributor(200);
   const key = 'github:fagerbergj/quack#1827';
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
-  assert.equal((await nextFrame(ws, () => true)).type, 'snapshot');
+  assert.equal((await nextFrame(ws, () => true)).type, 'view');
 
-  const ended = nextFrame(ws, runEnded);
+  const ended = nextFrame(ws, runEnded());
   ws.send(JSON.stringify({ type: 'input', input: 'hi', requestId: 'w-1' }));
-  assert.match(JSON.stringify((await ended).events), /echo: hi/);
+  assert.match(JSON.stringify((await ended).items), /echo: hi/);
 
   // Several idle sweeps pass while the viewer is connected; the session must still be running.
   await new Promise((r) => setTimeout(r, 1_000));

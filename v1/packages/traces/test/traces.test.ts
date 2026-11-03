@@ -5,7 +5,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { num, obj, str } from '@earendil-works/pi-schema';
 import { observeGeneration, onGeneration } from '@quack/sdk';
 import { defineWorkflow, runWorkflow, workflowExtension } from '@quack/workflows';
 import { agentSpec } from '@quack/session';
@@ -172,8 +173,8 @@ const note = { kind: 'test.note', path: 'note.md' };
 const flow = defineWorkflow({
   name: 'traced',
   steps: [
-    { name: 'decide', kind: 'model', schema: Type.Object({ n: Type.Number() }), prompt: () => 'pick a number' },
-    { name: 'card', kind: 'judged', schema: Type.Object({ text: Type.String() }), prompt: () => 'write the text', card: (_c, d) => d as object, judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 } }) },
+    { name: 'decide', kind: 'model', schema: obj({ n: num() }, { open: true }), prompt: () => 'pick a number' },
+    { name: 'card', kind: 'judged', schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object, judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 } }) },
   ],
 });
 

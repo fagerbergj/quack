@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { num, obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openSession } from '@quack/session';
 import { catalog } from '../src/catalog.ts';
@@ -12,7 +13,7 @@ const root = await mkdtemp(join(tmpdir(), 'quack-codemode-'));
 after(() => rm(root, { recursive: true, force: true }));
 
 const probe = (name: string, seen: string[]) =>
-  defineTool({ name, description: `Looks up ${name}`, parameters: Type.Object({ id: Type.Number() }), execute: async (a) => (seen.push(`${name}:${a.id}`), { output: [{ type: 'text', text: `${name} ${a.id}` }] }) });
+  defineTool({ name, description: `Looks up ${name}`, parameters: obj({ id: num() }, { open: true }), execute: async (a) => (seen.push(`${name}:${a.id}`), { output: [{ type: 'text', text: `${name} ${a.id}` }] }) });
 
 async function run(dir: string, codemode: object | undefined, script: string) {
   const seen: string[] = [];

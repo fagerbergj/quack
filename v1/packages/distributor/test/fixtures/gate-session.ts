@@ -1,6 +1,7 @@
 // A session process whose model calls a gated tool, then reports that it ran, for sleep/wake tests.
 import { appendFile } from 'node:fs/promises';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { gated } from '@quack/sdk';
 import { createSessionServer, listenReporting, openSession } from '@quack/session';
@@ -12,7 +13,7 @@ const extension = defineExtension({
       defineTool({
         name: 'post_comment',
         description: 'Post a comment',
-        parameters: Type.Object({}),
+        parameters: obj({}, { open: true }),
         execute: async () => {
           await appendFile(`${process.env.QUACK_SESSION_DIR}/posted`, 'x');
           return { output: [{ type: 'text', text: 'posted' }] };

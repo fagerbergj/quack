@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { pendingApprovals, resolveApproval, type Action } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { homeSessionExtensions } from '../src/index.ts';
@@ -13,10 +14,10 @@ const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
 
 const started: unknown[] = [];
-const ping: Action<ReturnType<typeof Type.Object>> = {
+const ping: Action<ReturnType<typeof obj>> = {
   name: 'ping_thing',
   summary: 'Pings a thing',
-  params: Type.Object({ thing: Type.String() }),
+  params: obj({ thing: str() }, { open: true }),
   async start(params) {
     started.push(params);
     return { session: 'thing:1', title: 'Ping thing' };

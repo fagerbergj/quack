@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, obj, str } from '@earendil-works/pi-schema';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
@@ -13,10 +13,10 @@ export const HISTORY_WORKFLOW = 'sleeper.history';
 /** The same wiring as the other jobs; history reads past seasons from the Sleeper client, so the day's snapshot and news are not used. */
 export type HistoryDeps = LineupDeps;
 
-const decisionSchema = Type.Object({
-  summary: Type.String({ maxLength: 800 }),
-  seasons: Type.Array(Type.Object({ season: Type.String(), text: Type.String({ maxLength: 500 }) })),
-});
+const decisionSchema = obj({
+  summary: str({ maxLength: 800 }),
+  seasons: arr(obj({ season: str(), text: str({ maxLength: 500 }) }, { open: true })),
+}, { open: true });
 
 const seasonText = (s: SeasonFigures) => {
   const worst = [...s.weeks].sort((a, b) => b.left - a.left).slice(0, 3).map((w) => `wk ${w.week} left ${w.left}`).join(', ');

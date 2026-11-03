@@ -120,7 +120,8 @@ test('a direct-spend commit that fails once is retried, so the spend is still re
   index.state.mode = 'ok';
   const session = await openDemo();
   let failures = 0;
-  const root = new Proxy(session.root, { get: (t, k) => k === 'commit' ? (...a: unknown[]) => (failures-- > 0 ? Promise.reject(new Error('blip')) : (t.commit as Function)(...a)) : Reflect.get(t, k) });
+  // Methods bind to the real conversation: its private fields do not survive a Proxy receiver.
+  const root = new Proxy(session.root, { get: (t, k) => { const v = Reflect.get(t, k); return k === 'commit' ? (...a: unknown[]) => (failures-- > 0 ? Promise.reject(new Error('blip')) : (t.commit as Function)(...a)) : typeof v === 'function' ? v.bind(t) : v; } });
   const publisher = await startPublisher({ harness: session.harness, root }, { url: index.url, token: 't', meta, pollMs: 60_000 });
   failures = 1;
   await observeGeneration({ messages: [] }, async () => reply(0.25));

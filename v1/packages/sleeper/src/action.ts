@@ -1,12 +1,12 @@
-import { Type } from '@earendil-works/pi-ai';
+import { int, obj, oneOf, opt, str } from '@earendil-works/pi-schema';
 import type { Action } from '@quack/sdk';
 
 const JOBS = ['lineup', 'waivers', 'trends', 'digest', 'retro', 'trade-finder', 'history'] as const;
-const params = Type.Object({
-  job: Type.String({ enum: [...JOBS], description: 'Which analysis to run' }),
-  league: Type.Optional(Type.String({ minLength: 1, description: 'Sleeper league id; the configured league when omitted' })),
-  week: Type.Optional(Type.Integer({ minimum: 1, description: 'NFL week; the current week when omitted' })),
-});
+const params = obj({
+  job: oneOf(JOBS, { description: 'Which analysis to run' }),
+  league: opt(str({ minLength: 1, description: 'Sleeper league id; the configured league when omitted' })),
+  week: opt(int({ minimum: 1, description: 'NFL week; the current week when omitted' })),
+}, { open: true });
 
 /** Runs a job through the Sleeper service's on-demand endpoint (SL-2), which owns the session key and input. */
 export const runJob: Action<typeof params> = {

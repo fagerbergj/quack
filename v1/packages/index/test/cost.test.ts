@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, UsageDoc } from '@earendil-works/pi-durable';
 import { decide, sessionModel } from '@quack/sdk';
 import { openSession } from '@quack/session';
@@ -16,7 +17,7 @@ after(() => rm(dir, { recursive: true, force: true }));
 
 test('the cost fact includes the spend of a decision fork, not just the root conversation', async () => {
   const ask = defineTool({
-    name: 'ask', description: 'ask', parameters: Type.Object({}),
+    name: 'ask', description: 'ask', parameters: obj({}, { open: true }),
     execute: async (_a, api, c) => {
       const d = await decide(api, { name: 'q', question: 'Ship it?', options: ['yes', 'no'] }, [sessionModel], c);
       return { output: [{ type: 'text', text: d?.choice ?? 'none' }] };

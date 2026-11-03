@@ -1,6 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
-import type { TSchema } from '@earendil-works/pi-ai';
 import { whileWaiting } from './signals.ts';
 import { defineDoc, type Conversation, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
@@ -51,7 +50,7 @@ async function waitForVerdict(watch: { value: Readonly<ApprovalsDoc> | null; sta
 }
 
 // A gated tool waits durably for a verdict before it runs (GATE-5..8). Replay-safe: a rerun after a crash finds its approval by task id.
-export function gated<P extends TSchema>(tool: ToolRegistration<P>): ToolRegistration<P> {
+export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistration<P> {
   return {
     ...tool,
     replay: 'safe',

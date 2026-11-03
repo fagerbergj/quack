@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { stepLabel } from './step.ts';
-import { applyEvents, emptyView } from './view.ts';
+import { applyView, emptyView } from './view.ts';
 
 const tool = (name: string, args: unknown = {}) => ({ tool: { name, args } });
 
@@ -23,8 +23,11 @@ test('without a tool the label follows what is being generated', () => {
   expect(stepLabel({})).toBe('Working');
 });
 
-test('the view holds the in-flight tool from its start until it ends', () => {
-  const started = applyEvents(emptyView, [{ type: 'tool_execution_start', toolCallId: 't', toolName: 'bash', args: {} }] as never);
-  expect(started.tool?.name).toBe('bash');
-  expect(applyEvents(started, [{ type: 'tool_execution_end', toolCallId: 't' }] as never).tool).toBeUndefined();
+test('the view holds the in-flight tool, with its call arguments, from its start until it is done', () => {
+  const call = { type: 'toolCall', id: 't', name: 'bash', arguments: { command: 'ls' } };
+  const items = [{ kind: 'entry', entry: { id: 1, kind: 'pi.assistant', model: [{ role: 'assistant', content: [call] }] } }];
+  const slot = (status: string) => ({ callId: 't', name: 'bash', status });
+  const started = applyView(emptyView, { type: 'view', items, live: { run: {}, tools: [slot('running')] } } as never);
+  expect(started.tool).toEqual({ name: 'bash', args: { command: 'ls' } });
+  expect(applyView(started, { type: 'view', live: { run: {}, tools: [slot('done')] } } as never).tool).toBeUndefined();
 });

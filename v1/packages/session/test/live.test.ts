@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { decide, person } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
@@ -13,7 +14,7 @@ import { nextFrame, runEnded } from './ws-helpers.ts';
 const dir = await mkdtemp(join(tmpdir(), 'quack-live-'));
 after(() => rm(dir, { recursive: true, force: true }));
 
-test('streams a snapshot, then the run, and accepts input over the socket', async () => {
+test('streams the conversation view, then the run, and accepts input over the socket', async () => {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses([fauxAssistantMessage('Paris')]);
   const models = createModels();
@@ -25,17 +26,17 @@ test('streams a snapshot, then the run, and accepts input over the socket', asyn
 
   const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
   const snapshot = await nextFrame(ws, () => true);
-  assert.equal(snapshot.type, 'snapshot');
+  assert.equal(snapshot.type, 'view');
 
   const bad = nextFrame(ws, (f) => f.type === 'error');
   ws.send(JSON.stringify({ type: 'input', input: '' }));
   assert.match((await bad).error, /non-empty/);
 
-  const ended = nextFrame(ws, runEnded);
+  const ended = nextFrame(ws, runEnded());
   const accepted = nextFrame(ws, (f) => f.type === 'accepted');
   ws.send(JSON.stringify({ type: 'input', input: 'Capital of France?', requestId: 'live-1' }));
   assert.equal((await accepted).submissionId !== undefined, true);
-  assert.match(JSON.stringify((await ended).events), /Paris/);
+  assert.match(JSON.stringify((await ended).items), /Paris/);
 
   ws.close();
   await new Promise((r) => server.close(r));
@@ -65,9 +66,9 @@ test('a failed submit is an error frame, and the session keeps streaming', async
   ws.send(JSON.stringify({ type: 'input', input: 'x'.repeat((1 << 20) + 1) }));
   assert.equal((await tooLong).error, 'input is too long');
 
-  const ended = nextFrame(ws, runEnded);
+  const ended = nextFrame(ws, runEnded());
   ws.send(JSON.stringify({ type: 'input', input: 'are you there?', requestId: 'live-2' }));
-  assert.match(JSON.stringify((await ended).events), /still here/);
+  assert.match(JSON.stringify((await ended).items), /still here/);
   ws.close();
   await new Promise((r) => server.close(r));
   await session.close();
@@ -75,7 +76,7 @@ test('a failed submit is an error frame, and the session keeps streaming', async
 
 test('an open question rides the socket as a standing frame and clears when answered, with no polling', async () => {
   const escalate = defineTool({
-    name: 'escalate', description: 'ask a person', parameters: Type.Object({}), replay: 'safe',
+    name: 'escalate', description: 'ask a person', parameters: obj({}, { open: true }), replay: 'safe',
     execute: async (_a, api, c) => {
       const d = await decide(api, { name: 'flex', question: 'Who starts?', options: ['Pollard', 'Stevenson'] }, [person()], c);
       return { output: [{ type: 'text', text: d?.choice ?? 'none' }] };

@@ -3,7 +3,8 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { reviewEvidence, reviewerRubric, reviewKind } from '@quack/github';
 import { feedback, rejudge, type Verdict } from '@quack/judge';
@@ -26,7 +27,7 @@ for (const dir of dirs) {
   const replay = defineTool({
     name: 'replay_judge',
     description: 'Judge every sealed review again.',
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     async execute(_args, api, ctx) {
       const versions = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions ?? [];
       for (const sealed of versions) {

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, Type, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
+import { num, obj, str } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import { answerQuestion, Approvals, Artifacts, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
@@ -45,7 +46,7 @@ test('a code, model and code workflow completes, records its steps and seals its
     name: 'three',
     steps: [
       { name: 'gather', kind: 'code', run: async (c) => { await c.api.env!.writeFile('note.md', 'ducks', ctx); await seal(c.api, note, ctx); return { items: [1, 2, 3] }; } },
-      { name: 'rank', kind: 'model', schema: Type.Object({ top: Type.Number() }), prompt: (c) => `Pick the best of ${JSON.stringify(c.prior.gather)}` },
+      { name: 'rank', kind: 'model', schema: obj({ top: num() }, { open: true }), prompt: (c) => `Pick the best of ${JSON.stringify(c.prior.gather)}` },
       { name: 'report', kind: 'code', run: (c) => `top is ${(c.prior.rank as { top: number }).top}` },
     ],
   });
@@ -103,7 +104,7 @@ test('a model reply that fails the schema fails the step and stops the workflow'
   const workflow = defineWorkflow({
     name: 'strict',
     steps: [
-      { name: 'rank', kind: 'model', schema: Type.Object({ top: Type.Number() }), prompt: () => 'rank' },
+      { name: 'rank', kind: 'model', schema: obj({ top: num() }, { open: true }), prompt: () => 'rank' },
       { name: 'after', kind: 'code', run: () => { ranAfter = true; return null; } },
     ],
   });
@@ -122,7 +123,7 @@ test('a model reply that fails the schema fails the step and stops the workflow'
 
 const capped = defineWorkflow({
   name: 'capped',
-  steps: [{ name: 'decide', kind: 'model', schema: Type.Object({ summary: Type.String({ maxLength: 5 }) }), prompt: () => 'summarize' }],
+  steps: [{ name: 'decide', kind: 'model', schema: obj({ summary: str({ maxLength: 5 }) }, { open: true }), prompt: () => 'summarize' }],
 });
 
 test('resuming a failed run reruns the failed step and later ones, keeping the earlier results', async () => {
@@ -188,7 +189,7 @@ test('a model reply that breaks the schema is repaired with the error and the fi
   assert.equal(seen.length, 2);
   assert.deepEqual(seen[1].map((m) => m.role), ['user', 'assistant', 'user']);
   assert.match(JSON.stringify(seen[1][1]), /far too long/);
-  assert.match(JSON.stringify(seen[1][2]), /summary.*must not have more than 5 characters/s);
+  assert.match(JSON.stringify(seen[1][2]), /summary.*expected at most 5 characters/s);
   await s.close();
 });
 
@@ -250,7 +251,7 @@ test('a gated step waits for approval and runs its tool once with earlier result
   const post = defineTool({
     name: 'post_comment',
     description: 'Post a comment',
-    parameters: Type.Object({ body: Type.String() }),
+    parameters: obj({ body: str() }, { open: true }),
     execute: async (args) => { posted.push(args.body); return { output: [{ type: 'text', text: 'posted' }] }; },
   });
   const workflow = defineWorkflow({
@@ -285,7 +286,7 @@ const judgedFlow = defineWorkflow({
   steps: [{
     name: 'card',
     kind: 'judged',
-    schema: Type.Object({ text: Type.String() }),
+    schema: obj({ text: str() }, { open: true }),
     prompt: () => 'write the text',
     card: (_c, d) => d as object,
     judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 }, notes: ['n'] }),
@@ -332,7 +333,7 @@ test('a judged step whose judge model gives no answer fails the step and attache
   const asked = { name: 'asks', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'q', label: 'q', weight: 1, scope: 'review', question: 'Is it fine?' }] }] };
   const flow = defineWorkflow({
     name: 'judged-outage',
-    steps: [{ name: 'card', kind: 'judged', schema: Type.Object({ text: Type.String() }), prompt: () => 'write the text', card: (_c, d) => d as object,
+    steps: [{ name: 'card', kind: 'judged', schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object,
       judge: () => ({ options: { kind: note, rubric: asked, evidence: async () => ({ review: [{ id: 'r', state: { text: 'x' } }] }), maxRevisions: 1 } }) }],
   });
   const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });
@@ -350,7 +351,7 @@ function throwingFlow(builds: { n: number }, failures: number) {
     steps: [{
       name: 'card',
       kind: 'judged',
-      schema: Type.Object({ text: Type.String() }),
+      schema: obj({ text: str() }, { open: true }),
       prompt: () => 'write the text',
       card: (_c, d) => {
         if (builds.n++ < failures) throw new Error('the card builder rejects this');

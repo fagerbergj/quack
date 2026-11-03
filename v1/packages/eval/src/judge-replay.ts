@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, Type, type MutableModels } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type MutableModels } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { rejudge, type ClassifierRef, type Evidence, type ModelRef, type Rubric } from '@quack/judge';
@@ -62,7 +63,7 @@ export async function replayJudge(o: Options): Promise<Row[]> {
   const replay = defineTool({
     name: 'replay_judge',
     description: 'Judge every recorded case again.',
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     async execute(_args, api, ctx) {
       await Promise.all(Array.from({ length: o.concurrency }, async () => {
         for (let j = queue.shift(); j && !failure; j = queue.shift()) {

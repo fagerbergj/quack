@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type ImageContent, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
@@ -48,14 +48,14 @@ export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: R
 // pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
 
-const REPORTED = new Set(['task_parked', 'task_faulted', 'extension_error', 'host_error']);
+const REPORTED = new Set(['task_interrupted', 'task_faulted', 'extension_error', 'host_error']);
 
-/** The log line for a harness report worth an operator's attention (a parked task is otherwise silently blocked); null for the rest. */
-export function reportLine(error: unknown, info: ReportInfo): string | null {
-  if (!REPORTED.has(info.type)) return null;
+/** The log line for a harness report worth an operator's attention (an interrupted task otherwise ends without a trace); null for the rest. */
+export function reportLine({ error, ...info }: Report): string | null {
+  if (!REPORTED.has(info.kind)) return null;
   const at = info as { task?: { kind: string }; extension?: string; callback?: string; reason?: string };
   const where = [at.task && `task=${at.task.kind}`, at.extension && `extension=${at.extension}`, at.callback && `callback=${at.callback}`, at.reason && `reason=${at.reason}`].filter(Boolean);
-  return `session: ${[info.type, ...where].join(' ')}: ${error instanceof Error ? error.message : String(error)}`;
+  return `session: ${[info.kind, ...where].join(' ')}: ${error instanceof Error ? error.message : String(error)}`;
 }
 
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
@@ -82,8 +82,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   if (!sees && opts.imageModel) registry.install(lookExtension(workspace, opts.models, opts.imageModel));
   const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
   const log = opts.log ?? console.error;
-  const onReport = (error: unknown, info: ReportInfo) => {
-    const line = reportLine(error, info);
+  const onReport = (report: Report) => {
+    const line = reportLine(report);
     if (line) log(line);
   };
   const harness = await Harness.open(storage, {
@@ -117,7 +117,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
 
   // True when every task that can run is a gated tool waiting for a verdict; a verdict wakes the process through the normal request path.
   async function onlyAwaitingHumans(): Promise<boolean> {
-    const live = (await harness.inspect(ctx)).tasks.filter((t) => t.state.kind === 'running' || t.state.kind === 'ready');
+    const live = (await harness.inspect(ctx)).tasks.filter((t) => t.state.kind === 'running' || t.state.kind === 'pending');
     const pending = new Set((await pendingApprovals(root, ctx)).map((a) => a.id));
     return live.length > 0 && live.every((t) => pending.has(String(t.record.id)));
   }

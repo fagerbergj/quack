@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
@@ -35,7 +36,7 @@ test('POST /abort ends a run that is waiting on a tool', async () => {
   const hang = defineTool({
     name: 'hang',
     description: 'waits until aborted',
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     execute: async (_a, _api, ctx) => {
       started();
       await new Promise((r) => ctx.abortSignal?.addEventListener('abort', r));
@@ -44,8 +45,8 @@ test('POST /abort ends a run that is waiting on a tool', async () => {
   });
   const h = await serve(defineExtension({ name: 'hang', tools: [hang] }), fauxAssistantMessage(fauxToolCall('hang', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('unreachable'));
   const ws = new WebSocket(`${h.base.replace('http', 'ws')}/ws`);
-  await nextFrame(ws, (f) => f.type === 'snapshot');
-  const ended = nextFrame(ws, runEnded);
+  await nextFrame(ws, (f) => f.type === 'view');
+  const ended = nextFrame(ws, runEnded());
   await fetch(`${h.base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'go', requestId: 'a-1' }) });
   await running;
   const res = await fetch(`${h.base}/abort`, { method: 'POST' });
@@ -60,7 +61,7 @@ test('GET /artifacts lists sealed versions with their verdicts', async () => {
   const submit = defineTool({
     name: 'submit',
     description: 'seal and check',
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     replay: 'safe',
     execute: async (_a, api, ctx) => {
       const sealed = await seal(api, note, ctx);

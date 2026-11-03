@@ -2,7 +2,8 @@ import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, defineTool, GenerationTask, hook, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import type { Dispatch, DispatchingExtension, Resume } from '@quack/session';
-import { Type, type Message } from '@earendil-works/pi-ai';
+import { type Message } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { Failures } from '@quack/sdk';
 import { latestRun, type Chat, type ChatSession } from './chat.ts';
 import { WorkflowDoc, type StepRecord } from './doc.ts';
@@ -112,7 +113,7 @@ export async function startWorkflow(harness: Harness, root: Conversation, workfl
 }
 
 // Starts a new run at the failed step, keeping earlier results; null if the latest run did not fail.
-// A failed task is terminal, so pi-durable's retryTask (parked tasks only) cannot rerun it.
+// A failed task is terminal, so it cannot be rerun in place; a new task starts at the failed step.
 export async function resumeWorkflow(harness: Harness, root: Conversation, workflow: Workflow, ctx: Context = BACKGROUND_CONTEXT): Promise<string | null> {
   const seen = await harness.snapshot(WorkflowDoc, root.id, ctx);
   const old = seen?.task ? await harness.getTask(Number(seen.task) as never, ctx) : undefined;
@@ -169,7 +170,7 @@ const text = (t: string, isError = false) => ({ output: [{ type: 'text' as const
 const rerunTool = (workflow: Workflow, session: () => ChatSession) => defineTool({
   name: 'rerun_job',
   description: "Start this session's job again on the same input, as the Run button does. The job takes no hint, so the request text does not change it; tell the person that. Returns at once; the new result appears in this session when the run ends.",
-  parameters: Type.Object({}),
+  parameters: obj({}, { open: true }),
   async execute(_args, api, ctx) {
     const s = session();
     const input = (await latestRun(s, ctx))?.input;

@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { obj, opt, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolRegistration } from '@earendil-works/pi-durable';
 import { Artifacts } from '@quack/sdk';
 import { latestRun, type Chat, type ChatSession, type Workflow } from '@quack/workflows';
@@ -27,7 +27,7 @@ export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegis
   const result = defineTool({
     name: 'job_result',
     description: "The latest sealed version of each result this session's job produced, and the judge's verdict when it has one.",
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     async execute(_args, api, ctx) {
       const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
       const latest = Object.values(doc?.kinds ?? {}).flatMap((k) => k.versions.slice(-1));
@@ -38,7 +38,7 @@ export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegis
   const facts = defineTool({
     name: 'job_facts',
     description: "What the latest run was built from: each step's results (the facts step holds the data) and the run's status. Pass a step name to read just that step.",
-    parameters: Type.Object({ step: Type.Optional(Type.String()) }),
+    parameters: obj({ step: opt(str()) }, { open: true }),
     async execute(args, _api, ctx) {
       const run = await latestRun(session(), ctx);
       if (!run) return reply('The job has not run in this session yet.', true);
@@ -49,7 +49,7 @@ export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegis
   const player = defineTool({
     name: 'player',
     description: "A player's current Sleeper status (team, position, injury designation, depth) and recent credible news with links. Pass the full name.",
-    parameters: Type.Object({ name: Type.String({ minLength: 2 }) }),
+    parameters: obj({ name: str({ minLength: 2 }) }, { open: true }),
     async execute(args, api) {
       const wanted = args.name.trim().toLowerCase();
       const dump = (await deps.client.players()) as Record<string, Record<string, string | number | null>>;

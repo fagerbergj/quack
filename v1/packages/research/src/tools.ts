@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { ClassifierRef, ModelRef } from '@quack/judge';
 import { extractText, getDocumentProxy } from 'unpdf';
@@ -69,7 +69,7 @@ async function toText(body: Buffer, contentType: string): Promise<string> {
 const MAX_BATCH = 5;
 const CONCURRENCY = 3;
 const BATCH_CHARS = 90_000;
-const batch = (what: string) => Type.Array(Type.String(), { minItems: 1, maxItems: MAX_BATCH, description: what });
+const batch = (what: string) => arr(str(), { minItems: 1, maxItems: MAX_BATCH, description: what });
 
 /** Results in input order, at most CONCURRENCY running at once; fn must catch its own failures so one item cannot fail the batch. */
 async function mapLimit<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -99,7 +99,7 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
   return defineTool({
     name: 'web_fetch',
     description: `Fetch up to ${MAX_BATCH} public web pages or PDFs at once and return each one's text. A fetched page starts with a source id such as [s1]; cite that id in the report. A failed URL is reported on its own and does not fail the others. Private and local addresses are refused.`,
-    parameters: Type.Object({ urls: batch('http(s) URLs') }),
+    parameters: obj({ urls: batch('http(s) URLs') }, { open: true }),
     async execute(args, api, ctx) {
       // Network in parallel, bookkeeping one by one in input order so source ids do not depend on which page answers first.
       const pages = await mapLimit(args.urls, load);
@@ -132,7 +132,7 @@ export function readSourceTool() {
   return defineTool({
     name: 'read_source',
     description: `Read a window of ${MAX_CHARS} characters from an already fetched source, by its [sN] id and a character offset. Use it to continue a page web_fetch cut off; it never refetches.`,
-    parameters: Type.Object({ id: Type.String({ description: 'Source id such as s1' }), offset: Type.Integer({ minimum: 0, description: 'Character to start at' }) }),
+    parameters: obj({ id: str({ description: 'Source id such as s1' }), offset: int({ minimum: 0, description: 'Character to start at' }) }, { open: true }),
     replay: 'safe',
     async execute(args, api, ctx) {
       const id = args.id.replace(/^\[|\]$/g, '');
@@ -174,7 +174,7 @@ export function webSearchTool(config: ResearchConfig) {
   return defineTool({
     name: 'web_search',
     description: `Search the web (Exa) for up to ${MAX_BATCH} queries at once; each gets titles, URLs, dates and a snippet per hit, or its own failure. Fetch a hit with web_fetch before citing it.`,
-    parameters: Type.Object({ queries: batch('Search queries'), count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: 'Hits per query' })) }),
+    parameters: obj({ queries: batch('Search queries'), count: opt(int({ minimum: 1, maximum: 20, description: 'Hits per query' })) }, { open: true }),
     replay: 'safe',
     async execute(args, _api, _ctx) {
       if (!apiKey) return error('web_search is not configured: QUACK_EXA_API_KEY is not set');

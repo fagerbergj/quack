@@ -35,7 +35,15 @@ class FakeSocket {
 
 const usage = {};
 const entry = (id: string, model: object[]) => ({ id, conversationId: 'c', kind: 'x', model });
-const snapshot = (over: object = {}) => ({ type: 'snapshot', entries: [], tools: [], nestedTools: [], compactions: [], inbox: [], agent: {}, usage, ...over });
+const item = (e: object) => ({ kind: 'entry', entry: e });
+// The conversation view as the socket sends it; omitted `entries` leave the transcript the client holds as it is.
+const view = (o: { entries?: object[]; run?: boolean | object; message?: object; tools?: object[]; usage?: object } = {}) => ({
+  type: 'view',
+  items: o.entries?.map(item),
+  live: { ...(o.run ? { run: { taskId: 1, inputs: [], turns: 0 } } : {}), ...(o.message ? { generation: { attempt: 1, message: o.message } } : {}), ...(o.tools ? { tools: o.tools } : {}) },
+  usage: o.usage ?? usage,
+});
+const snapshot = (o: Parameters<typeof view>[0] = {}) => view({ entries: [], ...o });
 const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
 
 // Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
@@ -250,18 +258,37 @@ test('renders the snapshot transcript, then streamed events', async () => {
   expect(screen.getByRole('article', { name: 'You' })).toHaveTextContent('hi');
   expect(screen.getByRole('status')).toHaveTextContent('Idle');
 
-  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }, { type: 'message_start', message: assistant([{ type: 'text', text: 'He' }]) }] });
+  ws.frame(view({ run: true, message: assistant([{ type: 'text', text: 'He' }]) }));
   expect(screen.getByRole('status')).toHaveTextContent('Running');
-  ws.frame({ type: 'events', events: [{ type: 'message_update', usage, changes: [{ type: 'text_delta', contentIndex: 0, delta: 'llo' }] }] });
+  ws.frame(view({ run: true, message: assistant([{ type: 'text', text: 'Hello' }]) }));
   expect(screen.getByRole('article', { name: 'Assistant' })).toHaveTextContent('Hello');
 
   const call = { type: 'toolCall', id: 't1', name: 'bash', arguments: { cmd: 'ls' } };
   const final = entry('e2', [assistant([{ type: 'text', text: 'Hello' }, call])]);
   const result = entry('e3', [{ role: 'toolResult', toolCallId: 't1', toolName: 'bash', content: [{ type: 'text', text: 'a.txt' }], isError: false, timestamp: 2 }]);
-  ws.frame({ type: 'events', events: [{ type: 'message_end', entry: final }, { type: 'entry_appended', entry: final }, { type: 'entry_appended', entry: result }, { type: 'run_end', inputs: [] }] });
+  ws.frame(view({ entries: [entry('e1', [{ role: 'user', content: 'hi', timestamp: 1 }]), final, result] }));
   expect(screen.getAllByRole('article', { name: 'Assistant' })).toHaveLength(1);
   expect(screen.getByText('Worked · 1 tool · bash').closest('details')).not.toHaveAttribute('open');
   expect(screen.getByRole('status')).toHaveTextContent('Idle');
+});
+
+test('a running tool call shows as running with its arguments, and its step in plain words', async () => {
+  const ws = await openSession();
+  const call = { type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'a/b/notes.md' } };
+  ws.frame(view({ entries: [entry('a', [assistant([call])])], run: true, tools: [{ callId: 't1', name: 'read', status: 'running' }] }));
+  expect(screen.getByText('Reading notes.md')).toBeInTheDocument();
+  const row = screen.getByText('read').closest('details')!;
+  expect(within(row.querySelector('summary')!).getByText('running')).toBeInTheDocument();
+  expect(row).toHaveTextContent('"path": "a/b/notes.md"');
+});
+
+test('a transcript longer than the window offers earlier and missing messages, and asks the server for them', async () => {
+  const ws = await openSession();
+  ws.frame({ ...view(), items: [{ kind: 'earlier' }, item(entry('e5', [{ role: 'user', content: 'five', timestamp: 5 }])), { kind: 'gap', after: 5, upTo: 9 }, item(entry('e9', [{ role: 'user', content: 'nine', timestamp: 9 }]))] });
+  await userEvent.click(screen.getByRole('button', { name: 'Load earlier messages' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Load missing messages' }));
+  expect(ws.sent).toEqual([{ type: 'earlier' }, { type: 'gap', after: 5, upTo: 9 }]);
+  expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(2);
 });
 
 test('tool calls show a summary, expand to arguments and output, truncate long output, and mark errors', async () => {
@@ -380,7 +407,7 @@ test('a send while a run works is a server-side follow-up shown as a chip; Send 
   expect(ws.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: 'first' }]);
   accept(ws);
 
-  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  ws.frame(view({ run: true }));
   expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
   expect(box()).toHaveAttribute('placeholder', 'Message · sends after this step');
   await send('turn left');
@@ -441,7 +468,7 @@ test('an approval that appears mid-run shows up when tool activity arrives', asy
   const ws = await openSession();
   ws.frame(snapshot());
   routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] };
-  ws.frame({ type: 'events', events: [{ type: 'tool_execution_start', toolCallId: 't', toolName: 'push', args: {} }] });
+  ws.frame(view({ run: true, tools: [{ callId: 't', name: 'push', status: 'running' }] }));
   expect(await screen.findByRole('button', { name: 'Reject push' })).toBeInTheDocument();
 });
 
@@ -486,11 +513,11 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   const ws = await openSession();
   ws.frame(snapshot());
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
-  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  ws.frame(view({ run: true }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Abort' }));
   expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
-  ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
+  ws.frame(view({}));
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
 });
 
@@ -686,7 +713,7 @@ test('a malformed socket frame is skipped and later frames still apply', async (
   const ws = await openSession();
   ws.frame(snapshot());
   act(() => ws.onmessage?.({ data: '{not json' }));
-  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  ws.frame(view({ run: true }));
   expect(screen.getByRole('status')).toHaveTextContent('Running');
 });
 
@@ -1194,12 +1221,12 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   const ws = FakeSocket.all[0]!;
   ws.open();
   ws.frame(snapshot());
-  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  ws.frame(view({ run: true }));
   const line = (await screen.findByText('Previous review')).closest('li')!;
   expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
   expect(within(line).queryByRole('region', { name: 'Review' })).toBeNull();
   expect(line).not.toHaveTextContent('Double-checked');
-  ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
+  ws.frame(view({}));
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
   const done = screen.getByText('Review posted').closest('li')!;
   expect(within(done).getByRole('region', { name: 'Review' })).toBeInTheDocument();

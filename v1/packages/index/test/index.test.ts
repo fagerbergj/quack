@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachLink, attachVerdict, decide, gated, pendingApprovals, person, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
@@ -49,7 +50,7 @@ async function freshSqlite(): Promise<Fresh> {
 
 const review: ArtifactKind = { kind: 'demo.review', path: 'review.md', outcome: (t) => /^## verdict\n(\S+)/im.exec(t)?.[1], summarize: (c) => `${c.split('\n')[0]} · sealed` };
 const submitReview = defineTool({
-  name: 'submit_review', description: 'seal', parameters: Type.Object({}), replay: 'safe',
+  name: 'submit_review', description: 'seal', parameters: obj({}, { open: true }), replay: 'safe',
   execute: async (_a, api, c) => {
     const sealed = await seal(api, review, c);
     await attachVerdict(api, sealed.kind, sealed.version, { passed: true }, c);
@@ -57,7 +58,7 @@ const submitReview = defineTool({
     return { output: [{ type: 'text', text: 'sealed' }] };
   },
 });
-const post = gated(defineTool({ name: 'post', description: 'post', parameters: Type.Object({}), execute: async () => ({ output: [{ type: 'text', text: 'posted' }] }) }));
+const post = gated(defineTool({ name: 'post', description: 'post', parameters: obj({}, { open: true }), execute: async () => ({ output: [{ type: 'text', text: 'posted' }] }) }));
 
 async function openDemoSession(dir: string) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -238,7 +239,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a quest
 
 const started: string[] = [];
 const escalate = defineTool({
-  name: 'escalate', description: 'ask a person', parameters: Type.Object({}), replay: 'safe',
+  name: 'escalate', description: 'ask a person', parameters: obj({}, { open: true }), replay: 'safe',
   execute: async (_a, api, c) => {
     const d = await decide(api, { name: 'flex', question: 'Who starts at flex?', options: ['Pollard', 'Stevenson'], evidence: 'Both are healthy' }, [{ id: 'unsure', resolve: async () => undefined }, person()], c);
     started.push(d?.choice ?? 'none');

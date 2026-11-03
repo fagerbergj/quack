@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { gated } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
@@ -22,7 +23,7 @@ const extension = defineExtension({
       defineTool({
         name: 'post_comment',
         description: 'Post a comment to the pull request',
-        parameters: Type.Object({ body: Type.String() }),
+        parameters: obj({ body: str() }, { open: true }),
         execute: async (args) => {
           posted.push(args.body);
           return { output: [{ type: 'text', text: 'posted' }] };

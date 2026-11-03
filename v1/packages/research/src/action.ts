@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { Type } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { submitToSession, type Action } from '@quack/sdk';
 
-const params = Type.Object({ question: Type.String({ minLength: 1, description: 'The question to research, with any URLs it names' }) });
+const params = obj({ question: str({ minLength: 1, description: 'The question to research, with any URLs it names' }) }, { open: true });
 
 /** Starts the researcher on a question in a session of its own. */
 export const researchQuestion: Action<typeof params> = {

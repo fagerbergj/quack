@@ -1,7 +1,8 @@
 // A session process whose gated tool records its side effect and then hangs, so a test can kill it mid-execution.
 import { appendFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { gated } from '@quack/sdk';
 import { createSessionServer, openSession } from '../../src/index.ts';
@@ -9,7 +10,7 @@ import { createSessionServer, openSession } from '../../src/index.ts';
 const post = defineTool({
   name: 'post_comment',
   description: 'Post a comment to the pull request',
-  parameters: Type.Object({ body: Type.String() }),
+  parameters: obj({ body: str() }, { open: true }),
   execute: async (args) => {
     appendFileSync(process.env.SIDE_EFFECTS!, `${args.body}\n`);
     return new Promise<never>(() => {});

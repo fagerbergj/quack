@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, seal, type ArtifactKind } from '@quack/sdk';
@@ -23,7 +24,7 @@ const review: ArtifactKind = {
 const submit = defineTool({
   name: 'submit_review',
   description: 'Seal the review for checking',
-  parameters: Type.Object({}),
+  parameters: obj({}, { open: true }),
   replay: 'safe',
   execute: async (_args, api, ctx) => {
     const sealed = await seal(api, review, ctx);

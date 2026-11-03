@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, type JsonObject } from '@earendil-works/pi-durable';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
@@ -19,11 +19,11 @@ export const WaiversFactsDoc = defineDoc<{ facts: JsonObject | null }>({ kind: W
 /** The same wiring as the lineup job: the Sleeper API, today's snapshot and an optional news source. */
 export type WaiversDeps = LineupDeps;
 
-const decisionSchema = Type.Object({
-  claims: Type.Array(Type.Object({ add: Type.String(), drop: Type.String(), bid: Type.Optional(Type.Integer({ minimum: 0 })), why: Type.String({ maxLength: 240 }) }), { maxItems: 6 }),
-  passed: Type.Array(Type.Object({ playerId: Type.String(), why: Type.String({ maxLength: 160 }) })),
-  summary: Type.String({ maxLength: 400 }),
-});
+const decisionSchema = obj({
+  claims: arr(obj({ add: str(), drop: str(), bid: opt(int({ minimum: 0 })), why: str({ maxLength: 240 }) }, { open: true }), { maxItems: 6 }),
+  passed: arr(obj({ playerId: str(), why: str({ maxLength: 160 }) }, { open: true })),
+  summary: str({ maxLength: 400 }),
+}, { open: true });
 
 const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.ppg === undefined ? '' : `, season ${p.ppg}/g`}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
 const links = (f: WaiverFacts, id: string) => (f.news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');

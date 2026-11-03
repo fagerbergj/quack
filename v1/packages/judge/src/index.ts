@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord/context';
-import { Type } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, GenerationTask, hook, LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
 import { answerUnit, type ClassifierRef, type ModelRef } from './resolve.ts';
@@ -127,7 +127,7 @@ export function judge(opts: JudgeOptions) {
   const submit = defineTool({
     name: toolName,
     description: `Seal ${opts.kind.path} and check it against its rubric. Call it when the ${opts.kind.kind} is ready.`,
-    parameters: Type.Object({}),
+    parameters: obj({}, { open: true }),
     replay: 'safe',
     async execute(_args, api, ctx) {
       const refused = await opts.refuse?.(api, ctx);
