@@ -1,5 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
-import { contentText, validateToolArguments, type Message, type TSchema } from '@earendil-works/pi-ai';
+import { contentText, validateToolArguments, type Message } from '@earendil-works/pi-ai';
+import type { Schema } from '@earendil-works/pi-schema';
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
 import { feedback, rejudge, undecidedMessage, type JudgeOptions } from '@quack/judge';
@@ -28,9 +29,9 @@ export class Wait {
 export type Step =
   | { name: string; kind: 'code'; run(c: StepContext): JsonValue | Wait | Promise<JsonValue | Wait> }
   /** The model's reply must be one JSON object matching `schema`; anything else fails the step. */
-  | { name: string; kind: 'model'; prompt(c: StepContext): string; schema: TSchema; model?: { provider: string; modelId: string } }
+  | { name: string; kind: 'model'; prompt(c: StepContext): string; schema: Schema; model?: { provider: string; modelId: string } }
   /** A model answer built into a sealed card and judged; a failing verdict goes back to the model for up to `maxRevisions` new versions, and the last version is kept with its verdict whatever it says. */
-  | { name: string; kind: 'judged'; prompt(c: StepContext): string; schema: TSchema; model?: { provider: string; modelId: string }; card(c: StepContext, decision: JsonValue): object | Promise<object>; judge(c: StepContext): { options: JudgeOptions; notes?: string[] } }
+  | { name: string; kind: 'judged'; prompt(c: StepContext): string; schema: Schema; model?: { provider: string; modelId: string }; card(c: StepContext, decision: JsonValue): object | Promise<object>; judge(c: StepContext): { options: JudgeOptions; notes?: string[] } }
   /** Resolvers run in order; a person answers through the session's questions when they all escalate. */
   | { name: string; kind: 'decision'; point(c: StepContext): Omit<DecisionPoint, 'name'>; resolvers?: Resolver[] }
   /** The tool waits for an approval before it runs; args may read earlier results. */
@@ -63,7 +64,7 @@ function parseObject(text: string): unknown {
 // An invalid answer gets its error back like a bad tool call would; a valid answer is never re-asked.
 const REPAIR_TURNS = 2;
 
-type Ask = { name: string; schema: TSchema; model?: { provider: string; modelId: string } };
+type Ask = { name: string; schema: Schema; model?: { provider: string; modelId: string } };
 
 // One conversation with the model: an invalid answer, or one `check` throws on, is repaired in `messages`; the accepted reply is returned with what `check` built from it.
 async function converse<B = undefined>(step: Ask, c: StepContext, messages: Message[], check?: (args: JsonValue) => B | Promise<B>) {

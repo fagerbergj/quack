@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { decide, sessionModel } from '@quack/sdk';
 import { openSession } from '../src/index.ts';
@@ -14,7 +15,7 @@ after(() => rm(dir, { recursive: true, force: true }));
 const pickFlex = defineTool({
   name: 'pick_flex',
   description: 'Choose the flex starter',
-  parameters: Type.Object({}),
+  parameters: obj({}, { open: true }),
   replay: 'safe',
   execute: async (_args, api, ctx) => {
     const d = await decide(api, { name: 'flex', question: 'Who starts at flex?', options: ['Pollard', 'Stevenson'] }, [sessionModel], ctx);

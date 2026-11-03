@@ -5,7 +5,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { obj } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
@@ -20,7 +21,7 @@ const World = defineDoc<{ seen: string | null }>({ kind: 'acme.world', version: 
 const submit = defineTool({
   name: 'submit_note',
   description: 'Seal and score the note',
-  parameters: Type.Object({}),
+  parameters: obj({}, { open: true }),
   replay: 'safe',
   execute: async (_args, api, ctx) => {
     await api.commit(async (tx) => { (await tx.doc(World, api.conversationId)).seen = 'pr head abc'; }, ctx);

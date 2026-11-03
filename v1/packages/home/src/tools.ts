@@ -1,4 +1,5 @@
-import { Type, validateToolArguments, type TSchema } from '@earendil-works/pi-ai';
+import { validateToolArguments } from '@earendil-works/pi-ai';
+import { int, lit, map, obj, opt, str, union, unknown } from '@earendil-works/pi-schema';
 import { defineTool, type ToolRegistration } from '@earendil-works/pi-durable';
 import { gated, type Action, type ActionContext } from '@quack/sdk';
 import { type Distributor, type SessionRow, type Standing } from './client.ts';
@@ -51,22 +52,22 @@ export async function readSession(d: Distributor, row: SessionRow, standing: Sta
   return clip(out.join('\n'), MAX_READ_CHARS);
 }
 
-const keyParam = Type.String({ description: 'Session key from find_sessions' });
+const keyParam = str({ description: 'Session key from find_sessions' });
 
 /** The `start` tool: asks the person first (the gate shows the action's summary and the filled params), then calls the action. */
-function startTool(actions: Action<any>[], ctx: ActionContext): ToolRegistration<TSchema> {
+function startTool(actions: Action<any>[], ctx: ActionContext): ToolRegistration {
   const menu = actions.map((a) => `- ${a.name}: ${a.summary}. Params ${JSON.stringify(a.params)}`).join('\n');
-  const parameters = Type.Object({ action: Type.String({ description: 'Action name' }), params: Type.Record(Type.String(), Type.Any(), { description: 'The action params' }) });
+  const parameters = obj({ action: str({ description: 'Action name' }), params: map(unknown(), { description: 'The action params' }) }, { open: true });
   const inner = gated(defineTool({
     name: 'start',
     description: 'start',
-    parameters: Type.Object({ action: Type.String(), summary: Type.String(), params: Type.Record(Type.String(), Type.Any()) }),
+    parameters: obj({ action: str(), summary: str(), params: map(unknown()) }, { open: true }),
     async execute(args) {
       const action = actions.find((a) => a.name === args.action)!;
       const started = await action.start(args.params as never, ctx);
       return text(`Started ${started.title}. Session key ${started.session}, link ${sessionLink(started.session)}`);
     },
-  }) as ToolRegistration<TSchema>);
+  }) as ToolRegistration);
   return defineTool({
     name: 'start',
     description: `Start new work. The person is asked to confirm before anything starts, so call it once the params are filled.\n${menu}`,
@@ -84,15 +85,15 @@ function startTool(actions: Action<any>[], ctx: ActionContext): ToolRegistration
       // The gate records these args, so the approval row shows what will run.
       return inner.execute({ action: action.name, summary: `${action.summary}: ${Object.entries(params as object).map(([k, v]) => `${k} ${String(v)}`).join(', ')}`, params } as never, api, c);
     },
-  }) as ToolRegistration<TSchema>;
+  }) as ToolRegistration;
 }
 
-export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionContext): ToolRegistration<TSchema>[] {
+export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionContext): ToolRegistration[] {
   const tools = [
     defineTool({
       name: 'find_sessions',
       description: 'Find sessions, newest first. Filter by words in the title or key, by agent, or by state: running, needs_you, failed, done.',
-      parameters: Type.Object({ text: Type.Optional(Type.String()), agent: Type.Optional(Type.String()), state: Type.Optional(Type.Union(STATES.map((s) => Type.Literal(s)))), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 25 })) }),
+      parameters: obj({ text: opt(str()), agent: opt(str()), state: opt(union(STATES.map((s) => lit(s)))), limit: opt(int({ minimum: 1, maximum: 25 })) }, { open: true }),
       replay: 'safe',
       async execute(args) {
         const [rows, standing] = await Promise.all([d.sessions(), d.standing()]);
@@ -109,7 +110,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
     defineTool({
       name: 'read_session',
       description: 'Read one session: its state, newest results with their summaries, open questions, failures and the last messages. Read it before answering anything about it.',
-      parameters: Type.Object({ key: keyParam }),
+      parameters: obj({ key: keyParam }, { open: true }),
       replay: 'safe',
       async execute(args) {
         const row = await known(d, args.key);
@@ -119,7 +120,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
     defineTool({
       name: 'send_message',
       description: 'Add a message to an existing session. It runs after the session finishes its current step.',
-      parameters: Type.Object({ key: keyParam, message: Type.String({ minLength: 1 }) }),
+      parameters: obj({ key: keyParam, message: str({ minLength: 1 }) }, { open: true }),
       async execute(args, api) {
         const row = await known(d, args.key);
         if (typeof row === 'string') return failure(row);
@@ -131,7 +132,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
     defineTool({
       name: 'stop_session',
       description: 'Abort the run in a session the person named.',
-      parameters: Type.Object({ key: keyParam }),
+      parameters: obj({ key: keyParam }, { open: true }),
       async execute(args) {
         const row = await known(d, args.key);
         if (typeof row === 'string') return failure(row);
@@ -142,7 +143,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
     defineTool({
       name: 'run_again',
       description: 'Rerun a failed session from its failed step.',
-      parameters: Type.Object({ key: keyParam }),
+      parameters: obj({ key: keyParam }, { open: true }),
       async execute(args) {
         const row = await known(d, args.key);
         if (typeof row === 'string') return failure(row);
@@ -151,5 +152,5 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
       },
     }),
   ];
-  return tools as unknown as ToolRegistration<TSchema>[];
+  return tools as unknown as ToolRegistration[];
 }

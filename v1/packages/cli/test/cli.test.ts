@@ -48,7 +48,7 @@ before(async () => {
   });
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
-    ws.send(JSON.stringify({ type: 'snapshot', entries: [{ model: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] }] }] }));
+    ws.send(JSON.stringify({ type: 'view', items: [{ kind: 'earlier' }, { kind: 'entry', entry: { model: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] }] } }], live: {} }));
     ws.on('message', (d) => {
       frames.push(JSON.parse(String(d)));
       ws.send(JSON.stringify(JSON.parse(String(d)).input === 'bad' ? { type: 'error', error: 'rejected' } : { type: 'accepted' }));
@@ -183,7 +183,7 @@ describe('quack', () => {
     mute.on('upgrade', () => {});
     await new Promise<void>((r) => mute.listen(0, '127.0.0.1', r));
     const c = client(`http://127.0.0.1:${(mute.address() as AddressInfo).port}`, undefined, 50);
-    await assert.rejects(c.snapshot('ui:a'), /cannot reach/);
+    await assert.rejects(c.view('ui:a'), /cannot reach/);
     mute.closeAllConnections();
     mute.close();
   });

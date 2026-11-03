@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
-import { Type } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import type { Action } from '@quack/sdk';
 import { distributor } from '../src/client.ts';
 import { homeTools } from '../src/tools.ts';
@@ -52,10 +52,10 @@ before(async () => {
 after(() => server.close());
 
 const started: unknown[] = [];
-const ping: Action<ReturnType<typeof Type.Object>> = {
+const ping: Action<ReturnType<typeof obj>> = {
   name: 'ping_thing',
   summary: 'Pings a thing',
-  params: Type.Object({ thing: Type.String() }),
+  params: obj({ thing: str() }, { open: true }),
   async start(params) {
     started.push(params);
     return { session: 'thing:1', title: 'Ping' };

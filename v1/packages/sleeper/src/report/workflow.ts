@@ -1,5 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { Type, type TSchema } from '@earendil-works/pi-ai';
+import type { Schema } from '@earendil-works/pi-schema';
+import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { type JudgeOptions, type Rubric } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
@@ -27,7 +28,7 @@ type Spec<F, D> = {
   /** Checks that need a news source; they are scored only once one is wired, and the verdict says so. */
   newsChecks: string[];
   facts: (deps: FactsDeps, snap: any, input: LineupInput, at: number) => Promise<F>;
-  schema: TSchema;
+  schema: Schema;
   prompt: (f: F) => string;
   card: (f: F, d: D) => object;
   evidence: (f: F) => JudgeOptions['evidence'];
@@ -105,10 +106,10 @@ function digestPrompt(f: DigestFacts): string {
   ].join('\n\n');
 }
 
-const digestSchema = Type.Object({
-  summary: Type.String({ maxLength: 400 }),
-  notes: Type.Array(Type.Object({ matchup: Type.Integer(), note: Type.String({ maxLength: 240 }) })),
-});
+const digestSchema = obj({
+  summary: str({ maxLength: 400 }),
+  notes: arr(obj({ matchup: int(), note: str({ maxLength: 240 }) }, { open: true })),
+}, { open: true });
 
 const retroLine = (i: number, text: string, news: Array<NewsItem & { player: string }>, before: string) => `${i}. ${text}\n   signals must be dated before ${before.slice(0, 16)}Z:${news.length ? links(news) : ' none found'}`;
 
@@ -134,8 +135,8 @@ export function retroPrompt(f: RetroFacts): string {
   ].join('\n\n');
 }
 
-const call = Type.Object({ index: Type.Integer({ minimum: 0 }), why: Type.String({ maxLength: 300 }), knowable: Type.Boolean(), signalUrl: Type.Optional(Type.String()) });
-const retroSchema = Type.Object({ misses: Type.Array(call), waiverMisses: Type.Array(call), lessons: Type.Array(Type.String({ maxLength: 160 }), { maxItems: 3 }), summary: Type.String({ maxLength: 400 }) });
+const call = obj({ index: int({ minimum: 0 }), why: str({ maxLength: 300 }), knowable: bool(), signalUrl: opt(str()) }, { open: true });
+const retroSchema = obj({ misses: arr(call), waiverMisses: arr(call), lessons: arr(str({ maxLength: 160 }), { maxItems: 3 }), summary: str({ maxLength: 400 }) }, { open: true });
 
 /** Digest job (SL-1): a preview before the week's first kickoff or a recap once its last game is final; code writes every number. */
 export const digestWorkflow = (deps: ReportDeps) =>

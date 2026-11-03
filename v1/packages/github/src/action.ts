@@ -1,7 +1,7 @@
-import { Type } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { submitToSession, type Action } from '@quack/sdk';
 
-const params = Type.Object({ url: Type.String({ description: 'The pull request URL, https://github.com/owner/repo/pull/N' }) });
+const params = obj({ url: str({ description: 'The pull request URL, https://github.com/owner/repo/pull/N' }) }, { open: true });
 
 function parse(url: string): { owner: string; repo: string; number: string } {
   const u = new URL(url);

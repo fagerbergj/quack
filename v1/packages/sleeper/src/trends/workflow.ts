@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import type { Json } from '../client.ts';
@@ -18,19 +18,19 @@ export type TrendsDeps = LineupDeps & {
   snapshotOn: (league: string, date: string) => Promise<Json>;
 };
 
-const decisionSchema = Type.Object({
-  items: Type.Array(
-    Type.Object({
-      kind: Type.Union(KINDS.map((k) => Type.Literal(k))),
-      playerId: Type.Optional(Type.String()),
-      newsUrl: Type.Optional(Type.String()),
-      source: Type.Optional(Type.String({ maxLength: 60 })),
-      text: Type.String({ maxLength: TEXT_MAX }),
-    }),
+const decisionSchema = obj({
+  items: arr(
+    obj({
+      kind: union(KINDS.map((k) => lit(k))),
+      playerId: opt(str()),
+      newsUrl: opt(str()),
+      source: opt(str({ maxLength: 60 })),
+      text: str({ maxLength: TEXT_MAX }),
+    }, { open: true }),
     { maxItems: 12 },
   ),
-  source_note: Type.String({ maxLength: 300 }),
-});
+  source_note: str({ maxLength: 300 }),
+}, { open: true });
 
 export function factsPrompt(f: TrendsFacts): string {
   const base = (id: string) => `${f.players[id].name} (${f.players[id].pos ?? '-'}, ${f.players[id].team ?? '-'})`;

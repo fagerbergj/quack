@@ -12,4 +12,17 @@ export function nextFrame(ws: WebSocket, match: (frame: any) => boolean, ms = 15
   });
 }
 
-export const runEnded = (frame: any) => frame.type === 'events' && frame.events.some((e: any) => e.type === 'run_end');
+// Matches the view that shows a run over: no run, after a run was seen or an answer arrived. Items are sent only when
+// they change, so the matching frame carries the latest as `items`.
+export function runEnded() {
+  let items: unknown[] = [];
+  let ran = false;
+  return (frame: any) => {
+    if (frame.type !== 'view') return false;
+    if (frame.items) items = frame.items;
+    ran ||= frame.live.run !== undefined;
+    if (frame.live.run !== undefined || !(ran || JSON.stringify(items).includes('"role":"assistant"'))) return false;
+    frame.items = items;
+    return true;
+  };
+}

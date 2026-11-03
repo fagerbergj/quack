@@ -1,4 +1,3 @@
-import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
@@ -14,16 +13,17 @@ import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
-import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
+import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 
 type Standing = { questions: Question[]; failures: Failure[] };
 type Queued = { id: string; text: string };
-type Frame = { type: 'queued'; items: Queued[] } | SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
+type Frame = { type: 'queued'; items: Queued[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
 
 let nextRequest = 0;
 
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
+  const held = useRef<View>(emptyView);
   const [view, setView] = useState<View>(emptyView);
   const [state, setState] = useState<'connecting' | 'open' | 'reconnecting'>('connecting');
   const [error, setError] = useState('');
@@ -41,13 +41,15 @@ function useSocket(key: string, agent: string | undefined) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
     const connect = () => {
+      held.current = emptyView;
       const sock = new WebSocket(socketUrl(key, agent));
       ws.current = sock;
       sock.onopen = () => {
         attempt = 0;
         setState('open');
       };
-      // Every connect starts with a full snapshot that replaces the view, so a reconnect cannot duplicate lines.
+      // Every connect starts with a full view that replaces the one held, so a reconnect cannot duplicate lines.
+      let activity: string | undefined;
       sock.onclose = () => {
         acks.current.forEach((done) => done(false));
         acks.current.clear();
@@ -62,10 +64,12 @@ function useSocket(key: string, agent: string | undefined) {
         } catch {
           return; // one malformed frame must not stop the ones after it
         }
-        if (frame.type === 'snapshot') setView(snapshotView(frame));
-        else if (frame.type === 'events') {
-          setView((v) => applyEvents(v, frame.events));
-          if (touchesApprovals(frame.events)) setTick((t) => t + 1);
+        if (frame.type === 'view') {
+          const next = applyView(held.current, frame);
+          held.current = next;
+          setView(next);
+          if (activity !== undefined && activity !== next.activity) setTick((t) => t + 1);
+          activity = next.activity;
         } else if (frame.type === 'standing') setStanding(frame);
         else if (frame.type === 'queued') setQueued(frame.items);
         else if (frame.type === 'error') (setError(frame.error), settle(frame.requestId, false));
@@ -94,7 +98,9 @@ function useSocket(key: string, agent: string | undefined) {
   };
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
   const unqueue = (type: 'withdraw' | 'steer', id: string) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }));
-  return { view, state, error, setError, approvalTick, standing, queued, send, unqueue };
+  // An earlier or gap row asks the server for the entries the window does not hold.
+  const load = (req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req));
+  return { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load };
 }
 
 const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
@@ -264,7 +270,7 @@ function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer
 }
 
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
-  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
+  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
@@ -290,7 +296,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
         <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
-            <Transcript view={view} meta={meta} />
+            <Transcript view={view} meta={meta} load={load} />
             <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
             <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />

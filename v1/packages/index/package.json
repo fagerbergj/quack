@@ -6,8 +6,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@earendil-works/chord": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0",
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-durable": "1.5.0",
     "@quack/sdk": "*",
     "pg": "^8.23.1",
     "web-push": "^3.6.7"

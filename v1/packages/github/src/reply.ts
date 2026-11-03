@@ -1,4 +1,4 @@
-import { Type } from '@earendil-works/pi-ai';
+import { int, lit, obj, str, union } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import type { SessionConfig } from './checkout.ts';
 
@@ -7,13 +7,13 @@ export function replyTool(config: SessionConfig) {
   return defineTool({
     name: 'reply_mention',
     description: 'Answer a PR comment that mentioned you, in its own thread. Pass the arguments the message gave you.',
-    parameters: Type.Object({
-      repository: Type.String({ description: 'owner/repo' }),
-      number: Type.Integer({ minimum: 1 }),
-      kind: Type.Union([Type.Literal('review'), Type.Literal('issue')]),
-      commentId: Type.Integer({ minimum: 1 }),
-      body: Type.String({ minLength: 1 }),
-    }),
+    parameters: obj({
+      repository: str({ description: 'owner/repo' }),
+      number: int({ minimum: 1 }),
+      kind: union([lit('review'), lit('issue')]),
+      commentId: int({ minimum: 1 }),
+      body: str({ minLength: 1 }),
+    }, { open: true }),
     async execute(args) {
       const [owner, repo] = args.repository.split('/');
       if (!owner || !repo) return { output: [{ type: 'text', text: 'repository must be owner/repo' }], isError: true };

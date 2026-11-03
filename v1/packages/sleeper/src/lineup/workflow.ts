@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, obj, str } from '@earendil-works/pi-schema';
 import { type ClassifierRef, type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import type { Json, SleeperClient } from '../client.ts';
@@ -18,10 +18,10 @@ export type LineupDeps = {
   now?: () => number;
 };
 
-const decisionSchema = Type.Object({
-  slots: Type.Array(Type.Object({ slot: Type.String(), playerId: Type.String(), why: Type.String({ maxLength: 240 }) })),
-  summary: Type.String({ maxLength: 400 }),
-});
+const decisionSchema = obj({
+  slots: arr(obj({ slot: str(), playerId: str(), why: str({ maxLength: 240 }) }, { open: true })),
+  summary: str({ maxLength: 400 }),
+}, { open: true });
 
 const line = (p: PlayerFact) => {
   const g = p.game ? `${p.game.home ? 'vs' : 'at'} ${p.game.opponent}, kickoff ${p.game.kickoff ?? 'unknown'}` : 'no game';

@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { num, obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openSession } from '../src/index.ts';
 import { LOOP_LIMIT } from '../src/loop-guard.ts';
@@ -18,7 +19,7 @@ async function run(name: string, steps: FauxResponseStep[], answer: (n: number) 
   const probe = defineTool({
     name: 'probe',
     description: 'Looks something up',
-    parameters: Type.Object({ id: Type.Number() }),
+    parameters: obj({ id: num() }, { open: true }),
     execute: async () => ({ output: [{ type: 'text', text: answer(++executed) }] }),
   });
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });

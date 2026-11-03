@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, Type, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
@@ -160,11 +161,11 @@ test('without the Exa key web_search says so, and a private URL is refused by de
 });
 
 const readSource = defineTool({
-  name: 'source_text', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
+  name: 'source_text', description: 'test', parameters: obj({ id: str() }, { open: true }), replay: 'safe',
   execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: (await sourceText(api, a.id, ctx)) ?? 'none' }] }),
 });
 const sourceLength = defineTool({
-  name: 'source_length', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
+  name: 'source_length', description: 'test', parameters: obj({ id: str() }, { open: true }), replay: 'safe',
   execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: String((await sourceText(api, a.id, ctx))?.length) }] }),
 });
 const readSourceExt = defineExtension({ name: 'test', tools: [readSource, sourceLength] });

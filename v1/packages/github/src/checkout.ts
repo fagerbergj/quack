@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord/context';
-import { Type } from '@earendil-works/pi-ai';
+import { int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, type SealedArtifact } from '@quack/sdk';
 
@@ -135,7 +135,7 @@ export function checkoutTool(config: SessionConfig) {
   return defineTool({
     name: 'checkout_pr',
     description: `Check out a pull request into ./${dir} at its head, with its base fetched, and return its description, CI checks, linked issues and the repo's conventions. Call it first.`,
-    parameters: Type.Object({ repository: Type.String({ description: 'owner/repo' }), number: Type.Integer({ minimum: 1 }), head: Type.Optional(Type.String({ description: 'the head sha the request named, if any' })) }),
+    parameters: obj({ repository: str({ description: 'owner/repo' }), number: int({ minimum: 1 }), head: opt(str({ description: 'the head sha the request named, if any' })) }, { open: true }),
     replay: 'safe',
     async execute(args, api, ctx) {
       const [owner, repo] = args.repository.split('/');

@@ -1,16 +1,16 @@
-import { Type } from '@earendil-works/pi-ai';
+import { arr, obj, str } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import { decide, person } from '@quack/sdk';
 
 export const YOU_DECIDE = 'You decide';
 
-const params = Type.Object({
-  id: Type.String({ pattern: '^[a-z][a-z0-9-]*$', description: 'Stable slug for this question, e.g. "pagination"; a rerun finds the same question by it' }),
-  question: Type.String({ minLength: 1, description: 'One question in plain words' }),
-  matters: Type.String({ minLength: 1, description: 'One sentence: why the answer matters to this contract' }),
-  suggested: Type.String({ minLength: 1, description: 'Your recommended answer, pre-selected for the person' }),
-  alternatives: Type.Array(Type.Object({ answer: Type.String({ minLength: 1 }), tradeoff: Type.String({ minLength: 1 }) }), { description: 'Other reasonable answers, each with its trade-off' }),
-});
+const params = obj({
+  id: str({ pattern: '^[a-z][a-z0-9-]*$', description: 'Stable slug for this question, e.g. "pagination"; a rerun finds the same question by it' }),
+  question: str({ minLength: 1, description: 'One question in plain words' }),
+  matters: str({ minLength: 1, description: 'One sentence: why the answer matters to this contract' }),
+  suggested: str({ minLength: 1, description: 'Your recommended answer, pre-selected for the person' }),
+  alternatives: arr(obj({ answer: str({ minLength: 1 }), tradeoff: str({ minLength: 1 }) }, { open: true }), { description: 'Other reasonable answers, each with its trade-off' }),
+}, { open: true });
 
 /** Asks the person one question: the suggested answer first, then alternatives, "You decide" last. */
 export const askQuestionTool = defineTool({

@@ -74,7 +74,7 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     remove: (key: string) => call(`${path(key)}/delete`, 'POST', {}),
     /** Returns once the server accepts the message; the run is not streamed. */
     send: (key: string, input: string) => socket(key, (ws) => ws.send(JSON.stringify({ type: 'input', input })), (f) => (f.type === 'accepted' ? f : undefined)),
-    /** The first frame the socket sends: every entry of the transcript. */
-    snapshot: (key: string) => socket<{ entries: Array<{ model: Array<{ role: string; content: unknown }> }> }>(key, undefined, (f) => (f.type === 'snapshot' ? f : undefined)),
+    /** The first frame the socket sends: the newest window of the transcript as items. */
+    view: (key: string) => socket<{ items: Array<{ kind: string; entry?: { model?: Array<{ role: string; content: unknown }> } }> }>(key, undefined, (f) => (f.type === 'view' ? f : undefined)),
   };
 }

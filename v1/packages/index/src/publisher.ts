@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { watchEvents, type Conversation, type Harness } from '@earendil-works/pi-durable';
+import type { Conversation, ConversationView, Harness } from '@earendil-works/pi-durable';
 import { onGeneration } from '@quack/sdk';
 import { collectFacts, Outbox, type SessionMeta, type Spend } from './facts.ts';
 
@@ -67,12 +67,18 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
     if (!u) return;
     spending = spending.then(() => record({ ...u, cost: u.cost?.total ?? 0, at: 0 })).then(() => flush()).catch((e) => console.error('index: direct spend', e));
   });
-  const events = await watchEvents(harness, root.id, ctx);
-  events.start(async (batch) => {
-    for (const e of batch) {
-      if (e.type === 'run_start') await setStatus('running');
-      if (e.type === 'run_end') await setStatus('idle');
-    }
+  // Streamed deltas change only the view's live message, so a flush follows what facts are made of: entries, run state, usage.
+  const watch = await root.watch(ctx);
+  const runs = (v: ConversationView) => v.docs['pi.live']?.run !== undefined;
+  const signature = (v: ConversationView) => JSON.stringify([v.entries.at(-1)?.id, runs(v), v.docs['pi.usage'], (v.docs['pi.live']?.tools as { status: string }[] | undefined)?.map((t) => t.status)]);
+  let seen = signature(watch.value);
+  let running = runs(watch.value);
+  watch.start(async (call) => {
+    if (call.kind !== 'value') return;
+    const next = signature(call.value);
+    if (next === seen) return;
+    seen = next;
+    if (runs(call.value) !== running) await setStatus((running = !running) ? 'running' : 'idle');
     await flush();
   });
   await flush();
@@ -86,7 +92,7 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
     clearInterval(poll);
     clearTimeout(timer);
     await Promise.race([current?.catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS).unref())]);
-    await events.stop();
+    await watch.stop();
   }
   return { flush, stop };
 }

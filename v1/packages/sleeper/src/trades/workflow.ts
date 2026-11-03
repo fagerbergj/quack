@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { Type } from '@earendil-works/pi-ai';
+import { arr, int, lit, nul, obj, opt, str, union } from '@earendil-works/pi-schema';
 import type { JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext, type Step } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
@@ -16,18 +16,18 @@ export const FINDER_WORKFLOW = 'sleeper.trade-finder';
 export type TradeJobDeps = LineupDeps;
 type News = Record<string, NewsItem[]>;
 
-const verdictSchema = Type.Union(['send', 'counter', 'decline'].map((v) => Type.Literal(v)));
-const tradeSchema = Type.Object({
+const verdictSchema = union(['send', 'counter', 'decline'].map((v) => lit(v)));
+const tradeSchema = obj({
   verdict: verdictSchema,
-  why: Type.String({ maxLength: 350 }),
-  flips_if: Type.String({ maxLength: 200 }),
-  counter: Type.Optional(Type.Union([Type.Null(), Type.Object({ give: Type.Array(Type.String(), { minItems: 1 }), get: Type.Array(Type.String(), { minItems: 1 }) })])),
-  summary: Type.String({ maxLength: 300 }),
-});
-const finderSchema = Type.Object({
-  suggestions: Type.Array(Type.Object({ partner: Type.Integer(), give: Type.String(), get: Type.String(), partner_need: Type.String({ maxLength: 32 }), note: Type.String({ maxLength: 350 }) }), { maxItems: 3 }),
-  summary: Type.String({ maxLength: 300 }),
-});
+  why: str({ maxLength: 350 }),
+  flips_if: str({ maxLength: 200 }),
+  counter: opt(union([nul(), obj({ give: arr(str(), { minItems: 1 }), get: arr(str(), { minItems: 1 }) }, { open: true })])),
+  summary: str({ maxLength: 300 }),
+}, { open: true });
+const finderSchema = obj({
+  suggestions: arr(obj({ partner: int(), give: str(), get: str(), partner_need: str({ maxLength: 32 }), note: str({ maxLength: 350 }) }, { open: true }), { maxItems: 3 }),
+  summary: str({ maxLength: 300 }),
+}, { open: true });
 
 const line = (p: TPlayer) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
 const links = (news: News, id: string) => (news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');
