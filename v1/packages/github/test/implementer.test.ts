@@ -81,7 +81,7 @@ test('a PR whose head is in a fork is refused with a plain message and nothing i
   await session.close();
 });
 
-test('deliver names every failed code check: no commit, no pr.md, then a bad subject, a dirty tree and a placeholder branch', async () => {
+test('deliver names every failed code check: no commit, no pr.md, then a bad subject, and a dirty tree', async () => {
   const { session, seen } = await implement(({ repo, seen }) => [
     checkout(),
     record(seen, () => call('deliver')),
@@ -93,13 +93,12 @@ test('deliver names every failed code check: no commit, no pr.md, then a bad sub
       return call('deliver');
     },
     record(seen, () => fauxAssistantMessage('stop')),
-  ], { headRef: 'wip' });
+  ]);
   await session.submit('Fix acme/widgets#7', 'fx-1', true);
   assert.match(seen[1], /there is no new commit since checkout/);
   assert.match(seen[1], /artifacts\/pr\.md cannot be read; write it first/);
   assert.match(seen[2], /commit subject is not Conventional Commits .*: updated stuff/);
   assert.match(seen[2], /the working tree has uncommitted changes/);
-  assert.match(seen[2], /the branch name \\"wip\\" is a placeholder/);
   assert.deepEqual(await pendingApprovals(session.root, BACKGROUND_CONTEXT), [], 'a failed check never reaches the gate');
   await session.close();
 });

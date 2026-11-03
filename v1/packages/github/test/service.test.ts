@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
-import { FIX_BUSY, noticeFor } from '../src/notice.ts';
+import { fixRefused, noticeFor } from '../src/notice.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -80,7 +80,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
-    if (busy) return res.writeHead(409).end('{}');
+    if (busy) return res.writeHead(409).end(JSON.stringify({ error: 'session is mid-run as agent reviewer; implementer can start once it finishes' }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
@@ -155,14 +155,14 @@ test('/fix runs the implementer in the PR session only where one is configured; 
   assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
   assert.match(invocations[0].body.input, /Instruction: the cache test\nand the lint error/);
 
-  // A session mid-run as another agent refuses with 409: the PR is told to re-post, not left silent.
+  // A refused /fix is answered on the PR with the distributor's reason, not left silent.
   busy = true;
   commented.length = 0;
   const refused = fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix2' } });
   assert.equal((await refused).status, 200);
   busy = false;
   assert.equal(invocations.length, 1);
-  assert.deepEqual(commented, [FIX_BUSY]);
+  assert.deepEqual(commented, [fixRefused('session is mid-run as agent reviewer; implementer can start once it finishes')]);
 });
 
 test('git credentials are minted per repository and cached until near expiry', async () => {

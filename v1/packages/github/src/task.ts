@@ -6,7 +6,6 @@ import { conventions, fetchRecord, git, prFacts, PullRequestDoc, remoteFor, sync
 import { parseReview } from './review.ts';
 
 const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
-const PLACEHOLDER_BRANCHES = new Set(['fix', 'update', 'wip', 'patch', 'tmp', 'temp', 'test', 'changes']);
 const PR_BODY = 'artifacts/pr.md';
 
 const titleOf = (text: string) => text.trim().split('\n')[0].replace(/^#+\s*/, '');
@@ -74,7 +73,6 @@ async function problems(r: Repo, pr: PullRequestRecord): Promise<string[]> {
   if (await out(r, 'status', '--porcelain')) found.push('the working tree has uncommitted changes; commit or discard them');
   const branch = await out(r, 'branch', '--show-current');
   if (branch !== pr.headRef) found.push(`HEAD is on "${branch || 'a detached head'}", not the pull request branch ${pr.headRef}`);
-  if (PLACEHOLDER_BRANCHES.has(pr.headRef.toLowerCase())) found.push(`the branch name "${pr.headRef}" is a placeholder`);
   return found;
 }
 
