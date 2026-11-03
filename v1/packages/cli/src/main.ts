@@ -108,8 +108,9 @@ async function exportSession(c: Client, [key, file]: string[]): Promise<Result> 
   if (!key) throw usageError('usage: quack export <key> [file]');
   await known(c, key);
   const path = file ?? `quack-${key.replace(/[^A-Za-z0-9._-]+/g, '-')}.json`;
-  await writeFile(path, JSON.stringify(await c.exported(key), null, 2));
-  return { data: { file: path }, text: `wrote ${path}` };
+  const body = await c.exported(key);
+  await writeFile(path, JSON.stringify(body, null, 2));
+  return { data: body, text: `wrote ${path}` };
 }
 
 const COMMANDS: Record<string, Command> = {

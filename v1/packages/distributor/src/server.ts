@@ -233,6 +233,30 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     res.end(JSON.stringify({ session, ...(await upstream.json() as object) }, null, 2));
   }
 
+  // A request in flight keeps its session from idling out, however long it waits on the run.
+  async function withSession(key: string, agent: string | undefined, what: string, use: (url: string) => Promise<void>) {
+    lastUse.set(key, now());
+    hold(key, 1);
+    try {
+      await stopping.get(key);
+      await removing.get(key);
+      await switchRole(key, agent, what);
+      const url = await driver.ensure(key, agent);
+      arm(key, undefined);
+      await use(url);
+    } finally {
+      hold(key, -1);
+      lastUse.set(key, now());
+    }
+  }
+
+  // Looked up before ensure(), which would start a session for an unknown key.
+  async function exportRoute(key: string, agent: string | undefined, res: ServerResponse) {
+    const info = (await driver.sessions()).find((x) => x.key === key);
+    if (!info) return send(res, 404, { error: 'no such session' });
+    await withSession(key, agent, 'GET /export', async (url) => void (await exportSession(info, url, res)));
+  }
+
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
     send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }) })) });
@@ -352,25 +376,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       if (!target) return send(res, 400, { error: 'invalid session key' });
       const { key, path, search, agent } = target;
       if (req.method === 'GET' && path === '/approvals') return await peekApprovals(key, search, res);
-      // Looked up before ensure(), which would start a session for an unknown key.
-      const exporting = req.method === 'GET' && path === '/export' ? (await driver.sessions()).find((x) => x.key === key) : undefined;
-      if (req.method === 'GET' && path === '/export' && !exporting) return send(res, 404, { error: 'no such session' });
-      lastUse.set(key, now());
-      // A request in flight keeps its session from idling out, however long it waits on the run.
-      hold(key, 1);
-      try {
-        await stopping.get(key);
-        await removing.get(key);
-        await switchRole(key, agent, `${req.method} ${path}`);
-        const url = await driver.ensure(key, agent);
-        arm(key, undefined);
-        if (exporting) return await exportSession(exporting, url, res);
+      if (req.method === 'GET' && path === '/export') return await exportRoute(key, agent, res);
+      await withSession(key, agent, `${req.method} ${path}`, async (url) => {
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
         await forward(url + path + search, req.method ?? 'GET', body, res, req.headers['x-authentik-username']?.toString());
-      } finally {
-        hold(key, -1);
-        lastUse.set(key, now());
-      }
+      });
     } catch (err) {
       send(res, errorStatus(err), { error: err instanceof Error ? err.message : String(err) });
     }
