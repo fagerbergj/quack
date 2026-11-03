@@ -33,11 +33,20 @@ export function findingItems(report: string): Array<{ first: string; text: strin
 const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
 const MIN_QUOTE = 12;
 
-/** Quoted spans of a finding, split at elisions; shorter ones are scare quotes or names, not evidence. */
+/** Quoted spans of a finding, split at elisions; shorter ones are scare quotes or names, not evidence. Edge punctuation is dropped: American style puts the sentence's comma or period inside the marks. */
 export function quotedSpans(text: string): string[] {
   return [...text.matchAll(/["“]([^"”\n]+)["”]/g)]
     .filter((m) => m[1].length >= MIN_QUOTE)
-    .flatMap((m) => m[1].split(/\.\.\.|…/).map((p) => p.trim()).filter((p) => p.length >= 6));
+    .flatMap((m) => m[1].split(/\.\.\.|…/).map((p) => p.replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, '')).filter((p) => p.length >= 6));
+}
+
+/** The finding's quoted spans that none of the cited source texts contain. */
+export const missingQuotes = (finding: string, texts: string[]) => quotedSpans(finding).filter((q) => !texts.map(squash).some((t) => t.includes(squash(q))));
+
+/** A finding named by its opening words; its bullet id means nothing to a reader or the reviser. */
+function opening(first: string | undefined): string {
+  const words = (first ?? '').replace(/^\s*([-*]|\d+\.)\s+/, '').replace(/\s*\[s\d+\]/g, '').split(/\s+/).filter(Boolean);
+  return `The finding starting "${words.slice(0, 8).join(' ')}${words.length > 8 ? '…' : ''}"`;
 }
 
 export function reportEvidence() {
@@ -47,8 +56,8 @@ export function reportEvidence() {
     for (const [i, f] of findingItems(sealed.content).entries()) {
       const ids = citedIds(f.text);
       // A source whose text was not kept (a failed write, a fork) cannot disprove a quote, so it is skipped.
-      const texts = (await Promise.all(ids.map((id) => sourceText(api, id, ctx)))).filter((t): t is string => t !== undefined).map(squash);
-      const misquotes = texts.length ? quotedSpans(f.text).filter((q) => !texts.some((t) => t.includes(squash(q)))) : [];
+      const texts = (await Promise.all(ids.map((id) => sourceText(api, id, ctx)))).filter((t): t is string => t !== undefined);
+      const misquotes = texts.length ? missingQuotes(f.text, texts) : [];
       finding.push({ id: `finding-${i + 1}`, state: { finding: f.text, cited: ids.length > 0, first: f.first, misquotes } });
     }
     return { review: [{ id: 'report', state: { report: sealed.content } }], sources: [{ id: 'fetched', state: { ids: fetched.map((s) => s.id) } }], finding };
@@ -62,13 +71,13 @@ function findingsCited(_artifact: string, ev: Evidence): CodeResult {
   const all = findings(ev);
   const bare = all.filter((f) => !f.cited);
   if (!all.length) return { met: 0, detail: 'the Findings section has no bullets; list each finding as "- claim [s1]"' };
-  return { met: (all.length - bare.length) / all.length, marks: bare.map((f) => f.first), detail: bare.length ? `${bare.map((f) => f.id).join(', ')} cite no source; add the [sN] of the page that supports it or drop the finding` : undefined };
+  return { met: (all.length - bare.length) / all.length, marks: bare.map((f) => f.first), detail: bare.length ? `${bare.map((f) => `${opening(f.first)} cites no source`).join('; ')}. Add the [sN] of the page that supports each, or drop it.` : undefined };
 }
 
 function quotesExist(_artifact: string, ev: Evidence): CodeResult {
   const all = findings(ev);
   const wrong = all.filter((f) => f.misquotes.length);
-  const listed = wrong.map((f) => `${f.id} quotes text its cited source does not contain: ${f.misquotes.slice(0, 3).map((q) => `"${q}"`).join(', ')}`).join('; ');
+  const listed = wrong.map((f) => `${opening(f.first)} quotes ${f.misquotes.slice(0, 3).map((q) => `"${q}"`).join(', ')}, which isn't on the cited page`).join('; ');
   return { met: all.length ? (all.length - wrong.length) / all.length : 1, marks: wrong.flatMap((f) => f.misquotes), detail: wrong.length ? `${listed}. Quote the page as written, or paraphrase without quotation marks.` : undefined };
 }
 

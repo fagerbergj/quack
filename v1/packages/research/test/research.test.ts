@@ -12,6 +12,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { deliveredReport, findingItems, formatResults, htmlToText, isPublicAddress, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
+import { missingQuotes } from '../src/report.ts';
 
 const servers: Server[] = [];
 const dirs: string[] = [];
@@ -324,19 +325,36 @@ const unit = ({ id = 'f', ...state }: { id?: string } & Record<string, any>) => 
 test('findings_cited: every finding bullet needs a [sN]; the bare one is named and marked', () => {
   assert.deepEqual(findingItems(GOOD).map((f) => f.first), ['- The page says "Ducks & geese fly." [s1]', '- Ducks are birds. [s1]']);
   assert.equal(gate('findings_cited', { finding: [unit({ cited: true, first: 'a' })] }).met, 1);
-  const bad = gate('findings_cited', { finding: [unit({ id: 'finding-1', cited: true, first: 'a' }), unit({ id: 'finding-2', cited: false, first: '- Ducks swim.' })] });
+  const bad = gate('findings_cited', { finding: [unit({ id: 'finding-1', cited: true, first: 'a' }), unit({ id: 'finding-2', cited: false, first: '- Ducks swim far out past the reef and the harbour wall. [s1]' })] });
   assert.equal(bad.met, 0.5);
-  assert.deepEqual(bad.marks, ['- Ducks swim.']);
-  assert.match(bad.detail!, /finding-2 cite no source/);
+  assert.deepEqual(bad.marks, ['- Ducks swim far out past the reef and the harbour wall. [s1]']);
+  assert.match(bad.detail!, /^The finding starting "Ducks swim far out past the reef and…" cites no source\./);
+  assert.doesNotMatch(bad.detail!, /finding-\d/);
   assert.equal(gate('findings_cited', { finding: [] }).met, 0);
 });
 
 test('quotes_exist: a quote the cited source lacks fails the gate with the quote as its mark', () => {
   assert.equal(gate('quotes_exist', { finding: [unit({ misquotes: [] })] }).met, 1);
-  const bad = gate('quotes_exist', { finding: [unit({ id: 'finding-1', misquotes: [] }), unit({ id: 'finding-2', misquotes: ['Geese never fly'] })] });
+  const bad = gate('quotes_exist', { finding: [unit({ id: 'finding-1', misquotes: [] }), unit({ id: 'finding-2', first: '- Geese are said to be flightless. [s1]', misquotes: ['Geese never fly'] })] });
   assert.equal(bad.met, 0.5);
   assert.deepEqual(bad.marks, ['Geese never fly']);
-  assert.match(bad.detail!, /finding-2 quotes text its cited source does not contain: "Geese never fly"/);
+  assert.match(bad.detail!, /The finding starting "Geese are said to be flightless\." quotes "Geese never fly", which isn't on the cited page/);
+  assert.doesNotMatch(bad.detail!, /finding-\d/);
+});
+
+const PAGE = 'I. Config. Store config in the environment. There is a tendency for config files to be scattered about in different places and different formats, making it hard to see where.';
+
+test('missingQuotes: punctuation the writer put inside the quote marks is not part of the quote', () => {
+  assert.deepEqual(missingQuotes('12-factor says "Store config in the environment," plainly.', [PAGE]), []);
+  assert.deepEqual(missingQuotes('It notes "there is a tendency for config files to be scattered about in different places and different formats." [s1]', [PAGE]), []);
+  assert.deepEqual(missingQuotes('It notes "different places and different formats; " [s1]', [PAGE]), []);
+});
+
+test('missingQuotes: a changed word still fails, with or without trailing punctuation', () => {
+  const rfc = ['The goal of this document is to remove inconsistencies with other specifications of JSON.'];
+  assert.deepEqual(missingQuotes('RFC 8259 "removes inconsistencies with other specifications of JSON."', rfc), ['removes inconsistencies with other specifications of JSON']);
+  assert.deepEqual(missingQuotes('"Store config in the environments,"', [PAGE]), ['Store config in the environments']);
+  assert.deepEqual(missingQuotes('"because documents still sending it are rejected"', ['Removing a field is breaking.']), ['because documents still sending it are rejected']);
 });
 
 test('a report with a real quote passes all gates; an invented quote and a bare finding fail with marks that deliveredReport places', async () => {
