@@ -271,7 +271,9 @@ function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer
 }
 
 // While the judge runs, its criteria and each result as it lands replace the bare step label.
-function Running({ view }: { view: View }) {
+function Running({ view, waiting, active }: { view: View; waiting: boolean; active: boolean }) {
+  if (waiting) return <Working label="Waiting for you" />;
+  if (!active) return null;
   const checks = liveChecks(view.tool?.details);
   if (!checks) return <Working label={stepLabel(view)} />;
   return (
@@ -314,7 +316,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
             <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
-            {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Running view={view} />}
+            <Running view={view} waiting={waiting > 0} active={tone === 'run'} />
           </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
