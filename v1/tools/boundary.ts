@@ -5,7 +5,7 @@ import { join } from 'node:path';
 export const LAYERS: Record<string, 'core' | 'foundation' | 'feature' | 'leaf'> = {
   sdk: 'core', session: 'core', index: 'core', distributor: 'core', runtime: 'core', web: 'core',
   judge: 'foundation', workflows: 'foundation', slots: 'foundation', traces: 'foundation',
-  github: 'feature', home: 'feature', sleeper: 'feature', remarkable: 'feature', research: 'feature',
+  github: 'feature', home: 'feature', sleeper: 'feature', remarkable: 'feature', research: 'feature', contracts: 'feature',
   schedules: 'leaf', eval: 'leaf', cli: 'leaf',
 };
 

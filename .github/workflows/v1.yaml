@@ -38,6 +38,8 @@ jobs:
           python-version: "3.13"
       # The reMarkable render tests draw a v6 page with rmc.
       - run: pip install --no-deps -r packages/remarkable/requirements.txt
+      # The contracts tests diff OpenAPI versions with oasdiff; keep the pin in step with v1/Dockerfile.
+      - run: go install github.com/oasdiff/oasdiff@v1.34.0 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: npx tsc -p tsconfig.json
       - run: npx tsc -p packages/web/tsconfig.json
       - run: npm test

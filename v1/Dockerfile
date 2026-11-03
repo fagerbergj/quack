@@ -1,9 +1,14 @@
 # The v1 image: one build serves the distributor (with its session processes), the GitHub, schedules, Sleeper and reMarkable services; compose picks
 # the entrypoint. Session processes review code, so the image carries git and Go.
+# oasdiff checks contract versions for breaking changes (packages/contracts); pinned to a release.
+FROM golang:1.27.3-trixie AS oasdiff
+RUN go install github.com/oasdiff/oasdiff@v1.34.0
+
 FROM node:26.13-trixie-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/cli/package.json packages/cli/
+COPY packages/contracts/package.json packages/contracts/
 COPY packages/distributor/package.json packages/distributor/
 COPY packages/github/package.json packages/github/
 COPY packages/home/package.json packages/home/
@@ -31,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 COPY packages/remarkable/requirements.txt /tmp/rm-requirements.txt
 RUN python3 -m venv /opt/rmc && /opt/rmc/bin/pip install --no-cache-dir --no-deps -r /tmp/rm-requirements.txt && rm /tmp/rm-requirements.txt
 COPY --from=golang:1.27.3-trixie /usr/local/go /usr/local/go
+COPY --from=oasdiff /go/bin/oasdiff /usr/local/bin/oasdiff
 ENV PATH=/opt/rmc/bin:/usr/local/go/bin:/app/node_modules/.bin:$PATH
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
