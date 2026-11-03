@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
 import { Approvals } from './Approvals.tsx';
@@ -7,6 +7,7 @@ import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
+import { SessionKeyContext } from './extension.ts';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
@@ -183,7 +184,7 @@ function Title({ name }: { name: SessionTitle }) {
 type Manage = { archived: boolean; changed: () => void };
 
 // Abort, the Work drawer and housekeeping live behind one quiet menu; it is absent when none applies.
-function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: { archived: boolean; rename: () => void; archive: () => void; remove: () => void } }) {
+function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void } }) {
   const [open, setOpen] = useState(false);
   if (!running && !latest && !manage) return null;
   const item = 'flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] hover:bg-soft lg:min-h-8';
@@ -197,6 +198,7 @@ function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; 
           {running && <button type="button" role="menuitem" onClick={pick(onAbort)} className={`${item} text-danger`}>Abort</button>}
           {manage && <button type="button" role="menuitem" onClick={pick(manage.rename)} className={`${item} text-ink`}>Rename</button>}
           {manage && <button type="button" role="menuitem" onClick={pick(manage.archive)} className={`${item} text-ink`}>{manage.archived ? 'Unarchive' : 'Archive'}</button>}
+          {manage && <a role="menuitem" href={manage.exportHref} download onClick={() => setOpen(false)} className={`${item} text-ink no-underline`}>Export</a>}
           {manage && <button type="button" role="menuitem" onClick={pick(manage.remove)} className={`${item} text-danger`}>Delete</button>}
         </div>
       )}
@@ -288,7 +290,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
-        <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
+        <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
@@ -297,7 +299,9 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <Transcript view={view} meta={meta} load={load} />
-            <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
+            <SessionKeyContext value={sessionKey}>
+              <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
+            </SessionKeyContext>
             <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
@@ -310,7 +314,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           </div>
         </div>
       </div>
-      {work && <Work artifact={work} onClose={() => setWork(null)} />}
+      {work && <Work artifact={work} session={sessionKey} onClose={() => setWork(null)} />}
     </div>
   );
 }

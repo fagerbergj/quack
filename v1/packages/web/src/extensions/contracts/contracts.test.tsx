@@ -160,6 +160,6 @@ test('a spec without a usable document is not drawn, and one that throws while d
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   render(<>{artifactCard(sealed(broken))}</>);
   expect(screen.getByRole('alert')).toHaveTextContent("This couldn't be drawn");
-  expect(screen.getByRole('alert')).toHaveTextContent('"parameters":5');
+  expect(screen.getByRole('alert')).toHaveTextContent('parameters5');
   vi.restoreAllMocks();
 });
