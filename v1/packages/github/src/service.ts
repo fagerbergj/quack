@@ -228,7 +228,7 @@ export async function invocationMeta(app: GithubApp, owner: string, repo: string
 
 async function pullStatesRoute(req: IncomingMessage, res: ServerResponse, app: GithubApp, states: States) {
   const keys = (new URL(req.url ?? '', 'http://x').searchParams.get('keys') ?? '').split(',').filter(Boolean);
-  send(res, 200, { pulls: await states.lookup(app, keys) });
+  send(res, 200, await states.lookup(app, keys));
 }
 
 export function createGithubService(app: GithubApp, config: ServiceConfig) {

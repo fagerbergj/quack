@@ -7,6 +7,7 @@ type Entry = PrState & { checked: number };
 
 const OPEN_TTL_MS = 10 * 60_000;
 const MAX_KEYS = 100;
+const KEEP_FINAL_MS = 30 * 24 * 3600_000;
 const KEY = /^(?:github:)?([^/\s,]+)\/([^#\s,]+)#(\d+)$/;
 
 export const prStateKey = (owner: string, repo: string, number: number) => `${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`;
@@ -22,6 +23,8 @@ export function pullStates(file?: string, now: () => number = Date.now) {
     // First run or an unreadable file: states are re-fetched lazily.
   }
   const save = () => {
+    // A dropped merged or closed entry is read again if a session still asks.
+    for (const [k, e] of Object.entries(entries)) if (e.state !== 'open' && now() - e.checked > KEEP_FINAL_MS) delete entries[k];
     if (!file) return;
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(`${file}.tmp`, JSON.stringify(entries));
@@ -49,11 +52,12 @@ export function pullStates(file?: string, now: () => number = Date.now) {
       save();
     },
     /** States for `owner/repo#n` keys (optionally `github:`-prefixed); keys with no installation or a failed read are left out. */
-    async lookup(app: GithubApp, keys: string[]): Promise<{ [key: string]: PrState }> {
+    async lookup(app: GithubApp, keys: string[]): Promise<{ pulls: { [key: string]: PrState }; truncated?: true }> {
       const asked = keys.slice(0, MAX_KEYS);
       const found = await Promise.all(asked.map((k) => read(app, k)));
       save();
-      return Object.fromEntries(asked.flatMap((k, i) => (found[i] ? [[k.replace(/^github:/, ''), found[i]]] : [])));
+      const pulls = Object.fromEntries(asked.flatMap((k, i) => (found[i] ? [[k.replace(/^github:/, ''), found[i]]] : [])));
+      return keys.length > MAX_KEYS ? { pulls, truncated: true } : { pulls };
     },
   };
 }

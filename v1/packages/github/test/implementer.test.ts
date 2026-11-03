@@ -10,6 +10,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, pendingApprovals, resolveApproval } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
+import { claimedCommands } from '../src/claims.ts';
 import { cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
@@ -143,5 +144,67 @@ test('an approved deliver refuses when the PR branch moved since checkout', asyn
   await run;
   assert.match(seen[0], /Nothing was pushed: bump moved from [0-9a-f]{40} to f{40} since checkout/);
   assert.equal(sh(bare, 'branch', '--list', 'bump'), '');
+  await session.close();
+});
+
+// Delivers a pr.md whose "How verified" claims `claim` (plus `extra`) after the session ran the `ran` commands.
+async function claiming(claim: string, ran: string[], extra = '') {
+  const text = PR_MD.replace('Verified: node app.ts.', `How verified: \`${claim}\` passed.${extra}`);
+  const { session, seen } = await implement(({ repo, seen }) => [
+    checkout(),
+    ...ran.map((command) => call('bash', { command })),
+    async () => { await change(repo()); await writeFile(join(repo(), '..', 'artifacts', 'pr.md'), text); return call('deliver'); },
+    record(seen, () => fauxAssistantMessage('stop')),
+  ]);
+  return { session, seen, run: session.submit('Fix acme/widgets#7', 'fx-1', true) };
+}
+
+test('a claimed command the session ran, behind a cd and different quoting, reaches approval', async () => {
+  const { session, run, seen } = await claiming('echo "ok"', ['cd repo && echo ok']);
+  await answer(session, 'approve');
+  assert.equal((await run).status, 'done');
+  assert.doesNotMatch(seen.at(-1)!, /Not delivered/);
+  await session.close();
+});
+
+test('a claimed command the session never ran fails deliver, naming it', async () => {
+  const { session, run, seen } = await claiming('npm test', ['echo hi']);
+  await run;
+  assert.match(seen.at(-1)!, /Not delivered/);
+  assert.match(seen.at(-1)!, /artifacts\/pr\.md says you ran `npm test`, but this session never ran it/);
+  assert.deepEqual(await pendingApprovals(session.root, BACKGROUND_CONTEXT), []);
+  await session.close();
+});
+
+test('a claimed pass whose only run exited non-zero fails deliver', async () => {
+  const { session, run, seen } = await claiming('ls nonexistent-dir', ['ls nonexistent-dir']);
+  await run;
+  assert.match(seen.at(-1)!, /`ls nonexistent-dir` passed, but every run of it exited non-zero/);
+  await session.close();
+});
+
+test('a claim whose line says it failed is backed by a failed run', async () => {
+  const { session, run, seen } = await claiming('ls nonexistent-dir', ['ls nonexistent-dir'], ' It failed as expected.');
+  await answer(session, 'approve');
+  assert.equal((await run).status, 'done');
+  assert.doesNotMatch(seen.at(-1)!, /Not delivered/);
+  await session.close();
+});
+
+test('a failure word must be a word: "redo" does not excuse a claimed pass whose runs all failed', async () => {
+  const { session, run, seen } = await claiming('ls nonexistent-dir', ['ls nonexistent-dir'], ' After a redo of the codegen step.');
+  await run;
+  assert.match(seen.at(-1)!, /`ls nonexistent-dir` passed, but every run of it exited non-zero/);
+  await session.close();
+});
+
+test('a claim on the last line keeps its last character when pr.md ends without a newline', () => {
+  assert.deepEqual(claimedCommands('# t\n\nHow verified: `npm test` broke').map((c) => c.line), ['How verified: `npm test` broke']);
+});
+
+test('a backticked commit id outside the commits made since checkout fails deliver', async () => {
+  const { session, run, seen } = await claiming('echo ok', ['echo ok'], ' Fixed in `deadbeef1`.');
+  await run;
+  assert.match(seen.at(-1)!, /names commit deadbeef1, which is not among the commits made since checkout/);
   await session.close();
 });

@@ -67,6 +67,9 @@ function Placeholder({ title }: { title: string }) {
 
 const trimSlash = (h: string) => (h !== '#/' && h.endsWith('/') ? h.slice(0, -1) : h);
 
+// On desktop the list lives in the sidebar, except on #/sessions itself, where it is the page.
+const listInSidebar = (desktop: boolean, nav: Route, open: boolean) => desktop && (open || nav !== 'sessions');
+
 export function App() {
   const raw = useHash();
   const hash = trimSlash(raw);
@@ -87,16 +90,17 @@ export function App() {
   const desktop = useDesktop();
   const prs = usePrStates(data.rows);
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
+  const inSidebar = listInSidebar(desktop, nav, Boolean(session));
   return (
     <PrStates value={prs}>
-      <Shell route={nav} bare={Boolean(session)} sidebar={desktop ? list : undefined}>
+      <Shell route={nav} bare={Boolean(session)} sidebar={inSidebar ? list : undefined}>
         {full ? <ArtifactPage sessionKey={full.key} version={full.version} />
           : Page ? <Page rows={data.rows} />
           : nav === 'more' ? <More />
           : nav === 'settings' ? <Settings />
           : nav === 'agents' ? <AgentsRoute hash={hash} />
           : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
-          : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={desktop ? undefined : list} />}
+          : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={inSidebar ? undefined : list} />}
       </Shell>
     </PrStates>
   );

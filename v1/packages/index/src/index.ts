@@ -1,4 +1,4 @@
-export { collectFacts, Outbox, type Fact, type SessionMeta } from './facts.ts';
+export { collectFacts, Outbox, type Fact, type PriceOf, type SessionMeta } from './facts.ts';
 export { authorized, indexRoutes } from './http.ts';
 export { openStore } from './open.ts';
 export { openPush, type Subscription } from './push.ts';

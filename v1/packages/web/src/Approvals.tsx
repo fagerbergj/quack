@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { age } from './sessions.ts';
 import { decideApproval, listApprovals, type Approval } from './api.ts';
+import { Args } from './JsonView.tsx';
 import { describe } from './Needs.tsx';
 
 const clip = (s = '', n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
@@ -27,7 +28,7 @@ export function Approvals({ sessionKey, refresh, onCount }: { sessionKey: string
           <p className="m-0 text-[14.5px] font-semibold">{describe(a.args) ?? a.tool}</p>
           <details className="text-[13px] text-ink-2">
             <summary className="cursor-pointer">{clip(JSON.stringify(a.args), 100)}</summary>
-            <pre className="m-0 mt-2 overflow-x-auto rounded-lg bg-soft p-2.5 font-mono text-[12px]">{JSON.stringify(a.args, null, 2)}</pre>
+            <div className="mt-2"><Args value={a.args} /></div>
           </details>
           <div className="flex gap-2">
             <button type="button" aria-label={`Approve ${a.tool}`} onClick={() => decide(a.id, 'approve')} className="h-11 flex-1 cursor-pointer rounded-xl border-0 bg-ink text-sm font-semibold text-on-ink hover:bg-ink-2">Approve</button>

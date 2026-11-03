@@ -243,6 +243,14 @@ test('an api schedule can be deleted, and an agent-declared id cannot be overwri
   assert.deepEqual((await api('GET', '/schedules')).json.schedules.map((s: any) => s.id), ['sleeper/weekly']);
 });
 
+test('the page proxy path lists and deletes but cannot register', async () => {
+  const { api } = await start(':memory:');
+  await api('POST', '/schedules', daily);
+  assert.deepEqual((await api('GET', '/apps/schedules')).json.schedules.map((s: any) => s.id), ['daily']);
+  assert.equal((await api('POST', '/apps/schedules', { ...daily, id: 'x' })).status, 404);
+  assert.equal((await api('DELETE', '/apps/schedules/daily')).status, 200);
+});
+
 test('the API requires the token and rejects bad definitions', async () => {
   const { api, base } = await start(':memory:');
   assert.equal((await fetch(`${base}/schedules`)).status, 401);
