@@ -1,4 +1,5 @@
 import { createServer, request, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
@@ -24,14 +25,19 @@ const TYPES: Record<string, string> = {
 };
 
 // Serves a file under root for a GET path; false when the path escapes root or names no file.
-async function serveStatic(root: string, pathname: string, res: ServerResponse): Promise<boolean> {
+async function serveStatic(root: string, pathname: string, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const rel = safeDecode(pathname);
   if (rel === undefined || rel.includes('\0')) return false;
   const file = resolve(root, '.' + (rel.endsWith('/') ? rel + 'index.html' : rel));
   if (!file.startsWith(resolve(root) + sep)) return false;
   try {
     const data = await readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(data);
+    // Only assets/ is content-hashed; everything else (index.html, manifest, icons) must revalidate.
+    const hashed = file.startsWith(resolve(root, 'assets') + sep);
+    const etag = `"${createHash('sha1').update(data).digest('base64url')}"`;
+    const headers = { etag, 'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache' };
+    if (req.headers['if-none-match'] === etag) res.writeHead(304, headers).end();
+    else res.writeHead(200, { ...headers, 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(data);
     return true;
   } catch {
     return false;
@@ -42,7 +48,7 @@ async function serveStatic(root: string, pathname: string, res: ServerResponse):
 async function serveWeb(root: string | undefined, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   if (!root || req.method !== 'GET') return false;
   const { pathname } = new URL(req.url ?? '', 'http://distributor');
-  return !/^\/(sessions|agents)(\/|$)/.test(pathname) && serveStatic(root, pathname, res);
+  return !/^\/(sessions|agents)(\/|$)/.test(pathname) && serveStatic(root, pathname, req, res);
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
