@@ -11,7 +11,7 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { feedback, judge, score, unitsFor, type Evidence, type Rubric } from '../src/index.ts';
+import { feedback, judge, rejudge, score, unitsFor, type Evidence, type Progress, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];

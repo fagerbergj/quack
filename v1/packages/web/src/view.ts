@@ -12,7 +12,7 @@ export type View = {
   partial?: AssistantMessage;
   spend?: Spend;
   /** The tool call in flight. */
-  tool?: { name: string; args: unknown };
+  tool?: { name: string; args: unknown; /** What the tool published while it ran (the judge's per-check progress). */ details?: unknown };
   /** Changes when a tool starts or ends or the run starts or ends, which is when an approval can appear or clear. */
   activity: string;
 };
@@ -47,5 +47,5 @@ export function applyView(prev: View, { items = prev.items, live, usage }: ViewF
   const slot = live.tools?.findLast((t) => t.status === 'running');
   const running = live.run !== undefined;
   const activity = JSON.stringify([running, live.tools?.map((t) => [t.callId, t.status])]);
-  return { items, running, partial: live.generation?.message as AssistantMessage | undefined, spend: spendOf(usage), tool: slot && { name: slot.name, args: argsOf(items, slot.callId) }, activity };
+  return { items, running, partial: live.generation?.message as AssistantMessage | undefined, spend: spendOf(usage), tool: slot && { name: slot.name, args: argsOf(items, slot.callId), details: slot.details }, activity };
 }

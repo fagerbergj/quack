@@ -2,6 +2,8 @@ import { useState, type ReactNode } from 'react';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import { Thumbs, type Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
+import { ledger, LedgerItem } from './Artifacts.tsx';
+import type { SealedArtifact } from './api.ts';
 import { Markdown } from './Markdown.tsx';
 import type { View } from './view.ts';
 
@@ -16,6 +18,7 @@ type Item =
   | { k: 'prose'; key: string; text: string }
   | { k: 'error'; key: string; text: string }
   | { k: 'work'; key: string; start: number; steps: Step[] }
+  | { k: 'artifact'; key: string; a: SealedArtifact; round: number; latest: boolean }
   | { k: 'earlier'; key: string }
   | { k: 'gap'; key: string; after: number; upTo: number };
 
@@ -150,20 +153,25 @@ export function Working({ label }: { label: string }) {
 type Meta = readonly Record<string, unknown>[];
 export type Load = (req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => unknown;
 
-function Row({ item, meta, load }: { item: Item; meta: Meta; load: Load }): ReactNode {
+function UserRow({ m, meta }: { m: Message; meta: Meta }) {
+  const body = m.role === 'user' ? text(m.content, false).replace(/\s*\[Attached images [^\]]*\]$/, '') : '';
+  const images = m.role === 'user' && typeof m.content !== 'string' ? m.content.filter((c): c is Img & { type: 'image' } => c.type === 'image') : [];
+  const card = EXTENSIONS.map((e) => e.opening?.(body, meta)).find(Boolean);
+  if (card) return card;
+  return (
+    <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 md-on-ink">
+      {images.length > 0 && <Thumbs images={images} />}
+      {body && <Markdown text={body} />}
+    </article>
+  );
+}
+
+type Ledger = { running: boolean; onOpen: (a: SealedArtifact) => void };
+
+function Row({ item, meta, load, ledger: l }: { item: Item; meta: Meta; load: Load; ledger: Ledger }): ReactNode {
   switch (item.k) {
-    case 'user': {
-      const body = item.m.role === 'user' ? text(item.m.content, false).replace(/\s*\[Attached images [^\]]*\]$/, '') : '';
-      const images = item.m.role === 'user' && typeof item.m.content !== 'string' ? item.m.content.filter((c): c is Img & { type: 'image' } => c.type === 'image') : [];
-      const card = EXTENSIONS.map((e) => e.opening?.(body, meta)).find(Boolean);
-      if (card) return card;
-      return (
-        <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 md-on-ink">
-          {images.length > 0 && <Thumbs images={images} />}
-          {body && <Markdown text={body} />}
-        </article>
-      );
-    }
+    case 'user': return <UserRow m={item.m} meta={meta} />;
+    case 'artifact': return <LedgerItem a={item.a} round={item.round} latest={item.latest} running={l.running} meta={meta} onOpen={l.onOpen} />;
     case 'compact': return <Compacted m={item.m} />;
     case 'prose': return <article aria-label="Assistant" className="min-w-0 text-[14.5px] leading-relaxed text-ink"><Markdown text={item.text} /></article>;
     case 'error': return <p className="m-0 text-[13px] text-danger">{`Error: ${item.text}`}</p>;
@@ -185,7 +193,8 @@ function blocks(m: AssistantMessage, key: string, results: Map<string, ToolResul
 // Consecutive steps fold into one work item; prose, user lines and compactions end it.
 type Msg = { key: string; m: Message; compaction: boolean };
 
-function build(view: View): Item[] {
+// Each sealed version goes in before the first message that came after it, ending any run of work it interrupts.
+function build(view: View, artifacts: SealedArtifact[]): Item[] {
   const seq = view.items.flatMap((it, i): (Msg | Item)[] => {
     if (it.kind === 'earlier') return [{ k: 'earlier', key: 'earlier' }];
     if (it.kind === 'gap') return [{ k: 'gap', key: `gap:${i}`, after: it.after, upTo: it.upTo }];
@@ -202,23 +211,32 @@ function build(view: View): Item[] {
     if (last?.k === 'work') last.steps.push(x);
     else items.push({ k: 'work', key, start, steps: [x] });
   };
+  const waiting = ledger(artifacts);
+  const seal = (until: number) => {
+    while (waiting.length && waiting[0]!.a.sealedAt < until) {
+      const { a, round, latest } = waiting.shift()!;
+      items.push({ k: 'artifact', key: `artifact:${a.kind}:${a.version}`, a, round, latest });
+    }
+  };
   for (const x of seq) {
     if (!('compaction' in x)) {
       items.push(x);
       continue;
     }
     const { key, m, compaction } = x;
+    seal(m.timestamp);
     if (m.role === 'user') items.push({ k: compaction ? 'compact' : 'user', key, m });
     else if (m.role === 'assistant') blocks(m, key, results).forEach((x) => add(key, m.timestamp, x));
     else if (m.role === 'toolResult' && !called.has(m.toolCallId)) add(key, m.timestamp, { t: 'orphan', result: m });
   }
+  seal(Infinity);
   return items;
 }
 
-export function Transcript({ view, meta = [], load }: { view: View; meta?: Meta; load: Load }) {
+export function Transcript({ view, meta = [], load, artifacts = [], running = false, onOpen = () => undefined }: { view: View; meta?: Meta; load: Load; artifacts?: SealedArtifact[]; running?: boolean; onOpen?: (a: SealedArtifact) => void }) {
   return (
     <div role="log" aria-label="Transcript" className="flex min-w-0 flex-col gap-5">
-      {build(view).map((item) => <Row key={item.key} item={item} meta={meta} load={load} />)}
+      {build(view, artifacts).map((item) => <Row key={item.key} item={item} meta={meta} load={load} ledger={{ running, onOpen }} />)}
     </div>
   );
 }

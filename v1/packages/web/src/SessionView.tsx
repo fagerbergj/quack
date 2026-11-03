@@ -5,7 +5,8 @@ import { AttachButton, Pending, useAttachments, type Attachments, type Img } fro
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
-import { Artifacts, useArtifacts } from './Artifacts.tsx';
+import { useArtifacts } from './Artifacts.tsx';
+import { CheckProgress, checkedCount, liveChecks } from './CheckResult.tsx';
 import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
@@ -269,6 +270,18 @@ function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer
   return { input, setInput, attach };
 }
 
+// While the judge runs, its criteria and each result as it lands replace the bare step label.
+function Running({ view }: { view: View }) {
+  const checks = liveChecks(view.tool?.details);
+  if (!checks) return <Working label={stepLabel(view)} />;
+  return (
+    <>
+      <Working label={`Double-checking · ${checkedCount(checks)} of ${checks.length} checked`} />
+      <CheckProgress checks={checks} />
+    </>
+  );
+}
+
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const { input, setInput, attach } = useSeed(sessionKey, state, send);
@@ -296,12 +309,12 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
         <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
-            <Transcript view={view} meta={meta} load={load} />
-            <Artifacts items={items} error={artifactsError} running={tone === 'run'} meta={meta} onOpen={setWork} />
+            {artifactsError && <p role="alert" className="m-0 text-[13px] text-danger">{artifactsError}</p>}
+            <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
-            {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label={stepLabel(view)} />}
+            {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Running view={view} />}
           </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">

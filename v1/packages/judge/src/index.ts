@@ -55,18 +55,35 @@ function planModelChecks(rubric: Rubric, ev: Evidence) {
   return { byUnit, results };
 }
 
-async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evidence, memo: string, ctx: Context): Promise<CheckResult[]> {
+/** What the check has decided so far, published as the tool call's running details; `met` is absent until every unit of the check is judged. */
+export type Progress = { rubric: string; checks: Array<{ criterion: string; id: string; label: string; weight: number | 'gate'; met?: number | null }> };
+
+/** Hands progress to wherever it is shown. */
+export type Report = (p: Progress) => Promise<void>;
+
+export function progressOf(rubric: Rubric, done: CheckResult[]): Progress {
+  const byKey = new Map(done.map((r) => [`${r.criterion}.${r.id}`, r]));
+  return { rubric: rubric.name, checks: rubric.criteria.flatMap((c) => c.checks.map((k) => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: byKey.get(`${c.id}.${k.id}`)?.met }))) };
+}
+
+async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evidence, memo: string, ctx: Context, code: CheckResult[], report?: Report): Promise<CheckResult[]> {
   const { byUnit, results } = planModelChecks(opts.rubric, ev);
+  const left = new Map([...results].map(([k, r]) => [k, r.units]));
+  // A model check is final once every unit it applies to is judged; one with no unit is final at once.
+  const publish = async () => report?.(progressOf(opts.rubric, [...code, ...[...results].filter(([k]) => !left.get(k)).map(([, r]) => r)]));
+  await publish();
   for (const { unit, checks } of byUnit.values()) {
     const answers = await answerUnit(api, opts.classifier, opts.judgeModel, memo, unit, checks, ctx);
     for (const [key, a] of Object.entries(answers)) {
       const r = results.get(key)!;
+      left.set(key, left.get(key)! - 1);
       r.resolvers[a.resolver] = (r.resolvers[a.resolver] ?? 0) + 1;
       // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
       if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
       if (a.met) r.met! += 1 / r.units;
       if (a.met === false && a.note) r.notes.push(unit.whole ? a.note : `${unit.id}: ${a.note}`);
     }
+    await publish();
   }
   for (const r of results.values()) if (r.undecided) r.met = null;
   return [...results.values()];
@@ -84,9 +101,11 @@ async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): P
 
 const terminal = (text: string) => ({ output: [{ type: 'text' as const, text }], isError: true, control: { terminate: true } });
 
-async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`): Promise<Verdict> {
+async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
+  await report?.(progressOf(opts.rubric, []));
   const ev = await opts.evidence(api, sealed, ctx);
-  const checks = [...codeResults(opts.rubric, sealed.content, ev), ...(await modelResults(api, opts, ev, memo, ctx))];
+  const code = codeResults(opts.rubric, sealed.content, ev);
+  const checks = [...code, ...(await modelResults(api, opts, ev, memo, ctx, code, report))];
   const s = score(opts.rubric, checks);
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
   const failedBefore = (doc?.kinds[sealed.kind]?.versions ?? []).filter((v) => v.verdict && !(v.verdict as { passed?: boolean }).passed).length;
@@ -97,8 +116,8 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
 }
 
 /** Judges a sealed version again under opts, without attaching the verdict; memo keeps one replay's answers apart from another's. */
-export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context): Promise<Verdict> {
-  return judgeVersion(api, opts, sealed, ctx, memo);
+export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context, report?: Report): Promise<Verdict> {
+  return judgeVersion(api, opts, sealed, ctx, memo, report);
 }
 
 /** What a caller is told when the judge model could not answer some checks. */
@@ -141,7 +160,7 @@ export function judge(opts: JudgeOptions) {
       if (sealed.verdict) return finish(sealed, sealed.verdict as unknown as Verdict, api, ctx);
       // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
       if ((await judgedInRun(api, opts.kind.kind, ctx)) > opts.maxRevisions) return terminal(`${opts.kind.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.`);
-      const verdict = await judgeVersion(api, opts, sealed, ctx);
+      const verdict = await judgeVersion(api, opts, sealed, ctx, undefined, (p) => api.details(p as never, ctx));
       // A verdict missing checks would pass or fail on a model outage; the decided answers are memoized, so calling again asks only the rest.
       if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };
       await attachVerdict(api, opts.kind.kind, sealed.version, verdict as never, ctx);
