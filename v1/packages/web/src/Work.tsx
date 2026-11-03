@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { SealedArtifact } from './api.ts';
 import { artifactCard, artifactName } from './Artifacts.tsx';
+import { SessionKeyContext } from './extension.ts';
+import { delivered, versionOf } from './delivered.ts';
 import { CheckRow } from './CheckList.tsx';
 import { Markdown } from './Markdown.tsx';
 
@@ -23,9 +25,11 @@ function Checks({ a }: { a: SealedArtifact }) {
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 // Modal drawer: Esc, the close button or the backdrop closes it, Tab stays inside, focus returns to the opener.
-export function Work({ artifact, versions, onClose }: { artifact: SealedArtifact; versions?: SealedArtifact[]; onClose: () => void }) {
-  const [picked, setPicked] = useState(artifact.version);
-  const a = versions?.find((v) => v.version === picked) ?? artifact;
+export function Work({ artifact, versions, session, onClose }: { artifact: SealedArtifact; versions?: SealedArtifact[]; session?: string; onClose: () => void }) {
+  const [picked, setPicked] = useState(versionOf(artifact));
+  const seen = versions && delivered(versions);
+  const a = seen?.find((v) => versionOf(v) === picked) ?? artifact;
+  const card = artifactCard(a);
   const [shown, setShown] = useState<'report' | 'checks'>('report');
   const id = useId();
   const arrows = (e: KeyboardEvent<HTMLElement>) => {
@@ -67,17 +71,17 @@ export function Work({ artifact, versions, onClose }: { artifact: SealedArtifact
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 pb-[calc(1rem+var(--safe-b))] sm:px-5">
-          {versions && versions.length > 1 && (
+          {seen && seen.length > 1 && (
             <label className="mb-3 flex items-center gap-2 text-[13px] text-ink-2">
               Version
               <select value={picked} onChange={(e) => setPicked(Number(e.target.value))} className="h-11 rounded-full border border-line bg-soft px-3 text-[13px] outline-none lg:h-8">
-                {versions.map((v) => <option key={v.version} value={v.version}>{`Version ${v.version}${v.verdict ? (v.verdict.passed ? ' · passed' : " · didn't pass") : ''}`}</option>)}
+                {seen.map((v) => <option key={v.version} value={versionOf(v)}>{`Version ${versionOf(v)}${v.verdict ? (v.verdict.passed ? ' · passed' : " · didn't pass") : ''}`}</option>)}
               </select>
             </label>
           )}
           <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${shown}`} className="rounded-[22px] border border-line bg-surface p-5 text-sm leading-relaxed text-ink-2 shadow-card [overflow-wrap:anywhere]">
             {shown === 'report' ? (
-              artifactCard(a) ?? <>
+              card ? <SessionKeyContext value={session}>{card}</SessionKeyContext> : <>
                 <p className="m-0 mb-3 flex items-center gap-2">
                   <span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{artifactName(a)}</span>
                 </p>

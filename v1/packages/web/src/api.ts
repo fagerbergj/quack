@@ -10,7 +10,7 @@ export type Approval = { id: string; tool: string; args: unknown; requestedAt: n
 export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[]; scope?: string };
 // Gates and positive checks fail when not fully met; a pitfall (negative weight) fails when it showed up. Not applicable never fails.
 export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? c.met < 1 : c.met > 0);
-export type Verdict = { passed: boolean; gatesFailed: string[]; score: number; checks: Check[] };
+export type Verdict = { passed: boolean; /** The judge released it unpassed after its revision limit. */ limitReached?: boolean; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
 export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string; carriedFrom?: { sha: string; url?: string } };
 
