@@ -550,7 +550,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable', '#/settings']);
   expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Inbox' }));
   expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
@@ -564,20 +564,27 @@ test('a session stays inside the Sessions rail entry', async () => {
   expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
 });
 
-test('the theme toggle flips the document theme', async () => {
-  routes['GET /sessions'] = { sessions: [] };
-  routes['GET /agents'] = { agents: [] };
+test('the Settings page picks the theme: Dark persists, System clears it', async () => {
   document.documentElement.dataset.theme = 'light';
   localStorage.clear();
+  location.hash = '#/settings';
   render(<App />);
-  const toggle = () => screen.getAllByRole('button', { name: 'Day / night' })[0];
-  expect(toggle()).toHaveAttribute('aria-pressed', 'false');
-  await userEvent.click(toggle());
+  expect(await screen.findByRole('group', { name: 'Appearance' })).toBeInTheDocument();
+  expect(screen.getByRole('radio', { name: 'System' })).toBeChecked();
+  await userEvent.click(screen.getByRole('radio', { name: 'Dark' }));
   expect(document.documentElement.dataset.theme).toBe('dark');
   expect(localStorage.getItem('quack:theme')).toBe('dark');
-  expect(toggle()).toHaveAttribute('aria-pressed', 'true');
-  await userEvent.click(toggle());
-  expect(document.documentElement.dataset.theme).toBe('light');
+  await userEvent.click(screen.getByRole('radio', { name: 'System' }));
+  expect(document.documentElement.dataset.theme).toBeUndefined();
+  expect(localStorage.getItem('quack:theme')).toBeNull();
+});
+
+test('More lists Settings and no longer carries the theme toggle', async () => {
+  stubViewport(false);
+  location.hash = '#/more';
+  render(<App />);
+  expect((await screen.findAllByRole('link', { name: 'Settings' })).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('button', { name: 'Day / night' })).toBeNull();
 });
 
 test('assistant text renders as markdown with a table, highlighted code and citation chips; calls collapse into one card', async () => {

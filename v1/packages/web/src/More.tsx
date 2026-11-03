@@ -1,5 +1,5 @@
 import { EXTENSIONS } from './extensions/index.ts';
-import { Icon, MORE, ThemeToggle } from './Shell.tsx';
+import { Icon, MORE } from './Shell.tsx';
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
 
@@ -28,7 +28,6 @@ export function More() {
           );
         })}
       </div>
-      <ThemeToggle className="mt-4 w-full px-3 text-[14px] lg:hidden" />
     </div>
   );
 }
