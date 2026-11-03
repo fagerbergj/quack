@@ -38,6 +38,12 @@ test('an argv command is confined the same way and keeps its arguments intact', 
   assert.equal(output.trim(), '[] a b');
 });
 
+test('every command starts in the workspace: a cd, or a cwd the caller asks for, does not carry over', async () => {
+  assert.equal((await run('cd /usr && pwd')).output.trim(), '/usr');
+  assert.equal((await run('pwd')).output.trim(), cwd);
+  assert.equal((await run('pwd', {}, { cwd: '/usr' })).output.trim(), cwd);
+});
+
 test('a command past the cap is killed with a note, and the model may only ask for less', async () => {
   const slow = await run('sleep 30', { timeoutSeconds: 1 }, { timeout: 9999 });
   assert.ok(!slow.result.ok && slow.result.error.code === 'timeout');

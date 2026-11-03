@@ -47,7 +47,9 @@ export class PolicyExecutionEnv extends NodeExecutionEnv {
     // An argv form has no shell to carry ulimit, so it runs through bash, which execs it.
     const wrapped = typeof command === 'string' ? limits + command : ['bash', '-c', `${limits}exec "$@"`, 'bash', ...command];
     const env = { ...shellEnv(this.source, this.policy.env), ...options?.env };
-    const result = await super.exec(wrapped, { ...options, timeout, inheritEnv: false, env }, context);
+    // cwd is dropped so every command starts in the workspace; a `cd` lives and dies with its own process.
+    const { cwd: _ignored, ...rest } = options ?? {};
+    const result = await super.exec(wrapped, { ...rest, timeout, inheritEnv: false, env }, context);
     // The bash tool words a timeout from the model's own argument, which is absent when the cap fired.
     if (!result.ok && result.error.code === 'timeout') options?.onOutput?.(`\n[command killed: exceeded the ${timeout} second timeout]\n`, context, { stream: 'stderr' });
     return result;

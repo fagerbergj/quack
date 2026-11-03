@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension } from '@earendil-works/pi-durable';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { openSession } from '@quack/session';
 import { checkoutTool, PullRequestDoc } from '../src/index.ts';
 import { cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
@@ -90,6 +90,34 @@ test('a pinned base keeps the base branch\'s later history, merges and tags out 
   assert.equal(sh(repo, 'log', '--all', '--format=%H').includes(later), false, 'no ref in the clone reaches the later commit');
   const doc = await session.harness.snapshot(PullRequestDoc, session.root.id, BACKGROUND_CONTEXT);
   assert.equal(doc!.pr!.baseSha, baseSha);
+  await session.close();
+});
+
+test('checking out the same head again returns the stored result with no fetch and no language-server call', async () => {
+  const { base, head } = await remotes();
+  const serviceUrl = (await fakeService(head)).url;
+  let lspCalls = 0;
+  const lsp = (name: string) => defineTool({ name, description: name, parameters: Type.Object({ path: Type.Optional(Type.String()) }, { additionalProperties: true }), replay: 'safe', async execute() { lspCalls++; return { output: [{ type: 'text', text: 'No result' }] }; } });
+  const texts: string[] = [];
+  let afterFirst = 0;
+  const seen = (c: { messages: unknown[] }) => texts.push((c.messages.at(-1) as { content: Array<{ text: string }> }).content[0].text);
+  const faux = fauxProvider({ models: [{ id: 'w' }] });
+  const call = () => fauxAssistantMessage(fauxToolCall('checkout_pr', { repository: 'acme/widgets', number: 7 }), { stopReason: 'toolUse' });
+  faux.setResponses([
+    call(),
+    // With the remote gone, a clone or fetch in the second call would fail it.
+    (c) => { seen(c); afterFirst = lspCalls; rmSync(fileURLToPath(base), { recursive: true }); return call(); },
+    (c) => { seen(c); return fauxAssistantMessage('done'); },
+  ]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const extensions = [defineExtension({ name: 'gh', tools: [checkoutTool({ serviceUrl, serviceToken: 'svc', gitBaseUrl: base }), lsp('lsp_symbols'), lsp('lsp_references')] })];
+  const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
+  await session.submit('Review acme/widgets#7', 'co-same', true);
+  assert.ok(afterFirst > 0, 'the first checkout asked the language server');
+  assert.equal(lspCalls, afterFirst, 'the second made no language-server call');
+  assert.equal(texts[1], texts[0]);
   await session.close();
 });
 

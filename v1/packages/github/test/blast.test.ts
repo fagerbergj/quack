@@ -42,6 +42,28 @@ test('a references call that errors reports "unavailable", never "no references 
   assert.match(await run({ structuredOutput: 'No result' }), /no references outside itself/);
 });
 
+test('a wide PR is capped with a stated note, and the calls run in parallel but in order', async () => {
+  const r = (a: number) => ({ start: { line: a, character: 0 }, end: { line: a, character: 0 } });
+  let inFlight = 0;
+  let peak = 0;
+  const api = {
+    agent: async () => ({ callable: [{ name: 'lsp_symbols' }, { name: 'lsp_references' }] }),
+    env: { cwd: '/w', readTextFile: async () => ({ ok: true, value: 'function f() {}\n' }) },
+    executeTool: async (tool: string) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((done) => setImmediate(done));
+      inFlight--;
+      return tool === 'lsp_symbols' ? { structuredOutput: [{ name: 'f', kind: 12, range: r(0), selectionRange: r(0) }] } : { structuredOutput: [] };
+    },
+  };
+  const diff = Array.from({ length: 25 }, (_, i) => `+++ b/f${i}.ts\n@@ -1 +1 @@`).join('\n');
+  const out = await blastRadius(api as never, 'repo', diff, {} as never);
+  assert.match(out, /Blast radius covers 20 of 25 changed files; the rest were not checked\.$/);
+  assert.equal(out.split('\n').filter((l) => l.startsWith('- ')).length, 20);
+  assert.ok(peak > 1 && peak <= 4, `peak ${peak}`);
+  assert.doesNotMatch(await blastRadius(api as never, 'repo', diff.split('\n').slice(0, 6).join('\n'), {} as never), /covers/, 'no note when nothing was capped');
+});
+
 const base = {
   'package.json': '{ "name": "widgets", "type": "module" }\n',
   'tsconfig.json': '{ "compilerOptions": { "strict": true, "module": "nodenext" }, "include": ["src", "test"] }\n',

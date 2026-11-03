@@ -19,7 +19,7 @@ export type PullRequestRecord = {
 };
 
 /** reviewed: the head each version was first judged under, so a version never posts against a later checkout. posted: versions of the review already sent, so none goes out twice; postedThisCheckout: the one a run sent. */
-export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number; reviewed?: Record<string, string> }>({
+export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number; reviewed?: Record<string, string>; checkout?: { head: string; text: string } }>({
   kind: 'github.pr', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ pr: null }), checkpointWhen: () => false,
 });
 
@@ -46,6 +46,21 @@ const skipReason = (pr: PullRequestRecord, prior: Parameters<typeof alreadyPoste
   pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
 const staleNote = (asked: string | undefined, live: string) => (asked && asked !== live ? `The request was for ${asked}, an older head; this reviews the live head ${live}.` : '');
 
+async function atHead(api: ToolExecutionApi, dir: string, sha: string, config: SessionConfig, remote: string, ctx: Context): Promise<boolean> {
+  if (!(await api.env!.readTextFile(`${dir}/.git/HEAD`, ctx)).ok) return false;
+  return (await git(api, ['-C', dir, 'rev-parse', 'HEAD'], config, remote, ctx).catch(() => '')).trim() === sha;
+}
+
+async function syncTree(api: ToolExecutionApi, dir: string, pr: PullRequestRecord, config: SessionConfig, remote: string, ctx: Context) {
+  const cloned = (await api.env!.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
+  if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
+  if (!cloned && pr.baseSha) await git(api, ['-C', dir, 'remote', 'add', 'origin', remote], config, remote, ctx);
+  if (!cloned && !pr.baseSha) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
+  const refs = pr.baseSha ? ['--no-tags', 'origin', `+${pr.baseSha}:refs/remotes/origin/${pr.baseRef}`, pr.headSha] : ['origin', pr.baseRef, `pull/${pr.number}/head`];
+  await git(api, ['-C', dir, 'fetch', '--filter=blob:none', ...refs], config, remote, ctx);
+  await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
+}
+
 async function conventions(api: ToolExecutionApi, dir: string, ctx: Context): Promise<string> {
   for (const name of CONVENTIONS) {
     const read = await api.env!.readTextFile(`${dir}/${name}`, ctx);
@@ -71,13 +86,11 @@ export function checkoutTool(config: SessionConfig) {
       const skip = skipReason(pr, prior);
       if (skip) return { output: [{ type: 'text', text: skip }] };
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
-      const cloned = (await api.env.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
-      if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
-      if (!cloned && pr.baseSha) await git(api, ['-C', dir, 'remote', 'add', 'origin', remote], config, remote, ctx);
-      if (!cloned && !pr.baseSha) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
-      const refs = pr.baseSha ? ['--no-tags', 'origin', `+${pr.baseSha}:refs/remotes/origin/${pr.baseRef}`, pr.headSha] : ['origin', pr.baseRef, `pull/${pr.number}/head`];
-      await git(api, ['-C', dir, 'fetch', '--filter=blob:none', ...refs], config, remote, ctx);
-      await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
+      const stale = staleNote(args.head, pr.headSha);
+      // The same head with its tree still there needs no clone, fetch or language-server pass.
+      const reuse = prior?.checkout?.head === pr.headSha && prior.pr?.headSha === pr.headSha && (await atHead(api, dir, pr.headSha, config, remote, ctx));
+      if (reuse) return { output: [{ type: 'text', text: [stale, prior!.checkout!.text].filter(Boolean).join('\n\n') }] };
+      await syncTree(api, dir, pr, config, remote, ctx);
       await api.commit(async (tx) => {
         const d = await tx.doc(PullRequestDoc, api.conversationId);
         d.pr = JSON.parse(JSON.stringify(pr));
@@ -87,7 +100,6 @@ export function checkoutTool(config: SessionConfig) {
       const hunks = await git(api, ['-C', dir, 'diff', '-U0', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
-        staleNote(args.head, pr.headSha),
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
         `Description:\n${pr.body || '(none)'}`,
         `CI checks: ${pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', ') || 'none reported'}`,
@@ -96,7 +108,8 @@ export function checkoutTool(config: SessionConfig) {
         await conventions(api, dir, ctx),
         await blastRadius(api, dir, hunks, ctx),
       ].filter(Boolean).join('\n\n');
-      return { output: [{ type: 'text', text }] };
+      await api.commit(async (tx) => { (await tx.doc(PullRequestDoc, api.conversationId)).checkout = { head: pr.headSha, text }; }, ctx);
+      return { output: [{ type: 'text', text: [stale, text].filter(Boolean).join('\n\n') }] };
     },
   });
 }
