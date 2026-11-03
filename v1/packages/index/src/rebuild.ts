@@ -21,7 +21,10 @@ export async function rebuild(store: IndexStore, dataDir: string, now = Date.now
     const meta = { key, agent: (await text(join(dir, 'agent'))) ?? '', version: typeof version === 'number' ? version : null };
     const harness = await Harness.open(await openNodeSqliteStorage(join(dir, 'session.sqlite')), { models: createModels(), registry: createRegistry() }, ctx);
     try {
-      await store.upsert(key, await collectFacts(harness, await harness.root(ctx), meta, now(), ctx, priceOf));
+      const facts = await collectFacts(harness, await harness.root(ctx), meta, now(), ctx, priceOf);
+      // The log is the truth, so its facts replace the session's rows: an upsert keeps a higher stored rev, such as a cost before a price cut.
+      await store.forget(key);
+      await store.upsert(key, facts);
     } finally {
       await harness.close(ctx);
     }

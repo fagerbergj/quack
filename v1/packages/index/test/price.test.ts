@@ -85,4 +85,7 @@ test('rebuild reprices sessions whose calls were made before the price', async (
   await store.ensure();
   assert.equal(await rebuild(store, dataDir, Date.now, priceOf(configFor({ input: 0.3, output: 1.2 }))), 1);
   assert.equal((await store.facts(['cost']))[0]?.data.total, 0.9);
+  // A price cut lowers the cost's rev, which an upsert would ignore; rebuild still lands it.
+  await rebuild(store, dataDir, Date.now, priceOf(configFor({ input: 0.1, output: 0.2 })));
+  assert.equal((await store.facts(['cost']))[0]?.data.total, 0.2);
 });
