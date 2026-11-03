@@ -279,7 +279,7 @@ test('a running tool call shows as running with its arguments, and its step in p
   expect(screen.getByText('Reading notes.md')).toBeInTheDocument();
   const row = screen.getByText('read').closest('details')!;
   expect(within(row.querySelector('summary')!).getByText('running')).toBeInTheDocument();
-  expect(row).toHaveTextContent('"path": "a/b/notes.md"');
+  expect(row).toHaveTextContent('patha/b/notes.md');
 });
 
 test('a transcript longer than the window offers earlier and missing messages, and asks the server for them', async () => {
@@ -313,11 +313,11 @@ test('tool calls show a summary, expand to arguments and output, truncate long o
   expect(search).not.toHaveAttribute('open');
   await userEvent.click(within(search).getByText('web_search'));
   expect(search).toHaveAttribute('open');
-  expect(search).toHaveTextContent('"limit": 3');
-  const out = search.querySelectorAll('pre')[1]!;
+  expect(search).toHaveTextContent('limit3');
+  const out = search.querySelectorAll('pre')[0]!;
   expect(out.textContent).toHaveLength(2003);
   await userEvent.click(within(search).getByRole('button', { name: 'Show all (2500 characters)' }));
-  expect(search.querySelectorAll('pre')[1]!.textContent).toHaveLength(2500);
+  expect(search.querySelectorAll('pre')[0]!.textContent).toHaveLength(2500);
 
   const bad = within(group).getByText('bash').closest('details')!;
   expect(within(bad.querySelector('summary')!).getByText('error')).toBeInTheDocument();
@@ -365,7 +365,7 @@ test('markdown tool output renders with a toggle to raw; the delivery link is no
   const submit = screen.getByText('submit_review').closest('details')!;
   expect(within(submit).getByRole('heading', { name: 'Takeaway' })).toBeInTheDocument();
   await userEvent.click(within(submit).getByRole('button', { name: 'Raw' }));
-  expect(submit.querySelectorAll('pre')[1]).toHaveTextContent('## Takeaway');
+  expect(submit.querySelectorAll('pre')[0]).toHaveTextContent('## Takeaway');
   // Delivery links come from the artifact's links (next test), never from a tool's result text.
   expect(screen.queryByRole('link', { name: 'Posted ↗' })).toBeNull();
 });
@@ -377,6 +377,15 @@ test('an artifact line renders the links stored with the version, with no stream
   const link = await screen.findByRole('link', { name: 'Posted ↗' });
   expect(link).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
   expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
+});
+
+test('a Sleeper card in a session links back to that session, in the list and the Work drawer', async () => {
+  const lineup = (await import('./extensions/sleeper/fixtures/8-lineup.json')).default as { content: string };
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const asks = await screen.findAllByRole('link', { name: 'Ask about this' });
+  for (const a of asks) expect(a).toHaveAttribute('href', '#/s/ui%3Au1');
 });
 
 test('the header shows the token total and Waiting on you for a pending approval', async () => {
@@ -605,7 +614,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/settings']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/agents', '#/remarkable', '#/schedules', '#/settings']);
   expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Artifacts' }));
   expect(within(rail).getByRole('link', { name: 'Artifacts' })).toHaveAttribute('aria-current', 'page');
@@ -898,8 +907,8 @@ test('with the index off, Home falls back to the running sessions own approvals,
   render(<App />);
   expect(await screen.findByRole('button', { name: 'Approve gh:1' })).toBeInTheDocument();
   expect(screen.getByText('gh:1 wants to continue')).toBeInTheDocument();
-  expect(screen.getByText('Details').closest('details')).toHaveTextContent('"branch": "main"');
-  expect(screen.queryByText('push')).toBeNull();
+  expect(screen.getByText('Details').closest('details')).toHaveTextContent('branchmain');
+  expect(screen.getByText('push')).not.toBeVisible();
 });
 
 test('Artifacts lists sealed versions from the index and opens one in the Work drawer', async () => {
@@ -1382,7 +1391,7 @@ test('an approval with a summary reads in plain words and keeps the raw call beh
   phoneAt('#/');
   render(<App />);
   const card = await screen.findByRole('region', { name: 'Approval' });
-  expect(within(card).getByText('Process waivers for week 9')).toBeInTheDocument();
+  expect(within(card).getAllByText('Process waivers for week 9')[0]).toBeInTheDocument();
   expect(within(card).getByText('start', { exact: false })).not.toBeVisible();
 });
 
@@ -1453,7 +1462,7 @@ describe('bottom bar', () => {
     const rail = screen.getAllByRole('navigation', { name: 'Main' })[0]!;
     const top = () => [...rail.querySelectorAll(':scope > a')].map((l) => l.textContent);
     expect(top()).toEqual(['Home', 'reMarkable', 'Agents']);
-    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Settings']);
+    expect([...rail.querySelectorAll('details a')].map((l) => l.textContent)).toEqual(['Sessions', 'Artifacts', 'Sleeper', 'Schedules', 'Settings']);
     await userEvent.click(screen.getByRole('checkbox', { name: 'Sessions' }));
     expect(top()).toEqual(['Home', 'reMarkable', 'Agents', 'Sessions']);
   });
@@ -1503,7 +1512,7 @@ test('in a home: conversation the header reads quack and a confirm row shows wha
   render(<App />);
   FakeSocket.all[0]!.open();
   const card = await screen.findByRole('region', { name: 'Approval' });
-  expect(within(card).getByText('Process waivers for week 9')).toBeInTheDocument();
+  expect(within(card).getAllByText('Process waivers for week 9')[0]).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'quack' })).toBeInTheDocument();
 });
 
@@ -1640,6 +1649,16 @@ test('a Home approval card says what it will do, from the args the index carries
   phoneAt('#/');
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
-  expect(within(needs).getByText(args.summary)).toBeInTheDocument();
+  // The headline, then again in the Details tree.
+  expect(within(needs).getAllByText(args.summary)[0]).toBeInTheDocument();
   expect(within(needs).getByText(/abc1234 docs: fix typo/)).toBeInTheDocument();
+});
+
+test('a running session waiting for a model slot says so on its row, instead of looking like it works', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Queued one', running: true, active: true, note: 'Waiting for a model slot (2 ahead)' }), sess('gh:2', { title: 'Working one', running: true, active: true })] };
+  location.hash = '#/sessions';
+  stubViewport(false);
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Queued one/ })).toHaveTextContent('Waiting for a model slot (2 ahead)');
+  expect(screen.getByRole('link', { name: /Working one/ })).not.toHaveTextContent('Waiting for a model slot');
 });

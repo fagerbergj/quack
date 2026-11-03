@@ -4,7 +4,7 @@ import { artifactCard, artifactName } from './Artifacts.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { delivered, versionOf } from './delivered.ts';
 import { CheckRow } from './CheckList.tsx';
-import { Markdown } from './Markdown.tsx';
+import { Content } from './JsonView.tsx';
 
 const tab = (on: boolean) =>
   `h-11 lg:h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
@@ -85,7 +85,7 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
                 <p className="m-0 mb-3 flex items-center gap-2">
                   <span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{artifactName(a)}</span>
                 </p>
-                <Markdown text={a.content} />
+                <Content text={a.content} />
               </>
             ) : (
               <Checks a={a} />

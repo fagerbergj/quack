@@ -1,6 +1,8 @@
 import type { SealedArtifact } from '../../api.ts';
 import { plain, sentence, type Extension } from '../../extension.ts';
+import { createElement } from 'react';
 import { Sleeper } from './Sleeper.tsx';
+import { SleeperCard, cardOf } from './SleeperCard.tsx';
 
 const KEY = /^sleeper:[^:]+:(\d+):(lineup|waivers|history|trends|trade-finder|trade|digest|retro)(?::|$)/;
 
@@ -32,7 +34,15 @@ function cardName(a: SealedArtifact): string {
   return '';
 }
 
+// Card and page draw the same view; undefined (not a known card) leaves the generic JSON tree.
+const view = (a: SealedArtifact) => {
+  const card = cardOf(a);
+  return card && createElement(SleeperCard, { key: a.hash, a, card });
+};
+
 export const sleeper: Extension = {
+  card: view,
+  full: view,
   wholeUnits: ['card', 'facts'],
   artifact: (a) => (a.kind === 'sleeper.cards' ? { name: cardName(a) } : undefined),
   session: {
