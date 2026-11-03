@@ -6,7 +6,7 @@ import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { authorized } from '@quack/index';
 import { serviceHttp } from '@quack/sdk';
-import { AgentError, type HostDriver } from './process-driver.ts';
+import { AgentError, type HostDriver, type SessionInfo } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
@@ -223,6 +223,16 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     res.end(Buffer.from(await upstream.arrayBuffer()));
   }
 
+  // One self-contained file: the session's metadata beside its transcript and sealed artifacts, as a download.
+  async function exportSession(info: SessionInfo, url: string, res: ServerResponse) {
+    const upstream = await fetch(`${url}/export`);
+    if (!upstream.ok) return send(res, 502, { error: 'session export failed' });
+    const { running: _running, ...session } = info;
+    const name = `quack-${info.key.replace(/[^A-Za-z0-9._-]+/g, '-')}.json`;
+    res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': `attachment; filename="${name}"` });
+    res.end(JSON.stringify({ session, ...(await upstream.json() as object) }, null, 2));
+  }
+
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
     send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }) })) });
@@ -342,6 +352,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       if (!target) return send(res, 400, { error: 'invalid session key' });
       const { key, path, search, agent } = target;
       if (req.method === 'GET' && path === '/approvals') return await peekApprovals(key, search, res);
+      // Looked up before ensure(), which would start a session for an unknown key.
+      const exporting = req.method === 'GET' && path === '/export' ? (await driver.sessions()).find((x) => x.key === key) : undefined;
+      if (req.method === 'GET' && path === '/export' && !exporting) return send(res, 404, { error: 'no such session' });
       lastUse.set(key, now());
       // A request in flight keeps its session from idling out, however long it waits on the run.
       hold(key, 1);
@@ -351,6 +364,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
         await switchRole(key, agent, `${req.method} ${path}`);
         const url = await driver.ensure(key, agent);
         arm(key, undefined);
+        if (exporting) return await exportSession(exporting, url, res);
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
         await forward(url + path + search, req.method ?? 'GET', body, res, req.headers['x-authentik-username']?.toString());
       } finally {

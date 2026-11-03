@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { ApiError, client, type Client } from './api.ts';
 
@@ -102,6 +103,15 @@ const action = (usage: string, n: number, check: boolean, run: (c: Client, pos: 
   },
 });
 
+// Writes the whole session as one JSON file; the default name is the key made safe for a file system.
+async function exportSession(c: Client, [key, file]: string[]): Promise<Result> {
+  if (!key) throw usageError('usage: quack export <key> [file]');
+  await known(c, key);
+  const path = file ?? `quack-${key.replace(/[^A-Za-z0-9._-]+/g, '-')}.json`;
+  await writeFile(path, JSON.stringify(await c.exported(key), null, 2));
+  return { data: { file: path }, text: `wrote ${path}` };
+}
+
 const COMMANDS: Record<string, Command> = {
   sessions: { usage: 'sessions [--state running|needs_you|failed|done] [--agent A]', run: sessions },
   show: { usage: 'show <key>', run: show },
@@ -111,6 +121,7 @@ const COMMANDS: Record<string, Command> = {
   rename: action('rename <key> <title>', 2, false, (c, [k, ...t]) => c.rename(k!, t.join(' '))),
   archive: action('archive <key>', 1, false, (c, [k]) => c.archive(k!)),
   delete: action('delete <key>', 1, false, (c, [k]) => c.remove(k!)),
+  export: { usage: 'export <key> [file]', run: exportSession },
   approvals: { usage: 'approvals', run: approvals },
   approve: action('approve <key> <id>', 2, true, (c, [k, id]) => c.decide(k!, id!, 'approve')),
   reject: action('reject <key> <id> [reason]', 2, true, (c, [k, id, ...r]) => c.decide(k!, id!, 'reject', r.join(' ') || undefined)),

@@ -1307,6 +1307,15 @@ test('Archive posts the flag from the session menu', async () => {
   expect(sent('PATCH')).toEqual([['sessions/ui%3Au1', { archived: true }]]);
 });
 
+test('Export is a download link to the session file', async () => {
+  withRow();
+  await openSession();
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  const link = screen.getByRole('menuitem', { name: 'Export' });
+  expect(link).toHaveAttribute('href', 'sessions/ui%3Au1/export');
+  expect(link).toHaveAttribute('download');
+});
+
 test('an archived session is still readable and offers Unarchive', async () => {
   withRow({ archived: true });
   const ws = await openSession();
