@@ -1,4 +1,5 @@
 import { EXTENSIONS } from './extensions/index.ts';
+import { CORE, useBar } from './bottomBar.ts';
 import { Icon, MORE } from './Shell.tsx';
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
@@ -10,12 +11,13 @@ function Line({ status }: { status: NonNullable<(typeof NAVS)[number]['status']>
 
 // One tile per nav entry, so an extension that registers a nav appears here with no change to this page.
 export function More() {
+  const bar = useBar();
   return (
     <div className="mx-auto max-w-3xl px-3 py-4 lg:py-8">
       <h1 className="m-0 mb-3 hidden px-1 text-[19px] lg:block">More</h1>
       <p className="m-0 mb-2 px-1 text-xs font-semibold tracking-wider text-muted uppercase">Apps</p>
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-        {MORE.map((n) => {
+        {[...CORE, ...MORE].filter((n) => !bar.includes(n.route)).map((n) => {
           const nav = NAVS.find((x) => x.route === n.route);
           return (
             <a key={n.route} href={n.href} className="flex min-h-11 flex-col gap-2.5 rounded-[18px] border border-line bg-surface p-3.5 text-ink no-underline shadow-card hover:bg-soft">

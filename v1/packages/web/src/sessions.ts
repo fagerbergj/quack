@@ -41,14 +41,6 @@ export function group(rows: Row[]): Groups {
 /** The row's line for a failed run: the step and the error's first line. */
 export const failedLine = (f: Failure) => `Run failed at ${f.step} · ${f.error.split('\n')[0]}`;
 
-export function statusLine(r: Row): string {
-  if (r.approvals.length) return `Approve ${r.approvals[0]!.tool}${r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : ''}`;
-  if (r.questions.length) return `Answer: ${r.questions[0]!.question}`;
-  if (r.failures.length) return failedLine(r.failures[0]!);
-  if (r.note) return r.note;
-  return `${r.agent} · ${r.running ? 'running' : 'idle'}`;
-}
-
 export function age(iso: string, now: number): string {
   const min = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));
   if (min < 1) return 'now';

@@ -1,23 +1,19 @@
 import { useEffect, type ReactNode } from 'react';
+import { CORE, HOME, PAGES, useBar, type Item } from './bottomBar.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 
 export type Route = string;
 
 // Icon paths from the mockup's ICONS table.
 const ICONS: Record<string, string> = {
+  home: 'M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z',
   sessions: 'M3 12h4l3 8 4-16 3 8h4',
-  inbox: 'M3 13h5l2 3h4l2-3h5M5 5h14l2 8v6H3v-6z',
   artifacts: 'M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6',
   settings: 'M4 7h10M18 7h2M4 17h2M10 17h10M16 4v6M8 14v6',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
 };
 
-type Item = { route: Route; label: string; href: string };
-export const MAIN: Item[] = [
-  { route: 'sessions', label: 'Sessions', href: '#/' },
-  { route: 'inbox', label: 'Inbox', href: '#/inbox' },
-  { route: 'artifacts', label: 'Artifacts', href: '#/artifacts' },
-];
+export const MAIN: Item[] = [HOME, ...CORE];
 export const GROUPS: { title: string; items: Item[] }[] = [
   { title: 'Apps', items: [
     ...EXTENSIONS.flatMap((e) => e.nav ?? []).map((n): Item => ({ route: n.route, label: n.label, href: `#/${n.route}` })),
@@ -67,6 +63,7 @@ const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-
 // Below lg main is the only scroller, so the document never scrolls and the URL bar cannot collapse mid-scroll; `bare` drops the phone title bar.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
+  const tabs = useBar().flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
     <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls}>
@@ -103,7 +100,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
       <div className="fixed inset-x-0 top-0 bottom-[calc(48px+var(--safe-b))] flex flex-col lg:contents">
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>
         <Duck size={30} />
-        {route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}
+        {route === 'home' ? <span className="wordmark text-xl">quack</span> : route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}
         {route === 'sessions' && (
           <a href="#/new" aria-label="New session" className="ml-auto grid h-11 w-11 place-items-center rounded-full bg-ink text-on-ink no-underline hover:bg-ink-2">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -112,57 +109,13 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
       </div>
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(48px+var(--safe-b))] grid-cols-4 border-t border-line bg-canvas/90 pb-[var(--safe-b)] backdrop-blur-md lg:hidden">
-        {MAIN.map((n) => link(n, tabBase))}
-        <a href="#/more" aria-current={route === 'more' || MORE.some((n) => n.route === route) ? 'page' : undefined} className={tabBase}>
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(48px+var(--safe-b))] border-t border-line bg-canvas/90 pb-[var(--safe-b)] backdrop-blur-md lg:hidden" style={{ gridTemplateColumns: `repeat(${tabs.length + 2}, minmax(0, 1fr))` }}>
+        {[HOME, ...tabs].map((n) => link(n, tabBase))}
+        <a href="#/more" aria-current={route === 'more' || (route !== HOME.route && !tabs.some((n) => n.route === route)) ? 'page' : undefined} className={tabBase}>
           <Icon route="grid" />
           More
         </a>
       </nav>
     </>
-  );
-}
-
-const reed = 'M8 58 Q6 30 9 6';
-const duckling = (
-  <svg width="20" height="16" viewBox="0 0 18 14">
-    <ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a" />
-    <circle cx="5.5" cy="5" r="3.5" fill="#e9c46a" />
-    <path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d" />
-    <circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513" />
-  </svg>
-);
-
-// The swimmer's head and bill point left in the source art; .swimmer flips it to face its rightward travel.
-export function Pond({ children, still }: { children: ReactNode; still?: boolean }) {
-  return (
-    <div className={`pond ${still ? 'still' : ''} relative overflow-hidden rounded-[28px] border border-line px-6 pt-6 pb-20`}>
-      <div className="relative z-10">{children}</div>
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-[70px]">
-        <svg className="reed absolute bottom-3 left-4" width="30" height="58" viewBox="0 0 30 58">
-          <path d={reed} stroke="#3f7d4f" strokeWidth="2.5" fill="none" />
-          <rect x="6.5" y="2" width="5" height="16" rx="2.5" fill="#7a4a32" />
-          <path d="M18 58 Q20 34 17 16" stroke="#4f9461" strokeWidth="2" fill="none" />
-        </svg>
-        <svg className="reed absolute right-6 bottom-3" style={{ animationDelay: '-1.5s' }} width="26" height="50" viewBox="0 0 30 58">
-          <path d={reed} stroke="#3f7d4f" strokeWidth="2.5" fill="none" />
-          <rect x="6.5" y="2" width="5" height="16" rx="2.5" fill="#7a4a32" />
-        </svg>
-        <div className="swimmer flex items-end gap-1">
-          <svg width="46" height="34" viewBox="0 0 64 48">
-            <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".25" />
-            <circle cx="20" cy="18" r="10" fill="#1f7a63" />
-            <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
-            <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
-            <circle cx="17" cy="15" r="1.8" fill="#fff" />
-            <path d="M50 28 Q60 24 58 34" fill="#fdfcf7" />
-          </svg>
-          <span className="mb-1 flex gap-1">{duckling}{duckling}{duckling}</span>
-        </div>
-        <div className="waves back absolute inset-x-0 bottom-0" />
-        {still && <span className="absolute bottom-[52px] left-[calc(34%+34px)] grid h-[22px] w-[22px] place-items-center rounded-full bg-warning text-[14px] leading-none font-bold text-canvas">!</span>}
-        <div className="waves absolute inset-x-0 bottom-0" />
-      </div>
-    </div>
   );
 }

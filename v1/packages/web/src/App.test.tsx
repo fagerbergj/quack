@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 
 class FakeSocket {
@@ -68,6 +68,8 @@ const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', runn
 test('the list keeps the server order and labels rows by creation when an older session becomes active', async () => {
   const older = sess('gh:old', { title: 'Older', running: true, active: true, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' });
   routes['GET /sessions'] = { sessions: [sess('gh:a', { title: 'Alpha', running: true, active: true, createdAt: '2026-11-01T03:00:00.000Z' }), sess('gh:new', { title: 'Newer', createdAt: '2026-11-01T02:00:00.000Z' }), older, sess('gh:z', { title: 'Zed', createdAt: '2026-11-01T00:00:00.000Z' })] };
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
   const running = await screen.findByRole('region', { name: 'Running' });
   expect(within(running).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Aa', '#/s/gh%3Aold']);
@@ -79,13 +81,14 @@ test('groups sessions: a running session with a pending approval lands in Needs 
   routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true, title: 'Fix the flake' }), sess('gh:2', { running: true, active: true }), sess('gh:3', { title: 'Old work' })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: {}, requestedAt: 1 }] };
   routes['GET /sessions/gh%3A2/approvals'] = { approvals: [] };
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
   expect(within(needs).getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('href', '#/s/gh%3A1');
-  expect(within(needs).getByText('Approve push')).toBeInTheDocument();
+  expect(within(needs).getByText('Waiting for your approval')).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Running' })).getByRole('link', { name: /gh:2/ })).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /Old work/ })).toHaveTextContent('reviewer');
-  expect(screen.getByText('1 need you · 1 running')).toBeInTheDocument();
 });
 
 test('a GitHub key shows as #n with its title, and the full key stays as the tooltip', async () => {
@@ -144,6 +147,8 @@ test('each kind of session shows its own title and state, and search finds it by
     indexed('sleeper:123:8:retro', 'sleeper.cards', true),
     indexed('remarkable:doc1', 'remarkable.transcript', false),
   ] };
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
   const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));
   expect((await row(/#7 Fix the cache/)).getByText('Reviewing')).toBeInTheDocument();
@@ -192,16 +197,15 @@ test('selecting a session opens it in the main pane and marks its row', async ()
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
 });
 
-async function startFromLanding(text: string) {
-  routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 2 }] };
+async function startFromHome(text: string) {
   render(<App />);
-  await userEvent.type(await screen.findByRole('textbox', { name: 'Question or task' }), text);
-  await userEvent.click(screen.getByRole('button', { name: 'Start' }));
-  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/ui%3Auuid-1\/ws\?agent=reviewer$/));
+  await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), text);
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Auuid-1\/ws\?agent=quack$/));
 }
 
-test('starting a session opens a ui: key with the chosen agent and sends the untouched first message once on open', async () => {
-  await startFromLanding('review it');
+test('starting a session opens a home: key for quack and sends the untouched first message once on open', async () => {
+  await startFromHome('review it');
   const sock = FakeSocket.all[0];
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
   expect(sock.sent).toEqual([]);
@@ -211,7 +215,7 @@ test('starting a session opens a ui: key with the chosen agent and sends the unt
 });
 
 test('a seed the user edited is not sent on open, and a socket that never opens leaves the text', async () => {
-  await startFromLanding('review it');
+  await startFromHome('review it');
   const sock = FakeSocket.all[0];
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), ' carefully');
@@ -446,11 +450,12 @@ test('a send on a closed socket keeps the input and says so', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('Disconnected');
 });
 
-test('each list fetch reports its own failure', async () => {
+test('a failed session fetch shows its error on the list', async () => {
   routes = {};
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
-  expect(await screen.findByText(/Sessions: /)).toBeInTheDocument();
-  expect(screen.getByText(/Agents: /)).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toBeInTheDocument();
 });
 
 test('Abort shows only while a run is in progress and posts to the abort route', async () => {
@@ -550,12 +555,11 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable', '#/settings']);
-  expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
-  await userEvent.click(within(rail).getByRole('link', { name: 'Inbox' }));
-  expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
-  expect(within(rail).getByRole('link', { name: 'Inbox' })).toHaveAttribute('aria-current', 'page');
-  expect(within(rail).getByRole('link', { name: 'Sessions' })).not.toHaveAttribute('aria-current');
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/sessions', '#/artifacts', '#/sleeper', '#/remarkable', '#/settings']);
+  expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+  await userEvent.click(within(rail).getByRole('link', { name: 'Artifacts' }));
+  expect(within(rail).getByRole('link', { name: 'Artifacts' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
 });
 
 test('a session stays inside the Sessions rail entry', async () => {
@@ -663,23 +667,16 @@ test('a malformed socket frame is skipped and later frames still apply', async (
   expect(screen.getByRole('status')).toHaveTextContent('Running');
 });
 
-test('a trailing slash on #/new/ shows the landing page on phone and desktop alike', async () => {
+test('#/new lands on Home with the box focused, on phone and desktop alike', async () => {
   for (const desktop of [false, true]) {
     stubViewport(desktop);
-    location.hash = '#/new/';
+    location.hash = '#/new';
     const { unmount } = render(<App />);
-    expect(await screen.findByRole('heading', { name: 'What should quack work on?' })).toBeInTheDocument();
+    const box = await screen.findByRole('textbox', { name: 'What do you need?' });
+    await waitFor(() => expect(box).toHaveFocus());
+    expect(location.hash).toBe('#/');
     unmount();
   }
-});
-
-test('the landing page offers the suggestions its extensions supply and fills the composer with their prompt', async () => {
-  routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 2 }] };
-  location.hash = '#/new';
-  render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: 'Research a question' }));
-  expect(screen.getByRole('textbox', { name: 'Question or task' })).toHaveValue('Research: ');
-  expect(screen.getByRole('button', { name: 'Review a pull request' })).toBeInTheDocument();
 });
 
 const pendingIndex = { approvals: [{ session: 'gh:3', id: 'a/1', tool: 'github_post_review', state: 'pending', decision: null, by: null, at: 1 }] };
@@ -688,48 +685,51 @@ const goTo = (hash: string) => {
   act(() => void dispatchEvent(new HashChangeEvent('hashchange')));
 };
 
-test('with the index on, an idle session waiting on approval is in Needs you and the Inbox', async () => {
+test('with the index on, an idle session waiting on approval is in Needs you on the list and on Home', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Old work' })] };
   routes['GET /index/approvals?state=pending'] = pendingIndex;
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
-  expect(within(needs).getByText('Approve github_post_review')).toBeInTheDocument();
+  expect(within(needs).getByText('Waiting for your approval')).toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([u]) => u === 'sessions/gh%3A3/approvals')).toBe(false);
-  goTo('#/inbox');
-  expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
-  expect(screen.getByText('1 waiting for your approval')).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Old work' })).toHaveAttribute('href', '#/s/gh%3A3');
+  goTo('#/');
+  const home = await screen.findByRole('region', { name: 'Approval' });
+  expect(within(home).getByRole('link', { name: 'Old work wants to continue' })).toHaveAttribute('href', '#/s/gh%3A3');
+  expect(within(home).getByText('github_post_review', { exact: false })).not.toBeVisible();
 });
 
-test('the Inbox posts approve to the owning session, and reject with its reason', async () => {
+test('Home posts approve to the owning session, and reject with its reason', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = pendingIndex;
   routes['POST /sessions/gh%3A3/approvals/a%2F1'] = { resolved: true };
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
   const post = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string);
-  await userEvent.click(await screen.findByRole('button', { name: 'Approve github_post_review' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Approve gh:3' }));
   expect(post()).toEqual({ decision: 'approve' });
 
-  await userEvent.click(screen.getByRole('button', { name: 'Reject github_post_review' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Reject gh:3' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'wrong repo');
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
-  await userEvent.click(screen.getByRole('button', { name: 'Confirm reject github_post_review' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm reject gh:3' }));
   expect(post()).toEqual({ decision: 'reject', reason: 'wrong repo' });
-  await screen.findByText('Nothing is waiting on you');
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
 });
 
 const pendingDecision = { questions: [{ session: 'gh:3', id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: 1 }] };
 
-test('the Inbox shows a workflow question with its options, and an option answers it', async () => {
+test('Home shows a workflow question with its options, and an option answers it', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Campaign Notes' })] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = pendingDecision;
   routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
   expect(await screen.findByText('What kind of document is this?')).toBeInTheDocument();
-  expect(screen.getByText('1 waiting for your answer')).toBeInTheDocument();
   expect(screen.getByText('Agenda: standup')).not.toBeVisible();
   expect(screen.getByRole('link', { name: 'Campaign Notes' })).toHaveAttribute('href', '#/s/gh%3A3');
   routes['GET /index/questions?state=pending'] = pendingDecision;
@@ -743,7 +743,8 @@ test('a re-asked question with a newer askedAt shows again after the first was a
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = pendingDecision;
   routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
   const first = await screen.findByRole('button', { name: 'meeting' });
   routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, at: 2 })) };
@@ -755,7 +756,8 @@ test('a failed answer keeps the question card and shows the error', async () => 
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = pendingDecision;
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
   await userEvent.click(await screen.findByRole('button', { name: 'meeting' }));
   expect(await screen.findByRole('alert')).toBeInTheDocument();
@@ -769,7 +771,7 @@ test('a session waiting on a question is in Needs you, and its view shows the qu
   const ws = await openSession();
   ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }], failures: [] });
   const needs = await screen.findByRole('region', { name: 'Needs you' });
-  expect(within(needs).getByText('Answer: What kind of document is this?')).toBeInTheDocument();
+  expect(within(needs).getByText('What kind of document is this?')).toBeInTheDocument();
   const card = await screen.findByRole('region', { name: 'Question' });
   expect(within(card).getByText('NEEDS YOU')).toBeInTheDocument();
   expect(within(card).getByRole('button', { name: 'idea' })).toBeInTheDocument();
@@ -811,19 +813,23 @@ test('a failed run that cannot resume shows why, and Copy error copies the whole
 test('a session whose run failed is under Needs you with its step and the error first line', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
   routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }] };
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
   expect(within(needs).getByText('Run failed at decide · Validation failed for tool "decide":')).toBeInTheDocument();
-  expect(screen.getByText('1 failed · 0 need you · 0 running')).toBeInTheDocument();
 });
 
-test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {
+test('with the index off, Home falls back to the running sessions own approvals, details behind a disclosure', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: { branch: 'main' }, requestedAt: 1 }] };
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
-  expect(await screen.findByText('{"branch":"main"}')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Approve push' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Approve gh:1' })).toBeInTheDocument();
+  expect(screen.getByText('gh:1 wants to continue')).toBeInTheDocument();
+  expect(screen.getByText('Details').closest('details')).toHaveTextContent('"branch": "main"');
+  expect(screen.queryByText('push')).toBeNull();
 });
 
 test('Artifacts lists sealed versions from the index and opens one in the Work drawer', async () => {
@@ -855,20 +861,21 @@ test('Artifacts says so when the index is off', async () => {
   expect(await screen.findByText(/The index is off/)).toBeInTheDocument();
 });
 
-test('a failed load shows its error in the Inbox instead of an empty list', async () => {
+test('a failed load shows its error on Home', async () => {
   delete routes['GET /sessions'];
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
   expect(await screen.findAllByRole('alert')).not.toHaveLength(0);
-  expect(screen.queryByText('Nothing is waiting on you')).toBeNull();
 });
 
 test('a double-click on Approve posts once', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = pendingIndex;
-  location.hash = '#/inbox';
+  stubViewport(false);
+  location.hash = '#/';
   render(<App />);
-  const approve = await screen.findByRole('button', { name: 'Approve github_post_review' });
+  const approve = await screen.findByRole('button', { name: 'Approve gh:3' });
   // The decision stays in flight, as it does while the session wakes.
   fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
   await userEvent.dblClick(approve);
@@ -1094,6 +1101,8 @@ test('an idle review reads as its posted verdict, a limit-released one included,
   const k42 = 'github:fagerbergj/quack#2042';
   routes['GET /sessions'] = { sessions: [sess(k19, { title: 'quotes_exist fails only on nowhere' }), sess(k42, { title: 'Sleeper week stepper', running: true, active: true }), sess('github:fagerbergj/quack#2043', { title: 'Only commented' }), sess('github:fagerbergj/quack#2044', { title: 'Ended unposted' })] };
   routes['GET /index/artifacts'] = { artifacts: [...prodArtifacts(k19, k42), indexed('github:fagerbergj/quack#2043', 'github.review', true, 1, 1, { outcome: 'comment', posted: true }), indexed('github:fagerbergj/quack#2044', 'github.review', false)] };
+  stubViewport(false);
+  location.hash = '#/sessions';
   render(<App />);
   const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));
   expect((await row(/#2019/)).getByText('Approved ✓')).toBeInTheDocument();
@@ -1241,4 +1250,141 @@ test('a refused delete keeps the dialog open with the server reason', async () =
   await menu('Delete');
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
   expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('not found');
+});
+
+const phoneAt = (hash: string) => {
+  stubViewport(false);
+  location.hash = hash;
+};
+
+test('Home shows what needs you and what is running, each linking to its session', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Needs a look' }), sess('gh:2', { title: 'Busy one', running: true, active: true }), sess('gh:3', { title: 'Old work' })] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'push', state: 'pending', decision: null, by: null, at: 1 }] };
+  phoneAt('#/');
+  render(<App />);
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByRole('link', { name: 'Needs a look wants to continue' })).toHaveAttribute('href', '#/s/gh%3A1');
+  const running = screen.getByRole('region', { name: 'Running' });
+  expect(within(running).getByRole('link', { name: /Busy one/ })).toHaveAttribute('href', '#/s/gh%3A2');
+  expect(within(running).getByRole('link', { name: 'All sessions' })).toHaveAttribute('href', '#/sessions');
+  expect(screen.queryByRole('combobox')).toBeNull();
+  expect(screen.queryByText('Old work')).toBeNull();
+});
+
+test('an approval with a summary reads in plain words and keeps the raw call behind Details', async () => {
+  routes['GET /sessions'] = { sessions: [sess('home:h1', { title: 'Waivers', running: true, active: true })] };
+  routes['GET /sessions/home%3Ah1/approvals'] = { approvals: [{ id: 'a', tool: 'start', args: { summary: 'Process waivers for week 9' }, requestedAt: 1 }] };
+  phoneAt('#/');
+  render(<App />);
+  const card = await screen.findByRole('region', { name: 'Approval' });
+  expect(within(card).getByText('Process waivers for week 9')).toBeInTheDocument();
+  expect(within(card).getByText('start', { exact: false })).not.toBeVisible();
+});
+
+test('a failed session that is not running is on Home with Run again; a running one is not', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' }), sess('gh:4', { title: 'Retrying', running: true, active: true })] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }, { session: 'gh:4', ...failure, at: 1 }] };
+  routes['POST /sessions/gh%3A3/resume'] = { resumed: true };
+  phoneAt('#/');
+  render(<App />);
+  const card = await screen.findByRole('region', { name: 'Failed run' });
+  expect(screen.getAllByRole('region', { name: 'Failed run' })).toHaveLength(1);
+  await userEvent.click(within(card).getByRole('button', { name: 'Run Trade finder again' }));
+  expect(fetchMock.mock.calls.some(([u, i]) => u === 'sessions/gh%3A3/resume' && i?.method === 'POST')).toBe(true);
+});
+
+test('the Home box opens a home: session for the quack agent and seeds its first message', async () => {
+  phoneAt('#/');
+  render(<App />);
+  const send = screen.getByRole('button', { name: 'Send' });
+  expect(send).toBeDisabled();
+  await userEvent.type(screen.getByRole('textbox', { name: 'What do you need?' }), 'how did the review go?');
+  await userEvent.click(send);
+  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Auuid-1\/ws\?agent=quack$/));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('how did the review go?');
+  expect(screen.getByRole('heading', { name: 'quack' })).toBeInTheDocument();
+  expect(document.querySelector('a[aria-label="Home"]')).toHaveAttribute('href', '#/');
+});
+
+test('#/sessions is the session list on a phone, and #/inbox goes to Home', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Old work' })] };
+  phoneAt('#/sessions');
+  render(<App />);
+  expect(await screen.findByRole('region', { name: 'Recent' })).toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'What do you need?' })).toBeNull();
+  goTo('#/inbox');
+  expect(await screen.findByRole('textbox', { name: 'What do you need?' })).toBeInTheDocument();
+  expect(location.hash).toBe('#/');
+});
+
+const tabs = () => within(screen.getAllByRole('navigation', { name: 'Main' })[1]).getAllByRole('link').map((l) => l.textContent);
+
+describe('bottom bar', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
+
+  test('defaults to Sessions, Artifacts, Sleeper between Home and More', () => {
+    phoneAt('#/');
+    render(<App />);
+    expect(tabs()).toEqual(['Home', 'Sessions', 'Artifacts', 'Sleeper', 'More']);
+  });
+
+  test('Settings changes it live: unticking drops a page, order moves, and a page left out is under More', async () => {
+    phoneAt('#/settings');
+    render(<App />);
+    await userEvent.click(screen.getByRole('button', { name: 'Move Sleeper up' }));
+    expect(tabs()).toEqual(['Home', 'Sessions', 'Sleeper', 'Artifacts', 'More']);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Sessions' }));
+    expect(tabs()).toEqual(['Home', 'Sleeper', 'Artifacts', 'More']);
+    expect(JSON.parse(localStorage.getItem('quack:bottom-bar')!)).toEqual(['sleeper', 'artifacts']);
+    goTo('#/more');
+    expect(await within(screen.getByRole('main')).findByRole('link', { name: /Sessions/ })).toHaveAttribute('href', '#/sessions');
+  });
+
+  test('allows three pages and no more', async () => {
+    phoneAt('#/settings');
+    render(<App />);
+    expect(screen.getByRole('checkbox', { name: 'reMarkable' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Artifacts' }));
+    expect(screen.getByRole('checkbox', { name: 'reMarkable' })).toBeEnabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'reMarkable' }));
+    expect(tabs()).toEqual(['Home', 'Sessions', 'Sleeper', 'reMarkable', 'More']);
+  });
+
+  test('reads a stored choice, ignoring pages that no longer exist', () => {
+    localStorage.setItem('quack:bottom-bar', JSON.stringify(['remarkable', 'inbox', 'sessions']));
+    phoneAt('#/');
+    render(<App />);
+    expect(tabs()).toEqual(['Home', 'reMarkable', 'Sessions', 'More']);
+  });
+
+  test('falls back to the default when storage throws, and still applies a change this session', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+    phoneAt('#/settings');
+    render(<App />);
+    expect(tabs()).toEqual(['Home', 'Sessions', 'Artifacts', 'Sleeper', 'More']);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Sleeper' }));
+    expect(tabs()).toEqual(['Home', 'Sessions', 'Artifacts', 'More']);
+  });
+});
+
+test('in a home: conversation the header reads quack and a confirm row shows what it will start', async () => {
+  routes['GET /sessions'] = { sessions: [sess('home:h1', { title: 'Waivers', agent: 'quack' })] };
+  routes['GET /sessions/home%3Ah1/approvals'] = { approvals: [{ id: 'a', tool: 'start', args: { summary: 'Process waivers for week 9' }, requestedAt: 1 }] };
+  routes['GET /sessions/home%3Ah1/artifacts'] = { artifacts: [] };
+  phoneAt('#/s/home%3Ah1');
+  render(<App />);
+  FakeSocket.all[0]!.open();
+  const card = await screen.findByRole('region', { name: 'Approval' });
+  expect(within(card).getByText('Process waivers for week 9')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'quack' })).toBeInTheDocument();
+});
+
+test('archived sessions stay out of Home', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Live one', running: true, active: true }), sess('gh:2', { title: 'Shelved', running: true, active: true, archived: true })] };
+  phoneAt('#/');
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Live one/ })).toBeInTheDocument();
+  expect(screen.queryByText(/Shelved/)).toBeNull();
 });

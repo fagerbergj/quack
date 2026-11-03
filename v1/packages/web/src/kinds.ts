@@ -27,7 +27,11 @@ function outcome(r: Row, kind: string, w: Words, delivered?: Delivered): Pick<Lo
 }
 
 const FALLBACK: SessionKind = { label: '', match: () => true, icon: DOT, tint: BLUE, name: (r) => plain(r.title ?? r.key), words: () => undefined };
-const KINDS: SessionKind[] = [...EXTENSIONS.flatMap((e) => e.session ?? []), FALLBACK];
+// Conversations started from Home; the agent is quack, so the row says Chat rather than naming it.
+const HOME: SessionKind = { label: 'Chat', match: (r) => r.key.startsWith('home:'), icon: DOT, tint: BLUE, name: (r) => plain(r.title ?? 'Chat with quack'), words: () => undefined };
+const KINDS: SessionKind[] = [...EXTENSIONS.flatMap((e) => e.session ?? []), HOME, FALLBACK];
+
+const approvals = (n: number) => (n > 1 ? `${n} waiting for your approval` : 'Waiting for your approval');
 
 export function look(r: Row): Look {
   const kind = KINDS.find((x) => x.match(r))!;
@@ -35,10 +39,9 @@ export function look(r: Row): Look {
   const w = kind.words(r);
   const state = w ? outcome(r, w.kind, w.w, kind.delivered?.(r)) : { line: r.agent, tone: 'muted' as const };
   const ask = r.approvals[0];
-  const more = r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : '';
   const question = r.questions[0];
   const failure = r.failures[0];
-  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : ask ? { line: `Approve ${ask.tool}${more}`, tone: 'warn' as const } : question ? { line: `Answer: ${question.question}`, tone: 'warn' as const } : state;
+  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : ask ? { line: `${approvals(r.approvals.length)}`, tone: 'warn' as const } : question ? { line: question.question, tone: 'warn' as const } : state;
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
 }
 

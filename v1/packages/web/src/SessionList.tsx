@@ -106,7 +106,7 @@ export function SessionList({ rows, selected, error, now }: { rows: Row[] | unde
         </div>
       </div>
       <div className="flex-1 overflow-y-auto pb-4">
-        {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{`Sessions: ${error}`}</p>}
+        {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
         {rows?.length === 0 && <p className="px-4 pt-3 text-[13px] text-muted">No sessions yet.</p>}
         {rows && rows.length > 0 && !shown.length && <p className="px-4 pt-3 text-[13px] text-muted">No sessions match.</p>}
         <Section name="Needs you" rows={g.needs} kind="needs" selected={selected} now={now} />
