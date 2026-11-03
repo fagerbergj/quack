@@ -189,3 +189,10 @@ test('a missing requirement or a cycle fails the definition with a clear message
   assert.throws(() => parseDefinition({ ...base, extensions: { a: {} } }, d, deps), /extension a requires ghost, which is not available/);
   assert.throws(() => parseDefinition({ ...base, extensions: { b: {} } }, d, deps), /extension dependency cycle: b -> c -> b/);
 });
+
+test('imageModel must name a configured model declared with images', () => {
+  const models = { omni: { contextWindow: 8192, maxTokens: 512, images: true }, plain: { contextWindow: 8192, maxTokens: 512 } };
+  const config = (imageModel: string) => ({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models } }, imageModel });
+  assert.equal(parseDeployment(config('local/omni')).imageModel, 'local/omni');
+  for (const bad of ['local/plain', 'local/nope', 'omni']) assert.throws(() => parseDeployment(config(bad)), /imageModel must be/);
+});

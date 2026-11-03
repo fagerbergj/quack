@@ -1448,3 +1448,45 @@ test('session rows show the index spend: dollars when priced, tokens when not, n
   expect(screen.getByRole('link', { name: /Unpriced/ })).toHaveTextContent('12k tokens');
   expect(screen.getByRole('link', { name: /Fresh/ })).not.toHaveTextContent(/tokens|\$/);
 });
+
+describe('images', () => {
+  const photo = new File(['x'], 'cat.png', { type: 'image/png' });
+
+  beforeEach(() => {
+    vi.stubGlobal('createImageBitmap', async () => ({ width: 4000, height: 1000, close() {} }));
+    HTMLCanvasElement.prototype.getContext = (() => ({ fillRect() {}, drawImage() {} })) as never;
+    HTMLCanvasElement.prototype.toDataURL = () => 'data:image/jpeg;base64,QUJD';
+  });
+
+  test('attaching shows a thumbnail with a remove button, and sending carries the image', async () => {
+    const ws = await openSession();
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    expect(await screen.findByRole('img', { name: 'Attached image 1' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove image 1' }));
+    expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull();
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    await screen.findByRole('img', { name: 'Attached image 1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(ws.sent).toEqual([{ type: 'input', input: '', images: [{ data: 'QUJD', mimeType: 'image/jpeg' }] }]);
+    expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull();
+  });
+
+  test('a fifth image is refused with a message', async () => {
+    await openSession();
+    await userEvent.upload(screen.getByTestId('attach-input'), [photo, photo, photo, photo, photo]);
+    expect(await screen.findByRole('alert')).toHaveTextContent('At most 4 images per message.');
+    expect(screen.getAllByRole('img')).toHaveLength(4);
+  });
+
+  test('a snapshot with an image renders its thumbnail, and a tap opens it full size', async () => {
+    const ws = await openSession();
+    ws.frame(snapshot({ entries: [entry('e1', [{ role: 'user', content: [{ type: 'image', data: 'QUJD', mimeType: 'image/jpeg' }, { type: 'text', text: 'what is this?\n\n[Attached images attachments/1-1.jpg. You cannot see images.]' }], timestamp: 1 }])] }));
+    const you = screen.getByRole('article', { name: 'You' });
+    expect(you).toHaveTextContent('what is this?');
+    expect(you).not.toHaveTextContent('Attached images');
+    await userEvent.click(within(you).getByRole('button', { name: 'Open image 1' }));
+    expect(screen.getByRole('img', { name: 'Full size' })).toHaveAttribute('src', 'data:image/jpeg;base64,QUJD');
+    await userEvent.click(screen.getByRole('button', { name: 'Close image' }));
+    expect(screen.queryByRole('img', { name: 'Full size' })).toBeNull();
+  });
+});

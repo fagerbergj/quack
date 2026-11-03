@@ -1,4 +1,5 @@
 import type { Approval, Failure, Question, IndexArtifact, SessionSummary, Spend } from './api.ts';
+import type { Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { searchText, sessionTitle } from './kinds.ts';
 
@@ -62,4 +63,4 @@ export function age(iso: string, now: number): string {
 }
 
 // A composer's first message waits here for the new session's socket to open.
-export const pendingInput = new Map<string, string>();
+export const pendingInput = new Map<string, { text: string; images: Img[] }>();

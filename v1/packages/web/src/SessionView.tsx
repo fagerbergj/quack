@@ -2,6 +2,7 @@ import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
+import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
@@ -67,13 +68,13 @@ function useSocket(key: string, agent: string | undefined) {
       ws.current?.close();
     };
   }, [key, agent]);
-  const send = (input: string, whenBusy?: 'steer' | 'followUp') => {
+  const send = (input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []) => {
     if (ws.current?.readyState !== WebSocket.OPEN) {
       setError('Disconnected: reconnecting. Your message was not sent.');
       return false;
     }
     setError('');
-    ws.current.send(JSON.stringify({ type: 'input', input, whenBusy }));
+    ws.current.send(JSON.stringify({ type: 'input', input, images: images.length ? images : undefined, whenBusy }));
     return true;
   };
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
@@ -99,18 +100,21 @@ function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void
 
 type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
 
-function Composer({ busy, disabled, send, input, setInput, queued, unqueue }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue }) {
+function Composer({ busy, disabled, send, input, setInput, queued, unqueue, attach }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => boolean; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue; attach: Attachments }) {
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
-    if (input.trim() && send(input, busy ? 'followUp' : undefined)) setInput('');
+    if ((input.trim() || attach.images.length) && send(input, busy ? 'followUp' : undefined, attach.images)) (setInput(''), attach.clear());
   };
+  const empty = !input.trim() && !attach.images.length;
   return (
     <>
       {queued.map((q) => <QueuedChip key={q.id} text={q.text} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
-      <form onSubmit={submit} className="pointer-events-auto flex items-center gap-2 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-4 shadow-lift ring-1 ring-line-strong transition focus-within:ring-ink-2/40">
+      <Pending attach={attach} />
+      <form onSubmit={submit} {...attach.handlers} className="pointer-events-auto flex items-center gap-1 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-1 shadow-lift ring-1 ring-line-strong transition focus-within:ring-ink-2/40">
+        <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <button type="submit" disabled={disabled} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="submit" disabled={disabled || empty} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
       </form>
@@ -229,12 +233,14 @@ function usePaneStyle(): CSSProperties | undefined {
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
   // The landing composer's text seeds this composer.
-  const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
+  const [seed] = useState(() => pendingInput.get(sessionKey));
+  const initial = seed?.text ?? '';
   const [input, setInput] = useState(initial);
+  const attach = useAttachments(seed?.images);
   useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
   // Sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
   useEffect(() => {
-    if (state === 'open' && input !== '' && input === initial && send(input, 'followUp')) setInput('');
+    if (state === 'open' && seed && (input !== '' || attach.images.length) && input === initial && attach.images === seed.images && send(input, 'followUp', seed.images)) (setInput(''), attach.clear());
   }, [state]);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
@@ -270,7 +276,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[720px] flex-col gap-2">
-            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} />
+            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
           </div>
         </div>
       </div>

@@ -1,12 +1,13 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
+import { contentText, type ImageContent, type MutableModels } from '@earendil-works/pi-ai';
+import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
+import { lookExtension, NO_IMAGE_MODEL, saveImages } from './images.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -20,6 +21,7 @@ export type AgentSpec = {
   /** Model responses one run may take before it is failed (default TURN_CEILING). */
   turnCeiling?: number;
 };
+
 
 export type SubmitResult =
   | { submissionId: string; status: 'queued' | 'placed' }
@@ -58,7 +60,7 @@ export function reportLine(error: unknown, info: ReportInfo): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; /** Answers questions about images for an agent whose own model cannot see them. */ imageModel?: { provider: string; modelId: string }; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
@@ -77,6 +79,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
+  const sees = !!opts.models.getModel(opts.agent.model.provider, opts.agent.model.modelId)?.input.includes('image');
+  if (!sees && opts.imageModel) registry.install(lookExtension(workspace, opts.models, opts.imageModel));
   const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
   const log = opts.log ?? console.error;
   const onReport = (error: unknown, info: ReportInfo) => {
@@ -169,21 +173,32 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     },
     // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
     async queued() {
+      return (await this.queuedItems()).map(({ id, text }) => ({ id, text }));
+    },
+    async queuedItems() {
       const inbox = await harness.snapshot(InboxDoc, root.id, ctx);
-      return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]) }] : []));
+      return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]), content: i.content as UserInput }] : []));
     },
     // Withdraws a queued follow-up; false when the run already took it. With `steer`, sends its text again as a steer.
     async withdraw(id: string, steer = false): Promise<boolean> {
-      const item = (await this.queued()).find((q) => q.id === id);
+      const item = (await this.queuedItems()).find((q) => q.id === id);
       const submission = item && (await harness.submission(id as never, ctx));
       if (!item || (await submission!.abort(ctx)) !== 'aborted') return false;
-      if (steer) await this.submit(item.text, undefined, false, 'steer');
+      if (steer) await this.submitContent(item.content, undefined, false, 'steer');
       return true;
     },
-    async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
-      const taken = await dispatch?.({ harness, root }, input, requestId, wait);
+    // Images ride in the user message, so the transcript shows them after a reload; a model without image input gets a placeholder from pi-ai and asks look_at_image about the saved copy.
+    async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp', images: ImageContent[] = []): Promise<SubmitResult> {
+      if (!images.length) return this.submitContent(input, requestId, wait, whenBusy);
+      if (!sees && !opts.imageModel) throw new Error(NO_IMAGE_MODEL);
+      const note = sees ? '' : `\n\n[Attached images ${(await saveImages(workspace, images)).join(', ')}. You cannot see images: use look_at_image to ask about one.]`;
+      const text = `${input}${note}`.trim();
+      return this.submitContent([...(text ? [{ type: 'text' as const, text }] : []), ...images], requestId, wait, whenBusy);
+    },
+    async submitContent(content: UserInput, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
+      const taken = typeof content === 'string' ? await dispatch?.({ harness, root }, content, requestId, wait) : undefined;
       if (taken) return taken;
-      const submission = await root.submit({ type: 'input', content: input, requestId, whenBusy }, ctx);
+      const submission = await root.submit({ type: 'input', content, requestId, whenBusy }, ctx);
       const record = wait ? await submission.wait(ctx) : await submission.status(ctx);
       const submissionId = String(record.id);
       if (record.status === 'done') return { submissionId, status: 'done', answer: await answerText(record.answer) };

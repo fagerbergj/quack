@@ -2,6 +2,8 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { watchEvents } from '@earendil-works/pi-durable';
+import { MAX_IMAGE_CHARS, MAX_IMAGES, parseImages } from './images.ts';
+import type { ImageContent } from '@earendil-works/pi-ai';
 import { failedRows, Failures, pendingQuestions, Questions } from '@quack/sdk';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Session } from './runtime.ts';
@@ -10,7 +12,7 @@ import type { Session } from './runtime.ts';
 // for that and every in-budget input reaches the polite length check.
 const MAX_INPUT = 1 << 20;
 
-type ClientInput = { type: 'input'; input: string; requestId?: string; whenBusy?: 'steer' | 'followUp' } | { type: 'withdraw' | 'steer'; id: string };
+type ClientInput = { type: 'input'; input: string; images: ImageContent[]; requestId?: string; whenBusy?: 'steer' | 'followUp' } | { type: 'withdraw' | 'steer'; id: string };
 
 function parseClient(data: string): ClientInput | string {
   let msg: unknown;
@@ -25,12 +27,14 @@ function parseClient(data: string): ClientInput | string {
   return parseInput(msg as Record<string, unknown>);
 }
 
-function parseInput({ input, requestId, whenBusy }: Record<string, unknown>): ClientInput | string {
-  if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
+function parseInput({ input, images, requestId, whenBusy }: Record<string, unknown>): ClientInput | string {
+  const attached = parseImages(images);
+  if (typeof attached === 'string') return attached;
+  if (typeof input !== 'string' || (input.length === 0 && !attached.length)) return 'input must be a non-empty string';
   if (input.length > MAX_INPUT) return 'input is too long';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
   if (whenBusy !== undefined && whenBusy !== 'steer' && whenBusy !== 'followUp') return 'whenBusy must be steer or followUp';
-  return { type: 'input', input, requestId, whenBusy };
+  return { type: 'input', input, images: attached, requestId, whenBusy };
 }
 
 // Open questions and failures raise no stream event, so their documents ride the socket as a `standing` frame instead of being polled.
@@ -64,7 +68,7 @@ async function stream(session: Session, ws: WebSocket) {
     // A rejection here would be unhandled, and Node ends the process on those, taking every viewer with it.
     try {
       if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer'));
-      const result = await session.submit(input.input, input.requestId, false, input.whenBusy);
+      const result = await session.submit(input.input, input.requestId, false, input.whenBusy, input.images);
       ws.send(JSON.stringify({ type: 'accepted', ...result }));
     } catch (err) {
       ws.send(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err) }));
@@ -74,7 +78,7 @@ async function stream(session: Session, ws: WebSocket) {
 }
 
 export function liveUpgrade(session: Session) {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + 1024 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + MAX_IMAGES * MAX_IMAGE_CHARS + 1024 });
   return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     if (req.url !== '/ws') return socket.destroy();
     wss.handleUpgrade(req, socket, head, (ws) => void stream(session, ws).catch(() => ws.close(1011)));
