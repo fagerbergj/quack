@@ -74,6 +74,15 @@ export async function decideApproval(key: string, id: string, decision: 'approve
   );
 }
 
+// Starts the contracts agent on a description as the define_contract action does; the distributor creates the session on first use.
+export async function startContract(description: string): Promise<string> {
+  const id = crypto.randomUUID();
+  const key = `contracts:${id}`;
+  const title = description.replace(/\s+/g, ' ').trim().slice(0, 80);
+  await json(await fetch(`${base(key)}/invocations?agent=contracts`, { method: 'POST', body: JSON.stringify({ requestId: `ui-contract:${id}`, title, input: description }) }));
+  return key;
+}
+
 export function socketUrl(key: string, agent?: string) {
   const url = new URL(`${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`, location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
