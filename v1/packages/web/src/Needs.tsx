@@ -7,7 +7,7 @@ const btn = 'min-h-11 cursor-pointer rounded-lg px-3 text-xs lg:min-h-0 lg:py-1'
 const prim = `${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2 disabled:opacity-50`;
 const card = 'flex flex-col gap-2 rounded-2xl border p-3.5';
 
-// The index records the tool alone; per-session approvals carry args. A one-line `summary` in them is the human description.
+// A one-line `summary` in an approval's args is its human description.
 export function describe(args: unknown): string | undefined {
   const s = (args as { summary?: unknown } | null | undefined)?.summary;
   return typeof s === 'string' && s.trim() ? s.trim() : undefined;

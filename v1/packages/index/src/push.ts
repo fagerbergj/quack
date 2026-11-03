@@ -37,7 +37,7 @@ const oneLine = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').
 /** What a fact asks of the operator in plain words, or undefined when it asks nothing. */
 function ask(f: Fact): { what: string; body?: string } | undefined {
   const d = f.data as Record<string, unknown>;
-  if (f.kind === 'approval' && d.state === 'pending') return { what: 'Approval waiting' };
+  if (f.kind === 'approval' && d.state === 'pending') return { what: 'Approval waiting', body: oneLine((d.args as { summary?: unknown } | null)?.summary) || undefined };
   if (f.kind === 'question' && d.state === 'pending') return { what: 'Question waiting', body: oneLine(d.question) };
   if (f.kind === 'failure' && d.state === 'failed') return { what: 'Session failed' };
   return undefined;

@@ -65,6 +65,7 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     questions: async (key: string): Promise<Json[]> => (await call(`${path(key)}/questions`)).questions,
     artifacts: async (key: string): Promise<Json[]> => (await call(`${path(key)}/artifacts`)).artifacts,
     index,
+    exported: async (key: string): Promise<Json> => call(`${path(key)}/export`),
     decide: (key: string, id: string, decision: 'approve' | 'reject', reason?: string) =>
       call(`${path(key)}/approvals/${encodeURIComponent(id)}`, 'POST', { decision, ...(reason && { reason }) }),
     abort: (key: string) => call(`${path(key)}/abort`, 'POST'),

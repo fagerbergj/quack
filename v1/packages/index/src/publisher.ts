@@ -1,13 +1,13 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Conversation, ConversationView, Harness } from '@earendil-works/pi-durable';
 import { onGeneration } from '@quack/sdk';
-import { collectFacts, Outbox, type SessionMeta, type Spend } from './facts.ts';
+import { collectFacts, Outbox, type PriceOf, type SessionMeta, type Spend } from './facts.ts';
 
 const ctx = BACKGROUND_CONTEXT;
 const SEND_TIMEOUT_MS = 10_000;
 const STOP_WAIT_MS = 5_000;
 
-export type PublisherOptions = { url: string; token: string; meta: SessionMeta; retryMs?: number; pollMs?: number; now?: () => number };
+export type PublisherOptions = { url: string; token: string; meta: SessionMeta; priceOf?: PriceOf; retryMs?: number; pollMs?: number; now?: () => number };
 
 // Sends a session's unacknowledged facts to the index (A6). The log is the outbox: a fact is unsent while its revision is
 // above the acknowledged one in the Outbox document, so a crash, an index outage or a restart loses nothing.
@@ -20,7 +20,7 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
 
   async function sendOnce(): Promise<void> {
     const acked = (await harness.snapshot(Outbox, root.id, ctx))?.acked ?? {};
-    const unsent = (await collectFacts(harness, root, opts.meta, now(), ctx)).filter((f) => (acked[f.id] ?? 0) < f.rev);
+    const unsent = (await collectFacts(harness, root, opts.meta, now(), ctx, opts.priceOf)).filter((f) => (acked[f.id] ?? 0) < f.rev);
     if (!unsent.length) return;
     try {
       const res = await fetch(`${opts.url}/index/facts`, { method: 'POST', headers: { authorization: `Bearer ${opts.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ session: opts.meta.key, facts: unsent }), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
