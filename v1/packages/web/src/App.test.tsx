@@ -1767,10 +1767,12 @@ describe('the session page as a ledger', () => {
     expect(within(one).getByText(/Double-check failed · 1 to fix · 40%/).closest('details')).toHaveAttribute('open');
     expect(within(one).getByText('The revision must fix')).toBeInTheDocument();
     expect(within(one).getByText('Finding 2 has no line number.')).toBeInTheDocument();
-    const done = within(two).getByText(/Double-check passed · 100%/).closest('details')!;
+    const done = within(two).getByText(/^Double-check passed$/).closest('details')!;
     expect(done).not.toHaveAttribute('open');
     await userEvent.click(within(done).getByText(/Double-check passed/));
-    expect(within(done).getAllByText('Pass')).toHaveLength(2);
+    // Passed checks are named by the problem they looked for: listed under "Checked, nothing found", no Pass pill.
+    expect(within(done).getByText('Checked, nothing found')).toBeInTheDocument();
+    expect(within(done).queryByText('Pass')).toBeNull();
     expect(within(done).getByText('Label cites')).toBeInTheDocument();
   });
 
