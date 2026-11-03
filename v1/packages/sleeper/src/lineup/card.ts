@@ -6,6 +6,10 @@ import { fits } from './slots.ts';
 export const cardsKind: ArtifactKind = {
   kind: 'sleeper.cards',
   path: 'cards.json',
+  summarize(text) {
+    const c = JSON.parse(text) as { kind?: string; my_proj?: number; opp_proj?: number | null; summary?: string };
+    return c.kind === 'lineup' && typeof c.my_proj === 'number' && typeof c.opp_proj === 'number' ? `${c.my_proj} vs ${c.opp_proj} projected` : (c.summary ?? '');
+  },
   validate(text) {
     try {
       const c = JSON.parse(text);

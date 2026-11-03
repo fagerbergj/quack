@@ -28,6 +28,11 @@ export function problems(t: Partial<Transcript> | null): string[] {
 export const transcriptKind: ArtifactKind = {
   kind: 'remarkable.transcript',
   path: 'transcript.json',
+  summarize(text) {
+    const t = JSON.parse(text) as Partial<Transcript>;
+    const n = t.pages?.length ?? 0;
+    return `${t.topic ?? t.document?.name ?? ''} · ${n} ${n === 1 ? 'page' : 'pages'}`;
+  },
   validate(text) {
     try {
       return problems(JSON.parse(text));

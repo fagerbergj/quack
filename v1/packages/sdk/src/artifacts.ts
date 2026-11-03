@@ -5,14 +5,20 @@ import { defineDoc, defineExtension, wrapTool, type ToolExecutionApi, type ToolR
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
 
 /** An extension-declared artifact: a finished product at a workspace path, validated by its schema (D42). */
-export type ArtifactKind = { kind: string; path: string; validate?: (text: string) => string[];
+export type ArtifactKind = {
+  kind: string; path: string; validate?: (text: string) => string[];
   /** A one-word reading of the sealed content (a review's verdict), stored on the version so lists need not fetch content. */
-  outcome?: (text: string) => string | undefined };
+  outcome?: (text: string) => string | undefined;
+  /** One line saying what the content concluded, stored with the version so lists can show it without reading content; cut to SUMMARY_MAX. */
+  summarize?: (content: string) => string;
+};
+
+export const SUMMARY_MAX = 80;
 
 /** A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered. */
 export type ArtifactLink = { label: string; url: string };
 
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string };
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string };
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
 
@@ -25,6 +31,13 @@ export const Artifacts = defineDoc<ArtifactsDoc>({
   initial: () => ({ kinds: {} }),
   checkpointWhen: () => false,
 });
+
+/** The kind's one-line summary, cut to SUMMARY_MAX; a summarizer that throws or returns nothing leaves the version without one. */
+export function summaryOf(kind: ArtifactKind, content: string): string | undefined {
+  let line = '';
+  try { line = kind.summarize?.(content).replace(/\s+/g, ' ').trim() ?? ''; } catch { /* a summary is never worth failing a seal */ }
+  return !line ? undefined : line.length > SUMMARY_MAX ? `${line.slice(0, SUMMARY_MAX - 1).trimEnd()}…` : line;
+}
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -52,6 +65,8 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     const sealed: SealedArtifact = { kind: kind.kind, version: entry.versions.length + 1, hash, content, sealedAt: api.now(), verdict: null };
     const outcome = kind.outcome?.(content);
     if (outcome) sealed.outcome = outcome;
+    const summary = summaryOf(kind, content);
+    if (summary) sealed.summary = summary;
     entry.versions.push(sealed);
     return plain(sealed);
   }, ctx);

@@ -23,7 +23,7 @@ const linksOf = (v: SealedArtifact) => v.links ?? [];
 /** The rev always carries the outcome's +2, even when absent, so facts emitted before `outcome` was stored (which had it) are never outranked by the re-emit. */
 export function artifactFacts(artifacts: { kinds: Record<string, { versions: SealedArtifact[] }> } | undefined): Fact[] {
   return Object.entries(artifacts?.kinds ?? {}).flatMap(([kind, { versions }]) =>
-    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length + 2, at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v), outcome: v.outcome ?? null } })));
+    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length + 2, at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v), outcome: v.outcome ?? null, summary: v.summary ?? null } })));
 }
 
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {

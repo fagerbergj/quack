@@ -54,7 +54,7 @@ export function createStore(backend: Backend) {
     },
     async artifacts() {
       return (await facts(['artifact'])).sort(newestFirst).map((f) => ({
-        session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), links: field(f, 'links') ?? [], outcome: field(f, 'outcome') ?? undefined, sealedAt: f.at,
+        session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), links: field(f, 'links') ?? [], outcome: field(f, 'outcome') ?? undefined, summary: field(f, 'summary') ?? undefined, sealedAt: f.at,
       }));
     },
     async questions(state?: string) {

@@ -47,7 +47,7 @@ async function freshSqlite(): Promise<Fresh> {
   return { store };
 }
 
-const review: ArtifactKind = { kind: 'demo.review', path: 'review.md', outcome: (t) => /^## verdict\n(\S+)/im.exec(t)?.[1] };
+const review: ArtifactKind = { kind: 'demo.review', path: 'review.md', outcome: (t) => /^## verdict\n(\S+)/im.exec(t)?.[1], summarize: (c) => `${c.split('\n')[0]} · sealed` };
 const submitReview = defineTool({
   name: 'submit_review', description: 'seal', parameters: Type.Object({}), replay: 'safe',
   execute: async (_a, api, c) => {
@@ -123,8 +123,8 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   await publisher.flush();
   assert.deepEqual((await get('/index/approvals?state=pending')).approvals.map((a) => [a.session, a.id, a.tool, a.state]), [['chat:1', approval.id, 'post', 'pending']]);
   // A link added after sealing rides with the artifact and leaves the sealed hash alone.
-  assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict, a.links, a.outcome, a.hash]),
-    [['chat:1', 'demo.review', 1, { passed: true }, [{ label: 'Posted', url: 'https://example.test/r/1' }], 'approve', createHash('sha256').update('# Review\n\n## Verdict\napprove\n\n## Findings\nNone.\n').digest('hex')]]);
+  assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict, a.links, a.outcome, a.summary, a.hash]),
+    [['chat:1', 'demo.review', 1, { passed: true }, [{ label: 'Posted', url: 'https://example.test/r/1' }], 'approve', '# Review · sealed', createHash('sha256').update('# Review\n\n## Verdict\napprove\n\n## Findings\nNone.\n').digest('hex')]]);
   const [row] = (await get('/index/sessions')).sessions;
   assert.deepEqual([row.key, row.agent, row.version, row.status], ['chat:1', 'reviewer', 4, 'running']);
 
