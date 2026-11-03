@@ -22,23 +22,37 @@ export function Note({ text }: { text: string }) {
   );
 }
 
-/** The judge's notes for one check, behind a disclosure. */
-export function Why({ check }: { check: Check }) {
+export function Pill({ check }: { check: Check }) {
+  const [text, tone] = check.met === null ? ["Didn't apply", 'bg-soft text-muted'] : !checkFailed(check) ? ['Pass', 'bg-success-bg text-success'] : ['Fail', 'bg-danger-bg text-danger'];
+  return <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{text}</span>;
+}
+
+/** One check: its label (and result), expanding to the judge's notes. A failed check starts open; one with no note has nothing to expand. */
+export function CheckRow({ check, pill }: { check: Check; pill?: boolean }) {
+  const head = (
+    <>
+      <span title={`${check.criterion}.${check.id}`} className="min-w-0 flex-1 break-words">{check.label}</span>
+      {pill && <Pill check={check} />}
+    </>
+  );
+  if (!check.notes.length) return <div className="flex min-h-11 items-center gap-2 lg:min-h-8">{head}{pill && <span aria-hidden="true" className="w-3 flex-none" />}</div>;
   return (
-    <details>
-      <summary className="flex min-h-11 cursor-pointer items-center text-[12.5px] text-muted lg:min-h-6">Why</summary>
-      <div className="flex flex-col gap-2 pb-1">{check.notes.length ? check.notes.map((n, i) => <Note key={i} text={n} />) : <p className="m-0 text-[12.5px] text-muted">No note from the judge.</p>}</div>
+    <details open={checkFailed(check)}>
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 lg:min-h-8 [&::-webkit-details-marker]:hidden">
+        {head}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>
+      </summary>
+      <div className="flex flex-col gap-2 pb-2">{check.notes.map((n, i) => <Note key={i} text={n} />)}</div>
     </details>
   );
 }
 
-/** One failed check: its plain label, with the reason one tap away. */
+/** One failed check on a card, open on its reason. */
 export function FailedCheck({ check, tone }: { check: Check; tone: 'danger' | 'muted' }) {
   const box = tone === 'danger' ? 'border-danger-line bg-danger-bg/60 text-danger' : 'border-line bg-soft text-ink-2';
   return (
-    <div className={`rounded-lg border px-3 py-1.5 ${box}`}>
-      <p title={`${check.criterion}.${check.id}`} className="m-0 break-words font-medium">{check.label}</p>
-      <Why check={check} />
+    <div className={`rounded-lg border px-3 ${box}`}>
+      <CheckRow check={check} />
     </div>
   );
 }

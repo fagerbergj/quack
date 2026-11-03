@@ -1,16 +1,11 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { checkFailed, type Check, type SealedArtifact } from './api.ts';
+import type { SealedArtifact } from './api.ts';
 import { artifactCard, artifactName } from './Artifacts.tsx';
-import { Why } from './CheckList.tsx';
+import { CheckRow } from './CheckList.tsx';
 import { Markdown } from './Markdown.tsx';
 
 const tab = (on: boolean) =>
   `h-11 lg:h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
-
-function Pill({ check }: { check: Check }) {
-  const [text, tone] = check.met === null ? ["Didn't apply", 'bg-soft text-muted'] : !checkFailed(check) ? ['Pass', 'bg-success-bg text-success'] : ['Fail', 'bg-danger-bg text-danger'];
-  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{text}</span>;
-}
 
 function Checks({ a }: { a: SealedArtifact }) {
   if (!a.verdict) return <p className="m-0 text-[13px] text-muted">Its checks haven't finished.</p>;
@@ -18,13 +13,7 @@ function Checks({ a }: { a: SealedArtifact }) {
     <div className="flex flex-col gap-2 text-[13px]">
       <ul className="m-0 flex list-none flex-col p-0">
         {a.verdict.checks.map((c) => (
-          <li key={`${c.criterion}.${c.id}`} className="flex flex-col gap-1 border-b border-line py-2 last:border-0">
-            <span className="flex items-center gap-2">
-              <span title={`${c.criterion}.${c.id}`} className="min-w-0 flex-1 break-words">{c.label}</span>
-              <Pill check={c} />
-            </span>
-            {checkFailed(c) && <Why check={c} />}
-          </li>
+          <li key={`${c.criterion}.${c.id}`} className="border-b border-line last:border-0"><CheckRow check={c} pill /></li>
         ))}
       </ul>
     </div>
