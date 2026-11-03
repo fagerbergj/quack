@@ -141,6 +141,7 @@ export function judge(opts: JudgeOptions) {
           const last = doc?.kinds[opts.kind.kind]?.versions.at(-1);
           const v = last?.verdict as Verdict | null | undefined;
           if (!last) return { continue: `Write ${opts.kind.path} and call ${toolName} before you finish.` };
+          if (last.carriedFrom) return undefined;
           if (!v) return { continue: `Call ${toolName} to check ${opts.kind.path} before you finish.` };
           if (v.passed || v.limitReached) return undefined;
           return { continue: `${opts.kind.kind} v${last.version} failed its checks. Revise ${opts.kind.path} using the feedback, then call ${toolName} again.` };

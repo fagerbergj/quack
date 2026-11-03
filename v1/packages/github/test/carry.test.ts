@@ -4,10 +4,9 @@ import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension } from '@earendil-works/pi-durable';
 import { openSession } from '@quack/session';
 import { Artifacts } from '@quack/sdk';
-import { checkoutTool, PullRequestDoc } from '../src/index.ts';
+import { githubSessionExtensions, PullRequestDoc } from '../src/index.ts';
 import { cleanup, fakeService, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
@@ -51,16 +50,19 @@ async function checkoutAfter(change: string, seed: Seed = {}) {
   const { base, oldHead, newHead } = await rebased(change);
   const service = await fakeService(newHead);
   let result = '';
+  let reprompt = '';
   const faux = fauxProvider({ models: [{ id: 'w' }] });
   faux.setResponses([
     fauxAssistantMessage(fauxToolCall('checkout_pr', { repository: 'acme/widgets', number: 7 }), { stopReason: 'toolUse' }),
     (c) => { result = JSON.stringify(c.messages.at(-1)); return fauxAssistantMessage('done'); },
+    (c) => { reprompt = JSON.stringify(c.messages.at(-1)); return fauxAssistantMessage('done'); },
   ]);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const tool = checkoutTool({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base });
-  const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'gh', tools: [tool] })] } });
+  // The production wiring, so the judge's yield gate runs on the closing answer.
+  const extensions = githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base });
+  const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   await session.root.commit(async (tx) => {
     const kinds = (await tx.doc(Artifacts, session.root.id)).kinds;
     kinds['github.review'] = { versions: [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, outcome: seed.outcome ?? 'approve', links: [{ label: 'Posted', url: REVIEW }], verdict: { passed: seed.passed ?? true, checks: [] } as never }] };
@@ -71,11 +73,12 @@ async function checkoutAfter(change: string, seed: Seed = {}) {
   await session.submit('Review acme/widgets#7', 'carry-1', true);
   const versions = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['github.review'].versions;
   await session.close();
-  return { result, service, versions, oldHead, newHead };
+  return { result, reprompt, service, versions, oldHead, newHead };
 }
 
 test('a rebase with the same patch-id carries the approval to the new head without a review', async () => {
-  const { result, service, versions, oldHead, newHead } = await checkoutAfter('2');
+  const { result, reprompt, service, versions, oldHead, newHead } = await checkoutAfter('2');
+  assert.equal(reprompt, '', 'the closing answer ends the session');
   assert.equal(service.posted.length, 1);
   assert.equal(service.posted[0].event, 'APPROVE');
   assert.equal(service.posted[0].commitId, newHead);

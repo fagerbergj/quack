@@ -101,6 +101,8 @@ async function carryApproval(api: ToolExecutionApi, dir: string, pr: PullRequest
     await git(api, ['-C', dir, 'fetch', '--filter=blob:none', 'origin', approved.sha], config, remote, ctx);
     const [was, now] = await Promise.all([approved.sha, pr.headSha].map((sha) => patchId(api, dir, pr.baseRef, sha, config, remote, ctx)));
     if (was !== now) return undefined;
+    // Like postCleared, refuse to approve a head that moved while the patch-ids ran.
+    if ((await fetchRecord(config, pr.owner, pr.repo, pr.number)).headSha !== pr.headSha) return undefined;
     const body = carriedBody(approved);
     const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify({ owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: 'APPROVE', body }), headers: { authorization: `Bearer ${config.serviceToken}` } });
     if (!res.ok) return undefined;
@@ -155,7 +157,7 @@ export function checkoutTool(config: SessionConfig) {
         delete d.postedThisCheckout;
       }, ctx);
       const carried = await carryApproval(api, dir, pr, config, remote, ctx);
-      if (carried) return { output: [{ type: 'text', text: carried }] };
+      if (carried) return { output: [{ type: 'text', text: [stale, carried].filter(Boolean).join('\n\n') }] };
       const stat = await git(api, ['-C', dir, 'diff', '--stat', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
