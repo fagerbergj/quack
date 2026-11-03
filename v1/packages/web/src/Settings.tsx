@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BottomBarSetting } from './BottomBarSetting.tsx';
+import { NotificationsSetting } from './NotificationsSetting.tsx';
 import { storedTheme, THEME_KEY } from './Shell.tsx';
 
 const CHOICES = [
@@ -45,6 +46,7 @@ export function Settings() {
           </label>
         ))}
       </fieldset>
+      <NotificationsSetting />
       <BottomBarSetting />
     </div>
   );

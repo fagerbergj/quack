@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { indexRoutes, openStore } from '@quack/index';
+import { indexRoutes, openPush, openStore } from '@quack/index';
 import { createDistributor } from './server.ts';
 import { processDriver, sessionHost, type HostDriver } from './process-driver.ts';
 import { credentialBroker } from './credentials.ts';
@@ -45,8 +45,10 @@ const driver = sessionDriver();
 const apps = appsProxy(parseApps(process.env.QUACK_APPS));
 // The page's rename, archive and delete always work; a token set also lets the retention sweep delete idle sessions.
 const retire = { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) };
-const indexHttp = indexRoutes(store, token);
-const server = createDistributor(driver, { retire, webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await apps(req, res)) || (await broker.route(req, res)) || false }).listen(port);
+// VAPID keys are made on first boot under the data dir; QUACK_VAPID_PUBLIC_KEY, QUACK_VAPID_PRIVATE_KEY and QUACK_VAPID_SUBJECT override them.
+const push = openPush({ dataDir, env: process.env, title: async (key) => (await driver.sessions()).find((s) => s.key === key)?.title });
+const indexHttp = indexRoutes(store, token, push.notify);
+const server = createDistributor(driver, { retire, webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res)) || false }).listen(port);
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   // Sessions stop first: their logs are durable, so a request cut here is answered after the restart. The deadline beats
   // compose's 30 s stop grace, so a stuck child or an attached viewer cannot hold the exit.

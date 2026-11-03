@@ -3,6 +3,9 @@ import { serviceHttp } from '@quack/sdk';
 import type { Fact } from './facts.ts';
 import type { IndexStore } from './store.ts';
 
+/** Called with each batch of facts the index accepted. */
+export type OnFacts = (session: string, facts: Fact[]) => Promise<void>;
+
 const KINDS = new Set(['session', 'artifact', 'approval', 'question', 'failure', 'cost', 'status']);
 const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
@@ -23,11 +26,13 @@ function parseFacts(body: unknown): { session: string; facts: Fact[] } | string 
 
 export const authorized = (req: IncomingMessage, token: string) => bearerOk(req, token);
 
-async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: string) {
+async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: string, onFacts?: OnFacts) {
   if (!authorized(req, token)) return send(res, 401, { error: 'unauthorized' });
   const parsed = parseFacts(await readJson(req));
   if (typeof parsed === 'string') return send(res, 400, { error: parsed });
   await store.upsert(parsed.session, parsed.facts);
+  // Sending to a push service must not slow or fail the publish.
+  void onFacts?.(parsed.session, parsed.facts).catch((err) => console.error('index: on facts', err));
   send(res, 200, { accepted: parsed.facts.length });
 }
 
@@ -40,7 +45,7 @@ const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<u
 };
 
 // Sessions publish with the service token; reads rely on the proxy for auth. A down database answers 503 and the session retries.
-export function indexRoutes(store: IndexStore, token: string) {
+export function indexRoutes(store: IndexStore, token: string, onFacts?: OnFacts) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
     const read = req.method === 'GET' ? READS[url.pathname] : undefined;
@@ -48,7 +53,7 @@ export function indexRoutes(store: IndexStore, token: string) {
     if (!read && !isPublish) return false;
     try {
       if (read) send(res, 200, await read(store, url.searchParams));
-      else await publish(req, res, store, token);
+      else await publish(req, res, store, token, onFacts);
     } catch (err) {
       const bad = err instanceof SyntaxError || (err instanceof Error && err.message === 'body too large');
       send(res, bad ? 400 : 503, { error: err instanceof Error ? err.message : String(err) });

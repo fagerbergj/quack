@@ -1,6 +1,7 @@
 export { collectFacts, Outbox, type Fact, type SessionMeta } from './facts.ts';
 export { authorized, indexRoutes } from './http.ts';
 export { openStore } from './open.ts';
+export { openPush, type Subscription } from './push.ts';
 export { startPublisher, type PublisherOptions } from './publisher.ts';
 export { rebuild } from './rebuild.ts';
 export { createStore, type Backend, type IndexStore } from './store.ts';
