@@ -1,0 +1,286 @@
+{
+  "kind": "rest",
+  "title": "Sleeper schedule endpoint",
+  "version": 2,
+  "intent": {
+    "purpose": "Gives the Sleeper page this league's upcoming runs and Sleeper's live week. Never starts a job.",
+    "nonGoals": [
+      "Starting or cancelling a job"
+    ],
+    "audience": "The Sleeper page",
+    "consumers": [
+      "Sleeper page"
+    ],
+    "guarantees": [
+      "Read-only",
+      "Covers a week with no runs",
+      "Follows the REST guide"
+    ]
+  },
+  "document": {
+    "openapi": "3.1.0",
+    "info": {
+      "title": "Sleeper schedule endpoint",
+      "version": "2.0.0"
+    },
+    "paths": {
+      "/apps/sleeper/schedule": {
+        "get": {
+          "summary": "This league's runs this week, done and upcoming, with Sleeper's live week, for the Sleeper page's week strip. Never starts a job.",
+          "tags": [
+            "Schedule"
+          ],
+          "security": [
+            {
+              "appProxyToken": []
+            }
+          ],
+          "parameters": [],
+          "responses": {
+            "200": {
+              "description": "The week and its runs",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "week",
+                      "runs"
+                    ],
+                    "properties": {
+                      "week": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "example": 9,
+                        "description": "Sleeper's live week, even when nothing has run yet"
+                      },
+                      "runs": {
+                        "type": "array",
+                        "description": "Runs from the start of the week, oldest first",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "job",
+                            "at",
+                            "status"
+                          ],
+                          "properties": {
+                            "job": {
+                              "type": "string",
+                              "enum": [
+                                "lineup",
+                                "waivers",
+                                "trends",
+                                "digest",
+                                "retro",
+                                "trade-finder"
+                              ],
+                              "description": "Which job runs"
+                            },
+                            "at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "When it runs"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "done",
+                                "next"
+                              ],
+                              "description": "Whether the run already happened"
+                            },
+                            "resultUrl": {
+                              "type": "string",
+                              "description": "Where to open a done run's result"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "example": {
+                    "week": 9,
+                    "runs": [
+                      {
+                        "job": "digest",
+                        "at": "2026-11-03T06:15:00Z",
+                        "status": "done",
+                        "resultUrl": "/apps/sleeper/runs/digest-9"
+                      },
+                      {
+                        "job": "waivers",
+                        "at": "2026-11-03T20:00:00Z",
+                        "status": "next"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "502": {
+              "description": "Sleeper service down, from the proxy"
+            },
+            "503": {
+              "description": "Schedules service unreachable"
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "securitySchemes": {
+        "appProxyToken": {
+          "type": "http",
+          "scheme": "bearer",
+          "description": "Service token, added by the app proxy"
+        }
+      }
+    }
+  },
+  "choices": [
+    {
+      "id": "read-only",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get",
+      "decision": "GET with no body",
+      "why": [
+        {
+          "source": "answer",
+          "text": "You said it never starts a job",
+          "ref": "question 1"
+        },
+        {
+          "source": "guide",
+          "text": "A read that changes nothing is a GET",
+          "ref": "REST guide, methods"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get/security",
+      "decision": "Service token, added by the app proxy",
+      "why": [
+        {
+          "source": "code",
+          "text": "Every Sleeper route reaches the service through the app proxy, which adds the token",
+          "ref": "v1/packages/web/src/extensions/sleeper/api.ts:14"
+        },
+        {
+          "source": "guide",
+          "text": "Callers never hold the service token",
+          "ref": "REST guide, auth"
+        }
+      ]
+    },
+    {
+      "id": "live-week",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get/responses/200/content/application~1json/schema/properties/week",
+      "decision": "Live week from Sleeper itself",
+      "why": [
+        {
+          "source": "answer",
+          "text": "A week with no runs yet still shows",
+          "ref": "question 4"
+        }
+      ]
+    },
+    {
+      "id": "run-order",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get/responses/200/content/application~1json/schema/properties/runs",
+      "decision": "Runs from the start of the week, oldest first",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Your request: also show runs that already happened this week",
+          "ref": "question 2"
+        }
+      ]
+    },
+    {
+      "id": "unavailable",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get/responses/503",
+      "decision": "503 when schedules is down",
+      "why": [
+        {
+          "source": "answer",
+          "text": "\"An error the page can show\"",
+          "ref": "question 3"
+        },
+        {
+          "source": "guide",
+          "text": "A dependency outage is 503 with a retry hint, not an empty success",
+          "ref": "REST guide, errors"
+        },
+        {
+          "source": "code",
+          "text": "The app proxy already returns 502 when Sleeper itself is down",
+          "ref": "v1/packages/distributor/src/proxy.ts:88"
+        }
+      ]
+    },
+    {
+      "id": "run-status",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get/responses/200/content/application~1json/schema/properties/runs/items/properties/status",
+      "decision": "Each run says whether it is done",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Your request: mark runs that happened",
+          "ref": "question 5"
+        }
+      ]
+    },
+    {
+      "id": "result-link",
+      "pointer": "/paths/~1apps~1sleeper~1schedule/get/responses/200/content/application~1json/schema/properties/runs/items/properties/resultUrl",
+      "decision": "Done runs link to their result",
+      "why": [
+        {
+          "source": "answer",
+          "text": "The strip's pins open the job",
+          "ref": "question 5"
+        },
+        {
+          "source": "code",
+          "text": "The Sleeper page already opens a job by its result path",
+          "ref": "v1/packages/web/src/extensions/sleeper/Sleeper.tsx:212"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "choice": "run-status",
+      "was": "",
+      "now": "runs[].status: \"done\" | \"next\"",
+      "why": "Your request: mark runs that happened"
+    },
+    {
+      "choice": "run-order",
+      "was": "Upcoming only, soonest first",
+      "now": "Runs from the start of the week, oldest first",
+      "why": "So the strip reads left to right through the week"
+    },
+    {
+      "choice": "result-link",
+      "was": "",
+      "now": "Done runs link to their result",
+      "why": "The strip's pins open the job"
+    }
+  ],
+  "compatibility": {
+    "breaking": [
+      {
+        "what": "The Sleeper page reads the first run as \"next\". It needs a one-line change, listed with this version.",
+        "callers": [
+          "Sleeper page"
+        ]
+      }
+    ],
+    "safe": [
+      "Still read-only",
+      "Done runs carry where to open them"
+    ]
+  }
+}
