@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { blastRadius } from './blast.ts';
 
 export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?: string; /** Where repositories are cloned from; tests use a local directory. */ gitBaseUrl?: string };
 
@@ -87,7 +86,7 @@ export function checkoutTool(config: SessionConfig) {
       if (skip) return { output: [{ type: 'text', text: skip }] };
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const stale = staleNote(args.head, pr.headSha);
-      // The same head with its tree still there needs no clone, fetch or language-server pass.
+      // The same head with its tree still there needs no clone or fetch.
       const reuse = prior?.checkout?.head === pr.headSha && prior.pr?.headSha === pr.headSha && (await atHead(api, dir, pr.headSha, config, remote, ctx));
       if (reuse) return { output: [{ type: 'text', text: [stale, prior!.checkout!.text].filter(Boolean).join('\n\n') }] };
       await syncTree(api, dir, pr, config, remote, ctx);
@@ -97,7 +96,6 @@ export function checkoutTool(config: SessionConfig) {
         delete d.postedThisCheckout;
       }, ctx);
       const stat = await git(api, ['-C', dir, 'diff', '--stat', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
-      const hunks = await git(api, ['-C', dir, 'diff', '-U0', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
@@ -106,7 +104,6 @@ export function checkoutTool(config: SessionConfig) {
         ...pr.linkedIssues.map((i) => `Linked issue #${i.number}: ${i.title}\n${i.body}`),
         `Changed files:\n${stat}`,
         await conventions(api, dir, ctx),
-        await blastRadius(api, dir, hunks, ctx),
       ].filter(Boolean).join('\n\n');
       await api.commit(async (tx) => { (await tx.doc(PullRequestDoc, api.conversationId)).checkout = { head: pr.headSha, text }; }, ctx);
       return { output: [{ type: 'text', text: [stale, text].filter(Boolean).join('\n\n') }] };

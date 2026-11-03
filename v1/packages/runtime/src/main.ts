@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment } from '@quack/session';
 import { startPublisher } from '@quack/index';
-import { piShutdown } from '@quack/sdk';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -25,12 +24,12 @@ const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: build
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
   ? await startPublisher(session, { url: process.env.QUACK_INDEX_URL, token: process.env.QUACK_INDEX_TOKEN, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion } })
   : undefined;
-// Everything above read what it needs; dropping it keeps child processes (language servers, tool shells) from inheriting service secrets.
+// Everything above read what it needs; dropping it keeps child processes (tool shells) from inheriting service secrets.
 for (const name of [...declaredEnv(extensions, catalog), ...deploymentEnv(deploymentExtensions), 'QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN']) delete process.env[name];
 const server = createSessionServer(session);
 listenReporting(server, Number(env('PORT', '8080')));
 
 // A held wait:true invocation would block close until its run ends; a caller that needs the result re-sends the same requestId to rejoin the run.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(signal, () => { server.closeAllConnections(); server.close(() => void publisher?.stop().then(() => session.close()).then(piShutdown).then(() => process.exit(0))); });
+  process.on(signal, () => { server.closeAllConnections(); server.close(() => void publisher?.stop().then(() => session.close()).then(() => process.exit(0))); });
 }

@@ -18,7 +18,7 @@ Status: draft, 2026-10-30. Priority 2 of the launch workloads (D2). Core terms a
 | --- | --- | --- | --- |
 | GH-1 | MUST | Receive and verify GitHub App webhooks in the service half, and map each to the session key of its PR or issue. | SUR-3, D19 |
 | GH-2 | MUST | Start the first review when a configured label is added; start later runs with `/review` (reviewer) and `/fix` (implementer) comment commands; start implement-from-issue when an issue is assigned to the App; answer in a thread when a PR or issue comment mentions the App. | G1, G5 |
-| GH-3 | MUST | Before a review starts, give the reviewer the repository's conventions (AGENTS.md or CLAUDE.md, lint configuration, the linked issue) and the blast radius of each changed symbol (callers, implementations, tests that touch it). | G2 |
+| GH-3 | MUST (blast radius deferred) | Before a review starts, give the reviewer the repository's conventions (AGENTS.md or CLAUDE.md, lint configuration, the linked issue) and the blast radius of each changed symbol (callers, implementations, tests that touch it). The blast radius is deferred: LSP cut for now, 2026-11-03; references were unreliable on prod and the pi package bridge is out of scope. | G2 |
 | GH-4 | MUST | Let the reviewer run any command in its session workspace. | G3 |
 | GH-5 | MUST | Support four jobs: PR review, implement from an issue (open a PR), fix failing CI or review findings on a PR (push commits), answer questions in PR and issue threads. | G4 |
 | GH-6 | MUST | Make every write to GitHub (review, comment, push, pull request) a gated action checked by the judge extension against an audited rubric for its job. | D3, D11 |
