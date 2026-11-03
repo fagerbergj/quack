@@ -130,8 +130,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "You said it never starts a job",
-          "ref": "question 1"
+          "text": "No, it only reads",
+          "ref": "Should this ever start a job?"
         },
         {
           "source": "guide",
@@ -164,8 +164,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "A week with no runs yet still shows",
-          "ref": "question 4"
+          "text": "Yes, always",
+          "ref": "Should the week show when nothing has run yet?"
         }
       ]
     },
@@ -176,8 +176,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "Your answer to question 2",
-          "ref": "question 2"
+          "text": "The soonest one",
+          "ref": "Which run should come first?"
         }
       ]
     },
@@ -188,8 +188,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "\"An error the page can show\"",
-          "ref": "question 3"
+          "text": "An error the page can show",
+          "ref": "What should the page get when the schedules service is down?"
         },
         {
           "source": "guide",

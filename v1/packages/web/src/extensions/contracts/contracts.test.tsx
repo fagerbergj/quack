@@ -2,7 +2,9 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { ArtifactPage } from '../../ArtifactPage.tsx';
+import { SessionKeyContext } from '../../extension.ts';
 import type { SealedArtifact } from '../../api.ts';
 import { contracts } from './index.ts';
 import { fields, parseSpec, toYaml, type ContractSpec } from './spec.ts';
@@ -35,7 +37,7 @@ test('a why chip opens the reasons for its own choice, by source', async () => {
   const panel = screen.getByRole('region', { name: 'Why: 503 when schedules is down' });
   const items = within(panel).getAllByRole('listitem').map((li) => li.textContent);
   expect(items).toEqual([
-    'You"An error the page can show"question 3',
+    'YouAnswered “What should the page get when the schedules service is down?”An error the page can show',
     'GuideA dependency outage is 503 with a retry hint, not an empty successREST guide, errors',
     'ExistingThe app proxy already returns 502 when Sleeper itself is downv1/packages/distributor/src/proxy.ts:88',
   ]);
@@ -44,7 +46,7 @@ test('a why chip opens the reasons for its own choice, by source', async () => {
 
   const week = screen.getByText('week').closest('li') as HTMLElement;
   await userEvent.click(within(week).getByRole('button', { name: 'Why: Live week from Sleeper itself' }));
-  expect(screen.getByRole('region', { name: 'Why: Live week from Sleeper itself' })).toHaveTextContent('A week with no runs yet still shows');
+  expect(screen.getByRole('region', { name: 'Why: Live week from Sleeper itself' })).toHaveTextContent('Yes, always');
 });
 
 test('every choice can be opened, and the ones on a field sit on that field', async () => {
@@ -91,4 +93,27 @@ test('the schema walk follows $ref and the YAML export is plain', () => {
   const doc = { components: { schemas: { Run: { type: 'object', required: ['at'], properties: { at: { type: 'string', format: 'date-time' } } } } } };
   expect(fields(doc, { type: 'array', items: { $ref: '#/components/schemas/Run' } }, '/x').map((f) => [f.name, f.type, f.required, f.ptr])).toEqual([['at', 'date-time', true, '/components/schemas/Run/properties/at']]);
   expect(toYaml({ a: 1, 'b/c': [{ d: 'x: y' }, []], e: {} })).toBe('a: 1\n"b/c":\n  -\n    d: "x: y"\n  - []\ne: {}');
+});
+
+test('an answer shows the question as asked and the user\'s answer, in the panel and the decision line', async () => {
+  show(1);
+  expect(screen.getByText('You answered “Should this ever start a job?”: No, it only reads')).toBeInTheDocument();
+  await userEvent.click(screen.getAllByRole('button', { name: 'Why: GET with no body' })[0]!);
+  const panel = screen.getByRole('region', { name: 'Why: GET with no body' });
+  expect(within(panel).getByText('Answered “Should this ever start a job?”')).toBeInTheDocument();
+  expect(within(panel).getByText('No, it only reads')).toBeInTheDocument();
+});
+
+test('the card links to its own page for its session; the page has no such link and offers versions', async () => {
+  render(<SessionKeyContext value="home:main">{contracts.card!(sealed(raw(1)))}</SessionKeyContext>);
+  expect(screen.getByRole('link', { name: 'Open full view' })).toHaveAttribute('href', '#/s/home%3Amain/spec?v=1');
+  const list = [sealed(raw(1)), sealed(raw(2), { version: 2 })];
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
+  render(<ArtifactPage sessionKey="home:main" version={1} />);
+  expect(await screen.findByText('1 route · version 1')).toBeInTheDocument();
+  expect(screen.getAllByRole('link', { name: 'Open full view' })).toHaveLength(1);
+  expect(screen.getByRole('link', { name: '‹ Back to the session' })).toHaveAttribute('href', '#/s/home%3Amain');
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '2');
+  expect(screen.getByText('1 route · version 2')).toBeInTheDocument();
+  vi.unstubAllGlobals();
 });

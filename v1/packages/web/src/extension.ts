@@ -1,6 +1,9 @@
-import type { ComponentType, ReactNode } from 'react';
+import { createContext, type ComponentType, type ReactNode } from 'react';
 import type { ArtifactLink, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
+
+/** The session an artifact is shown from, for links that open it on its own page. */
+export const SessionKeyContext = createContext<string | undefined>(undefined);
 
 export type Tone = 'plain' | 'muted' | 'warn' | 'ok' | 'bad';
 export type Words = { run: string; pass: string; fail: string; none: string; /** Newest artifact sealed without a verdict (kind is never judged). */ sealed?: string };
@@ -31,6 +34,8 @@ export type Extension = {
   artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean } | undefined;
   /** A sealed artifact drawn as a card instead of a line; undefined when it is not this extension's or cannot be read as one. */
   card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
+  /** The artifact drawn as its own page (opened from a link on its card); undefined when it is not this extension's. */
+  full?: (a: SealedArtifact) => ReactNode | undefined;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */

@@ -43,6 +43,7 @@ function newest(all: IndexArtifact[]): IndexArtifact[] {
 export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: number }) {
   const [items, setItems] = useState<IndexArtifact[] | null>();
   const [open, setOpen] = useState<SealedArtifact[]>();
+  const [session, setSession] = useState<string>();
   const [error, setError] = useState('');
   const [group, setGroup] = useState('');
   useEffect(() => void indexArtifacts().then((r) => setItems(r ?? null)), [now]);
@@ -50,7 +51,10 @@ export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: numb
   const show = (a: IndexArtifact) =>
     listArtifacts(a.session).then((all) => {
       const versions = all.filter((x) => x.kind === a.kind).sort((x, y) => y.version - x.version);
-      if (versions.length) setOpen(versions);
+      if (versions.length) {
+        setSession(a.session);
+        setOpen(versions);
+      }
       else setError('That artifact is no longer in its session.');
     }, (e: Error) => setError(e.message));
   const entries = (items ? newest(items) : []).map((a) => {
@@ -72,7 +76,7 @@ export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: numb
       <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-[22px] border border-line bg-surface p-0 shadow-card empty:hidden">
         {entries.filter((x) => !group || x.group === group).map(({ a, r, noun }) => <Item key={`${a.session}:${a.kind}`} a={a} noun={noun} title={r ? titleOf(r) : a.session} active={r?.active ?? false} now={now} onOpen={() => void show(a)} />)}
       </ul>
-      {open && <Work artifact={open[0]!} versions={open} onClose={() => setOpen(undefined)} />}
+      {open && <Work artifact={open[0]!} versions={open} session={session} onClose={() => setOpen(undefined)} />}
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
+import { SessionKeyContext } from '../../extension.ts';
 import { Markdown } from '../../Markdown.tsx';
 import { SchemaTree, WhyChip } from './SchemaTree.tsx';
 import { fields, operations, resolve, toYaml, type Choice, type ContractSpec, type Field, type Json, type Operation } from './spec.ts';
@@ -9,6 +10,8 @@ const SOURCE: Record<Choice['why'][number]['source'], { label: string; cls: stri
   guide: { label: 'Guide', cls: 'text-accent-ink' },
   code: { label: 'Existing', cls: 'text-link' },
 };
+// An answer's `ref` is the question as the user saw it and its `text` their answer.
+const gist = (w: Choice['why'][number]) => (w.source === 'answer' ? `You answered “${w.ref}”: ${w.text}` : w.text);
 const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
 const card = 'rounded-[18px] border border-line bg-surface';
 const pill = 'inline-flex min-h-11 flex-none cursor-pointer items-center rounded-full border border-line-strong bg-transparent px-4 text-[13.5px] text-ink-2 hover:text-ink';
@@ -27,14 +30,21 @@ function WhyPanel({ choice, onClose }: { choice: Choice; onClose: () => void }) 
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>
-      <ul className="m-0 flex max-h-[40vh] list-none flex-col gap-2 overflow-y-auto p-0">
+      <ul className="m-0 flex max-h-[40vh] @3xl:max-h-none list-none flex-col gap-2 overflow-y-auto p-0">
         {choice.why.map((w, i) => (
           <li key={i} className="flex gap-3 rounded-2xl border border-line bg-canvas px-3.5 py-3 text-sm leading-snug">
             <span className={`w-16 flex-none text-xs font-semibold ${SOURCE[w.source].cls}`}>{SOURCE[w.source].label}</span>
-            <span className="flex min-w-0 flex-1 flex-col gap-1 [overflow-wrap:anywhere]">
-              {w.text}
-              <code className="font-mono text-xs text-muted">{w.ref}</code>
-            </span>
+            {w.source === 'answer' ? (
+              <span className="flex min-w-0 flex-1 flex-col gap-1 [overflow-wrap:anywhere]">
+                <span className="text-muted">Answered “{w.ref}”</span>
+                <strong className="font-semibold">{w.text}</strong>
+              </span>
+            ) : (
+              <span className="flex min-w-0 flex-1 flex-col gap-1 [overflow-wrap:anywhere]">
+                {w.text}
+                <code className="font-mono text-xs text-muted">{w.ref}</code>
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -186,7 +196,7 @@ function Decisions({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => 
       <ul className="m-0 list-none p-0">
         {spec.choices.map((c) => (
           <li key={c.id} className="flex items-center gap-3 border-t border-line pl-4">
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-2.5 text-sm [overflow-wrap:anywhere]">{c.decision}<span className="line-clamp-2 text-[12.5px] text-muted">{c.why[0]?.text}</span></span>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-2.5 text-sm [overflow-wrap:anywhere]">{c.decision}<span className="line-clamp-2 text-[12.5px] text-muted">{c.why[0] && gist(c.why[0])}</span></span>
             <button type="button" aria-label={`Why: ${c.decision}`} onClick={() => onWhy(c)} className="min-h-11 flex-none cursor-pointer border-0 bg-transparent px-4 text-[13px] text-link">Why ›</button>
           </li>
         ))}
@@ -203,7 +213,14 @@ function download(doc: unknown) {
   URL.revokeObjectURL(a.href);
 }
 
-export function RestView({ spec }: { spec: ContractSpec }) {
+// Links to the spec's own page, where the three-column layout has room; from a session page the hash names the session.
+function FullViewLink({ version }: { version: number }) {
+  const ctx = useContext(SessionKeyContext);
+  const key = ctx === undefined ? /^#\/s\/([^/?]+)/.exec(location.hash)?.[1] : encodeURIComponent(ctx);
+  return key ? <a href={`#/s/${key}/spec?v=${version}`} className={`${pill} no-underline`}>Open full view</a> : null;
+}
+
+export function RestView({ spec, full = false }: { spec: ContractSpec; full?: boolean }) {
   const [sel, setSel] = useState(0);
   const [why, setWhy] = useState<Choice>();
   const doc = spec.document as Json;
@@ -218,6 +235,7 @@ export function RestView({ spec }: { spec: ContractSpec }) {
           <h2 className="m-0 text-xl [overflow-wrap:anywhere]">{spec.title}</h2>
           <span className="text-xs text-muted">{ops.length} {ops.length === 1 ? 'route' : 'routes'} · version {spec.version}</span>
         </div>
+        {!full && <FullViewLink version={spec.version} />}
         <button type="button" onClick={() => download(doc)} className={pill}>OpenAPI file</button>
       </header>
       <Changes spec={spec} onWhy={setWhy} />

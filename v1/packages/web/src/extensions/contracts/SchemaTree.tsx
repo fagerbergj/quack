@@ -7,18 +7,18 @@ export function WhyChip({ choice, onWhy }: { choice: Choice; onWhy: (c: Choice) 
   );
 }
 
-const fact = 'inline-flex items-center gap-1 rounded bg-soft px-1.5 py-0.5 text-xs text-muted [overflow-wrap:anywhere]';
+const fact = 'inline-flex items-start gap-1 rounded bg-soft px-1.5 py-0.5 text-xs text-muted [overflow-wrap:anywhere]';
 
 function Row({ f, choice, onWhy }: { f: Field; choice?: Choice; onWhy: (c: Choice) => void }) {
   return (
     <li style={{ paddingLeft: `${f.depth * 16}px` }} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-line py-2 text-[13.5px] first:border-t-0">
-      <code className="font-mono [overflow-wrap:anywhere] @xl:w-40 @xl:flex-none">{f.name}</code>
-      <span className="font-mono text-[12.5px] text-success @xl:w-28 @xl:flex-none">{f.type}</span>
+      <code className="font-mono [overflow-wrap:anywhere] @xl:w-28 @xl:flex-none">{f.name}</code>
+      <span className="font-mono text-[12.5px] text-success @xl:w-24 @xl:flex-none">{f.type}</span>
       {f.required && <span className="text-[11px] tracking-wide text-danger">REQUIRED</span>}
       {f.where && <span className={fact}>{f.where}</span>}
-      <span className="flex min-w-0 flex-[1_1_12rem] flex-col gap-1 text-[13px] text-muted">
+      <span className="flex min-w-0 flex-[1_1_8rem] flex-col gap-1 text-[13px] text-muted">
         {f.desc && <span>{f.desc}</span>}
-        {f.facts.length > 0 && <span className="flex flex-wrap gap-1.5">{f.facts.map(([k, v]) => <span key={k} className={fact}>{k}<code className="font-mono text-ink-2">{v}</code></span>)}</span>}
+        {f.facts.length > 0 && <span className="flex flex-wrap gap-1.5">{f.facts.map(([k, v]) => <span key={k} className={fact}><span className="flex-none whitespace-nowrap">{k}</span><code className="font-mono text-ink-2">{v}</code></span>)}</span>}
       </span>
       {choice && <WhyChip choice={choice} onWhy={onWhy} />}
     </li>

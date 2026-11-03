@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AgentsRoute } from './Agents.tsx';
+import { ArtifactPage } from './ArtifactPage.tsx';
 import { ArtifactList } from './ArtifactList.tsx';
 import { FOCUS_ASK } from './Home.tsx';
 import { More } from './More.tsx';
@@ -23,6 +24,13 @@ function parseHash(hash: string): { key: string; agent?: string } | undefined {
   const m = /^#\/s\/([^?]+)(?:\?agent=(.*))?$/.exec(hash);
   const key = m && safeDecode(m[1]);
   return m && key ? { key, agent: m[2] ? safeDecode(m[2]) : undefined } : undefined;
+}
+
+// An artifact's own page: #/s/<key>/spec, with ?v=<version> to pick one.
+function parseFull(hash: string): { key: string; version?: number } | undefined {
+  const m = /^#\/s\/([^/?]+)\/spec(?:\?v=(\d+))?$/.exec(hash);
+  const key = m && safeDecode(m[1]!);
+  return m && key ? { key, version: m[2] ? Number(m[2]) : undefined } : undefined;
 }
 
 function useHash() {
@@ -59,7 +67,8 @@ function Placeholder({ title }: { title: string }) {
 export function App() {
   const raw = useHash();
   const hash = raw !== '#/' && raw.endsWith('/') ? raw.slice(0, -1) : raw;
-  const session = parseHash(hash);
+  const full = parseFull(hash);
+  const session = full ? { key: full.key } : parseHash(hash);
   // Inbox folded into Home; old links still land.
   useEffect(() => {
     if (hash === '#/inbox') location.replace('#/');
@@ -76,7 +85,8 @@ export function App() {
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
   return (
     <Shell route={nav} bare={Boolean(session)} sidebar={desktop ? list : undefined}>
-      {Page ? <Page rows={data.rows} />
+      {full ? <ArtifactPage sessionKey={full.key} version={full.version} />
+        : Page ? <Page rows={data.rows} />
         : nav === 'more' ? <More />
         : nav === 'settings' ? <Settings />
         : nav === 'agents' ? <AgentsRoute hash={hash} />

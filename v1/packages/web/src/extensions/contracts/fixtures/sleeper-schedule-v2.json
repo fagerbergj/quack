@@ -146,8 +146,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "You said it never starts a job",
-          "ref": "question 1"
+          "text": "No, it only reads",
+          "ref": "Should this ever start a job?"
         },
         {
           "source": "guide",
@@ -180,8 +180,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "A week with no runs yet still shows",
-          "ref": "question 4"
+          "text": "Yes, always",
+          "ref": "Should the week show when nothing has run yet?"
         }
       ]
     },
@@ -192,8 +192,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "Your request: also show runs that already happened this week",
-          "ref": "question 2"
+          "text": "Yes, oldest first",
+          "ref": "Show runs that already happened this week?"
         }
       ]
     },
@@ -204,8 +204,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "\"An error the page can show\"",
-          "ref": "question 3"
+          "text": "An error the page can show",
+          "ref": "What should the page get when the schedules service is down?"
         },
         {
           "source": "guide",
@@ -226,8 +226,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "Your request: mark runs that happened",
-          "ref": "question 5"
+          "text": "Yes, done or next",
+          "ref": "Mark runs that already happened?"
         }
       ]
     },
@@ -238,8 +238,8 @@
       "why": [
         {
           "source": "answer",
-          "text": "The strip's pins open the job",
-          "ref": "question 5"
+          "text": "Its result, from the strip's pins",
+          "ref": "What should a done run open?"
         },
         {
           "source": "code",
