@@ -1,0 +1,11 @@
+{
+  "name": "@quack/cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "quack": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  }
+}

@@ -3,6 +3,7 @@
 FROM node:26.13-trixie-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY packages/cli/package.json packages/cli/
 COPY packages/distributor/package.json packages/distributor/
 COPY packages/github/package.json packages/github/
 COPY packages/home/package.json packages/home/
