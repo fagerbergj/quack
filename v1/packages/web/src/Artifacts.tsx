@@ -50,19 +50,17 @@ export function LedgerItem({ a, round, latest, running, meta, onOpen }: { a: Sea
   const card = latest && !named?.previous ? artifactCard(a, { running, meta }) : undefined;
   const label = [a.version > 1 ? `Version ${a.version}` : '', round > 0 ? `revision ${round}` : ''].filter(Boolean).join(' · ');
   return (
-    <ul className="m-0 list-none p-0">
-      <li className="flex flex-col gap-1 text-[13px] text-muted">
-        <div className="flex items-center gap-2">
-          {!named?.previous && <StatusIcon verdict={a.verdict} />}
-          <span className="min-w-0 truncate">{lineOf(a, named)}</span>
-          {label && <span className="flex-none text-[12px]">{label}</span>}
-          <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
-          {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
-        </div>
-        {card}
-        {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed && !card} />}
-      </li>
-    </ul>
+    <div data-ledger className="flex flex-col gap-1 text-[13px] text-muted">
+      <div className="flex items-center gap-2">
+        {!named?.previous && <StatusIcon verdict={a.verdict} />}
+        <span className="min-w-0 truncate">{lineOf(a, named)}</span>
+        {label && <span className="flex-none text-[12px]">{label}</span>}
+        <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
+        {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
+      </div>
+      {card}
+      {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} />}
+  </div>
   );
 }
 

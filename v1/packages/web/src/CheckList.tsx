@@ -25,7 +25,8 @@ export function Note({ text, scope }: { text: string; scope?: string }) {
 
 export function Pill({ check }: { check: Check }) {
   const [text, tone] = check.met === null ? ["Didn't apply", 'bg-soft text-muted'] : !checkFailed(check) ? ['Pass', 'bg-success-bg text-success'] : ['Fail', 'bg-danger-bg text-danger'];
-  return <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{text}</span>;
+  const score = check.met === null ? '' : ` · ${Math.round(check.met * 100)}%`;
+  return <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{text + score}</span>;
 }
 
 /** One check: its label (and result), expanding to the judge's notes. A failed check starts open; one with no note has nothing to expand. */
