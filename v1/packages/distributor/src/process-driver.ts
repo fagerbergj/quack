@@ -14,7 +14,7 @@ export type AgentInfo = { name: string; version: number; status: AgentStatus; mo
 export type AgentView = AgentDetail & { /** Every version the host holds a copy of, newest first: those it has loaded since the version store began, and those sessions pinned. */ versions: Array<{ version: number; status: AgentStatus }> };
 export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; archived?: boolean; running: boolean; createdAt: string; lastActivity: string };
 
-/** A request the agent registry refuses: 404 for an unknown agent, 409 for a session that already runs another. */
+/** A request the agent registry refuses: 404 for an unknown agent, 409 for a switch while a run is active or an agent named on a non-submission request. */
 export class AgentError extends Error {
   status: 404 | 409;
   constructor(status: 404 | 409, message: string) {
@@ -26,6 +26,10 @@ export class AgentError extends Error {
 export type HostDriver = {
   /** Starts the session's process if it is not running and returns its base URL. A new session is bound to `agent` (default: the deployment's). */
   ensure(key: string, agent?: string): Promise<string>;
+  /** The agent the session is bound to; undefined for a session that does not exist yet. */
+  agentOf(key: string): Promise<string | undefined>;
+  /** Binds an existing session to `agent` from its next start (D33); the caller has checked no run is active and stops the process. 404 for an unknown agent. */
+  rebind(key: string, agent: string): Promise<void>;
   agents(): Promise<AgentInfo[]>;
   /** One agent's definition, prompt and rubric at `version` (default: current); undefined when the host holds no such copy. */
   agent(name: string, version?: number): Promise<AgentView | undefined>;
@@ -235,10 +239,18 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   // Copies the agent's bundle into the session dir; every later start loads that copy, never the agents dir (DEP-3).
   async function snapshot(name: string, source: string, dir: string, isNew: boolean) {
     if (isNew) await assertUnforked(name, source);
+    // A previous role's files must not linger beside the new bundle.
+    await rm(join(dir, SNAPSHOT), { recursive: true, force: true });
     await cp(dirname(source), join(dir, SNAPSHOT), { recursive: true });
   }
 
-  // A session's agent is fixed by its first request; later requests must agree.
+  async function source(name: string, fallback: string): Promise<string | undefined> {
+    const found = (await registry()).find((a) => a.name === name)?.path ?? (name === fallback ? defaultPath : undefined);
+    if (!found && name) throw new AgentError(404, `unknown agent ${name}`);
+    return found;
+  }
+
+  // Only a submission that starts a run may change the role (see rebind); any other request must agree with the record.
   // shortcut: two first requests naming different agents at once race on the record, last writer wins; serialize per key if that matters.
   async function bind(key: string, requested?: string): Promise<{ name: string; path: string | undefined }> {
     const dir = sessionDir(key);
@@ -249,16 +261,24 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     if (recorded !== undefined && (await stat(snapshotDir).catch(() => null))) return { name: recorded, path: join(snapshotDir, 'agent.json') };
     const fallback = await defaultName();
     const name = recorded ?? requested ?? fallback;
-    const source = (await registry()).find((a) => a.name === name)?.path ?? (name === fallback ? defaultPath : undefined);
-    if (!source && name) throw new AgentError(404, `unknown agent ${name}`);
-    if (source) await snapshot(name, source, dir, recorded === undefined);
+    const from = await source(name, fallback);
+    if (from) await snapshot(name, from, dir, recorded === undefined);
     if (recorded === undefined) {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'session-key'), key);
       await writeFile(join(dir, 'agent'), name);
       await writeFile(join(dir, 'created'), String(Date.now()));
     }
-    return { name, path: source && join(snapshotDir, 'agent.json') };
+    return { name, path: from && join(snapshotDir, 'agent.json') };
+  }
+
+  const agentOf = (key: string) => readText(join(sessionDir(key), 'agent'));
+
+  // Rewrites the snapshot and record the next start reads, so a restart resumes with the role of the latest run.
+  async function rebind(key: string, name: string) {
+    const from = await source(name, await defaultName());
+    if (from) await snapshot(name, from, sessionDir(key), true);
+    await writeFile(join(sessionDir(key), 'agent'), name);
   }
 
   async function start(key: string, agentPath: string | undefined): Promise<string> {
@@ -377,7 +397,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     await child.launched.stop();
   }
 
-  return { ensure, agents, agent, promote, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
+  return { ensure, agentOf, rebind, agents, agent, promote, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
 }
 
 /** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */

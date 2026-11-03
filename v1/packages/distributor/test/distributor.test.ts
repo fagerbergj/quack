@@ -134,7 +134,7 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
 });
 
 test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
-  const broken = { agents: async () => [], agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const broken = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -200,11 +200,11 @@ test('lastActivity comes from the session log, so file mtimes from a restart do 
   assert.ok(Date.parse(before) < future.getTime());
 });
 
-test('a session keeps its agent: a different one is 409, an unknown one 404', async () => {
+test('a session keeps its agent on requests that are not submissions; an unknown one is 404', async () => {
   const dir = await agentsDir('reviewer', 'research');
-  const { invoke, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  const { invoke, ranAs, base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   await invoke('research:x', { input: 'hi', wait: true }, 'research');
-  assert.equal((await invoke('research:x', { input: 'hi', wait: true }, 'reviewer')).status, 409);
+  assert.equal((await fetch(`${base}/sessions/research%3Ax/ping?agent=reviewer`)).status, 409);
   assert.equal((await invoke('research:x', { input: 'hi', wait: true }, 'research')).status, 200);
   assert.equal((await invoke('research:x', { input: 'whoami', wait: true })).body.answer, ranAs('research:x'));
   assert.equal((await invoke('research:y', { input: 'hi' }, 'nope')).status, 404);
@@ -216,7 +216,7 @@ test('a session naming no agent gets the deployment default', async () => {
   const { invoke, base, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent });
   assert.equal((await invoke('github:a#2', { input: 'whoami', wait: true })).body.answer, ranAs('github:a#2'));
   assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
-  assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'research')).status, 409);
+  assert.equal((await fetch(`${base}/sessions/github%3Aa%232/ping?agent=research`)).status, 409);
   const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ agent: string }> };
   assert.equal(sessions[0].agent, 'reviewer');
 });
@@ -351,7 +351,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
   const running = new Set<string>();
   const log: string[] = [];
   const driver = {
-    agents: async () => [], agent: async () => undefined, promote: async () => 'draft' as const, pid: () => undefined,
+    agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, pid: () => undefined,
     sessions: async () => [...running].map((key) => ({ key, agent: '', running: true, createdAt: '', lastActivity: '' })),
     ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
     stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
@@ -627,7 +627,7 @@ test('an invocation held past undici\'s headers timeout is still proxied, not tu
   const session = createHttpServer((_req, res) => setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"answered"}'), 2_000)).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const previous = getGlobalDispatcher();
@@ -652,7 +652,7 @@ test('a client that hangs up mid-body does not take the distributor down', async
   }).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const port = (server.address() as AddressInfo).port;
@@ -711,7 +711,7 @@ test('the identity header reaches the session; without it none is sent', async (
   const session = createHttpServer((req, res) => { seen.push(req.headers['x-authentik-username'] as string | undefined); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); }).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/k1`;
