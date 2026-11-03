@@ -68,6 +68,8 @@ function retentionProblems(r: unknown): string[] {
   return r === undefined || (isObject(r) && positive(r.idleDays) && Object.keys(r).length === 1) ? [] : ['retention must be { idleDays: positive integer }'];
 }
 
+const ceilingProblems = (c: unknown) => (c === undefined || positive(c) ? [] : ['turnCeiling must be a positive integer']);
+
 function validZone(z: unknown): boolean {
   try {
     return typeof z === 'string' && !!new Intl.DateTimeFormat('en', { timeZone: z });
@@ -136,8 +138,7 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   // Pinned snapshots are immutable history and may still carry the removed key (D58), so it is ignored, not rejected.
   if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed (D58) and is ignored`);
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
-  if (raw.turnCeiling !== undefined && !positive(raw.turnCeiling)) problems.push('turnCeiling must be a positive integer');
-  problems.push(...retentionProblems(raw.retention));
+  problems.push(...retentionProblems(raw.retention), ...ceilingProblems(raw.turnCeiling));
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
   else {
