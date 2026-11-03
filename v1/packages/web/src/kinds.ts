@@ -27,6 +27,9 @@ function outcome(r: Row, kind: string, w: Words, delivered?: Delivered): Pick<Lo
   return v.passed ? { line: w.pass, tone: 'ok' } : { line: w.fail, tone: 'bad' };
 }
 
+// A running session's own status note, such as waiting for a model slot, says more than "running".
+const queued = (r: Row) => (r.active && r.note ? { line: r.note, tone: 'muted' as const } : undefined);
+
 const FALLBACK: SessionKind = { label: '', match: () => true, icon: DOC, tint: BLUE, name: (r) => plain(r.title ?? r.key), words: () => undefined };
 // Conversations started from Home; the row says Chat or Working, never the agent's name.
 const HOME: SessionKind = { label: 'Chat', match: (r) => r.key.startsWith('home:'), icon: CHAT, tint: BLUE, name: (r) => plain(r.title ?? 'Chat with quack'), words: () => ({ kind: 'chat', w: { run: 'Working', pass: 'Chat', fail: 'Chat', none: 'Chat' } }) };
@@ -38,7 +41,7 @@ export function look(r: Row): Look {
   const kind = KINDS.find((x) => x.match(r))!;
   const { num, repo, title, full } = kind.name(r);
   const w = kind.words(r);
-  const state = w ? outcome(r, w.kind, w.w, kind.delivered?.(r)) : { line: r.agent, tone: 'muted' as const };
+  const state = queued(r) ?? (w ? outcome(r, w.kind, w.w, kind.delivered?.(r)) : { line: r.agent, tone: 'muted' as const });
   const ask = r.approvals[0];
   const question = r.questions[0];
   const failure = r.failures[0];
