@@ -13,13 +13,13 @@ const deployment = parseDeployment({
   },
 });
 
-test('the shipped reviewer definition loads with its prompt, the GitHub tools and the language servers', async () => {
+test('the shipped reviewer definition loads with its prompt, and the GitHub tools', async () => {
   process.env.QUACK_GH_SERVICE_URL = 'http://127.0.0.1:8090';
   process.env.QUACK_GH_SERVICE_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You review one pull request/);
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
-  for (const name of ['checkout_pr', 'submit_review', 'bash', 'write', 'lsp_references', 'lsp_symbols']) assert.ok(tools.includes(name), `${name} in ${tools.join(', ')}`);
+  for (const name of ['checkout_pr', 'submit_review', 'bash', 'write']) assert.ok(tools.includes(name), `${name} in ${tools.join(', ')}`);
 });
 
 test('the shipped researcher definition loads with the research tools and the report judge', async () => {

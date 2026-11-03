@@ -1,9 +1,5 @@
 # The v1 image: one build serves the distributor (with its session processes), the GitHub, schedules, Sleeper and reMarkable services; compose picks
-# the entrypoint. Session processes review code, so the image carries git, Go and the language servers they use.
-FROM golang:1.27.3-trixie AS gopls
-RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    GOBIN=/out go install golang.org/x/tools/gopls@v0.24.0
-
+# the entrypoint. Session processes review code, so the image carries git and Go.
 FROM node:26.13-trixie-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -21,7 +17,7 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/session/package.json packages/session/
 COPY packages/web/package.json packages/web/
 COPY packages/workflows/package.json packages/workflows/
-# typescript and typescript-language-server are dev dependencies the sessions run, so nothing is omitted.
+# typescript is a dev dependency the sessions run, so nothing is omitted.
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 FROM deps AS web
@@ -34,7 +30,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 COPY packages/remarkable/requirements.txt /tmp/rm-requirements.txt
 RUN python3 -m venv /opt/rmc && /opt/rmc/bin/pip install --no-cache-dir --no-deps -r /tmp/rm-requirements.txt && rm /tmp/rm-requirements.txt
 COPY --from=golang:1.27.3-trixie /usr/local/go /usr/local/go
-COPY --from=gopls /out/gopls /usr/local/bin/gopls
 ENV PATH=/opt/rmc/bin:/usr/local/go/bin:/app/node_modules/.bin:$PATH
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules

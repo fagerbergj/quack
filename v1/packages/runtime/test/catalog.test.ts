@@ -21,7 +21,7 @@ const OLD_ENV: Record<string, string[] | ((config: unknown) => string[])> = {
 const agentsDir = new URL('../../../agents/', import.meta.url);
 
 test('the manifest-built catalog has the old entry names and deployment env', () => {
-  assert.deepEqual(Object.keys(catalog).sort(), ['coding', 'github', 'home', 'lsp', 'research', 'workflows']);
+  assert.deepEqual(Object.keys(catalog).sort(), ['coding', 'github', 'home', 'research', 'workflows']);
   assert.deepEqual(deploymentEnv(deploymentExtensions), ['QUACK_SLOTS_URL', 'QUACK_SLOTS_TOKEN', 'LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
 });
 

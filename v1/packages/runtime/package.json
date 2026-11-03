@@ -7,7 +7,6 @@
     "validate": "node src/validate.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "1.4.0",
     "@quack/github": "*",
     "@quack/home": "*",
     "@quack/index": "*",
@@ -19,8 +18,7 @@
     "@quack/session": "*",
     "@quack/sleeper": "*",
     "@quack/traces": "*",
-    "@quack/workflows": "*",
-    "pi-lsp": "0.1.7"
+    "@quack/workflows": "*"
   },
   "quack": {
     "extensions": [
@@ -29,7 +27,6 @@
       "@quack/home",
       "@quack/research",
       "@quack/workflows",
-      "./src/extensions/lsp.ts",
       "@quack/sleeper",
       "@quack/remarkable",
       "@quack/slots",

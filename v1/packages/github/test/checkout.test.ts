@@ -93,30 +93,25 @@ test('a pinned base keeps the base branch\'s later history, merges and tags out 
   await session.close();
 });
 
-test('checking out the same head again returns the stored result with no fetch and no language-server call', async () => {
+test('checking out the same head again returns the stored result with no fetch', async () => {
   const { base, head } = await remotes();
   const serviceUrl = (await fakeService(head)).url;
-  let lspCalls = 0;
-  const lsp = (name: string) => defineTool({ name, description: name, parameters: Type.Object({ path: Type.Optional(Type.String()) }, { additionalProperties: true }), replay: 'safe', async execute() { lspCalls++; return { output: [{ type: 'text', text: 'No result' }] }; } });
   const texts: string[] = [];
-  let afterFirst = 0;
   const seen = (c: { messages: unknown[] }) => texts.push((c.messages.at(-1) as { content: Array<{ text: string }> }).content[0].text);
   const faux = fauxProvider({ models: [{ id: 'w' }] });
   const call = () => fauxAssistantMessage(fauxToolCall('checkout_pr', { repository: 'acme/widgets', number: 7 }), { stopReason: 'toolUse' });
   faux.setResponses([
     call(),
     // With the remote gone, a clone or fetch in the second call would fail it.
-    (c) => { seen(c); afterFirst = lspCalls; rmSync(fileURLToPath(base), { recursive: true }); return call(); },
+    (c) => { seen(c); rmSync(fileURLToPath(base), { recursive: true }); return call(); },
     (c) => { seen(c); return fauxAssistantMessage('done'); },
   ]);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const extensions = [defineExtension({ name: 'gh', tools: [checkoutTool({ serviceUrl, serviceToken: 'svc', gitBaseUrl: base }), lsp('lsp_symbols'), lsp('lsp_references')] })];
+  const extensions = [defineExtension({ name: 'gh', tools: [checkoutTool({ serviceUrl, serviceToken: 'svc', gitBaseUrl: base })] })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   await session.submit('Review acme/widgets#7', 'co-same', true);
-  assert.ok(afterFirst > 0, 'the first checkout asked the language server');
-  assert.equal(lspCalls, afterFirst, 'the second made no language-server call');
   assert.equal(texts[1], texts[0]);
   await session.close();
 });

@@ -13,8 +13,6 @@
     "@quack/sdk": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-tui": "1.4.0",
-    "@quack/session": "*",
-    "pi-lsp": "0.1.7"
+    "@quack/session": "*"
   }
 }
