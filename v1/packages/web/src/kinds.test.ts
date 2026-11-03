@@ -47,3 +47,8 @@ test('a sealed reMarkable transcript with no verdict is not "not transcribed"', 
   expect(look(row([art])).line).toBe('Transcribed');
   expect(look(row([])).line).toBe('Not transcribed yet');
 });
+
+test('a Home conversation reads Chat or Working, never the agent name', () => {
+  expect(look({ ...s('home:main', { agent: 'quack' }), approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }).line).toBe('Chat');
+  expect(look({ ...s('home:main', { agent: 'quack', active: true }), approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }).line).toBe('Working');
+});

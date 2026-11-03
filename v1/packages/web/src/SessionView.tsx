@@ -232,9 +232,9 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
   const [input, setInput] = useState(initial);
   useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
-  // Sent once when the socket opens, and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
+  // Sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
   useEffect(() => {
-    if (state === 'open' && input !== '' && input === initial && send(input)) setInput('');
+    if (state === 'open' && input !== '' && input === initial && send(input, 'followUp')) setInput('');
   }, [state]);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
