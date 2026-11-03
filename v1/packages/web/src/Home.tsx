@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { AttachButton, Pending, useAttachments } from './Attach.tsx';
 import { look } from './kinds.ts';
+import { Pond } from './Pond.tsx';
 import { Needs } from './Needs.tsx';
 import { age, group, pendingInput, titleOf, type Row } from './sessions.ts';
 
@@ -11,7 +12,7 @@ export const HOME_KEY = 'home:main';
 export const FOCUS_ASK = 'quack:focus-ask';
 
 // Same hand-off as the New session page: the text waits for the session's socket to open.
-function Ask() {
+function Ask({ failed }: { failed: boolean }) {
   const [input, setInput] = useState('');
   const attach = useAttachments();
   const box = useRef<HTMLTextAreaElement>(null);
@@ -28,7 +29,9 @@ function Ask() {
   };
   return (
     <form onSubmit={send} {...attach.handlers} className="flex flex-col gap-2.5">
-      <label htmlFor="ask" className="wordmark text-2xl leading-tight">What do you need?</label>
+      <Pond still={failed}>
+        <label htmlFor="ask" className="wordmark text-2xl leading-tight">What do you need?</label>
+      </Pond>
       <div className="flex flex-col gap-2.5 rounded-[22px] border border-line-strong bg-surface py-3 pr-3 pl-4 shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring">
         <textarea
           id="ask"
@@ -82,12 +85,13 @@ export function Home({ rows, error, now, reload }: { rows: Row[] | undefined; er
   const g = group(rows ?? []);
   return (
     <div className="mx-auto flex w-full max-w-[640px] flex-col gap-6 px-4 py-6 lg:py-12">
-      <Ask />
+      <Ask failed={g.needs.some((r) => r.failures.length > 0)} />
       {rows?.some((r) => r.key === HOME_KEY) && <a href={`#/s/${encodeURIComponent(HOME_KEY)}`} className="grid min-h-11 place-items-center self-start text-[13.5px] text-link no-underline">Open conversation</a>}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <Needs rows={rows ?? []} now={now} reload={reload} />
       <Running rows={g.running} now={now} />
       {rows && !g.running.length && <a href="#/sessions" className="grid min-h-11 lg:hidden place-items-center self-start text-[13.5px] text-link no-underline">All sessions</a>}
+      <div className="feet w-full" aria-hidden="true" />
     </div>
   );
 }
