@@ -65,7 +65,7 @@ function Duck({ size, className = '' }: { size: number; className?: string }) {
 // Links to Settings, where the full version and build time live.
 export function VersionLink({ className }: { className: string }) {
   const v = useVersion();
-  return v?.commit ? <a href="#/settings" className={className}>{shortCommit(v.commit)}</a> : null;
+  return v?.commit ? <a href="#/settings" className={className}>{`Version ${shortCommit(v.commit)}`}</a> : null;
 }
 
 export const THEME_KEY = 'quack:theme';

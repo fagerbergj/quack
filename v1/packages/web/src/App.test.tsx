@@ -691,7 +691,7 @@ test('the sidebar footer shows the short commit and links to Settings', async ()
   routes['GET /version'] = BUILD;
   render(<App />);
   const rail = screen.getAllByRole('complementary')[0];
-  expect(await within(rail).findByRole('link', { name: 'abc1234' })).toHaveAttribute('href', '#/settings');
+  expect(await within(rail).findByRole('link', { name: 'Version abc1234' })).toHaveAttribute('href', '#/settings');
   expect(fetchMock.mock.calls.filter(([u]) => u === 'version')).toHaveLength(1);
 });
 
@@ -700,7 +700,7 @@ test('More lists the short commit on a phone', async () => {
   stubViewport(false);
   location.hash = '#/more';
   render(<App />);
-  expect((await screen.findAllByRole('link', { name: 'abc1234' })).length).toBeGreaterThan(0);
+  expect((await screen.findAllByRole('link', { name: 'Version abc1234' })).length).toBeGreaterThan(0);
 });
 
 test('a failed version fetch shows nothing', async () => {
