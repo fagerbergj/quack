@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { Type } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { submitToSession, type Action } from '@quack/sdk';
 
-const params = Type.Object({ description: Type.String({ minLength: 1, description: 'What the contract must do and for whom, in the person\'s words' }) });
+const params = obj({ description: str({ minLength: 1, description: 'What the contract must do and for whom, in the person\'s words' }) }, { open: true });
 
 /** Starts the contracts agent on a description in a session of its own. */
 export const defineContract: Action<typeof params> = {
