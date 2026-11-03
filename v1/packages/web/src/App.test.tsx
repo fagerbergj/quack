@@ -870,6 +870,26 @@ test('a session whose run failed is under Needs you with its step and the error 
   expect(within(needs).getByText('Run failed at decide · Validation failed for tool "decide":')).toBeInTheDocument();
 });
 
+test('Home pond goes still when a session has failed', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }] };
+  stubViewport(false);
+  location.hash = '#/';
+  render(<App />);
+  await screen.findByText('Run failed at decide · Validation failed for tool "decide":');
+  expect(screen.getByText('What do you need?').closest('.pond')).toHaveClass('still');
+});
+
+test('Home pond keeps swimming when nothing has failed', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
+  stubViewport(false);
+  location.hash = '#/';
+  render(<App />);
+  const pond = (await screen.findByText('What do you need?')).closest('.pond');
+  expect(pond).not.toHaveClass('still');
+  expect(pond?.querySelector('.swimmer')).not.toBeNull();
+});
+
 test('with the index off, Home falls back to the running sessions own approvals, details behind a disclosure', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: { branch: 'main' }, requestedAt: 1 }] };

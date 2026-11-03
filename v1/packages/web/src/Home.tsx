@@ -90,8 +90,8 @@ export function Home({ rows, error, now, reload }: { rows: Row[] | undefined; er
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <Needs rows={rows ?? []} now={now} reload={reload} />
       <Running rows={g.running} now={now} />
-      <div className="feet w-full" aria-hidden="true" />
       {rows && !g.running.length && <a href="#/sessions" className="grid min-h-11 lg:hidden place-items-center self-start text-[13.5px] text-link no-underline">All sessions</a>}
+      <div className="feet w-full" aria-hidden="true" />
     </div>
   );
 }
