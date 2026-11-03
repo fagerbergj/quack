@@ -36,10 +36,7 @@ export function limitPrefix(limits: NonNullable<ExecPolicy['limits']>): string {
 // Read-only system paths a build needs; /app is left out except node_modules, which holds the toolchain the shell runs.
 const SANDBOX_RO = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc', '/opt', '/app/node_modules'];
 
-/**
- * bwrap argv that shows a command only the system paths, `sessionDir`'s workspace and home, and a private /tmp, /dev and /proc.
- * The new PID namespace plus fresh /proc hides the session process (and its environ); other sessions' directories and the image's /app are absent.
- */
+/** bwrap argv showing only system paths, the session's workspace and home, and a private /tmp, /dev and /proc. The fresh PID namespace hides the runtime's environ. */
 export function bwrapArgv(sessionDir: string, cwd: string, extraRo: string[] = []): string[] {
   const ro = [...SANDBOX_RO, ...extraRo].flatMap((p) => ['--ro-bind-try', p, p]);
   const rw = ['workspace', 'home'].flatMap((d) => ['--bind', join(sessionDir, d), join(sessionDir, d)]);
