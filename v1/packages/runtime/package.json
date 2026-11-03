@@ -7,6 +7,7 @@
     "validate": "node src/validate.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-codemode": "1.4.0",
     "@quack/github": "*",
     "@quack/home": "*",
     "@quack/index": "*",
@@ -23,6 +24,7 @@
   "quack": {
     "extensions": [
       "./src/extensions/coding.ts",
+      "./src/extensions/codemode.ts",
       "@quack/github",
       "@quack/home",
       "@quack/research",
