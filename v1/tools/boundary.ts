@@ -6,7 +6,7 @@ export const LAYERS: Record<string, 'core' | 'foundation' | 'feature' | 'leaf'> 
   sdk: 'core', session: 'core', index: 'core', distributor: 'core', runtime: 'core', web: 'core',
   judge: 'foundation', workflows: 'foundation', slots: 'foundation', traces: 'foundation',
   github: 'feature', home: 'feature', sleeper: 'feature', remarkable: 'feature', research: 'feature',
-  schedules: 'leaf', eval: 'leaf',
+  schedules: 'leaf', eval: 'leaf', cli: 'leaf',
 };
 
 /** Known violations to retire, as 'from -> to': issue. Empty today; a stale entry fails the test. */
