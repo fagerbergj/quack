@@ -131,6 +131,13 @@ function PromoteDialog({ agent, onClose, onDone }: { agent: AgentDetail; onClose
   );
 }
 
+export function AgentsRoute({ hash }: { hash: string }) {
+  const name = /^#\/agents\/([^/?]+)$/.exec(hash)?.[1];
+  // A malformed escape in the hash falls back to the list rather than throwing.
+  const decoded = name && (() => { try { return decodeURIComponent(name); } catch { return undefined; } })();
+  return decoded ? <AgentView name={decoded} /> : <AgentList />;
+}
+
 export function AgentView({ name }: { name: string }) {
   const [version, setVersion] = useState<number>();
   const [confirming, setConfirming] = useState(false);

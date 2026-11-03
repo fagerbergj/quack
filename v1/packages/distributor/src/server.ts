@@ -318,11 +318,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     return true;
   }
 
-  const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res));
+  const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res)) || (await agentRoutes(req, res));
 
   const server = createServer(async (req, res) => {
     try {
-      if (await listing(req, res) || await agentRoutes(req, res) || await removal(req, res)) return;
+      if (await listing(req, res) || await removal(req, res)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });

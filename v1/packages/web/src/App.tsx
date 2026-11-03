@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AgentList, AgentView } from './Agents.tsx';
+import { AgentsRoute } from './Agents.tsx';
 import { ArtifactList } from './ArtifactList.tsx';
 import { FOCUS_ASK } from './Home.tsx';
 import { More } from './More.tsx';
@@ -71,7 +71,6 @@ export function App() {
   const nav = session?.key.startsWith('home:') ? 'home' : session ? 'sessions' : navRoute(hash);
   const Page = session ? undefined : NAVS.find((n) => n.route === nav)?.page;
   const title = !session && PLACEHOLDERS[nav];
-  const agent = /^#\/agents\/([^/?]+)$/.exec(hash)?.[1];
   const data = useWorkspaceData(session?.key);
   const desktop = useDesktop();
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
@@ -80,7 +79,7 @@ export function App() {
       {Page ? <Page rows={data.rows} />
         : nav === 'more' ? <More />
         : nav === 'settings' ? <Settings />
-        : nav === 'agents' ? (agent && safeDecode(agent) ? <AgentView name={safeDecode(agent)!} /> : <AgentList />)
+        : nav === 'agents' ? <AgentsRoute hash={hash} />
         : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
         : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={desktop ? undefined : list} />}
     </Shell>
