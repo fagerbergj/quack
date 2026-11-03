@@ -6,7 +6,7 @@ import { parseReview, type Finding, type Review } from './review.ts';
 
 const VERDICT: Record<string, { label: string; tone: string; band: string }> = {
   approve: { label: 'Approved', tone: 'text-success', band: 'bg-success-bg' },
-  request_changes: { label: 'Changes requested', tone: 'text-warning', band: 'bg-warning-bg' },
+  request_changes: { label: 'Changes requested', tone: 'text-danger', band: 'bg-danger-bg' },
   comment: { label: 'Reviewed', tone: 'text-link', band: 'bg-link-bg' },
 };
 const SEVERITY: Record<string, string> = { blocking: 'bg-danger-bg text-danger', suggestion: 'bg-link-bg text-link', question: 'bg-warning-bg text-warning' };

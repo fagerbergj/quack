@@ -22,7 +22,7 @@ function outdated(a: SealedArtifact, now: Parameters<NonNullable<Extension['card
   const head = (now?.meta.at(-1) as PrMeta | undefined)?.headSha;
   return Boolean(now?.running && a.basis && head && head !== a.basis);
 }
-const POSTED: Record<string, Delivered['tone']> = { 'Approved ✓': 'ok', 'Changes requested': 'warn', Commented: 'plain' };
+const POSTED: Record<string, Delivered['tone']> = { 'Approved ✓': 'ok', 'Changes requested': 'bad', Commented: 'plain' };
 const VERDICT_WORDS: Record<string, string> = { approve: 'Approved ✓', request_changes: 'Changes requested', comment: 'Commented' };
 
 // An idle review reads as the newest version that reached GitHub, with its verdict as posted (a limit-released one included), never the judge's result.

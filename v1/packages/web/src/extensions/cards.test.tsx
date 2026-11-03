@@ -31,7 +31,8 @@ test('the review card shows the seal, counts, a posted link, findings with their
   const link = { label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' };
   render(<>{reviewCard(sealed(md('review-changes'), { links: [link], verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } }))}</>);
   const card = screen.getByRole('region', { name: 'Review' });
-  expect(within(card).getByText('Changes requested')).toBeInTheDocument();
+  // Red, not amber, so it can't be mistaken for an approval at a glance.
+  expect(within(card).getByText('Changes requested')).toHaveClass('text-danger');
   expect(card).toHaveTextContent('1 blocking · 1 suggestion');
   expect(within(card).getByRole('link', { name: 'Posted to GitHub ↗' })).toHaveAttribute('href', link.url);
   expect(within(card).getByText('Blocking · defect')).toBeInTheDocument();
