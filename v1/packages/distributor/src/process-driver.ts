@@ -44,7 +44,12 @@ export type HostDriver = {
   pid(key: string): number | undefined;
 };
 
-type Child = { proc: ChildProcess; url: string; stopping: boolean };
+/** A session's running process or container, as its launcher reports it. */
+export type Launched = { url: string; pid?: number; stop(): Promise<void>; onExit(cb: () => void): void };
+/** Starts one session (A11): `dir` is its data directory and `agentPath` its pinned definition. Rejects when it cannot come up. */
+export type Launch = (spec: { key: string; dir: string; agentPath: string | undefined }) => Promise<Launched>;
+
+type Child = { launched: Launched; stopping: boolean };
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
@@ -163,8 +168,8 @@ async function stuckReport(proc: ChildProcess, dir: string): Promise<string> {
 const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
-// Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment.
-export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
+// Shared host-driver logic: the session registry, directories and lifecycle bookkeeping; `launch` is the part that differs per host (A11).
+export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string }, launch: Launch): HostDriver {
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
@@ -243,24 +248,11 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
   }
 
   async function start(key: string, agentPath: string | undefined): Promise<string> {
-    const dir = sessionDir(key);
-    const [cmd, ...args] = opts.command;
-    // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
-    const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
-    const reportDir = await mkdtemp(join(tmpdir(), 'quack-report-'));
-    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
-    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
-    const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-    // Output still reaches this process's streams; the tail only rides along in a startup failure.
-    let tail = '';
-    const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));
-    forwardOutput(proc.stdout!, process.stdout, keep);
-    forwardOutput(proc.stderr!, process.stderr, keep);
-    // The session binds its own port and reports it, so the parent never probes a port another process may own.
-    const child: Child = { proc, url: '', stopping: false };
+    const launched = await launch({ key, dir: sessionDir(key), agentPath });
+    const child: Child = { launched, stopping: false };
     // A crash after startup restarts from the log (NFR-HAR-2), up to a budget so a process-level crash cannot loop;
     // past it the next request restarts the session. Startup crashes are reported to the caller instead.
-    proc.once('exit', () => {
+    launched.onExit(() => {
       if (children.get(key) !== child) return;
       children.delete(key);
       if (child.stopping) return;
@@ -268,28 +260,14 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       crashes.set(key, recent);
       if (recent.length <= CRASH_BUDGET) void ensure(key).catch(() => {});
     });
-    try {
-      child.url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
-    } catch (err) {
-      const silent = (err as NodeJS.ErrnoException).code === 'E_NO_PORT';
-      const detail = silent ? await stuckReport(proc, reportDir) : '';
-      proc.kill('SIGKILL');
-      if (silent) {
-        console.error(`session start failed for ${key}: ${detail}; output: ${tail.trim() || '(none)'}`);
-        throw new Error(`${(err as Error).message}; ${detail}`);
-      }
-      throw err;
-    } finally {
-      void rm(reportDir, { recursive: true, force: true }).catch(() => {});
-    }
     children.set(key, child);
-    return child.url;
+    return launched.url;
   }
 
   async function ensure(key: string, agent?: string): Promise<string> {
     const { path } = await bind(key, agent);
     const live = children.get(key);
-    if (live) return live.url;
+    if (live) return live.launched.url;
     let pending = starting.get(key);
     if (!pending) {
       pending = start(key, path).finally(() => starting.delete(key));
@@ -360,10 +338,55 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     if (!child) return;
     child.stopping = true;
     children.delete(key);
-    const exited = new Promise((r) => child.proc.once('exit', r));
-    child.proc.kill('SIGTERM');
-    await exited;
+    await child.launched.stop();
   }
 
-  return { ensure, agents, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
+  return { ensure, agents, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
+}
+
+/** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */
+export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
+  return sessionHost(opts, processLauncher(opts));
+}
+
+function processLauncher(opts: { command: string[]; inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): Launch {
+  return async ({ key, dir, agentPath }) => {
+    const [cmd, ...args] = opts.command;
+    // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
+    const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
+    const reportDir = await mkdtemp(join(tmpdir(), 'quack-report-'));
+    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
+    const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    // Output still reaches this process's streams; the tail only rides along in a startup failure.
+    let tail = '';
+    const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));
+    forwardOutput(proc.stdout!, process.stdout, keep);
+    forwardOutput(proc.stderr!, process.stderr, keep);
+    try {
+      // The session binds its own port and reports it, so the parent never probes a port another process may own.
+      const url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
+      return {
+        url,
+        pid: proc.pid,
+        onExit: (cb) => (proc.exitCode !== null || proc.signalCode ? cb() : void proc.once('exit', cb)),
+        stop: async () => {
+          const exited = new Promise((r) => proc.once('exit', r));
+          proc.kill('SIGTERM');
+          await exited;
+        },
+      };
+    } catch (err) {
+      const silent = (err as NodeJS.ErrnoException).code === 'E_NO_PORT';
+      const detail = silent ? await stuckReport(proc, reportDir) : '';
+      proc.kill('SIGKILL');
+      if (silent) {
+        console.error(`session start failed for ${key}: ${detail}; output: ${tail.trim() || '(none)'}`);
+        throw new Error(`${(err as Error).message}; ${detail}`);
+      }
+      throw err;
+    } finally {
+      void rm(reportDir, { recursive: true, force: true }).catch(() => {});
+    }
+  };
 }
