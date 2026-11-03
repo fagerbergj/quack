@@ -123,7 +123,7 @@ test('a session with a named data volume mounts only its subpath of it', async (
   assert.equal(HostConfig.Binds, undefined);
 });
 
-test('a provider with an API key is routed through the broker and a keyless one is left alone', async () => {
+test('every provider is routed through the broker, keyed or not, and only keyed ones get the real key upstream', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-prov-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const cfg = join(dir, 'deploy.json');
@@ -135,7 +135,8 @@ test('a provider with an API key is routed through the broker and a keyless one 
   assert.ok(env.some((e) => /^QUACK_HOSTED_API_KEY=[0-9a-f]{64}$/.test(e)));
   const written = JSON.parse(await readFile(join(dataDir, sessionDirName('a'), 'deployment.json'), 'utf8'));
   assert.equal(written.providers.hosted.baseUrl, 'http://quack-v1:8080/svc/PROVIDER_hosted');
-  assert.equal(written.providers.local.baseUrl, 'http://swap:1/v1');
+  assert.equal(written.providers.local.baseUrl, 'http://quack-v1:8080/svc/PROVIDER_local');
+  assert.ok(env.some((e) => /^QUACK_LOCAL_API_KEY=[0-9a-f]{64}$/.test(e)), 'a keyless provider still gets the token, which the session sends as its key');
 });
 
 test('an operator can pass a named secret through', () => {
@@ -239,4 +240,23 @@ test('dockerApi speaks JSON to a TCP host such as a socket proxy', async () => {
   const res = await dockerApi(parseDockerHost(url.replace('http', 'tcp')))('POST', '/containers/create?name=x', { a: 1 });
   assert.deepEqual(res, { status: 201, body: { got: 'POST /containers/create?name=x {"a":1}' } });
   assert.deepEqual(parseDockerHost('unix:///var/run/docker.sock'), { socketPath: '/var/run/docker.sock' });
+});
+
+test('a model response streams through the broker as it is produced', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const upstream = await listen(async (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: one\n\n');
+    await gate;
+    res.end('data: two\n\n');
+  });
+  const broker = credentialBroker();
+  broker.register('PROVIDER_local', upstream, {});
+  const front = await listen((req, res) => void broker.route(req, res));
+  const res = await fetch(`${front}/svc/PROVIDER_local/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${broker.mint('a')}` }, body: '{}' });
+  const reader = res.body!.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /one/, 'the first chunk arrives before the upstream finishes');
+  release();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /two/);
 });
