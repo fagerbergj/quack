@@ -13,7 +13,8 @@ const SEVERITY: Record<string, string> = { blocking: 'bg-danger-bg text-danger',
 const ORDER = ['blocking', 'suggestion', 'question', 'nit'];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const summary = 'flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[13px] text-muted hover:text-ink lg:min-h-8 [&::-webkit-details-marker]:hidden';
+const SUMMARY = 'flex min-h-11 cursor-pointer list-none [&::-webkit-details-marker]:hidden';
+const summary = `${SUMMARY} items-center gap-1.5 text-[13px] text-muted hover:text-ink lg:min-h-8`;
 
 function Chev({ className = '' }: { className?: string }) {
   return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`chev flex-none transition-transform ${className}`}><path d="M9 6l6 6-6 6" /></svg>;
@@ -55,7 +56,7 @@ function FindingRow({ f }: { f: Finding }) {
   if (!f.more) return <div className="flex border-t border-line px-3.5 py-3">{head}</div>;
   return (
     <details className="border-t border-line">
-      <summary className="flex min-h-11 cursor-pointer list-none items-start gap-2 px-3.5 py-3 text-ink hover:bg-soft [&::-webkit-details-marker]:hidden">{head}<Chev className="mt-1.5 text-muted" /></summary>
+      <summary className={`${SUMMARY} items-start gap-2 px-3.5 py-3 text-ink hover:bg-soft`}>{head}<Chev className="mt-1.5 text-muted" /></summary>
       <div className="px-3.5 pb-3 text-[13px] text-ink-2"><Markdown text={f.more} /></div>
     </details>
   );
