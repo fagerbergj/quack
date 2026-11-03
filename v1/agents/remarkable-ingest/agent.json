@@ -1,6 +1,6 @@
 {
   "name": "remarkable-ingest",
-  "version": 1,
+  "version": 2,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -9,7 +9,7 @@
       "workflow": "remarkable.ingest",
       "visionModel": {
         "provider": "local",
-        "modelId": "qwen3-omni-30b"
+        "modelId": "qwen3.8-27b"
       },
       "classifier": {
         "provider": "clef",
