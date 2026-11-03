@@ -10,7 +10,7 @@ import { AgentError, type HostDriver } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
-export const { readBody, send } = serviceHttp();
+export const { readBody, send, json } = serviceHttp();
 function safeDecode(s: string): string | undefined {
   try {
     return decodeURIComponent(s);
@@ -109,7 +109,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables DELETE /sessions/:key for callers bearing `token`; `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables the page's rename, archive and delete routes, and DELETE /sessions/:key for callers bearing `token` when one is set; `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
@@ -255,18 +255,56 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   }
 
   async function deletion(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const match = req.method === 'DELETE' && opts.retire ? /^\/sessions\/([^/?]+)$/.exec(req.url ?? '') : null;
+    const match = req.method === 'DELETE' && opts.retire?.token ? /^\/sessions\/([^/?]+)$/.exec(req.url ?? '') : null;
     if (!match) return false;
     const key = safeDecode(match[1]);
-    if (!authorized(req, opts.retire!.token)) send(res, 401, { error: 'unauthorized' });
+    if (!authorized(req, opts.retire!.token!)) send(res, 401, { error: 'unauthorized' });
     else if (!key || !KEY.test(key)) send(res, 400, { error: 'invalid session key' });
     else await retire(key, res);
     return true;
   }
 
+  const TITLE_MAX = 120;
+
+  // A title is text of bounded length and archived a boolean; the string is an error for the caller.
+  function parsePatch(body: unknown): { title?: string; archived?: boolean } | string {
+    const { title, archived } = (body ?? {}) as Record<string, unknown>;
+    if (title !== undefined && (typeof title !== 'string' || title.length > TITLE_MAX)) return `title must be text of at most ${TITLE_MAX} characters`;
+    if (archived !== undefined && typeof archived !== 'boolean') return 'archived must be true or false';
+    return title === undefined && archived === undefined ? 'nothing to change' : { title, archived };
+  }
+
+  // Archiving hides a session from the lists, so one mid-run or waiting on a person is refused.
+  async function patch(key: string, req: IncomingMessage, res: ServerResponse) {
+    const change = parsePatch(await json(req).catch(() => null));
+    if (typeof change === 'string') return send(res, 400, { error: change });
+    const { title, archived } = change;
+    if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return send(res, 409, { error: "Can't archive a session that is running or waiting on you." });
+    const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
+    if (done.includes(false)) return send(res, 404, { error: 'no such session' });
+    send(res, 200, { key });
+  }
+
+  // The page's routes carry no token: the proxy's identity header (else the tailnet) is the boundary, as for approvals.
+  // A JSON content type keeps a cross-site form from posting here.
+  async function housekeeping(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const match = opts.retire && /^\/sessions\/([^/?]+)(\/delete)?$/.exec(req.url ?? '');
+    if (!match || req.method !== (match[2] ? 'POST' : 'PATCH')) return false;
+    const key = safeDecode(match[1]);
+    if (!key || !KEY.test(key)) send(res, 400, { error: 'invalid session key' });
+    else if (!req.headers['content-type']?.startsWith('application/json')) send(res, 415, { error: 'send JSON' });
+    else if (match[2]) {
+      console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
+      await retire(key, res);
+    } else await patch(key, req, res);
+    return true;
+  }
+
+  const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res));
+
   const server = createServer(async (req, res) => {
     try {
-      if (await listing(req, res) || await deletion(req, res)) return;
+      if (await listing(req, res) || await removal(req, res)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });

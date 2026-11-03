@@ -10,7 +10,7 @@ import { childPort, shellEnv } from '@quack/session';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
-export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; running: boolean; createdAt: string; lastActivity: string };
+export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; archived?: boolean; running: boolean; createdAt: string; lastActivity: string };
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a session that already runs another. */
 export class AgentError extends Error {
@@ -30,6 +30,10 @@ export type HostDriver = {
   stop(key: string): Promise<void>;
   /** Deletes the session's directory (log, workspace, snapshot); false when no such session exists. The caller has checked it is not running. */
   remove(key: string): Promise<boolean>;
+  /** Sets the session's title (the `title` file); undefined restores the default from its first message. False when no such session exists. */
+  setTitle(key: string, title: string | undefined): Promise<boolean>;
+  /** Hides the session from the default list while it stays readable. False when no such session exists. */
+  setArchived(key: string, archived: boolean): Promise<boolean>;
   /** Records when a stopped session next needs a process (its earliest sleep); undefined clears it. */
   setWake(key: string, at: number | undefined): Promise<void>;
   /** Records that the session was doing work at `at`, for runs that add no log messages. */
@@ -44,6 +48,7 @@ type Child = { proc: ChildProcess; url: string; stopping: boolean };
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
+const exists = (path: string) => stat(path).then(() => true, () => false);
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
 const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'null') as { name?: unknown; version?: unknown; status?: unknown; retention?: { idleDays?: unknown } } | null;
 
@@ -307,7 +312,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       const { version } = pinned ?? {};
       const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
       const title = cachedTitle(join(opts.dataDir, d));
-      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
+      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), ...((await exists(join(opts.dataDir, d, 'archived'))) && { archived: true }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
     }));
     return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
   }
@@ -335,6 +340,21 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     return true;
   }
 
+  // A title or flag is a file in the session's directory, like `wake`; setting one never starts a process.
+  async function setTitle(key: string, title: string | undefined) {
+    if (!(await exists(join(sessionDir(key), 'session-key')))) return false;
+    if (title) await writeFile(join(sessionDir(key), 'title'), title);
+    else await rm(join(sessionDir(key), 'title'), { force: true });
+    return true;
+  }
+
+  async function setArchived(key: string, archived: boolean) {
+    if (!(await exists(join(sessionDir(key), 'session-key')))) return false;
+    if (archived) await writeFile(join(sessionDir(key), 'archived'), '');
+    else await rm(join(sessionDir(key), 'archived'), { force: true });
+    return true;
+  }
+
   async function stop(key: string) {
     const child = children.get(key);
     if (!child) return;
@@ -345,5 +365,5 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     await exited;
   }
 
-  return { ensure, agents, sessions, stop, remove, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
+  return { ensure, agents, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
 }

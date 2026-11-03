@@ -4,7 +4,7 @@ import { searchText, sessionTitle } from './kinds.ts';
 
 export type Row = SessionSummary & { approvals: Approval[]; questions: Question[]; failures: Failure[]; artifacts: IndexArtifact[]; multiRepo: boolean };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
-export type Filters = { text: string; agent: string; start: string };
+export type Filters = { text: string; agent: string; start: string; view: '' | 'archived' };
 
 // The display title as one string, e.g. "#1927 Add retries"; the full key stays in the row's tooltip.
 export function titleOf(s: SessionSummary & { multiRepo?: boolean }): string {
@@ -27,7 +27,7 @@ export function startOf(key: string): string {
 export function matches(s: Row, f: Filters): boolean {
   const q = f.text.trim().toLowerCase();
   const hit = !q || [...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
-  return hit && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
+  return hit && Boolean(s.archived) === (f.view === 'archived') && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
 }
 
 const asks = (r: Row) => r.approvals.length + r.questions.length + r.failures.length > 0;

@@ -24,8 +24,8 @@ const sessionVars = { QUACK_INDEX_URL: `http://127.0.0.1:${port}`, QUACK_INDEX_T
 const driver = processDriver({ command: [process.execPath, runtime], dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, startTimeoutMs: 60_000, env: sessionVars, inherit: (agentPath) => sessionEnv(agentPath) });
 // Opt-in: QUACK_APPS registers extension services the page may reach through /apps/<name>/*.
 const apps = appsProxy(parseApps(process.env.QUACK_APPS));
-// Opt-in: with a token set, the retention sweep may delete idle sessions.
-const retire = process.env.QUACK_ADMIN_TOKEN ? { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) } : undefined;
+// The page's rename, archive and delete always work; a token set also lets the retention sweep delete idle sessions.
+const retire = { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) };
 const indexHttp = indexRoutes(store, token);
 const server = createDistributor(driver, { retire, webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await apps(req, res)) || false }).listen(port);
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
