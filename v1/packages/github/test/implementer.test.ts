@@ -145,3 +145,46 @@ test('an approved deliver refuses when the PR branch moved since checkout', asyn
   assert.equal(sh(bare, 'branch', '--list', 'bump'), '');
   await session.close();
 });
+
+// Delivers a pr.md whose "How verified" claims `claim` (plus `extra`) after the session ran the `ran` commands.
+async function claiming(claim: string, ran: string[], extra = '') {
+  const text = PR_MD.replace('Verified: node app.ts.', `How verified: \`${claim}\` passed.${extra}`);
+  const { session, seen } = await implement(({ repo, seen }) => [
+    checkout(),
+    ...ran.map((command) => call('bash', { command })),
+    async () => { await change(repo()); await writeFile(join(repo(), '..', 'artifacts', 'pr.md'), text); return call('deliver'); },
+    record(seen, () => fauxAssistantMessage('stop')),
+  ]);
+  return { session, seen, run: session.submit('Fix acme/widgets#7', 'fx-1', true) };
+}
+
+test('a claimed command the session ran, behind a cd and different quoting, reaches approval', async () => {
+  const { session, run, seen } = await claiming('echo "ok"', ['cd repo && echo ok']);
+  await answer(session, 'approve');
+  assert.equal((await run).status, 'done');
+  assert.doesNotMatch(seen.at(-1)!, /Not delivered/);
+  await session.close();
+});
+
+test('a claimed command the session never ran fails deliver, naming it', async () => {
+  const { session, run, seen } = await claiming('npm test', ['echo hi']);
+  await run;
+  assert.match(seen.at(-1)!, /Not delivered/);
+  assert.match(seen.at(-1)!, /artifacts\/pr\.md says you ran `npm test`, but this session never ran it/);
+  assert.deepEqual(await pendingApprovals(session.root, BACKGROUND_CONTEXT), []);
+  await session.close();
+});
+
+test('a claimed pass whose only run exited non-zero fails deliver', async () => {
+  const { session, run, seen } = await claiming('ls nonexistent-dir', ['ls nonexistent-dir']);
+  await run;
+  assert.match(seen.at(-1)!, /`ls nonexistent-dir` passed, but every run of it exited non-zero/);
+  await session.close();
+});
+
+test('a backticked commit id outside the commits made since checkout fails deliver', async () => {
+  const { session, run, seen } = await claiming('echo ok', ['echo ok'], ' Fixed in `deadbeef1`.');
+  await run;
+  assert.match(seen.at(-1)!, /names commit deadbeef1, which is not among the commits made since checkout/);
+  await session.close();
+});
