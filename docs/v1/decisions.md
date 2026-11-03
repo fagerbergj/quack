@@ -141,6 +141,7 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 
 - **MEM1 Recall.** Approved memories are scoped (global, per agent, per repo or league). A small set is pinned as a stable prompt section for matching sessions; the rest is searchable through a recall tool.
 - **MEM2 Success.** Memory must win a with-and-without benchmark for an agent, or it is turned off for that agent.
+- **MEM3 Open source first** (2026-11-03). v0's memory retires with v0 and is not ported. If memory returns, it adopts a maintained open-source memory system. A homegrown one is built only if it beats that system on MEM2's benchmark, and only if it stores durable, general facts rather than v0's narrow, one-off ones.
 - **J1 Revisions.** Each agent's manifest declares how many revise-and-recheck rounds its checker may run before the deliverable goes out with failures marked (R3). The SLO (D9) still applies.
 - **EV1 Eval data.** Datasets and experiment results live in Langfuse; quack exports sessions to it and runs experiments against it.
 - **EV2 Dataset bar.** Before an agent reaches prod, its benchmark has at least 20 real cases including known-bad ones; repeats and golden labels are added only when a comparison is a close call.
