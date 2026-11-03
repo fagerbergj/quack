@@ -63,7 +63,8 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
       // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
       if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
       if (a.met) r.met! += 1 / r.units;
-      if (a.met === false && a.note) r.notes.push(`${unit.id}: ${a.note}`);
+      // The reason that matters is the one for the failing answer: no for an earned check, yes for a pitfall.
+      if (a.note && a.met === (typeof r.weight === 'number' && r.weight < 0)) r.notes.push(`${unit.id}: ${a.note}`);
     }
   }
   for (const r of results.values()) if (r.undecided) r.met = null;

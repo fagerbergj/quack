@@ -143,3 +143,13 @@ test('an undecided check is unscored, never unmet', () => {
   assert.deepEqual(score({ name: 'x', version: 1, threshold: 0.8, criteria: [] }, [r, ok]), { score: 1, gatesFailed: [], passed: true });
   assert.deepEqual(feedback([r]), []);
 });
+
+test('a pitfall answered yes carries the judge reason into its notes', async () => {
+  clefCalls.length = 0;
+  const baseUrl = await fakeClef(() => 0.95);
+  const content = '## Takeaway\nFix it.\n## Verdict\nrequest_changes\n## Findings\n- blocking: src/x.ts:12 off by one\n';
+  const { versions } = await run(baseUrl, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), yes, yes, yes, fauxAssistantMessage('Done.')]);
+  const preference = versions[0].checks.find((c: any) => c.id === 'preference_only');
+  assert.equal(preference.met, 1);
+  assert.deepEqual(preference.notes, ['f1: it explains the risk']);
+});

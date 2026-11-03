@@ -24,7 +24,7 @@ Posted inline on the diff:
 ## Verified
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
-const PITFALLS = /toolchain_as_defect|contradicted|no_reason_given|preference_only|blocks_without_consequence|wrong_output_below_blocking/;
+const PITFALLS = /toolchain_as_defect|contradicted|no_reason_given|preference_only|blocks_without_consequence|wrong_output_below_blocking|sibling_parts/;
 const clefUnits: string[] = [];
 async function fakeClef() {
   return `${await listen(
@@ -87,7 +87,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@4\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@5\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);

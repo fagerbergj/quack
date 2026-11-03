@@ -40,7 +40,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks (D11, D54). Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 4,
+  version: 5,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -48,7 +48,8 @@ export const reviewerRubric: Rubric = {
       // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
       { id: 'reports_every_defect', label: "A real problem isn't flagged as blocking", weight: 4, scope: 'change', question: 'Is every problem in the diff that goes wrong once this change is merged as it stands (wrong output, a crash, data loss, a security hole) reported as a blocking finding? Problems that only cost time or calls, or only matter if the code changes later, need not be blocking.' },
       { id: 'promises_handled', label: "A promised behavior is missing", weight: 3, scope: 'change', question: 'Is every behaviour the description or linked issues say this change delivers either present in the diff, deferred to a linked follow-up, or reported as a blocking delivery finding? A loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.' },
-      { id: 'sibling_parts', label: "Misses parts its sibling code has", weight: 2, scope: 'change', question: 'Where the diff adds another instance of an existing pattern, does the review report the parts its siblings carry that this one lacks (or are there none missing)?' },
+      // A pitfall: the earned form scored a review 0 for not discussing siblings even when none lacked anything.
+      { id: 'sibling_parts', label: "Misses parts its sibling code has", weight: -2, scope: 'change', question: 'Does the diff add another instance of an existing pattern that lacks a part its siblings carry, which the review does not report? Name the sibling and the missing part; if you cannot, answer no.' },
       { id: 'toolchain_as_defect', label: "Blames code for a tooling failure", weight: -4, scope: 'change', question: 'Does the review report a sandbox, toolchain or network failure as a code defect while the CI checks are green?' },
     ] },
     { id: 'claims_grounded', checks: [
