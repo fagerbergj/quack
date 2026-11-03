@@ -33,7 +33,7 @@ export function artifactFacts(artifacts: { kinds: Record<string, { versions: Sea
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {
   return Object.entries(approvals?.items ?? {}).map(([id, a]): Fact => {
     const v = a.verdict;
-    return { id: `approval:${id}`, kind: 'approval', rev: v ? 2 : 1, at: v?.at ?? a.requestedAt, data: { tool: a.tool, state: v ? 'resolved' : 'pending', decision: v?.decision ?? null, by: v?.by ?? null } };
+    return { id: `approval:${id}`, kind: 'approval', rev: v ? 2 : 1, at: v?.at ?? a.requestedAt, data: { tool: a.tool, state: v ? 'resolved' : 'pending', decision: v?.decision ?? null, by: v?.by ?? null, args: v ? null : a.args } };
   });
 }
 
@@ -56,25 +56,34 @@ function failureFacts(failures: { items: Record<string, FailureRow> } | undefine
   });
 }
 
-function costFact(usage: Readonly<UsageState>, direct: Spend | undefined): Fact[] {
+/** Per-million price of a `provider/modelId` key as the deployment configures it; omitted parts are free. */
+export type PriceOf = (modelKey: string) => { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
+const none: PriceOf = () => undefined;
+
+// Cost is tokens at today's price, not the per-call cost stored when each call ran, so a price set or changed later reaches old calls.
+// Tool and direct spend carry no model key and stay as stored. A lower price does not republish: the index keeps the higher rev.
+function costFact(usage: Readonly<UsageState>, direct: Spend | undefined, priceOf: PriceOf): Fact[] {
   const t: Spend = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, at: 0, ...direct };
-  for (const u of [...Object.values(usage.models), ...Object.values(usage.tools)]) {
-    t.input += u.input; t.output += u.output; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite; t.cost += u.cost?.total ?? 0;
-  }
+  const add = (u: Readonly<UsageState['tools'][string]>, p?: ReturnType<PriceOf>) => {
+    t.input += u.input; t.output += u.output; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite;
+    t.cost += p ? (u.input * (p.input ?? 0) + u.output * (p.output ?? 0) + u.cacheRead * (p.cacheRead ?? 0) + u.cacheWrite * (p.cacheWrite ?? 0)) / 1e6 : u.cost?.total ?? 0;
+  };
+  for (const [key, u] of Object.entries(usage.models)) add(u, priceOf(key));
+  for (const u of Object.values(usage.tools)) add(u);
   // Tokens plus micro-dollars as the revision: both only grow, so it moves only when the spend does, and a free model still publishes its tokens.
   const rev = t.input + t.output + t.cacheRead + t.cacheWrite + Math.round(t.cost * 1e6);
   return rev > 0 ? [{ id: 'cost', kind: 'cost', rev, at: t.at, data: { total: t.cost, input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite } }] : [];
 }
 
 // harness.usage totals every conversation, so decision forks and subagents count. Derived from the log's current documents, so a replay of the log yields the same facts as live publishing.
-export async function collectFacts(harness: Harness, root: Conversation, meta: SessionMeta, now: number, ctx: Context): Promise<Fact[]> {
+export async function collectFacts(harness: Harness, root: Conversation, meta: SessionMeta, now: number, ctx: Context, priceOf: PriceOf = none): Promise<Fact[]> {
   const [artifacts, approvals, questions, failures, outbox] = await Promise.all([
     harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(Questions, root.id, ctx), harness.snapshot(Failures, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
   ]);
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...questionFacts(questions), ...failureFacts(failures), ...costFact(await harness.usage(ctx), outbox?.direct),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...questionFacts(questions), ...failureFacts(failures), ...costFact(await harness.usage(ctx), outbox?.direct, priceOf),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }

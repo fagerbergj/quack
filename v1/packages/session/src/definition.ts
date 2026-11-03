@@ -175,6 +175,12 @@ export function providerEnv(deployment: DeploymentConfig): string[] {
   return Object.entries(deployment.providers).map(([id, p]) => p.apiKeyEnv ?? `QUACK_${id.toUpperCase().replace(/\W/g, '_')}_API_KEY`);
 }
 
+/** The configured price of a `provider/modelId` key, for pricing recorded tokens at today's rates. */
+export const priceOf = (d: DeploymentConfig) => (key: string): Partial<Price> | undefined => {
+  const i = key.indexOf('/');
+  return d.providers[key.slice(0, i)]?.models[key.slice(i + 1)]?.price;
+};
+
 export function buildModels(deployment: DeploymentConfig): MutableModels {
   const models = createModels();
   const priced = (l: ModelLimits): Price => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...l.price });

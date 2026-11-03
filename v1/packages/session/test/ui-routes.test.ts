@@ -92,3 +92,12 @@ test('GET /messages returns the newest person and assistant messages, oldest fir
   assert.deepEqual((await read('?limit=2')).map((m) => m.text), ['second question', 'second answer']);
   await h.stop();
 });
+
+test('GET /export returns the transcript with tool calls and results, and the sealed artifacts', async () => {
+  const h = await serve(defineExtension({ name: 'none' }), fauxAssistantMessage(fauxToolCall('write', { path: 'a.md', content: 'x' }), { stopReason: 'toolUse' }), fauxAssistantMessage('done'));
+  await h.session.submit('write it', 'e-1', true);
+  const body = (await (await fetch(`${h.base}/export`)).json()) as { transcript: Array<{ kind: string }>; artifacts: unknown[] };
+  assert.deepEqual(body.transcript.map((e) => e.kind), ['pi.user', 'pi.assistant', 'pi.tool-result', 'pi.assistant']);
+  assert.deepEqual(body.artifacts, []);
+  await h.stop();
+});
