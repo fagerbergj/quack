@@ -27,6 +27,10 @@ export const contracts: Extension = {
     label: 'contract', noun: () => 'Contract', group: 'Contracts', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
     name: (r) => plain(contractOf(r).name),
     words: () => ({ kind: KIND, w: { run: 'Drafting the contract', pass: 'Spec ready', fail: "Didn't pass its checks", none: 'Starting', sealed: 'Spec ready' } }),
-    delivered: (r) => { const c = contractOf(r); return c.status.startsWith('Approved') ? { line: c.status, tone: 'ok' } : undefined; },
+    delivered: (r) => {
+      const c = contractOf(r);
+      if (c.status === 'Changes requested') return { line: c.status, tone: 'bad' };
+      return c.status.startsWith('Approved') ? { line: c.status, tone: 'ok' } : undefined;
+    },
   },
 };

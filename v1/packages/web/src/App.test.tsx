@@ -550,7 +550,7 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
   ws.frame(view({ run: true }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Abort' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
   expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
   ws.frame(view({}));
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
@@ -560,7 +560,7 @@ test('a failed abort is reported', async () => {
   const ws = await openSession();
   ws.frame(snapshot({ run: {} }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Abort' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('not found');
 });
 
@@ -1741,4 +1741,53 @@ test('a contract session is named by its latest spec in the list, not by the tex
   render(<App />);
   expect(await screen.findByRole('link', { name: /Distributor HTTP API/ })).toHaveAttribute('href', '#/s/contracts%3Ac1');
   expect(screen.queryByText(/contract distributor\.http in/)).toBeNull();
+});
+
+test('the session menu names what it opens: Open review, not Work', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Open review' }));
+  expect(screen.getByRole('dialog', { name: 'Work' })).toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: 'Work' })).toBeNull();
+});
+
+test('the session menu runs from harmless to destructive', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'r', sealedAt: 1, verdict: null }] };
+  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip' })] };
+  const ws = await openSession();
+  ws.frame(snapshot({ run: true }));
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  const items = await screen.findAllByRole('menuitem');
+  const names = items.map((i) => i.textContent);
+  expect(names).toEqual(['Stop', 'Open review', 'Rename', 'Export', 'Archive', 'Delete']);
+});
+
+test('nothing above the nav duplicates Home: no link to #/new on desktop or on the phone Sessions header', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  location.hash = '#/sessions';
+  const { unmount } = render(<App />);
+  expect(document.querySelector('a[href="#/new"]')).toBeNull();
+  unmount();
+  stubViewport(false);
+  render(<App />);
+  expect(document.querySelector('a[href="#/new"]')).toBeNull();
+});
+
+test('a contract session reads its spec name on Home and in its header, and Changes requested on its row', async () => {
+  const spec = { session: 'contracts:c2', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Roster API, version 1', outcome: 'v1' };
+  const changes = { session: 'contracts:c2', kind: 'contract.changes', version: 1, hash: 'c', verdict: null, sealedAt: 2, summary: 'Use cursor paging', outcome: 'v1' };
+  routes['GET /sessions'] = { sessions: [sess('contracts:c2', { title: 'A long working title from the description' })] };
+  routes['GET /index/artifacts'] = { artifacts: [spec, changes] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  const { unmount } = render(<App />);
+  const row = await screen.findByRole('link', { name: /Roster API/ });
+  expect(row).toHaveTextContent('Changes requested');
+  expect(row).not.toHaveTextContent('Spec ready');
+  unmount();
+  location.hash = '#/s/contracts%3Ac2';
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: /Roster API/ })).toBeInTheDocument();
 });

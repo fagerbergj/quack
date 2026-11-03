@@ -5,7 +5,7 @@ import { AttachButton, Pending, useAttachments, type Attachments, type Img } fro
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
-import { Artifacts, useArtifacts } from './Artifacts.tsx';
+import { artifactName, Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
@@ -184,23 +184,43 @@ function Title({ name }: { name: SessionTitle }) {
 
 type Manage = { archived: boolean; changed: () => void };
 
-// Abort, the Work drawer and housekeeping live behind one quiet menu; it is absent when none applies.
-function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void } }) {
+type Entry = { label: string; run?: () => void; href?: string; danger?: boolean };
+
+function MenuEntry({ e, close }: { e: Entry; close: () => void }) {
+  const cls = `flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] no-underline hover:bg-soft lg:min-h-8 ${e.danger ? 'text-danger' : 'text-ink'}`;
+  return e.href
+    ? <a role="menuitem" href={e.href} download onClick={close} className={cls}>{e.label}</a>
+    : <button type="button" role="menuitem" onClick={() => { close(); e.run?.(); }} className={cls}>{e.label}</button>;
+}
+
+type MenuActions = { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void };
+
+// Grouped from harmless to destructive: stop the run, everyday actions, reversible archive, then delete last.
+function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort: () => void, onOpen: (a: SealedArtifact) => void, manage?: MenuActions): Entry[][] {
+  return [
+    running ? [{ label: 'Stop', run: onAbort }] : [],
+    [
+      ...(latest ? [{ label: `Open ${artifactName(latest).toLowerCase()}`, run: () => onOpen(latest) }] : []),
+      ...(manage ? [{ label: 'Rename', run: manage.rename }, { label: 'Export', href: manage.exportHref }] : []),
+    ],
+    manage ? [manage.archived ? { label: 'Unarchive', run: manage.archive } : { label: 'Archive', run: manage.archive }] : [],
+    manage ? [{ label: 'Delete', run: manage.remove, danger: true }] : [],
+  ].filter((g) => g.length);
+}
+
+// Stopping the run, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
+function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions }) {
   const [open, setOpen] = useState(false);
   if (!running && !latest && !manage) return null;
-  const item = 'flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] hover:bg-soft lg:min-h-8';
-  const pick = (fn: () => void) => () => { setOpen(false); fn(); };
+  const close = () => setOpen(false);
   return (
     <div className="relative">
       <button type="button" aria-label="More actions" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-40 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
-          {latest && <button type="button" role="menuitem" onClick={pick(() => onOpen(latest))} className={`${item} text-ink`}>Work</button>}
-          {running && <button type="button" role="menuitem" onClick={pick(onAbort)} className={`${item} text-danger`}>Abort</button>}
-          {manage && <button type="button" role="menuitem" onClick={pick(manage.rename)} className={`${item} text-ink`}>Rename</button>}
-          {manage && <button type="button" role="menuitem" onClick={pick(manage.archive)} className={`${item} text-ink`}>{manage.archived ? 'Unarchive' : 'Archive'}</button>}
-          {manage && <a role="menuitem" href={manage.exportHref} download onClick={() => setOpen(false)} className={`${item} text-ink no-underline`}>Export</a>}
-          {manage && <button type="button" role="menuitem" onClick={pick(manage.remove)} className={`${item} text-danger`}>Delete</button>}
+        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
+          {groupsOf(running, latest, onAbort, onOpen, manage).map((g, i) => (
+            <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={close} />)}</div>
+          ))}
         </div>
       )}
     </div>
