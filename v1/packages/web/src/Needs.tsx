@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { decideApproval, resumeRun } from './api.ts';
+import { Args } from './JsonView.tsx';
 import { QuestionCard } from './Questions.tsx';
 import { age, failedLine, titleOf, type Row } from './sessions.ts';
 
@@ -37,7 +38,8 @@ function ApprovalCard({ row, a, now, done }: { row: Row; a: Row['approvals'][num
       </div>
       <details className="text-[13px] text-ink-2">
         <summary className="flex min-h-11 cursor-pointer items-center text-link">Details</summary>
-        <pre className="m-0 max-h-60 overflow-auto rounded-lg bg-soft p-2.5 font-mono text-[12px] whitespace-pre-wrap [overflow-wrap:anywhere]">{[a.tool, a.args === undefined ? '' : JSON.stringify(a.args, null, 2)].filter(Boolean).join('\n')}</pre>
+        <p className="m-0 font-mono text-[12px] text-ink">{a.tool}</p>
+        {a.args !== undefined && <Args value={a.args} />}
       </details>
       {rejecting && (
         <label className="flex flex-col gap-1 text-[13px] text-ink-2">
