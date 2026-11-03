@@ -290,6 +290,14 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
   assert.equal(await index.text(), '<h1>quack</h1>');
   assert.match((await fetch(`${base}/assets/app.js`)).headers.get('content-type')!, /^text\/javascript/);
   assert.equal((await fetch(`${base}/manifest.webmanifest`)).headers.get('content-type'), 'application/manifest+json');
+  assert.equal(index.headers.get('cache-control'), 'no-cache');
+  assert.equal((await fetch(`${base}/manifest.webmanifest`)).headers.get('cache-control'), 'no-cache');
+  const asset = await fetch(`${base}/assets/app.js`);
+  assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  const etag = index.headers.get('etag')!;
+  assert.ok(etag);
+  assert.equal((await fetch(`${base}/`, { headers: { 'if-none-match': etag } })).status, 304);
+  assert.equal((await fetch(`${base}/`, { headers: { 'if-none-match': '"stale"' } })).status, 200);
   assert.equal((await fetch(`${base}/assets/`)).status, 404);
   assert.equal((await fetch(`${base}/missing.js`)).status, 404);
   // fetch normalizes dot segments, so the traversal goes out as a raw request line.
