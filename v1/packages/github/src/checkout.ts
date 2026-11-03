@@ -79,7 +79,7 @@ async function lastApproval(api: ToolExecutionApi, prior: Awaited<ReturnType<typ
   const kinds = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds;
   const last = (kinds?.['github.review']?.versions ?? []).filter((v: SealedArtifact) => v.links?.length).at(-1);
   const sha = last && prior?.reviewed?.[String(last.version)];
-  return last && sha && last.outcome === 'approve' && last.verdict?.passed === true ? { version: last.version, sha, link: last.links![0].url } : undefined;
+  return last && sha && last.outcome === 'approve' && (last.verdict?.passed === true || last.carriedFrom) ? { version: last.version, sha, link: last.links![0].url } : undefined;
 }
 const priorDoc = (api: ToolExecutionApi, ctx: Context) => api.snapshot(PullRequestDoc, api.conversationId, ctx);
 
@@ -105,21 +105,21 @@ async function carryApproval(api: ToolExecutionApi, dir: string, pr: PullRequest
     const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify({ owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: 'APPROVE', body }), headers: { authorization: `Bearer ${config.serviceToken}` } });
     if (!res.ok) return undefined;
     const url = ((await res.json()) as { url?: string }).url;
-    await recordCarried(api, pr, body, url, ctx);
+    await recordCarried(api, pr, body, url, approved, ctx);
     return `${body}. It is posted${url ? `: ${url}` : ''}. The review is done; do not review this head again.`;
   } catch {
     return undefined;
   }
 }
 
-async function recordCarried(api: ToolExecutionApi, pr: PullRequestRecord, body: string, url: string | undefined, ctx: Context) {
+async function recordCarried(api: ToolExecutionApi, pr: PullRequestRecord, body: string, url: string | undefined, from: Approved, ctx: Context) {
   const content = `## Takeaway\n${body}\n\n## Verdict\napprove\n\n## Findings\n`;
   await api.commit(async (tx) => {
     const kind = (await tx.doc(Artifacts, api.conversationId)).kinds;
     kind['github.review'] ??= { versions: [] };
     const versions = kind['github.review'].versions;
     const version = versions.length + 1;
-    versions.push({ kind: 'github.review', version, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'carried-forward', checks: [], undecided: [] }, outcome: 'approve', summary: 'Approve · carried forward', ...(url ? { links: [{ label: 'Posted', url }] } : {}) });
+    versions.push({ kind: 'github.review', version, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, carriedFrom: { sha: from.sha, ...(from.link ? { url: from.link } : {}) }, outcome: 'approve', summary: 'Approve · carried forward', ...(url ? { links: [{ label: 'Posted', url }] } : {}) });
     const d = await tx.doc(PullRequestDoc, api.conversationId);
     d.reviewed = { ...d.reviewed, [String(version)]: pr.headSha };
     d.posted = [...(d.posted ?? []), version];

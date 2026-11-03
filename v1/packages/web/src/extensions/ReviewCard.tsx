@@ -71,11 +71,17 @@ function List({ label, items }: { label: string; items: string[] }) {
   );
 }
 
+function Carried({ from }: { from: NonNullable<SealedArtifact['carriedFrom']> }) {
+  const text = `Same change as the approved review of ${from.sha.slice(0, 8)}`;
+  return from.url ? <a href={from.url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center">{text}</a> : <span>{text}</span>;
+}
+
 function Footer({ a, md }: { a: SealedArtifact; md: string }) {
   return (
     <div className="border-t border-line px-3.5">
       <div className="flex min-h-11 items-center gap-2 text-[12.5px]">
         <Verdict artifact={a} />
+        {a.carriedFrom && <Carried from={a.carriedFrom} />}
       </div>
       <details className="border-t border-line">
         <summary className={summary}><span>Full review</span><Chev /></summary>

@@ -83,6 +83,8 @@ test('a rebase with the same patch-id carries the approval to the new head witho
   assert.match(result, /do not review this head again/);
   assert.equal(versions.length, 2);
   assert.equal(versions[1].outcome, 'approve');
+  assert.equal(versions[1].verdict, null);
+  assert.deepEqual(versions[1].carriedFrom, { sha: oldHead, url: REVIEW });
   assert.equal(versions[1].links?.[0].url, 'https://github.com/acme/widgets/pull/7#review-9');
 });
 
