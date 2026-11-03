@@ -28,6 +28,9 @@ function useSocket(key: string, agent: string | undefined) {
   const [approvalTick, setTick] = useState(0);
   const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
   const [queued, setQueued] = useState<Queued[]>([]);
+  // One per input in flight: the server answers each with `accepted` or `error`, in order.
+  const acks = useRef<Array<(ok: boolean) => void>>([]);
+  const settle = (ok: boolean) => acks.current.shift()?.(ok);
   useEffect(() => {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -41,6 +44,7 @@ function useSocket(key: string, agent: string | undefined) {
       };
       // Every connect starts with a full snapshot that replaces the view, so a reconnect cannot duplicate lines.
       sock.onclose = () => {
+        acks.current.splice(0).forEach((done) => done(false));
         if (disposed) return;
         setState('reconnecting');
         timer = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 30_000));
@@ -58,7 +62,8 @@ function useSocket(key: string, agent: string | undefined) {
           if (touchesApprovals(frame.events)) setTick((t) => t + 1);
         } else if (frame.type === 'standing') setStanding(frame);
         else if (frame.type === 'queued') setQueued(frame.items);
-        else if (frame.type === 'error') setError(frame.error);
+        else if (frame.type === 'error') (setError(frame.error), settle(false));
+        else if (frame.type === 'accepted') settle(true);
       };
     };
     connect();
@@ -68,14 +73,16 @@ function useSocket(key: string, agent: string | undefined) {
       ws.current?.close();
     };
   }, [key, agent]);
-  const send = (input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []) => {
+  // Resolves true once the server accepts the input, false when it rejects it or the socket drops, so a composer clears only on true.
+  const send = (input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []): Promise<boolean> => {
     if (ws.current?.readyState !== WebSocket.OPEN) {
       setError('Disconnected: reconnecting. Your message was not sent.');
-      return false;
+      return Promise.resolve(false);
     }
     setError('');
+    const done = new Promise<boolean>((resolve) => acks.current.push(resolve));
     ws.current.send(JSON.stringify({ type: 'input', input, images: images.length ? images : undefined, whenBusy }));
-    return true;
+    return done;
   };
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
   const unqueue = (type: 'withdraw' | 'steer', id: string) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }));
@@ -100,10 +107,15 @@ function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void
 
 type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
 
-function Composer({ busy, disabled, send, input, setInput, queued, unqueue, attach }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => boolean; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue; attach: Attachments }) {
-  const submit = (e: SubmitEvent) => {
+function Composer({ busy, disabled, send, input, setInput, queued, unqueue, attach }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue; attach: Attachments }) {
+  const [sending, setSending] = useState(false);
+  const submit = async (e: SubmitEvent) => {
     e.preventDefault();
-    if ((input.trim() || attach.images.length) && send(input, busy ? 'followUp' : undefined, attach.images)) (setInput(''), attach.clear());
+    if (sending || (!input.trim() && !attach.images.length)) return;
+    setSending(true);
+    // A rejected send keeps the text and images so the person can fix it and send again.
+    if (await send(input, busy ? 'followUp' : undefined, attach.images)) (setInput(''), attach.clear());
+    setSending(false);
   };
   const empty = !input.trim() && !attach.images.length;
   return (
@@ -114,7 +126,7 @@ function Composer({ busy, disabled, send, input, setInput, queued, unqueue, atta
         <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <button type="submit" disabled={disabled || empty} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="submit" disabled={disabled || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
       </form>
@@ -240,7 +252,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
   useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
   // Sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
   useEffect(() => {
-    if (state === 'open' && seed && (input !== '' || attach.images.length) && input === initial && attach.images === seed.images && send(input, 'followUp', seed.images)) (setInput(''), attach.clear());
+    if (state === 'open' && seed && (input !== '' || attach.images.length) && input === initial && attach.images === seed.images) void send(input, 'followUp', seed.images).then((ok) => ok && (setInput(''), attach.clear()));
   }, [state]);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));

@@ -211,6 +211,8 @@ test('starting a session opens a home: key for quack and sends the untouched fir
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
   expect(sock.sent).toEqual([]);
   sock.open();
+  await waitFor(() => expect(sock.sent).toHaveLength(1));
+  sock.frame({ type: 'accepted' });
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
   expect(sock.sent).toEqual([{ type: 'input', input: 'review it', whenBusy: 'followUp' }]);
 });
@@ -372,12 +374,15 @@ test('a send while a run works is a server-side follow-up shown as a chip; Send 
   };
   await send('first');
   expect(ws.sent).toEqual([{ type: 'input', input: 'first' }]);
+  ws.frame({ type: 'accepted' });
 
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
   expect(box()).toHaveAttribute('placeholder', 'Message · sends after this step');
   await send('turn left');
   expect(ws.sent[1]).toEqual({ type: 'input', input: 'turn left', whenBusy: 'followUp' });
+  ws.frame({ type: 'accepted' });
+  await waitFor(() => expect(box()).toHaveValue(''));
   expect(screen.queryByText('Queued')).toBeNull();
 
   // The chip is the server's queue: it shows when the session reports it, so a reload shows it too.
@@ -1468,7 +1473,21 @@ describe('images', () => {
     await screen.findByRole('img', { name: 'Attached image 1' });
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(ws.sent).toEqual([{ type: 'input', input: '', images: [{ data: 'QUJD', mimeType: 'image/jpeg' }] }]);
-    expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull();
+    ws.frame({ type: 'accepted' });
+    await waitFor(() => expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull());
+  });
+
+  test('a send the server rejects keeps the text and the thumbnails', async () => {
+    const ws = await openSession();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'what is this?');
+    await userEvent.upload(screen.getByTestId('attach-input'), photo);
+    await screen.findByRole('img', { name: 'Attached image 1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    ws.frame({ type: 'error', error: 'Images need an image model: none' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Images need an image model');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('what is this?');
+    expect(screen.getByRole('img', { name: 'Attached image 1' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
   });
 
   test('a fifth image is refused with a message', async () => {
