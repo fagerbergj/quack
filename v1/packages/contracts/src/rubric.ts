@@ -30,13 +30,14 @@ async function codeRefResolves(api: ToolExecutionApi, ref: string, ctx: Context)
 
 async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchors: Set<string>, ctx: Context): Promise<string[]> {
   const questions = (await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {};
+  const answered = new Set(Object.values(questions).filter((q) => q.answer).map((q) => q.question));
   const out: string[] = [];
   for (const c of spec.choices) {
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer "${c.pointer}" is not in the document`);
     for (const w of c.why) {
       const ref = w.ref.replace(/^rest#|^#/, '');
-      // "request" is the person's first description, which is not a question.
-      const ok = w.source === 'answer' ? ref === 'request' || !!questions[w.ref]?.answer : w.source === 'guide' ? anchors.has(ref) : await codeRefResolves(api, w.ref, ctx);
+      // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
+      const ok = w.source === 'answer' ? ref === 'request' || answered.has(w.ref) : w.source === 'guide' ? anchors.has(ref) : await codeRefResolves(api, w.ref, ctx);
       if (!ok) out.push(`${c.id}: ${w.source} ref "${w.ref}" does not resolve`);
     }
   }

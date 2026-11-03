@@ -89,7 +89,7 @@ test('the question flow asks one at a time and seals version 1 only after the an
   assert.equal(v1.summary, 'Sleeper schedule endpoint, version 1');
   assert.equal((v1.verdict as { passed: boolean }).passed, true);
   const spec = JSON.parse(v1.content) as ContractSpec;
-  assert.deepEqual(spec.choices.flatMap((c) => c.why.filter((w) => w.source === 'answer').map((w) => w.ref)), [q1.id, q2.id]);
+  assert.deepEqual(spec.choices.flatMap((c) => c.why.filter((w) => w.source === 'answer').map((w) => w.ref)), [q1.question, q2.question]);
   await s.close();
 });
 

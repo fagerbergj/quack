@@ -9,7 +9,7 @@ Status: draft, 2026-11-03. Issue #2065. A feature extension (core = harness plus
 - **Kind plugin** (`ContractKind`): `extract` (a contract file to its standard document), `check` (mechanical problems), `diff` (breaking changes between versions), `renderHints`, and `skill` (the authoring guide, also the rubric source). Only `rest` exists.
 - **REST checks**: Spectral with the maintained `oas` ruleset plus the guide's checks as declarative rules (`rest-rules.ts`). Breaking changes come from oasdiff (pinned in `v1/Dockerfile` and CI; `QUACK_OASDIFF` names the binary). Neither is hand-rolled.
 - **Questions**: the `ask_question` tool runs the SDK's `decide` with the `person` resolver. Options are the suggested answer first, the alternatives, then "You decide"; the evidence holds why it matters and each trade-off.
-- **Judge** (`submit_contract`): code gates for a clean document, the version number, resolving links (answer ids in the questions doc, guide anchors, `path:line` in the workspace) and breaking changes with named callers; model checks for intent versus spec, guide agreement and unasked additions.
+- **Judge** (`submit_contract`): code gates for a clean document, the version number, resolving links (answered questions by their text, guide anchors, `path:line` in the workspace) and breaking changes with named callers; model checks for intent versus spec, guide agreement and unasked additions.
 - **Action** `define_contract` starts a `contracts:<id>` session so Home can offer "define a contract for ...".
 
 ## Spec version numbers

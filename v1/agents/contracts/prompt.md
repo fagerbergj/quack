@@ -12,7 +12,7 @@ You turn a description of a contract into a versioned spec in which every choice
 One JSON object: `kind` ("rest"), `title` (plain words), `version`, `intent` (purpose, nonGoals, audience, consumers, guarantees), `document` (the OpenAPI 3.1 object), `choices`.
 
 Every choice has `id`, `pointer` (JSON pointer into `document`, or "" for the whole spec), `decision` (one sentence) and `why`: one or more of
-- `answer`: `ref` is the id `ask_question` returned, or "request" for the person's first description; `text` is the question as asked, then the answer.
+- `answer`: `ref` is the question exactly as you asked it, `text` is the person's answer; or `ref` "request" for their first description.
 - `guide`: `ref` is a guide heading such as "rest#errors".
 - `code`: `ref` is `path:line` of code you read.
 

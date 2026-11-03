@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { breakingChanges, guideAnchors, restKind, validateSpec } from '../src/index.ts';
 import { scheduleDocument, scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
 
-const refs = { versioning: 'q:versioning', time: 'q:time' };
+const refs = { versioning: 'Keep the existing unversioned route, or add /v1?', time: 'How are run times written?' };
 const mutated = (change: (doc: any) => void) => {
   const doc = structuredClone(scheduleDocument());
   change(doc);

@@ -15,7 +15,7 @@ const params = Type.Object({
 /** Asks the person one question: the suggested answer first, then alternatives, "You decide" last. */
 export const askQuestionTool = defineTool({
   name: 'ask_question',
-  description: 'Ask the person one open question about the contract and wait for the answer. Ask one at a time, only what the code and the guide cannot settle. Returns the answer and the question id to cite in a choice\'s why.',
+  description: 'Ask the person one open question about the contract and wait for the answer. Ask one at a time, only what the code and the guide cannot settle. Returns the answer to cite in a choice\'s why.',
   parameters: params,
   replay: 'safe',
   async execute({ id, question, matters, suggested, alternatives }, api, ctx) {
@@ -25,6 +25,6 @@ export const askQuestionTool = defineTool({
     const d = await decide(api, { name: id, question, options, evidence }, [person(ctx.abortSignal)], ctx);
     if (!d) return { output: [{ type: 'text', text: 'Nobody answered.' }], isError: true };
     const answer = d.choice === YOU_DECIDE ? `${YOU_DECIDE}: use the suggested "${suggested}" and say in the why that the person delegated it` : d.choice;
-    return { output: [{ type: 'text', text: `Answer: ${answer}\nCite it in a why with source "answer", ref "${String(api.taskId)}:${id}", and text "${question} ${answer}" (the question as asked, then the answer).` }] };
+    return { output: [{ type: 'text', text: `Answer: ${answer}\nCite it in a why with source "answer", ref "${question}" (the question exactly as asked) and text "${answer}".` }] };
   },
 });

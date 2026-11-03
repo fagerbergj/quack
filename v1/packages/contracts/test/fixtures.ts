@@ -47,11 +47,11 @@ export function scheduleSpecV1(refs: Refs): ContractSpec {
     document: scheduleDocument('iso'),
     choices: [
       { id: 'versioning', pointer: '/info/version', decision: 'Keep the existing unversioned route and evolve it compatibly.', why: [
-        { source: 'answer', text: 'Keep the existing unversioned route, or add /v1? Keep the existing unversioned route', ref: refs.versioning },
+        { source: 'answer', text: 'Keep the existing unversioned route', ref: refs.versioning },
         { source: 'guide', text: 'The house convention beats the AIP-185 default.', ref: 'rest#versioning' },
       ] },
       { id: 'time-format', pointer: '/paths/~1apps~1sleeper~1schedule/get/responses/200', decision: 'Run times are ISO 8601 date-times.', why: [
-        { source: 'answer', text: 'How are run times written? You decide (the suggested ISO 8601 string stands)', ref: refs.time },
+        { source: 'answer', text: 'You decide (the suggested ISO 8601 string stands)', ref: refs.time },
         { source: 'code', text: 'The service already returns the next run as the schedules service gives it.', ref: 'packages/sleeper/src/service.ts:85' },
       ] },
       { id: 'errors', pointer: '/paths/~1apps~1sleeper~1schedule/get/responses/502', decision: 'Failures are problem+json with 501 and 502.', why: [
