@@ -1,4 +1,4 @@
-import { arr, obj, str } from '@earendil-works/pi-schema';
+import { arr, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import { decide, person } from '@quack/sdk';
 
@@ -7,12 +7,12 @@ export const YOU_DECIDE = 'You decide';
 const params = obj({
   id: str({ pattern: '^[a-z][a-z0-9-]*$', description: 'Stable slug for this question, e.g. "pagination"; a rerun finds the same question by it' }),
   question: str({ minLength: 1, description: 'One question in plain words' }),
-  header: str({ minLength: 1, maxLength: 12, description: 'A chip of at most 12 characters naming the topic, e.g. "Errors"' }),
-  title: str({ minLength: 1, maxLength: 100, description: 'The question as a headline, at most about 80 characters; `code` allowed' }),
-  detail: str({ minLength: 1, description: 'One to three sentences of Markdown context for the person' }),
+  header: opt(str({ minLength: 1, maxLength: 12, description: 'A chip of at most 12 characters naming the topic, e.g. "Errors"' })),
+  title: opt(str({ minLength: 1, maxLength: 100, description: 'The question as a headline, at most about 80 characters; `code` allowed' })),
+  detail: opt(str({ minLength: 1, description: 'One to three sentences of Markdown context for the person' })),
   matters: str({ minLength: 1, description: 'One sentence: why the answer matters to this contract' }),
   suggested: str({ minLength: 1, maxLength: 80, description: 'Your recommended answer as a short label, shown first' }),
-  suggestedTradeoff: str({ minLength: 1, description: 'One line: what choosing it costs or gives' }),
+  suggestedTradeoff: opt(str({ minLength: 1, description: 'One line: what choosing it costs or gives' })),
   alternatives: arr(obj({ answer: str({ minLength: 1, maxLength: 80, description: 'Short label' }), tradeoff: str({ minLength: 1 }) }, { open: true }), { description: 'Other reasonable answers, each with its trade-off' }),
 }, { open: true });
 
