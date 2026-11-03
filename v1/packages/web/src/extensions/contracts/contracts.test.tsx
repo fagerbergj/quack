@@ -125,6 +125,8 @@ test('a rejected attempt shares its spec version: the picker and page follow con
   const list = [sealed(raw(1), { version: 1, verdict: ok }), sealed(draft, { version: 2, verdict: { ...ok, passed: false } }), sealed(raw(2), { version: 3, verdict: ok })];
   expect(delivered(list).map((a) => [a.version, versionOf(a)])).toEqual([[3, 2], [1, 1]]);
   expect(delivered(list.slice(0, 2)).map((a) => a.version)).toEqual([2, 1]);
+  const released = [sealed(raw(2), { version: 2, verdict: { ...ok, passed: false, limitReached: true } }), sealed(draft, { version: 3, verdict: { ...ok, passed: false } })];
+  expect(delivered(released).map((a) => a.version)).toEqual([2]);
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
   render(<ArtifactPage sessionKey="home:main" version={2} />);
   expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
