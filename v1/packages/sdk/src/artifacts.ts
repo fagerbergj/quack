@@ -20,7 +20,7 @@ export const SUMMARY_MAX = 80;
 /** A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered. */
 export type ArtifactLink = { label: string; url: string };
 
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string; basis?: string };
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string; basis?: string; /** Set on a version that carried an earlier approval forward instead of being judged: the sha it came from and that review's link. */ carriedFrom?: { sha: string; url?: string } };
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
 
