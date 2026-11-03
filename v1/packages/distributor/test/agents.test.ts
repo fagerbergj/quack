@@ -37,6 +37,14 @@ async function start(dataDir: string, agentsDir: string) {
   return { get, post, url };
 }
 
+test('requests racing the boot copy all see the stored version', async () => {
+  const [dataDir, agentsDir] = [await tmp(), join(await tmp(), 'agents')];
+  await write(join(agentsDir, 'reviewer'), bundle(3), 'new prompt');
+  const { get } = await start(dataDir, agentsDir);
+  const seen = await Promise.all([get('/agents'), ...Array.from({ length: 8 }, () => get('/agents/reviewer'))]);
+  for (const r of seen.slice(1)) assert.deepEqual([r.version, r.prompt, r.rubric], [3, 'new prompt', rubric]);
+});
+
 test('an agent reads at its current version with its rubric, or one a session pinned', async () => {
   const [dataDir, agentsDir] = [await tmp(), join(await tmp(), 'agents')];
   await write(join(agentsDir, 'reviewer'), bundle(3), 'new prompt');
