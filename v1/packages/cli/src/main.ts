@@ -52,13 +52,13 @@ async function sessions(c: Client, _: string[], o: Opts): Promise<Result> {
 const textOf = (content: unknown): string =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : '';
 
-const lastMessages = (snap: Awaited<ReturnType<Client['snapshot']>>, n = 5) =>
-  snap.entries.flatMap((e) => e.model ?? []).filter((m) => m.role !== 'toolResult' && textOf(m.content)).slice(-n).map((m) => ({ role: m.role, text: textOf(m.content) }));
+const lastMessages = (snap: Awaited<ReturnType<Client['view']>>, n = 5) =>
+  snap.items.flatMap((i) => i.entry?.model ?? []).filter((m) => m.role !== 'toolResult' && textOf(m.content)).slice(-n).map((m) => ({ role: m.role, text: textOf(m.content) }));
 
 async function show(c: Client, [key]: string[]): Promise<Result> {
   if (!key) throw usageError('usage: quack show <key>');
   const session = await known(c, key);
-  const [artifacts, questions, approvals, snap] = await Promise.all([c.artifacts(key), c.questions(key), c.approvals(key), c.snapshot(key)]);
+  const [artifacts, questions, approvals, snap] = await Promise.all([c.artifacts(key), c.questions(key), c.approvals(key), c.view(key)]);
   const messages = lastMessages(snap);
   const newest = [...new Map(artifacts.map((a) => [a.kind, a])).values()];
   const lines = [
