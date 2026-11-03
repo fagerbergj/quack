@@ -1590,3 +1590,14 @@ describe('images', () => {
     expect(screen.queryByRole('img', { name: 'Full size' })).toBeNull();
   });
 });
+
+test('a Home approval card says what it will do, from the args the index carries', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Fix the typo' })] };
+  const args = { summary: 'Push 1 commit(s) to fix-typo of o/r#1: docs: fix typo', commits: 'abc1234 docs: fix typo' };
+  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'deliver', args, state: 'pending', decision: null, by: null, at: 1 }] };
+  phoneAt('#/');
+  render(<App />);
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByText(args.summary)).toBeInTheDocument();
+  expect(within(needs).getByText(/abc1234 docs: fix typo/)).toBeInTheDocument();
+});

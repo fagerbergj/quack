@@ -41,7 +41,7 @@ export const archiveSession = (key: string, archived: boolean) => housekeep(base
 export const deleteSession = (key: string) => housekeep(`${base(key)}/delete`, 'POST', {});
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
-export type IndexApproval = { session: string; id: string; tool: string; at: number };
+export type IndexApproval = { session: string; id: string; tool: string; args?: unknown; at: number };
 export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; summary?: string; sealedAt: number };
 
 // The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
