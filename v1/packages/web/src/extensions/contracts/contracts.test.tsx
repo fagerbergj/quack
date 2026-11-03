@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { ArtifactPage } from '../../ArtifactPage.tsx';
+import { delivered, versionOf } from '../../delivered.ts';
 import { SessionKeyContext } from '../../extension.ts';
 import type { SealedArtifact } from '../../api.ts';
 import { contracts } from './index.ts';
@@ -115,5 +116,19 @@ test('the card links to its own page for its session; the page has no such link 
   expect(screen.getByRole('link', { name: '‹ Back to the session' })).toHaveAttribute('href', '#/s/home%3Amain');
   await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '2');
   expect(screen.getByText('1 route · version 2')).toBeInTheDocument();
+  vi.unstubAllGlobals();
+});
+
+test('a rejected attempt shares its spec version: the picker and page follow content.version and show the delivered seal', async () => {
+  const ok = { passed: true, gatesFailed: [], score: 1, checks: [] };
+  const draft = JSON.stringify({ ...JSON.parse(raw(2)), title: 'Rejected draft' });
+  const list = [sealed(raw(1), { version: 1, verdict: ok }), sealed(draft, { version: 2, verdict: { ...ok, passed: false } }), sealed(raw(2), { version: 3, verdict: ok })];
+  expect(delivered(list).map((a) => [a.version, versionOf(a)])).toEqual([[3, 2], [1, 1]]);
+  expect(delivered(list.slice(0, 2)).map((a) => a.version)).toEqual([2, 1]);
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
+  render(<ArtifactPage sessionKey="home:main" version={2} />);
+  expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
+  expect(screen.queryByText('Rejected draft')).toBeNull();
+  expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
   vi.unstubAllGlobals();
 });

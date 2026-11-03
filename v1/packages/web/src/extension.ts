@@ -36,6 +36,8 @@ export type Extension = {
   card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
   /** The artifact drawn as its own page (opened from a link on its card); undefined when it is not this extension's. */
   full?: (a: SealedArtifact) => ReactNode | undefined;
+  /** The version a kind's content calls itself, when sealed versions repeat it (a revised draft); undefined otherwise. */
+  versionOf?: (a: SealedArtifact) => number | undefined;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */

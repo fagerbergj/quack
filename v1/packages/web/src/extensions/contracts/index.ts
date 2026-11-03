@@ -15,4 +15,5 @@ export const contracts: Extension = {
   artifact: (a) => (a.kind === KIND ? { name: 'Spec' } : undefined),
   card: (a) => view(a, false),
   full: (a) => view(a, true),
+  versionOf: (a) => (a.kind === KIND ? parseSpec(a.content)?.version : undefined),
 };

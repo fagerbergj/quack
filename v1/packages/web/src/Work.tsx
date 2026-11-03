@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { SealedArtifact } from './api.ts';
 import { artifactCard, artifactName } from './Artifacts.tsx';
 import { SessionKeyContext } from './extension.ts';
+import { delivered, versionOf } from './delivered.ts';
 import { CheckRow } from './CheckList.tsx';
 import { Markdown } from './Markdown.tsx';
 
@@ -25,8 +26,9 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
 
 // Modal drawer: Esc, the close button or the backdrop closes it, Tab stays inside, focus returns to the opener.
 export function Work({ artifact, versions, session, onClose }: { artifact: SealedArtifact; versions?: SealedArtifact[]; session?: string; onClose: () => void }) {
-  const [picked, setPicked] = useState(artifact.version);
-  const a = versions?.find((v) => v.version === picked) ?? artifact;
+  const [picked, setPicked] = useState(versionOf(artifact));
+  const seen = versions && delivered(versions);
+  const a = seen?.find((v) => versionOf(v) === picked) ?? artifact;
   const card = artifactCard(a);
   const [shown, setShown] = useState<'report' | 'checks'>('report');
   const id = useId();
@@ -69,11 +71,11 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 pb-[calc(1rem+var(--safe-b))] sm:px-5">
-          {versions && versions.length > 1 && (
+          {seen && seen.length > 1 && (
             <label className="mb-3 flex items-center gap-2 text-[13px] text-ink-2">
               Version
               <select value={picked} onChange={(e) => setPicked(Number(e.target.value))} className="h-11 rounded-full border border-line bg-soft px-3 text-[13px] outline-none lg:h-8">
-                {versions.map((v) => <option key={v.version} value={v.version}>{`Version ${v.version}${v.verdict ? (v.verdict.passed ? ' · passed' : " · didn't pass") : ''}`}</option>)}
+                {seen.map((v) => <option key={v.version} value={versionOf(v)}>{`Version ${versionOf(v)}${v.verdict ? (v.verdict.passed ? ' · passed' : " · didn't pass") : ''}`}</option>)}
               </select>
             </label>
           )}

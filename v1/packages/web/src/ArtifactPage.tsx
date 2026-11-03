@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listArtifacts, type SealedArtifact } from './api.ts';
+import { delivered, versionOf } from './delivered.ts';
 import { SessionKeyContext } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 
@@ -10,8 +11,8 @@ export function ArtifactPage({ sessionKey, version }: { sessionKey: string; vers
   const [items, setItems] = useState<SealedArtifact[]>();
   const [error, setError] = useState('');
   const [picked, setPicked] = useState(version);
-  useEffect(() => void listArtifacts(sessionKey).then((all) => setItems(all.filter(fullOf).sort((a, b) => b.version - a.version)), (e: Error) => setError(e.message)), [sessionKey]);
-  const a = items?.find((x) => x.version === picked) ?? items?.[0];
+  useEffect(() => void listArtifacts(sessionKey).then((all) => setItems(delivered(all.filter(fullOf))), (e: Error) => setError(e.message)), [sessionKey]);
+  const a = items?.find((x) => versionOf(x) === picked) ?? items?.[0];
   return (
     <div className="mx-auto w-full max-w-[1280px] px-4 pt-3 pb-10 sm:px-6">
       <div className="mb-3 flex items-center gap-3">
@@ -19,8 +20,8 @@ export function ArtifactPage({ sessionKey, version }: { sessionKey: string; vers
         {items && items.length > 1 && (
           <label className="ml-auto flex items-center gap-2 text-[13px] text-ink-2">
             Version
-            <select value={a?.version} onChange={(e) => setPicked(Number(e.target.value))} className="h-11 rounded-full border border-line bg-soft px-3 text-[13px] outline-none">
-              {items.map((v) => <option key={v.version} value={v.version}>{`Version ${v.version}`}</option>)}
+            <select value={a && versionOf(a)} onChange={(e) => setPicked(Number(e.target.value))} className="h-11 rounded-full border border-line bg-soft px-3 text-[13px] outline-none">
+              {items.map((v) => <option key={v.version} value={versionOf(v)}>{`Version ${versionOf(v)}`}</option>)}
             </select>
           </label>
         )}
