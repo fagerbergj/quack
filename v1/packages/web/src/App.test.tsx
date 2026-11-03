@@ -1600,6 +1600,18 @@ describe('images', () => {
   });
 });
 
+test('on desktop, #/sessions shows the list as the page, not Home, and the sidebar takes it back once a session opens', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Alpha' })] };
+  location.hash = '#/sessions';
+  render(<App />);
+  expect(await screen.findAllByRole('region', { name: 'Sessions' })).toHaveLength(1);
+  expect(screen.getByRole('main')).toContainElement(screen.getByRole('region', { name: 'Sessions' }));
+  expect(screen.queryByRole('region', { name: 'Running' })).toBeNull();
+  location.hash = '#/s/gh%3A1';
+  dispatchEvent(new HashChangeEvent('hashchange'));
+  await waitFor(() => expect(screen.getByRole('main')).not.toContainElement(screen.getByRole('region', { name: 'Sessions' })));
+});
+
 test('a Home approval card says what it will do, from the args the index carries', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Fix the typo' })] };
   const args = { summary: 'Push 1 commit(s) to fix-typo of o/r#1: docs: fix typo', commits: 'abc1234 docs: fix typo' };
