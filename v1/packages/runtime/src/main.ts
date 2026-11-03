@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, imageModelRef, loadAgent, openSession, parseDeployment } from '@quack/session';
+import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, imageModelRef, loadAgent, openSession, parseDeployment, priceOf } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -22,7 +22,7 @@ const { name: agentName, version: agentVersion, extensions } = readJson(env('QUA
 
 const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, imageModel: imageModelRef(deployment) });
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
-  ? await startPublisher(session, { url: process.env.QUACK_INDEX_URL, token: process.env.QUACK_INDEX_TOKEN, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion } })
+  ? await startPublisher(session, { url: process.env.QUACK_INDEX_URL, token: process.env.QUACK_INDEX_TOKEN, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion }, priceOf: priceOf(deployment) })
   : undefined;
 // Everything above read what it needs; dropping it keeps child processes (tool shells) from inheriting service secrets.
 for (const name of [...declaredEnv(extensions, catalog), ...deploymentEnv(deploymentExtensions), 'QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN']) delete process.env[name];
