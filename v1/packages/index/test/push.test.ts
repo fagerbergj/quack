@@ -60,11 +60,52 @@ test('questions, failures and sealed reports each push once; a later failed run 
   await post('/push/subscribe', { subscription: sub(1) });
   const question: Fact = { id: 'question:q1', kind: 'question', rev: 1, at: NOW, data: { question: 'Ship  it?\nnow', state: 'pending' } };
   const failure = (rev: number): Fact => ({ id: 'failure:step', kind: 'failure', rev, at: NOW, data: { step: 'step', error: 'boom', state: 'failed' } });
-  const report: Fact = { id: 'artifact:review:1', kind: 'artifact', rev: 3, at: NOW, data: { kind: 'review' } };
+  const report = artifact('review', 1, { passed: true });
   await push.notify('s', [question, failure(4), report, failure(4), failure(6), { ...report, rev: 5 }]);
   assert.deepEqual(sent.map((s) => [s.payload.title, s.payload.body]), [
-    ['Question waiting: Review #2095', 'Ship it? now'], ['Session failed: Review #2095', ''], ['Report ready: Review #2095', ''], ['Session failed: Review #2095', ''],
+    ['Question waiting: Review #2095', 'Ship it? now'], ['Session failed: Review #2095', ''], ['Session failed: Review #2095', ''], ['Report ready: Review #2095', ''],
   ]);
+});
+
+const artifact = (kind: string, version: number, verdict: { passed: boolean; limitReached?: boolean } | null): Fact => ({ id: `artifact:${kind}:${version}`, kind: 'artifact', rev: verdict ? 3 : 1, at: NOW, data: { kind, version, verdict } });
+const idle: Fact = { id: 'status', kind: 'status', rev: 2, at: NOW, data: { state: 'idle' } };
+
+test('a failed draft is not a report; the passing revision is, once', async () => {
+  const { push, sent, post } = await setup();
+  await post('/push/subscribe', { subscription: sub(1) });
+  await push.notify('s', [artifact('review', 1, null)]);
+  await push.notify('s', [artifact('review', 1, { passed: false }), idle]);
+  await push.notify('s', [artifact('review', 2, null)]);
+  await push.notify('s', [artifact('review', 2, { passed: true }), idle]);
+  await push.notify('s', [artifact('review', 2, { passed: true }), idle]);
+  assert.deepEqual(sent.map((s) => s.payload.title), ['Report ready: Review #2095']);
+});
+
+test('a version released at the revision limit is a report', async () => {
+  const { push, sent, post } = await setup();
+  await post('/push/subscribe', { subscription: sub(1) });
+  await push.notify('s', [artifact('review', 3, { passed: false, limitReached: true })]);
+  assert.equal(sent.length, 1);
+});
+
+test('an unjudged kind pushes its newest version when the run ends, once per version', async () => {
+  const stored = [{ kind: 'cards', version: 1, verdict: false }, { kind: 'cards', version: 2, verdict: false }, { kind: 'judged', version: 1, verdict: true }];
+  const dir = await mkdtemp(join(tmpdir(), 'quack-push-'));
+  dirs.push(dir);
+  const sent: string[] = [];
+  const push = openPush({ dataDir: dir, now: () => NOW, artifacts: async () => stored, send: async (_s, p) => void sent.push(JSON.parse(p).title) });
+  const server = createServer((req, res) => void push.routes(req, res));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/push/subscribe`, { method: 'POST', body: JSON.stringify({ subscription: sub(1) }) });
+  server.close();
+  await push.notify('s', [artifact('cards', 1, null), artifact('cards', 2, null)]);
+  assert.deepEqual(sent, []);
+  await push.notify('s', [idle]);
+  await push.notify('s', [{ ...idle, rev: 4 }]);
+  stored.push({ kind: 'cards', version: 3, verdict: false });
+  await push.notify('s', [{ ...idle, rev: 6 }]);
+  assert.deepEqual(sent, ['Report ready', 'Report ready']);
+  push.close();
 });
 
 test('a 410 or 404 from the push service removes the subscription, other errors keep it', async () => {
