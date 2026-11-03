@@ -1,4 +1,4 @@
-import { providerEnv } from '@quack/session';
+import { providerEnv, type DeploymentConfig } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 
 type Proxy = { broker: CredentialBroker; distributorUrl: string; token: string };
@@ -23,10 +23,15 @@ export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy): Reco
 /** The deployment config with every provider pointed at a broker route, since a session container cannot reach the LAN; the key variable carries the launch token, and the real key (if any) is added server-side. */
 export function proxyProviders(config: { providers?: Record<string, { baseUrl: string; apiKeyEnv?: string }> }, inherited: NodeJS.ProcessEnv, p: Proxy) {
   const env: Record<string, string> = {};
+  const taken = new Set<string>();
   const providers = Object.fromEntries(Object.entries(config.providers ?? {}).map(([id, provider]) => {
-    const keyVar = providerEnv({ providers: { [id]: provider } } as never)[0];
+    const keyVar = providerEnv({ providers: { [id]: provider } } as DeploymentConfig)[0];
     const key = inherited[keyVar];
-    const name = `PROVIDER_${id.replace(/\W/g, '_')}`;
+    // Ids like a.b and a_b sanitize alike; each still needs its own route and key.
+    const base = `PROVIDER_${id.replace(/\W/g, '_')}`;
+    let name = base;
+    for (let i = 2; taken.has(name); i++) name = `${base}_${i}`;
+    taken.add(name);
     p.broker.register(name, provider.baseUrl, key || {});
     env[keyVar] = p.token;
     return [id, { ...provider, baseUrl: route(p, name) }];

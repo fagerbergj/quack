@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { credentialBroker, containerEnv, dockerApi, dockerLauncher, parseDockerHost, parseHostConfig, reapSessions, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
+import { proxyProviders } from '../src/keyed-services.ts';
 
 const cleanups: Array<() => void | Promise<void>> = [];
 after(async () => {
@@ -129,7 +130,11 @@ test('every provider is routed through the broker, keyed or not, and only keyed 
   const cfg = join(dir, 'deploy.json');
   await writeFile(cfg, JSON.stringify({ providers: { hosted: { baseUrl: 'https://llm.example/v1', models: {} }, local: { baseUrl: 'http://swap:1/v1', models: {} } } }));
   const { driver, docker, dataDir } = await setup({ QUACK_CONFIG: cfg, QUACK_HOSTED_API_KEY: 'hosted-secret' });
-  await driver.ensure('a');
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (m: string) => void warnings.push(m);
+  await driver.ensure('a').finally(() => (console.warn = warn));
+  assert.deepEqual(warnings, [], 'a provider key the driver replaced with the token is not reported as dropped');
   const env: string[] = [...docker.containers.values()][0].body.Env;
   assert.ok(!env.join('\n').includes('hosted-secret'));
   assert.ok(env.some((e) => /^QUACK_HOSTED_API_KEY=[0-9a-f]{64}$/.test(e)));
@@ -137,6 +142,11 @@ test('every provider is routed through the broker, keyed or not, and only keyed 
   assert.equal(written.providers.hosted.baseUrl, 'http://quack-v1:8080/svc/PROVIDER_hosted');
   assert.equal(written.providers.local.baseUrl, 'http://quack-v1:8080/svc/PROVIDER_local');
   assert.ok(env.some((e) => /^QUACK_LOCAL_API_KEY=[0-9a-f]{64}$/.test(e)), 'a keyless provider still gets the token, which the session sends as its key');
+});
+
+test('provider ids that sanitize alike get separate routes', () => {
+  const { config } = proxyProviders({ providers: { 'a.b': { baseUrl: 'http://one' }, a_b: { baseUrl: 'http://two' } } }, {}, { broker: credentialBroker(), distributorUrl: 'http://d', token: 't' });
+  assert.deepEqual(Object.values(config.providers).map((p) => p.baseUrl), ['http://d/svc/PROVIDER_a_b', 'http://d/svc/PROVIDER_a_b_2']);
 });
 
 test('an operator can pass a named secret through', () => {

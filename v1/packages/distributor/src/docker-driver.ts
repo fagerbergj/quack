@@ -61,6 +61,14 @@ export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; tok
   return { env, dropped };
 }
 
+async function readConfig(path: string) {
+  try {
+    return JSON.parse(await readFile(path, 'utf8'));
+  } catch (err) {
+    throw new Error(`QUACK_CONFIG ${path} is unreadable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 const mountFor = (data: DockerLauncherOptions['data'], sub: string) => 'volume' in data
   ? { Mounts: [{ Type: 'volume', Source: data.volume, Target: SESSION_MOUNT, VolumeOptions: { Subpath: sub } }] }
   : { Binds: [`${data.hostDir}/${sub}:${SESSION_MOUNT}`] };
@@ -96,15 +104,15 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
     try {
       const inherited = await opts.inherit(agentPath);
       const { env, dropped } = containerEnv(inherited, { key, token, broker: opts.broker, distributorUrl: opts.distributorUrl, passthrough: opts.passthrough ?? [], alwaysProxied: opts.alwaysProxied ?? [], agentPath, dir });
-      const fresh = dropped.filter((n) => !warned.has(n));
-      if (fresh.length) console.warn(`docker driver: not passing ${fresh.join(', ')} to session containers; list a name in QUACK_SESSION_PASSTHROUGH to pass it`);
-      fresh.forEach((n) => warned.add(n));
       // Rewritten on every start, so a session that edits its copy keeps the change only until it next restarts.
       if (inherited.QUACK_CONFIG) {
-        const proxied = proxyProviders(JSON.parse(await readFile(inherited.QUACK_CONFIG, 'utf8')), inherited, { broker: opts.broker, distributorUrl: opts.distributorUrl, token });
+        const proxied = proxyProviders(await readConfig(inherited.QUACK_CONFIG), inherited, { broker: opts.broker, distributorUrl: opts.distributorUrl, token });
         Object.assign(env, proxied.env);
         await writeFile(join(dir, 'deployment.json'), JSON.stringify(proxied.config));
       }
+      const fresh = dropped.filter((n) => !(n in env) && !warned.has(n));
+      if (fresh.length) console.warn(`docker driver: not passing ${fresh.join(', ')} to session containers; list a name in QUACK_SESSION_PASSTHROUGH to pass it`);
+      fresh.forEach((n) => warned.add(n));
       await api('DELETE', `/containers/${name}?force=1`);
       await call('POST', `/containers/create?name=${name}`, {
         Image: opts.image,
