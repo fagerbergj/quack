@@ -1,0 +1,140 @@
+import assert from 'node:assert/strict';
+import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { CodingTools } from '@earendil-works/pi-durable/tools';
+import { answerQuestion, Artifacts, pendingQuestions, Questions } from '@quack/sdk';
+import { buildModels, openSession, parseDeployment } from '@quack/session';
+import { contractsSessionExtensions, type ContractSpec } from '../src/index.ts';
+import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
+
+const repo = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const dirs: string[] = [];
+after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
+
+type Msgs = { messages: Array<{ content: unknown }> };
+type Step = (c: Msgs) => ReturnType<typeof fauxAssistantMessage>;
+const call = (name: string, args: Record<string, unknown>): Step => () => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
+const text = (c: Msgs) => { const m = c.messages.at(-1)!.content; return typeof m === 'string' ? m : (m as Array<{ text?: string }>).map((p) => p.text ?? '').join(''); };
+const refIn = (c: Msgs) => /ref "([^"]+)"/.exec(text(c))?.[1] ?? assert.fail(`no ref in: ${text(c)}`);
+const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: 'artifacts/spec.json', content: JSON.stringify(spec(), null, 2) })(c);
+
+// A stub model: judge questions ("Decision: ...") get "yes", except the pitfall question; everything else follows the script in order.
+async function open(script: Step[], maxRevisions = 2) {
+  const faux = fauxProvider({ models: [{ id: 'stub' }] });
+  const queue = [...script];
+  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: text(c).includes('never asked for') ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
+  const models = buildModels(parseDeployment({ providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const dir = await mkdtemp(join(tmpdir(), 'quack-contracts-'));
+  dirs.push(dir);
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({ maxRevisions })] } });
+  for (const f of ['packages/sleeper/src/service.ts', 'packages/web/src/extensions/sleeper/api.ts']) {
+    await mkdir(dirname(join(session.workspace, f)), { recursive: true });
+    await cp(join(repo, f), join(session.workspace, f));
+  }
+  return session;
+}
+type Open = Awaited<ReturnType<typeof open>>;
+
+// The next open question not in `seen`; touching the doc first lets it be watched before anything has asked.
+async function nextQuestion(s: Open, seen: string[] = []) {
+  await s.root.commit(async (tx) => { await tx.doc(Questions, s.root.id); }, ctx);
+  const watch = (await s.harness.watchDoc(Questions, s.root.id, ctx))!;
+  const fresh = () => pendingQuestions(watch.value).filter((q) => !seen.includes(q.id));
+  return new Promise<ReturnType<typeof fresh>>((resolve) => {
+    if (fresh().length) return resolve(fresh());
+    watch.start(async () => { if (fresh().length) resolve(fresh()); });
+  }).finally(() => watch.stop());
+}
+const versions = async (s: Open) => (await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds['contract.spec']?.versions ?? [];
+
+const refs = { versioning: '', time: '' };
+const askVersioning = call('ask_question', { id: 'versioning', question: 'Keep the existing unversioned route, or add /v1?', matters: 'A new major version is a new contract for every caller.', suggested: 'Keep the existing unversioned route', alternatives: [{ answer: 'Add /v1 (AIP-185)', tradeoff: 'Room for a breaking change later, but the Sleeper page must move.' }] });
+const askTime = call('ask_question', { id: 'time', question: 'How are run times written?', matters: 'Callers parse them.', suggested: 'ISO 8601 string', alternatives: [{ answer: 'Unix seconds', tradeoff: 'Smaller, but unreadable in logs.' }] });
+const v1Script: Step[] = [
+  call('read_guide', {}),
+  askVersioning,
+  (c) => ((refs.versioning = refIn(c)), askTime(c)),
+  (c) => ((refs.time = refIn(c)), call('read', { path: 'packages/sleeper/src/service.ts' })(c)),
+  write(() => scheduleSpecV1(refs)),
+  call('submit_contract', {}),
+  () => fauxAssistantMessage('Spec version 1 is sealed.'),
+];
+
+async function defineV1(s: Open) {
+  const run = s.submit('Define GET /apps/sleeper/schedule for the Sleeper page', 'r-1', true);
+  const q1 = (await nextQuestion(s))[0];
+  assert.deepEqual(q1.options, ['Keep the existing unversioned route', 'Add /v1 (AIP-185)', 'You decide']);
+  assert.match(q1.evidence!, /Suggested: Keep the existing unversioned route[\s\S]*- Add \/v1 \(AIP-185\): Room for a breaking change/);
+  assert.equal((await versions(s)).length, 0, 'nothing is sealed while a question is open');
+  assert.equal(await answerQuestion(s.root, q1.id, q1.options[0], 'jf', ctx), 'ok');
+  const q2 = (await nextQuestion(s, [q1.id]))[0];
+  assert.equal(q2.question, 'How are run times written?');
+  assert.equal(await answerQuestion(s.root, q2.id, 'You decide', 'jf', ctx), 'ok');
+  return { run, q1, q2 };
+}
+
+test('the question flow asks one at a time and seals version 1 only after the answers', async () => {
+  const s = await open(v1Script);
+  const { run, q1, q2 } = await defineV1(s);
+  const done = await run;
+  assert.equal(done.status === 'done' && done.answer, 'Spec version 1 is sealed.');
+  const [v1] = await versions(s);
+  assert.equal(v1.summary, 'Sleeper schedule endpoint, version 1');
+  assert.equal((v1.verdict as { passed: boolean }).passed, true);
+  const spec = JSON.parse(v1.content) as ContractSpec;
+  assert.deepEqual(spec.choices.flatMap((c) => c.why.filter((w) => w.source === 'answer').map((w) => w.ref)), [q1.question, q2.question]);
+  await s.close();
+});
+
+test('a spec citing a question nobody answered, or code that is not there, is sent back', async () => {
+  const bad = (): ContractSpec => { const v = scheduleSpecV1({ versioning: 'nope:1', time: 'nope:2' }); v.choices[2].why[1].ref = 'packages/sleeper/src/missing.ts:3'; return v; };
+  const s = await open([write(bad), call('submit_contract', {}), () => fauxAssistantMessage('stopped')], 0);
+  const done = await s.submit('Define it', 'r-1', true);
+  assert.equal(done.status, 'done');
+  const [v] = await versions(s);
+  const verdict = v.verdict as { passed: boolean; gatesFailed: string[]; checks: Array<{ notes: string[] }> };
+  assert.equal(verdict.passed, false);
+  assert.deepEqual(verdict.gatesFailed, ['justified.links_resolve']);
+  const notes = verdict.checks.flatMap((k) => k.notes).join(' ');
+  assert.match(notes, /answer ref "nope:1" does not resolve/);
+  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" does not resolve/);
+  await s.close();
+});
+
+test('end to end: GET /apps/sleeper/schedule through version 1 and a version 2 that names the Sleeper page', async () => {
+  const bareV2 = (): ContractSpec => scheduleSpecV2(refs, []);
+  const v2 = (): ContractSpec => scheduleSpecV2(refs, [SLEEPER_PAGE]);
+  const s = await open([
+    ...v1Script,
+    // Version 2: the first attempt hides the breaking change, so oasdiff's finding sends it back; the second names the caller.
+    call('read', { path: 'packages/web/src/extensions/sleeper/api.ts' }),
+    write(bareV2),
+    call('submit_contract', {}),
+    write(v2),
+    call('submit_contract', {}),
+    () => fauxAssistantMessage('Spec version 2 is sealed.'),
+  ]);
+  const { run } = await defineV1(s);
+  await run;
+  const second = await s.submit('Make the run time Unix seconds', 'r-2', true);
+  assert.equal(second.status === 'done' && second.answer, 'Spec version 2 is sealed.');
+  const all = await versions(s);
+  assert.equal(all.length, 3, 'v1, the rejected v2 attempt, the delivered v2');
+  const failed = all[1].verdict as { passed: boolean; gatesFailed: string[]; checks: Array<{ notes: string[] }> };
+  assert.deepEqual(failed.gatesFailed, ['compatible.breaking_named']);
+  assert.match(failed.checks.flatMap((k) => k.notes).join(' '), /the `runs\/items\/at` response's property `type\/format` changed from `string\/date-time` to `integer`/);
+  const last = all[2];
+  assert.equal((last.verdict as { passed: boolean }).passed, true);
+  const spec = JSON.parse(last.content) as ContractSpec;
+  assert.equal(spec.version, 2);
+  assert.match(spec.compatibility!.breaking[0].callers[0], /Sleeper page/);
+  assert.equal(spec.changes![0].choice, 'time-format');
+  await s.close();
+});

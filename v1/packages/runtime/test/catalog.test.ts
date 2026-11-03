@@ -21,7 +21,7 @@ const OLD_ENV: Record<string, string[] | ((config: unknown) => string[])> = {
 const agentsDir = new URL('../../../agents/', import.meta.url);
 
 test('the manifest-built catalog has the old entry names and deployment env', () => {
-  assert.deepEqual(Object.keys(catalog).sort(), ['codemode', 'coding', 'github', 'home', 'research', 'workflows']);
+  assert.deepEqual(Object.keys(catalog).sort(), ['codemode', 'coding', 'contracts', 'github', 'home', 'research', 'workflows']);
   assert.deepEqual(deploymentEnv(deploymentExtensions), ['QUACK_SLOTS_URL', 'QUACK_SLOTS_TOKEN', 'LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
 });
 
@@ -39,13 +39,13 @@ for (const dir of readdirSync(agentsDir)) {
 
 test('every loaded manifest\'s actions reach the home extension, and a name two extensions declare is refused', async () => {
   const manifests = await loadManifests();
-  assert.deepEqual(manifests.flatMap((m) => m.actions ?? []).map((a) => a.name).sort(), ['research_question', 'review_pull_request', 'run_job']);
+  assert.deepEqual(manifests.flatMap((m) => m.actions ?? []).map((a) => a.name).sort(), ['define_contract', 'research_question', 'review_pull_request', 'run_job']);
   const dup = { name: 'dup', actions: [{ name: 'run_job', summary: 's', params: {} as never, start: async () => ({ session: 'k', title: 't' }) }] };
   assert.throws(() => buildCatalog([...manifests, dup]), /action run_job is declared by two extensions/);
   const seen: string[][] = [];
   const probe = { name: 'probe', session: (_c: unknown, _w: unknown, actions: Array<{ name: string }>) => (seen.push(actions.map((a) => a.name)), []) };
   await buildCatalog([...manifests, probe]).catalog.probe({});
-  assert.deepEqual(seen[0].sort(), ['research_question', 'review_pull_request', 'run_job']);
+  assert.deepEqual(seen[0].sort(), ['define_contract', 'research_question', 'review_pull_request', 'run_job']);
 });
 
 test('the workflows entry refuses a vision model not declared with images: true', () => {

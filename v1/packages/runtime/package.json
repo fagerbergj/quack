@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-codemode": "1.4.0",
+    "@quack/contracts": "*",
     "@quack/github": "*",
     "@quack/home": "*",
     "@quack/index": "*",
@@ -25,6 +26,7 @@
     "extensions": [
       "./src/extensions/coding.ts",
       "./src/extensions/codemode.ts",
+      "@quack/contracts",
       "@quack/github",
       "@quack/home",
       "@quack/research",
