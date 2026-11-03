@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
-import { noticeFor } from '../src/notice.ts';
+import { fixRefused, noticeFor } from '../src/notice.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -66,6 +66,7 @@ const invocations: Array<{ path: string; body: any }> = [];
 const watchers: string[] = [];
 const watcherWaiters: Array<() => void> = [];
 const holds: Record<string, Promise<void>> = {};
+let busy = false;
 const outcomes: Record<string, unknown> = {};
 const distributor = await listen(
   createServer(async (req, res) => {
@@ -79,6 +80,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
+    if (busy) return res.writeHead(409).end(JSON.stringify({ error: 'session is mid-run as agent reviewer; implementer can start once it finishes' }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
@@ -138,6 +140,29 @@ test('/review starts a review only from a trusted commenter', async () => {
   assert.equal(await deliver('issue_comment', comment('MEMBER'), { id: 'd-8' }), 202);
   assert.equal(invocations.length, 1);
   assert.match(invocations[0].body.input, /\/review by someone/);
+});
+
+test('/fix runs the implementer in the PR session only where one is configured; a deployment without it ignores /fix', async () => {
+  invocations.length = 0;
+  const fix = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/fix the cache test\nand the lint error', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
+  assert.equal(await deliver('issue_comment', fix, { id: 'd-fix0' }), 200);
+  const withFix = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' }));
+  const body = JSON.stringify(fix);
+  const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
+  const status = await fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix1' } }).then((r) => r.status);
+  assert.equal(status, 202);
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
+  assert.match(invocations[0].body.input, /Instruction: the cache test\nand the lint error/);
+
+  // A refused /fix is answered on the PR with the distributor's reason, not left silent.
+  busy = true;
+  commented.length = 0;
+  const refused = fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix2' } });
+  assert.equal((await refused).status, 200);
+  busy = false;
+  assert.equal(invocations.length, 1);
+  assert.deepEqual(commented, [fixRefused('session is mid-run as agent reviewer; implementer can start once it finishes')]);
 });
 
 test('git credentials are minted per repository and cached until near expiry', async () => {

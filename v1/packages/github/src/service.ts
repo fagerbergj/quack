@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { invocationRequest, serviceHttp, submitToSession } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
-import { noticeFor, settled } from './notice.ts';
+import { fixRefused, noticeFor, settled } from './notice.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
@@ -12,6 +12,8 @@ export type ServiceConfig = {
   label: string;
   /** The agent that backs unattended triggers; it must be promoted (DEP-6). */
   agent: string;
+  /** The agent that backs `/fix`; without it `/fix` is ignored, so a deployment opts in. */
+  implementerAgent?: string;
 };
 
 const BACKOFF_CAP_MS = 30_000;
@@ -65,14 +67,23 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
   }
 }
 
+// A /fix the distributor refused is answered on the PR with its reason, never dropped.
+async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response): Promise<boolean> {
+  if (upstream.status !== 409 || t.role !== 'implementer') return false;
+  const { error = 'the distributor refused the run' } = (await upstream.json().catch(() => ({}))) as { error?: string };
+  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: fixRefused(error) });
+  return true;
+}
+
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
   const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label, await app.slug());
-  if (!trigger) return send(res, 200, { ignored: true });
+  const agent = trigger?.role === 'implementer' ? config.implementerAgent : config.agent;
+  if (!trigger || !agent) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
-  const session = { key: trigger.sessionKey, agent: config.agent };
+  const session = { key: trigger.sessionKey, agent };
   if (trigger.followUp) {
     const queued = await submitToSession(config.distributorUrl, { ...session, input: trigger.input, requestId, whenBusy: 'followUp' });
     return send(res, queued.ok ? 202 : 502, { session: trigger.sessionKey, status: queued.status });
@@ -81,7 +92,9 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
   const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload });
-  if (upstream.ok && !state.watched.has(requestId)) {
+  if (await noticeRefusedFix(app, trigger, upstream)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
+  // The unreviewed-run note is about reviews; a fix run ends in its own approval.
+  if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
     state.watched.add(requestId);
     void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before);
   }
@@ -165,7 +178,7 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
   return {
     owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
     state: pr.merged ? 'merged' : pr.state === 'closed' ? 'closed' : 'open',
-    headSha: pr.head.sha, headRef: pr.head.ref, baseRef: pr.base.ref,
+    headSha: pr.head.sha, headRef: pr.head.ref, baseRef: pr.base.ref, headRepo: pr.head.repo?.full_name ?? '',
     checks: (checks?.check_runs ?? []).map((c: any) => ({ name: c.name, status: c.status, conclusion: c.conclusion })),
     linkedIssues: issues.filter(Boolean).map((i: any) => ({ number: i.number, title: i.title, body: i.body ?? '' })),
   };

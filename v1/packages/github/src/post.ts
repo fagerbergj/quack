@@ -7,6 +7,7 @@ import { postable } from './inline.ts';
 import { replyTool } from './reply.ts';
 import { parseReview, reviewEvidence, reviewKind } from './review.ts';
 import { reviewerRubric } from './rubric.ts';
+import { checkoutTaskTool, deliverTool, prBodyKind } from './task.ts';
 
 const EVENT: Record<string, string> = { approve: 'APPROVE', comment: 'COMMENT', request_changes: 'REQUEST_CHANGES' };
 
@@ -44,10 +45,12 @@ async function refuseAfterSkip(api: ToolExecutionApi, ctx: Context) {
   return skipped && `Nothing to submit: ${skipped}. This run is over.`;
 }
 
-export type GithubSessionConfig = SessionConfig & { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
+export type GithubSessionConfig = SessionConfig & { /** Which job this agent does; reviewer unless set. */ role?: 'reviewer' | 'implementer'; maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
 
 /** The GitHub extension's session half: checkout, the review artifact, its judge, and the gated post. */
 export function githubSessionExtensions(config: GithubSessionConfig): Extension[] {
+  // No judge rubric for the implementer yet (the audit wants a labelled set first): a person's approval gates the push.
+  if (config.role === 'implementer') return [defineExtension({ name: 'github', tools: [checkoutTaskTool(config), deliverTool(config)] }), artifactsExtension([prBodyKind])];
   return [
     defineExtension({ name: 'github', tools: [checkoutTool(config), replyTool(config)] }),
     artifactsExtension([reviewKind]),

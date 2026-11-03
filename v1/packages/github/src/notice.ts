@@ -25,3 +25,6 @@ export function noticeFor(outcome: RunOutcome, delivered: boolean): string | und
   if (outcome.status === 'done') return `The review ended without a review being posted. ${RETRY}`;
   return undefined;
 }
+
+/** Said on the PR when the distributor refuses a `/fix`, with the distributor's own reason. */
+export const fixRefused = (reason: string) => `Quack could not start \`/fix\` on this pull request: ${reason}.`;

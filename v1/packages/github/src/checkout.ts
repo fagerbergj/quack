@@ -15,6 +15,8 @@ export type PullRequestRecord = {
   headSha: string; headRef: string; baseRef: string;
   /** Pins the base, as a replay does: only it and the head are fetched, so later history, merges and tags stay out of the clone. */
   baseSha?: string;
+  /** owner/name of the head branch's repository; a fork's head cannot be pushed to by the App. Absent in older records. */
+  headRepo?: string;
   checks: Array<{ name: string; status: string; conclusion: string | null }>;
   linkedIssues: Array<{ number: number; title: string; body: string }>;
 };
@@ -36,7 +38,9 @@ async function run(api: ToolExecutionApi, label: string, argv: string[], config:
   return output;
 }
 
-const git = (api: ToolExecutionApi, args: string[], config: SessionConfig, remote: string, ctx: Context) => run(api, args[0], ['git', '-c', 'credential.helper=', ...args], config, remote, ctx);
+export const git = (api: ToolExecutionApi, args: string[], config: SessionConfig, remote: string, ctx: Context) => run(api, args[0], ['git', '-c', 'credential.helper=', ...args], config, remote, ctx);
+
+export const remoteFor = (config: SessionConfig, owner: string, repo: string) => `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
 
 export async function fetchRecord(config: SessionConfig, owner: string, repo: string, number: number): Promise<PullRequestRecord> {
   const res = await fetch(`${config.serviceUrl}/pulls/${owner}/${repo}/${number}`, { headers: { authorization: `Bearer ${config.serviceToken}` } });
@@ -56,17 +60,18 @@ async function atHead(api: ToolExecutionApi, dir: string, sha: string, config: S
   return (await git(api, ['-C', dir, 'rev-parse', 'HEAD'], config, remote, ctx).catch(() => '')).trim() === sha;
 }
 
-async function syncTree(api: ToolExecutionApi, dir: string, pr: PullRequestRecord, config: SessionConfig, remote: string, ctx: Context) {
+// With `branch`, the head is checked out on that branch so commits extend it; otherwise detached.
+export async function syncTree(api: ToolExecutionApi, dir: string, pr: PullRequestRecord, config: SessionConfig, remote: string, ctx: Context, branch?: string) {
   const cloned = (await api.env!.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
   if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
   if (!cloned && pr.baseSha) await git(api, ['-C', dir, 'remote', 'add', 'origin', remote], config, remote, ctx);
   if (!cloned && !pr.baseSha) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
   const refs = pr.baseSha ? ['--no-tags', 'origin', `+${pr.baseSha}:refs/remotes/origin/${pr.baseRef}`, pr.headSha] : ['origin', pr.baseRef, `pull/${pr.number}/head`];
   await git(api, ['-C', dir, 'fetch', '--filter=blob:none', ...refs], config, remote, ctx);
-  await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
+  await git(api, ['-C', dir, 'checkout', ...(branch ? ['-B', branch] : ['--detach']), pr.headSha], config, remote, ctx);
 }
 
-async function conventions(api: ToolExecutionApi, dir: string, ctx: Context): Promise<string> {
+export async function conventions(api: ToolExecutionApi, dir: string, ctx: Context): Promise<string> {
   for (const name of CONVENTIONS) {
     const read = await api.env!.readTextFile(`${dir}/${name}`, ctx);
     if (read.ok) return `${name}:\n${read.value.slice(0, 12_000)}`;
@@ -131,6 +136,13 @@ async function recordCarried(api: ToolExecutionApi, pr: PullRequestRecord, body:
   }, ctx);
 }
 
+/** What both roles read of a pull request besides the code: description, CI result and linked issues. */
+export const prFacts = (pr: PullRequestRecord) => [
+  `Description:\n${pr.body || '(none)'}`,
+  `CI checks: ${pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', ') || 'none reported'}`,
+  ...pr.linkedIssues.map((i) => `Linked issue #${i.number}: ${i.title}\n${i.body}`),
+];
+
 // Checks out the pull request's head with its base fetched for diffing, and records the PR for review and judging.
 export function checkoutTool(config: SessionConfig) {
   const dir = config.repoDir ?? 'repo';
@@ -151,7 +163,7 @@ export function checkoutTool(config: SessionConfig) {
         return { output: [{ type: 'text', text: skip }] };
       }
       if (prior?.skipped) await api.commit(async (tx) => { delete (await tx.doc(PullRequestDoc, api.conversationId)).skipped; }, ctx);
-      const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
+      const remote = remoteFor(config, owner, repo);
       const stale = staleNote(args.head, pr.headSha);
       // The same head with its tree still there needs no clone or fetch.
       const reuse = prior?.checkout?.head === pr.headSha && seen(prior.pr) === seen(pr) && (await atHead(api, dir, pr.headSha, config, remote, ctx));
@@ -168,9 +180,7 @@ export function checkoutTool(config: SessionConfig) {
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
-        `Description:\n${pr.body || '(none)'}`,
-        `CI checks: ${pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', ') || 'none reported'}`,
-        ...pr.linkedIssues.map((i) => `Linked issue #${i.number}: ${i.title}\n${i.body}`),
+        ...prFacts(pr),
         `Changed files:\n${stat}`,
         await conventions(api, dir, ctx),
       ].filter(Boolean).join('\n\n');

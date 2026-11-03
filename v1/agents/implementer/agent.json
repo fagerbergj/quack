@@ -1,0 +1,16 @@
+{
+  "name": "implementer",
+  "version": 1,
+  "status": "promoted",
+  "model": "local/qwen3.8-27b",
+  "prompt": "prompt.md",
+  "extensions": {
+    "coding": {},
+    "github": {
+      "role": "implementer"
+    }
+  },
+  "retention": {
+    "idleDays": 14
+  }
+}

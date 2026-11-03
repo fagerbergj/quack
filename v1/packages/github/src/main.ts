@@ -11,6 +11,8 @@ function env(name: string, fallback?: string): string {
 }
 
 await assertPromoted(env('QUACK_DISTRIBUTOR_URL'), env('QUACK_GH_AGENT', 'reviewer'));
+const implementerAgent = process.env.QUACK_GH_IMPLEMENTER_AGENT;
+if (implementerAgent) await assertPromoted(env('QUACK_DISTRIBUTOR_URL'), implementerAgent);
 const app = githubApp({ appId: env('QUACK_GH_APP_ID'), privateKey: readFileSync(env('QUACK_GH_PRIVATE_KEY_FILE'), 'utf8') });
 const service = createGithubService(app, {
   webhookSecret: env('QUACK_GH_WEBHOOK_SECRET'),
@@ -18,6 +20,7 @@ const service = createGithubService(app, {
   distributorUrl: env('QUACK_DISTRIBUTOR_URL'),
   label: env('QUACK_GH_LABEL', 'quack:review'),
   agent: env('QUACK_GH_AGENT', 'reviewer'),
+  implementerAgent,
 });
 service.listen(Number(env('PORT', '8090')));
 const stopRedelivery = startRedelivery(app, join(process.env.QUACK_DATA_DIR ?? '.', 'github-redeliver.json'));
