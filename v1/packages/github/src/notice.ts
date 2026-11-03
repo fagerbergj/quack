@@ -2,7 +2,7 @@ import { request } from 'node:http';
 
 export type RunOutcome = { status?: string; reason?: string; detail?: unknown };
 
-// node:http, not fetch: undici gives up on headrs aftr 300 s, and a wait:true invocation sends none until its run settles.
+// node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
 export function settled(url: string, body: unknown): Promise<RunOutcome> {
   return new Promise((resolve, reject) => {
     const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
