@@ -51,6 +51,16 @@ async function atHead(api: ToolExecutionApi, dir: string, sha: string, config: S
   return (await git(api, ['-C', dir, 'rev-parse', 'HEAD'], config, remote, ctx).catch(() => '')).trim() === sha;
 }
 
+async function syncTree(api: ToolExecutionApi, dir: string, pr: PullRequestRecord, config: SessionConfig, remote: string, ctx: Context) {
+  const cloned = (await api.env!.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
+  if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
+  if (!cloned && pr.baseSha) await git(api, ['-C', dir, 'remote', 'add', 'origin', remote], config, remote, ctx);
+  if (!cloned && !pr.baseSha) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
+  const refs = pr.baseSha ? ['--no-tags', 'origin', `+${pr.baseSha}:refs/remotes/origin/${pr.baseRef}`, pr.headSha] : ['origin', pr.baseRef, `pull/${pr.number}/head`];
+  await git(api, ['-C', dir, 'fetch', '--filter=blob:none', ...refs], config, remote, ctx);
+  await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
+}
+
 async function conventions(api: ToolExecutionApi, dir: string, ctx: Context): Promise<string> {
   for (const name of CONVENTIONS) {
     const read = await api.env!.readTextFile(`${dir}/${name}`, ctx);
@@ -80,13 +90,7 @@ export function checkoutTool(config: SessionConfig) {
       // The same head with its tree still there needs no clone, fetch or language-server pass.
       const reuse = prior?.checkout?.head === pr.headSha && prior.pr?.headSha === pr.headSha && (await atHead(api, dir, pr.headSha, config, remote, ctx));
       if (reuse) return { output: [{ type: 'text', text: [stale, prior!.checkout!.text].filter(Boolean).join('\n\n') }] };
-      const cloned = (await api.env.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
-      if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
-      if (!cloned && pr.baseSha) await git(api, ['-C', dir, 'remote', 'add', 'origin', remote], config, remote, ctx);
-      if (!cloned && !pr.baseSha) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
-      const refs = pr.baseSha ? ['--no-tags', 'origin', `+${pr.baseSha}:refs/remotes/origin/${pr.baseRef}`, pr.headSha] : ['origin', pr.baseRef, `pull/${pr.number}/head`];
-      await git(api, ['-C', dir, 'fetch', '--filter=blob:none', ...refs], config, remote, ctx);
-      await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
+      await syncTree(api, dir, pr, config, remote, ctx);
       await api.commit(async (tx) => {
         const d = await tx.doc(PullRequestDoc, api.conversationId);
         d.pr = JSON.parse(JSON.stringify(pr));
