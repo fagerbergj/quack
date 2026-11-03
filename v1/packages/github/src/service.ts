@@ -89,6 +89,11 @@ function recordState(states: States, event: string | undefined, p: Record<string
   return true;
 }
 
+async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trigger, session: { key: string; agent: string }, requestId: string) {
+  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' });
+  send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
+}
+
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
@@ -101,10 +106,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const session = { key: trigger.sessionKey, agent };
-  if (trigger.followUp) {
-    const queued = await submitToSession(config.distributorUrl, { ...session, input: trigger.input, requestId, whenBusy: 'followUp' });
-    return send(res, queued.ok ? 202 : 502, { session: trigger.sessionKey, status: queued.status });
-  }
+  if (trigger.followUp) return queueFollowUp(res, config, trigger, session, requestId);
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
