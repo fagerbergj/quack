@@ -47,6 +47,12 @@ test('a 503 names the cause', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Schedules is unavailable: db down');
 });
 
+test('an unregistered app says schedules is not connected', async () => {
+  stub(() => new Response('{"error":"no such app"}', { status: 404 }));
+  render(<Schedules rows={undefined} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Schedules is not connected.');
+});
+
 test('a network failure names the cause', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
   render(<Schedules rows={undefined} />);

@@ -7,8 +7,9 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 
 // Plain words for the common cron shapes (daily, weekly); anything else shows the expression itself.
 function cadence(s: ScheduleItem): string {
+  // Set times are absolute instants; the zone only shifts cron, so it isn't shown for them.
+  if (s.times) return s.times.length === 1 ? 'Once' : `${s.times.length} set times`;
   const zone = s.tz ?? 'UTC';
-  if (s.times) return `${s.times.length === 1 ? 'Once' : `${s.times.length} set times`} (${zone})`;
   const [m = '', h = '', dom, mon, dow = ''] = (s.cron ?? '').split(/\s+/);
   if (/^\d+$/.test(m) && /^\d+$/.test(h) && dom === '*' && mon === '*') {
     const clock = `${h}:${m.padStart(2, '0')} ${zone}`;
