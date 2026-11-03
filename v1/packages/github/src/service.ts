@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { invocationRequest, serviceHttp, submitToSession } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
-import { noticeFor, settled } from './notice.ts';
+import { FIX_BUSY, noticeFor, settled } from './notice.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
@@ -84,6 +84,10 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
   const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload });
+  if (upstream.status === 409 && trigger.role === 'implementer') {
+    await app.asInstallation(trigger.repo.owner, trigger.repo.name, 'POST', `/repos/${trigger.repo.owner}/${trigger.repo.name}/issues/${trigger.number}/comments`, { body: FIX_BUSY });
+    return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
+  }
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
   if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
     state.watched.add(requestId);

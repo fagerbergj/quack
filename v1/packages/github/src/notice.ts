@@ -25,3 +25,6 @@ export function noticeFor(outcome: RunOutcome, delivered: boolean): string | und
   if (outcome.status === 'done') return `The review ended without a review being posted. ${RETRY}`;
   return undefined;
 }
+
+/** Said on the PR when the distributor refuses a `/fix` because the session is mid-run as another agent. */
+export const FIX_BUSY = 'Quack is in the middle of a run on this pull request, so `/fix` was not started. Comment `/fix` again when it finishes.';
