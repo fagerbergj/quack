@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { CORE, HOME, PAGES, useBar, type Item } from './bottomBar.ts';
 import { EXTENSIONS } from './extensions/index.ts';
+import { shortCommit, useVersion } from './useVersion.ts';
 
 export type Route = string;
 
@@ -61,6 +62,12 @@ function Duck({ size, className = '' }: { size: number; className?: string }) {
   );
 }
 
+// Links to Settings, where the full version and build time live.
+export function VersionLink({ className }: { className: string }) {
+  const v = useVersion();
+  return v?.commit ? <a href="#/settings" className={className}>{shortCommit(v.commit)}</a> : null;
+}
+
 export const THEME_KEY = 'quack:theme';
 
 export function storedTheme() {
@@ -114,6 +121,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           </details>
         </nav>
         <div className="flex min-h-0 flex-1 flex-col border-t border-line">{sidebar}</div>
+        <VersionLink className="px-5 py-2 font-mono text-[11px] text-muted no-underline hover:text-ink" />
       </aside>
       <div className="fixed inset-x-0 top-0 bottom-[calc(48px+var(--safe-b))] flex flex-col lg:contents">
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>

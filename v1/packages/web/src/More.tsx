@@ -1,6 +1,6 @@
 import { EXTENSIONS } from './extensions/index.ts';
 import { CORE, useBar } from './bottomBar.ts';
-import { Icon, MORE } from './Shell.tsx';
+import { Icon, MORE, VersionLink } from './Shell.tsx';
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
 
@@ -30,6 +30,7 @@ export function More() {
           );
         })}
       </div>
+      <VersionLink className="mt-4 block px-1 font-mono text-[11px] text-muted no-underline lg:hidden" />
     </div>
   );
 }

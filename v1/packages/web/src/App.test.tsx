@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
+import { forgetVersion } from './api.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
@@ -60,6 +61,7 @@ beforeEach(() => {
   FakeSocket.all = [];
   routes = { 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
   fetchMock.mockClear();
+  forgetVersion();
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
@@ -664,6 +666,50 @@ test('the Settings page picks the theme: Dark persists, System clears it', async
   await userEvent.click(screen.getByRole('radio', { name: 'System' }));
   expect(document.documentElement.dataset.theme).toBeUndefined();
   expect(localStorage.getItem('quack:theme')).toBeNull();
+});
+
+const BUILD = { commit: 'abc1234def5678', builtAt: '2026-11-03T12:00:00Z' };
+
+test('About shows the short commit linked to GitHub and the build time', async () => {
+  routes['GET /version'] = BUILD;
+  location.hash = '#/settings';
+  render(<App />);
+  const about = within(await screen.findByRole('region', { name: 'About' }));
+  expect(about.getByRole('link', { name: 'abc1234' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/commit/abc1234def5678');
+  expect(screen.getByText(/^Built /)).toBeInTheDocument();
+});
+
+test('About reads development build when the image carries no commit', async () => {
+  routes['GET /version'] = { commit: null, builtAt: null };
+  location.hash = '#/settings';
+  render(<App />);
+  expect(await screen.findByText('quack v1 · development build')).toBeInTheDocument();
+  expect(screen.queryByText(/^Built /)).toBeNull();
+});
+
+test('the sidebar footer shows the short commit and links to Settings', async () => {
+  routes['GET /version'] = BUILD;
+  render(<App />);
+  const rail = screen.getAllByRole('complementary')[0];
+  expect(await within(rail).findByRole('link', { name: 'abc1234' })).toHaveAttribute('href', '#/settings');
+  expect(fetchMock.mock.calls.filter(([u]) => u === 'version')).toHaveLength(1);
+});
+
+test('More lists the short commit on a phone', async () => {
+  routes['GET /version'] = BUILD;
+  stubViewport(false);
+  location.hash = '#/more';
+  render(<App />);
+  expect((await screen.findAllByRole('link', { name: 'abc1234' })).length).toBeGreaterThan(0);
+});
+
+test('a failed version fetch shows nothing', async () => {
+  location.hash = '#/settings';
+  render(<App />);
+  expect(await screen.findByRole('group', { name: 'Appearance' })).toBeInTheDocument();
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => u === 'version')).toBe(true));
+  expect(screen.queryByText(/quack v1/)).toBeNull();
+  expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).toBeNull();
 });
 
 test('More lists Settings and no longer carries the theme toggle', async () => {
