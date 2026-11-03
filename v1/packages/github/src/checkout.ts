@@ -119,7 +119,7 @@ async function recordCarried(api: ToolExecutionApi, pr: PullRequestRecord, body:
     kind['github.review'] ??= { versions: [] };
     const versions = kind['github.review'].versions;
     const version = versions.length + 1;
-    versions.push({ kind: 'github.review', version, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, carriedFrom: { sha: from.sha, ...(from.link ? { url: from.link } : {}) }, outcome: 'approve', summary: 'Approve · carried forward', ...(url ? { links: [{ label: 'Posted', url }] } : {}) });
+    versions.push({ kind: 'github.review', version, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, basis: pr.headSha, carriedFrom: { sha: from.sha, ...(from.link ? { url: from.link } : {}) }, outcome: 'approve', summary: 'Approve · carried forward', ...(url ? { links: [{ label: 'Posted', url }] } : {}) });
     const d = await tx.doc(PullRequestDoc, api.conversationId);
     d.reviewed = { ...d.reviewed, [String(version)]: pr.headSha };
     d.posted = [...(d.posted ?? []), version];

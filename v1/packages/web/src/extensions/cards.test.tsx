@@ -137,6 +137,7 @@ test('no marker once the run ends, or for a draft that never recorded its head',
   const meta = [{ id: 'new', headSha: 'new' }];
   render(<>{github.card!(sealed(md('review-changes'), { basis: 'old' }), { running: false, meta })}{github.card!(sealed(md('review-changes')), { running: true, meta })}</>);
   expect(screen.queryByText(/About an earlier commit/)).toBeNull();
+});
 
 test('a carried approval says it is the same change as the earlier review, with no Double-checked', () => {
   const from = { sha: 'abcdef1234567890', url: 'https://github.com/o/r/pull/1#pullrequestreview-5' };
