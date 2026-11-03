@@ -5,6 +5,7 @@ import { contractRubric, specEvidence } from './rubric.ts';
 import { CONTRACT_KIND, CONTRACT_PATH, summarizeSpec, validateSpec } from './spec.ts';
 import { contractTools } from './tools.ts';
 
+export { APPROVED_KIND, CHANGES_KIND, proposeContractTool, routesOf } from './approval.ts';
 export { defineContract } from './action.ts';
 export { askQuestionTool, YOU_DECIDE } from './ask.ts';
 export { kinds, restKind, type ContractKind } from './kinds.ts';
