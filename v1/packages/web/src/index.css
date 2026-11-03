@@ -96,9 +96,12 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 .live-dot { position: relative; animation: pulse-dot 1.6s ease-in-out infinite; }
 .live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 9999px; background: inherit; animation: ripple 1.8s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
-.navlink[aria-current="page"] { background: var(--color-soft); color: var(--color-ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--color-accent); }
+.navlink[aria-current="page"] { background: var(--color-soft); color: var(--color-ink); font-weight: 600; }
 .tablink[aria-current="page"] { color: var(--color-accent-ink); }
-.row[aria-current="true"] { background: var(--color-soft); box-shadow: inset 2px 0 0 var(--color-accent); }
+.row[aria-current="true"] { background: var(--color-soft); }
+/* A straight bar inset from the ends; an inset shadow would bend around the rounded corners. */
+.navlink[aria-current="page"], .row[aria-current="true"] { position: relative; }
+.navlink[aria-current="page"]::before, .row[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; background: var(--color-accent); }
 .rubber { animation: bob 2.2s ease-in-out infinite; }
 .feet { height: 14px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='14' viewBox='0 0 44 14'%3E%3Cpath d='M6 2 L9 8 L12 2 Q9 5 6 2Z M3 4 L9 12 L15 4' fill='%23e3a92b' fill-opacity='0.55'/%3E%3Cpath d='M28 6 L31 12 L34 6 Q31 9 28 6Z' fill='%23e3a92b' fill-opacity='0.35'/%3E%3C/svg%3E") repeat-x; }
 .md > * { margin: 0 0 0.7em; }
