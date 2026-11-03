@@ -7,6 +7,10 @@
   "extensions": {
     "workflows": {
       "workflow": "remarkable.ingest",
+      "visionModel": {
+        "provider": "local",
+        "modelId": "qwen3.8-27b"
+      },
       "classifier": {
         "provider": "clef",
         "modelId": "clef",
