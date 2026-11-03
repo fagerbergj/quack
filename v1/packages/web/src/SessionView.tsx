@@ -186,10 +186,10 @@ function Result({ result }: { result: Look }) {
   );
 }
 
-function Header({ name, status, tone, tokens, link, result, children }: { name: SessionTitle; status: string; tone: Tone; tokens?: number; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
+function Header({ name, back, status, tone, tokens, link, result, children }: { name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; tokens?: number; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
-        <a href="#/" aria-label="Sessions" className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
+        <a href={back.href} aria-label={back.label} className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
         </a>
         <span aria-hidden="true" className="hidden h-[26px] w-[26px] flex-none place-items-center rounded-lg bg-link-bg text-link lg:grid">
@@ -250,7 +250,7 @@ export function SessionView({ sessionKey, agent, name, delivered, manage }: { se
   useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header name={name} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
+      <Header name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>

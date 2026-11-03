@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { age } from './sessions.ts';
 import { decideApproval, listApprovals, type Approval } from './api.ts';
+import { describe } from './Needs.tsx';
 
 const clip = (s = '', n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
 
@@ -23,7 +24,7 @@ export function Approvals({ sessionKey, refresh, onCount }: { sessionKey: string
             <span className="text-[11px] font-bold tracking-[.06em] text-warning">NEEDS YOU</span>
             <span className="ml-auto text-[12px] text-muted">{age(new Date(a.requestedAt).toISOString(), Date.now())}</span>
           </div>
-          <p className="m-0 text-[14.5px] font-semibold">{a.tool}</p>
+          <p className="m-0 text-[14.5px] font-semibold">{describe(a.args) ?? a.tool}</p>
           <details className="text-[13px] text-ink-2">
             <summary className="cursor-pointer">{clip(JSON.stringify(a.args), 100)}</summary>
             <pre className="m-0 mt-2 overflow-x-auto rounded-lg bg-soft p-2.5 font-mono text-[12px]">{JSON.stringify(a.args, null, 2)}</pre>

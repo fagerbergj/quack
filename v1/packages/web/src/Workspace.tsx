@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { indexApprovals, indexArtifacts, indexFailures, indexQuestions, listAgents, listApprovals, listQuestions, listSessions, type Approval, type AgentSummary, type Question } from './api.ts';
-import { Landing } from './Landing.tsx';
+import { indexApprovals, indexArtifacts, indexFailures, indexQuestions, listApprovals, listQuestions, listSessions, type Approval, type Question } from './api.ts';
+import { Home } from './Home.tsx';
 import { look, sessionTitle } from './kinds.ts';
-import { group, multiScope, type Row } from './sessions.ts';
+import { multiScope, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
 const REFRESH_MS = 15_000;
@@ -28,9 +28,7 @@ async function loadRows(): Promise<Row[]> {
 
 export function useWorkspaceData(selected: string | undefined) {
   const [rows, setRows] = useState<Row[]>();
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [error, setError] = useState('');
-  const [agentsError, setAgentsError] = useState('');
   const [now, setNow] = useState(Date.now());
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -43,24 +41,30 @@ export function useWorkspaceData(selected: string | undefined) {
       clearInterval(timer);
     };
   }, [selected, tick]);
-  useEffect(() => void listAgents().then(setAgents, (e: Error) => setAgentsError(e.message)), []);
-  return { rows, agents, agentsError, error, now, reload: () => setTick((t) => t + 1) };
+  return { rows, error, now, reload: () => setTick((t) => t + 1) };
 }
 
 export type WorkspaceData = ReturnType<typeof useWorkspaceData>;
 
+// A conversation with quack is headed by who you are talking to; its title only names it in lists.
+function headerName(key: string, s: Parameters<typeof sessionTitle>[0]) {
+  const t = sessionTitle(s);
+  return key.startsWith('home:') ? { ...t, text: 'quack', full: 'quack' } : t;
+}
+
 // From lg the session list is the shell's sidebar and this is the main column; below lg the list is its own screen.
-export function Workspace({ data, selected, isNew, list }: { data: WorkspaceData; selected?: { key: string; agent?: string }; isNew: boolean; list?: ReactNode }) {
-  const open = Boolean(selected) || isNew;
-  if (list && !open) return <>{list}</>;
+export function Workspace({ data, selected, home, list }: { data: WorkspaceData; selected?: { key: string; agent?: string }; home: boolean; list?: ReactNode }) {
+  if (list && !selected && !home) return <>{list}</>;
   const row = data.rows?.find((r) => r.key === selected?.key);
   const l = row && !row.active ? look(row) : undefined;
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} delivered={l?.delivered ? l : undefined} manage={row && { archived: Boolean(row.archived), changed: data.reload }} name={sessionTitle(row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} delivered={l?.delivered ? l : undefined} manage={row && { archived: Boolean(row.archived), changed: data.reload }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
       ) : (
-        <div className="overflow-y-auto"><Landing agents={data.agents} error={data.agentsError} groups={group((data.rows ?? []).filter((r) => !r.archived))} /></div>
+        <div className="overflow-y-auto">
+          <Home rows={data.rows?.filter((r) => !r.archived)} error={data.error} now={data.now} reload={data.reload} />
+        </div>
       )}
     </div>
   );

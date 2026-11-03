@@ -7,7 +7,6 @@ function question(s: string): string {
 }
 
 export const research: Extension = {
-  suggestion: { label: 'Research a question', prompt: 'Research: ' },
   artifact: (a) => (a.kind === 'research.report' ? { name: 'Report' } : undefined),
   session: {
     label: 'research', noun: () => 'Research report', group: 'Research', match: (r) => r.agent === 'researcher' || r.key.startsWith('research:'), icon: 'M18 11a7 7 0 1 0-14 0a7 7 0 1 0 14 0M20 20l-3.5-3.5', tint: BLUE,

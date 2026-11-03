@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { BottomBarSetting } from './BottomBarSetting.tsx';
 import { storedTheme, THEME_KEY } from './Shell.tsx';
 
 const CHOICES = [
@@ -23,8 +24,8 @@ function applyTheme(choice: string) {
 export function Settings() {
   const [choice, setChoice] = useState(() => storedTheme() ?? 'system');
   return (
-    <div className="mx-auto max-w-3xl px-3 py-4 lg:py-8">
-      <h1 className="m-0 mb-3 hidden px-1 text-[19px] lg:block">Settings</h1>
+    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-3 py-4 lg:py-8">
+      <h1 className="m-0 hidden px-1 text-[19px] lg:block">Settings</h1>
       <fieldset className="m-0 min-w-0 rounded-[18px] border border-line bg-surface p-3.5 shadow-card">
         <legend className="px-1 text-xs font-semibold tracking-wider text-muted uppercase">Appearance</legend>
         {CHOICES.map((c) => (
@@ -44,6 +45,7 @@ export function Settings() {
           </label>
         ))}
       </fieldset>
+      <BottomBarSetting />
     </div>
   );
 }

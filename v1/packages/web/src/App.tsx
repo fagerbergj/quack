@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArtifactList } from './ArtifactList.tsx';
-import { Inbox } from './Inbox.tsx';
+import { FOCUS_ASK } from './Home.tsx';
 import { More } from './More.tsx';
 import { Shell, type Route } from './Shell.tsx';
 import { Settings } from './Settings.tsx';
@@ -36,11 +36,12 @@ function useHash() {
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
 const PLACEHOLDERS: Record<Route, string> = {
-  more: 'More', inbox: 'Inbox', artifacts: 'Artifacts', settings: 'Settings',
+  more: 'More', artifacts: 'Artifacts', settings: 'Settings',
   ...Object.fromEntries(NAVS.map((n) => [n.route, n.label])),
 };
 
 function navRoute(hash: string): Route {
+  if (hash === '#/' || hash === '' || hash === '#/new') return 'home';
   const name = /^#\/(\w+)\/?$/.exec(hash)?.[1];
   return name && Object.hasOwn(PLACEHOLDERS, name) ? name : 'sessions';
 }
@@ -58,7 +59,15 @@ export function App() {
   const raw = useHash();
   const hash = raw !== '#/' && raw.endsWith('/') ? raw.slice(0, -1) : raw;
   const session = parseHash(hash);
-  const nav = navRoute(hash);
+  // Inbox folded into Home; old links still land.
+  useEffect(() => {
+    if (hash === '#/inbox') location.replace('#/');
+    if (hash === '#/new') {
+      location.replace('#/');
+      dispatchEvent(new Event(FOCUS_ASK));
+    }
+  }, [hash]);
+  const nav = session?.key.startsWith('home:') ? 'home' : session ? 'sessions' : navRoute(hash);
   const Page = session ? undefined : NAVS.find((n) => n.route === nav)?.page;
   const title = !session && PLACEHOLDERS[nav];
   const data = useWorkspaceData(session?.key);
@@ -69,9 +78,8 @@ export function App() {
       {Page ? <Page rows={data.rows} />
         : nav === 'more' ? <More />
         : nav === 'settings' ? <Settings />
-        : nav === 'inbox' ? <Inbox rows={data.rows} error={data.error} now={data.now} reload={data.reload} />
         : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
-        : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} isNew={hash === '#/new'} list={desktop ? undefined : list} />}
+        : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={desktop ? undefined : list} />}
     </Shell>
   );
 }
