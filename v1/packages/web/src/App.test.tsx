@@ -1558,7 +1558,7 @@ describe('images', () => {
     expect(screen.getAllByRole('img')).toHaveLength(4);
   });
 
-  test('a snapshot with an image renders its thumbnail, and a tap opens it full size', async () => {
+  test('a view with an image renders its thumbnail, and a tap opens it full size', async () => {
     const ws = await openSession();
     ws.frame(snapshot({ entries: [entry('e1', [{ role: 'user', content: [{ type: 'image', data: 'QUJD', mimeType: 'image/jpeg' }, { type: 'text', text: 'what is this?\n\n[Attached images attachments/1-1.jpg. You cannot see images.]' }], timestamp: 1 }])] }));
     const you = screen.getByRole('article', { name: 'You' });

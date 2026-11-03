@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { contentText, Type, type ImageContent, type Message, type MutableModels } from '@earendil-works/pi-ai';
+import { contentText, type ImageContent, type Message, type MutableModels } from '@earendil-works/pi-ai';
+import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { observeGeneration } from '@quack/sdk';
 
@@ -45,7 +46,7 @@ export function lookExtension(workspace: string, models: MutableModels, imageMod
     tools: [defineTool({
       name: 'look_at_image',
       description: 'Ask an image-capable model a question about an attached image, such as "what is in it" or "read the text". You cannot see images yourself.',
-      parameters: Type.Object({ path: Type.String({ description: `The attachment path, such as ${DIR}/1-1.jpg` }), question: Type.String({ minLength: 1 }) }),
+      parameters: obj({ path: str({ description: `The attachment path, such as ${DIR}/1-1.jpg` }), question: str({ minLength: 1 }) }, { open: true }),
       replay: 'safe',
       async execute(args, api, ctx) {
         const [dir, file] = args.path.split('/');
