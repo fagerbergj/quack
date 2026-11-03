@@ -195,8 +195,8 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   const sessionDir = (key: string) => join(opts.dataDir, sessionDirName(key));
 
   // Each agent.json is read fresh, so a new session binds to the newest definition; bind() then snapshots it for that session (DEP-3).
-  // Each version is copied into the data dir the first time it is loaded, so history outlives the image's agents dir; its promotion marker lives there too.
-  const kept = new Set<string>();
+  // Each version is copied once into the data dir (every registry run awaits that one copy), so history outlives the image's agents dir; its promotion marker lives there too.
+  const kept = new Map<string, Promise<void>>();
   async function registry(): Promise<Array<AgentInfo & { path: string; retention?: unknown }>> {
     const dirs = opts.agentsDir ? await readdir(opts.agentsDir, { withFileTypes: true }).catch(() => []) : [];
     const found = await Promise.all(dirs.filter((d) => d.isDirectory()).map(async (d) => {
@@ -205,7 +205,8 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       const def = await readJson(path).catch(() => null);
       if (typeof def?.name !== 'string' || typeof def.version !== 'number' || !SAFE_NAME.test(def.name)) return undefined;
       const id = `${def.name}@${def.version}`;
-      if (!kept.has(id)) await keepVersion(opts.dataDir, dir, opts.rubricFor).then(() => kept.add(id), () => undefined);
+      if (!kept.has(id)) kept.set(id, keepVersion(opts.dataDir, dir, opts.rubricFor).catch(() => void kept.delete(id)));
+      await kept.get(id);
       const status: AgentStatus = def.status === 'promoted' || (await exists(join(versionDir(opts.dataDir, def.name, def.version), 'promoted'))) ? 'promoted' : 'draft';
       return { name: def.name, version: def.version, status, path, retention: def.retention?.idleDays, ...(typeof def.model === 'string' && { model: def.model }), ...(typeof def.description === 'string' && { description: def.description }) };
     }));
