@@ -1,8 +1,9 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import type { Spend } from './api.ts';
 import type { AgentEvent, MessageChange, SnapshotEvent } from '@earendil-works/pi-durable';
 
 // The snapshot carries every entry, so a late viewer rebuilds the whole transcript from it.
-export type View = { entries: SnapshotEvent['entries']; running: boolean; partial?: AssistantMessage; tokens?: number; /** The tool call in flight. */ tool?: { name: string; args: unknown } };
+export type View = { entries: SnapshotEvent['entries']; running: boolean; partial?: AssistantMessage; spend?: Spend; /** The tool call in flight. */ tool?: { name: string; args: unknown } };
 
 export const emptyView: View = { entries: [], running: false };
 
@@ -22,10 +23,17 @@ function change(msg: AssistantMessage, c: MessageChange): AssistantMessage {
 const withEntry = (entries: View['entries'], entry: View['entries'][number]) =>
   entries.some((e) => e.id === entry.id) ? entries : [...entries, entry];
 
-// Input plus output tokens across every model bucket of the snapshot's usage.
-const tokensOf = (s: SnapshotEvent) => Object.values(s.usage?.models ?? {}).reduce((n, u) => n + (u.input ?? 0) + (u.output ?? 0), 0);
+// The snapshot's usage summed over every model bucket; the index adds spend made outside the conversation.
+const spendOf = (s: SnapshotEvent): Spend => {
+  const spend: Spend = { cost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+  for (const u of Object.values(s.usage?.models ?? {})) {
+    spend.cost += u.cost?.total ?? 0;
+    for (const k of Object.keys(spend.tokens) as Array<keyof Spend['tokens']>) spend.tokens[k] += u[k] ?? 0;
+  }
+  return spend;
+};
 
-export const snapshotView = (s: SnapshotEvent): View => ({ entries: s.entries, running: s.run !== undefined, partial: s.generation?.message, tokens: tokensOf(s) });
+export const snapshotView = (s: SnapshotEvent): View => ({ entries: s.entries, running: s.run !== undefined, partial: s.generation?.message, spend: spendOf(s) });
 
 function step(v: View, e: AgentEvent): View {
   switch (e.type) {

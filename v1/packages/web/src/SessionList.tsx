@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { look, type Look, type Tone } from './kinds.ts';
 import { age, group, matches, startOf, type Filters, type Row } from './sessions.ts';
+import { SpendChip } from './SpendChip.tsx';
 
 const field = 'rounded-full border border-line bg-soft text-[12.5px] outline-none';
 
@@ -37,7 +38,10 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
           </span>
           <time dateTime={r.createdAt} className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.createdAt, now)}</time>
         </span>
-        <span className={`truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
+        <span className="flex gap-2">
+          <span className={`min-w-0 flex-1 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
+          <SpendChip spend={r.spend} className="text-xs text-muted" />
+        </span>
       </span>
     </a>
   );

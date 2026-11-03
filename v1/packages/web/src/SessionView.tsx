@@ -1,6 +1,6 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact } from './api.ts';
+import { abortRun, archiveSession, deleteSession, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
@@ -10,6 +10,7 @@ import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
+import { SpendChip } from './SpendChip.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
@@ -149,8 +150,6 @@ function Title({ name }: { name: SessionTitle }) {
   );
 }
 
-const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-
 type Manage = { archived: boolean; changed: () => void };
 
 // Abort, the Work drawer and housekeeping live behind one quiet menu; it is absent when none applies.
@@ -187,7 +186,7 @@ function Result({ result }: { result: Look }) {
   );
 }
 
-function Header({ name, back, status, tone, tokens, link, result, children }: { name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; tokens?: number; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
+function Header({ name, back, status, tone, spend, link, result, children }: { name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
         <a href={back.href} aria-label={back.label} className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
@@ -201,7 +200,7 @@ function Header({ name, back, status, tone, tokens, link, result, children }: { 
           <StatusChip text={status} tone={tone} />
           {result && <Result result={result} />}
         </div>
-        {tokens ? <span className="mr-1 hidden text-[12.5px] text-muted lg:inline">{`${compact(tokens)} tokens`}</span> : null}
+        <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
         {link && (
           <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
             <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
@@ -227,7 +226,7 @@ function usePaneStyle(): CSSProperties | undefined {
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
-export function SessionView({ sessionKey, agent, name, delivered, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; manage?: Manage }) {
+export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
   // The landing composer's text seeds this composer.
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
@@ -251,7 +250,7 @@ export function SessionView({ sessionKey, agent, name, delivered, manage }: { se
   useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
+      <Header name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>

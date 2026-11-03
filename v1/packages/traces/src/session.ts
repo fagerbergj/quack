@@ -91,7 +91,7 @@ export function generationSpan(config: TracesConfig, traceKey: string, input: un
     { key: 'langfuse.observation.input', value: { stringValue: JSON.stringify(input, dropImages) } },
     attr('langfuse.observation.output', message.content),
     attr('langfuse.observation.usage_details', { input: usage.input, output: usage.output, cache_read: usage.cacheRead, cache_write: usage.cacheWrite, total: usage.totalTokens }),
-    attr('langfuse.observation.cost_details', { input: usage.cost.input, output: usage.cost.output, total: usage.cost.total }),
+    attr('langfuse.observation.cost_details', { input: usage.cost.input, output: usage.cost.output, cache_read: usage.cost.cacheRead, cache_write: usage.cost.cacheWrite, total: usage.cost.total }),
     attr('langfuse.observation.level', failed ? 'ERROR' : 'DEFAULT'),
     attr('langfuse.session.id', traceKey),
     ...Object.entries(metadata).filter(([, v]) => v !== undefined).map(([k, v]) => attr(`langfuse.observation.metadata.${k}`, v)),
