@@ -65,7 +65,7 @@ export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegis
   return [result, facts, player];
 }
 
-const chatDepsFromEnv = (env: Record<string, string | undefined> = process.env): ChatDeps => ({ client: createSleeperClient(), news: env.QUACK_EXA_API_KEY ? exaNews({ apiKey: env.QUACK_EXA_API_KEY }) : undefined });
+const chatDepsFromEnv = (env: Record<string, string | undefined> = process.env): ChatDeps => ({ client: createSleeperClient(), news: env.QUACK_EXA_API_KEY ? exaNews({ apiKey: env.QUACK_EXA_API_KEY, url: env.QUACK_EXA_URL }) : undefined });
 
 /** A sleeper job's workflow with the follow-up chat added; the Sleeper API and news come from the environment. */
 export function withChat(workflow: Workflow, deps: ChatDeps = chatDepsFromEnv()): Workflow {

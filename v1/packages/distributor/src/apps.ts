@@ -13,8 +13,8 @@ export function parseApps(raw: string | undefined, env: NodeJS.ProcessEnv = proc
   return apps;
 }
 
-/** Sends the request to `target` with a bearer token the caller never sees; method, content type and body pass through, and so do the status and body back. */
-export function forward(req: IncomingMessage, res: ServerResponse, target: URL, token: string, body: Buffer): Promise<void> {
+/** Sends the request to `target` with credentials (`auth` headers) the caller never sees; method, content type and body pass through, and so do the status and body back. */
+export function forward(req: IncomingMessage, res: ServerResponse, target: URL, auth: Record<string, string>, body: Buffer): Promise<void> {
   return new Promise<void>((resolve) => {
     const fail = (err: Error) => {
       // After headers a JSON error would corrupt the partial body, so cut the connection instead.
@@ -22,7 +22,7 @@ export function forward(req: IncomingMessage, res: ServerResponse, target: URL, 
       else res.writeHead(502, { 'content-type': 'application/json' }).end(JSON.stringify({ error: err.message }));
       resolve();
     };
-    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    const headers: Record<string, string> = { ...auth };
     if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
     const up = request(target, { method: req.method, headers }, (r) => {
       res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
@@ -46,7 +46,7 @@ export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
     // Read up front under the same cap as the session forwarder, so a service never sees an unbounded upload.
     const body = await readBody(req).catch(() => undefined);
     if (!body) return res.writeHead(413, { 'content-type': 'application/json' }).end('{"error":"body too large"}'), true;
-    await forward(req, res, new URL(req.url!, app.url), env[app.tokenEnv]!, body);
+    await forward(req, res, new URL(req.url!, app.url), { authorization: `Bearer ${env[app.tokenEnv]}` }, body);
     return true;
   };
 }

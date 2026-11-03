@@ -17,5 +17,5 @@ export function depsFromEnv(workflow: string, env: Record<string, string | undef
   };
   // Without the Exa key the check is simply not scored, and the verdict says so.
   const apiKey = env.QUACK_EXA_API_KEY;
-  return { client: createSleeperClient(), snapshot, news: apiKey ? exaNews({ apiKey }) : undefined };
+  return { client: createSleeperClient(), snapshot, news: apiKey ? exaNews({ apiKey, url: env.QUACK_EXA_URL }) : undefined };
 }

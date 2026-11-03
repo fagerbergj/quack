@@ -1,8 +1,9 @@
-import { copyFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { shellEnv } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import type { DockerCall } from './docker-api.ts';
+import { proxyKeyedServices, proxyProviders } from './keyed-services.ts';
 import type { Launch } from './process-driver.ts';
 
 const SESSION_MOUNT = '/session';
@@ -17,8 +18,8 @@ export type DockerLauncherOptions = {
   /** OCI runtime: runsc (gVisor) or a Kata runtime; runc shares the host kernel and is for dev and tests. */
   runtime: string;
   network: string;
-  /** Where the distributor's data directory lives on the Docker host; the daemon resolves bind mounts there, not in this container. */
-  hostDataDir: string;
+  /** The data volume holds each session's directory: a named volume (each session mounts its subpath; Docker 26+) or a host path (bind). */
+  data: { volume: string } | { hostDir: string };
   /** What a session container uses to reach this distributor, e.g. http://quack-v1:8080. */
   distributorUrl: string;
   inherit: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
@@ -51,6 +52,7 @@ export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; tok
     env[`${prefix}_URL`] = `${o.distributorUrl}/svc/${prefix}`;
     env[`${prefix}_TOKEN`] = o.token;
   }
+  Object.assign(env, proxyKeyedServices(inherited, { broker: o.broker, distributorUrl: o.distributorUrl, token: o.token }));
   for (const name of o.passthrough) if (inherited[name] !== undefined) env[name] = inherited[name]!;
   const dropped = Object.keys(inherited).filter((n) => !(n in env) && !n.startsWith('QUACK_CONFIG'));
   Object.assign(env, { PORT: String(SESSION_PORT), QUACK_SESSION_DIR: SESSION_MOUNT, QUACK_SESSION_KEY: o.key });
@@ -58,6 +60,18 @@ export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; tok
   if (inherited.QUACK_CONFIG) env.QUACK_CONFIG = `${SESSION_MOUNT}/deployment.json`;
   return { env, dropped };
 }
+
+async function readConfig(path: string) {
+  try {
+    return JSON.parse(await readFile(path, 'utf8'));
+  } catch (err) {
+    throw new Error(`QUACK_CONFIG ${path} is unreadable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+const mountFor = (data: DockerLauncherOptions['data'], sub: string) => 'volume' in data
+  ? { Mounts: [{ Type: 'volume', Source: data.volume, Target: SESSION_MOUNT, VolumeOptions: { Subpath: sub } }] }
+  : { Binds: [`${data.hostDir}/${sub}:${SESSION_MOUNT}`] };
 
 /** A11's Docker driver: one container per session from the quack image, with only that session's directory mounted. */
 export function dockerLauncher(opts: DockerLauncherOptions): Launch {
@@ -90,12 +104,15 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
     try {
       const inherited = await opts.inherit(agentPath);
       const { env, dropped } = containerEnv(inherited, { key, token, broker: opts.broker, distributorUrl: opts.distributorUrl, passthrough: opts.passthrough ?? [], alwaysProxied: opts.alwaysProxied ?? [], agentPath, dir });
-      const fresh = dropped.filter((n) => !warned.has(n));
+      // Rewritten on every start, so a session that edits its copy keeps the change only until it next restarts.
+      if (inherited.QUACK_CONFIG) {
+        const proxied = proxyProviders(await readConfig(inherited.QUACK_CONFIG), inherited, { broker: opts.broker, distributorUrl: opts.distributorUrl, token });
+        Object.assign(env, proxied.env);
+        await writeFile(join(dir, 'deployment.json'), JSON.stringify(proxied.config));
+      }
+      const fresh = dropped.filter((n) => !(n in env) && !warned.has(n));
       if (fresh.length) console.warn(`docker driver: not passing ${fresh.join(', ')} to session containers; list a name in QUACK_SESSION_PASSTHROUGH to pass it`);
       fresh.forEach((n) => warned.add(n));
-      const config = inherited.QUACK_CONFIG;
-      // Rewritten on every start, so a session that edits its copy keeps the change only until it next restarts.
-      if (config) await copyFile(config, join(dir, 'deployment.json'));
       await api('DELETE', `/containers/${name}?force=1`);
       await call('POST', `/containers/create?name=${name}`, {
         Image: opts.image,
@@ -103,7 +120,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
         WorkingDir: '/app',
         Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
         Labels: { 'quack.session': key },
-        HostConfig: { Runtime: opts.runtime, NetworkMode: opts.network, Binds: [`${opts.hostDataDir}/${basename(dir)}:${SESSION_MOUNT}`], AutoRemove: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'] },
+        HostConfig: { Runtime: opts.runtime, NetworkMode: opts.network, ...mountFor(opts.data, basename(dir)), AutoRemove: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'] },
       }, [201]);
       // Waits for removal, which AutoRemove does after exit, so the name is free again when it resolves.
       const gone = api('POST', `/containers/${name}/wait?condition=removed`).catch(() => undefined);
