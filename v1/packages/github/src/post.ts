@@ -38,6 +38,12 @@ function postCleared(config: SessionConfig) {
   };
 }
 
+// A checkout that found nothing to review leaves nothing to submit; the refusal ends the run instead of inviting a revision.
+async function refuseAfterSkip(api: ToolExecutionApi, ctx: Context) {
+  const skipped = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.skipped;
+  return skipped && `Nothing to submit: ${skipped}. This run is over.`;
+}
+
 export type GithubSessionConfig = SessionConfig & { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
 
 /** The GitHub extension's session half: checkout, the review artifact, its judge, and the gated post. */
@@ -45,6 +51,6 @@ export function githubSessionExtensions(config: GithubSessionConfig): Extension[
   return [
     defineExtension({ name: 'github', tools: [checkoutTool(config), replyTool(config)] }),
     artifactsExtension([reviewKind]),
-    judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
+    judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, refuse: refuseAfterSkip, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
   ];
 }

@@ -18,7 +18,7 @@ type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone
 export type DeploymentConfig = { providers: Record<string, ProviderConfig>; timeZone?: string; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
 /** Per agent (D48): its model as provider/model, a prompt file beside it, and the extensions it selects by name with their config. */
-export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
+export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
 export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[] };
@@ -67,6 +67,8 @@ function execProblems(at: string, e: unknown, deployment: boolean): string[] {
 function retentionProblems(r: unknown): string[] {
   return r === undefined || (isObject(r) && positive(r.idleDays) && Object.keys(r).length === 1) ? [] : ['retention must be { idleDays: positive integer }'];
 }
+
+const ceilingProblems = (c: unknown) => (c === undefined || positive(c) ? [] : ['turnCeiling must be a positive integer']);
 
 function validZone(z: unknown): boolean {
   try {
@@ -136,7 +138,7 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   // Pinned snapshots are immutable history and may still carry the removed key (D58), so it is ignored, not rejected.
   if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed (D58) and is ignored`);
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
-  problems.push(...retentionProblems(raw.retention));
+  problems.push(...retentionProblems(raw.retention), ...ceilingProblems(raw.turnCeiling));
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
   else {
@@ -191,6 +193,7 @@ export async function agentSpec(def: AgentDefinition, catalog: Catalog, always: 
   const slash = def.model.indexOf('/');
   return {
     model: { provider: def.model.slice(0, slash), modelId: def.model.slice(slash + 1) },
+    ...(def.turnCeiling && { turnCeiling: def.turnCeiling }),
     ...(def.exec?.timeoutSeconds && { commandTimeoutSeconds: def.exec.timeoutSeconds }),
     extensions: [...(await Promise.all(resolveExtensions(Object.keys(def.extensions), catalog).order.map((name) => catalog[name](def.extensions[name])))).flat(), ...always.flatMap((make) => make())],
   };

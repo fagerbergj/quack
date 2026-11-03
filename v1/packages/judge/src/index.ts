@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool, GenerationTask, hook, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { defineExtension, defineTool, GenerationTask, hook, LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
 import { answerUnit, type ClassifierRef, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type Check, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
@@ -13,8 +13,10 @@ export type JudgeOptions = {
   rubric: Rubric;
   /** Builds the focused evidence units for a sealed version (the domain's job, e.g. diff excerpts per finding). */
   evidence: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Evidence>;
-  /** Revise-and-recheck rounds before a failing version may go out with its failures marked (J1). */
+  /** Revise-and-recheck rounds before a failing version may go out with its failures marked (J1). A run judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. */
   maxRevisions: number;
+  /** Text when this run has nothing to submit (a checkout found no work); the submit is then refused and ends the run. */
+  refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
   /** A decision model asked first; uncertain or oversized checks escalate to the agent's own model. */
   classifier?: ClassifierRef;
   /** Where uncertain checks escalate; the agent's own model when unset. */
@@ -24,7 +26,7 @@ export type JudgeOptions = {
   onCleared?: (sealed: SealedArtifact, verdict: Verdict, api: ToolExecutionApi, ctx: Context) => Promise<{ text: string; isError?: boolean } | undefined>;
 };
 
-export type Verdict = { passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
+export type Verdict = { /** The run that judged it, so a run's submits can be counted. */ run?: string; passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
 
 export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResult[] {
   return rubric.criteria.flatMap((c) =>
@@ -70,6 +72,18 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
   return [...results.values()];
 }
 
+// The run's first input id: stable through the run, where its task id changes between tool rounds.
+const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
+
+/** Versions this run has already judged, passing or failing: the count the revision limit bounds. */
+async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<number> {
+  const run = await runOf(api, ctx);
+  const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+  return (doc?.kinds[kind]?.versions ?? []).filter((v) => (v.verdict as { run?: string } | null)?.run === run).length;
+}
+
+const terminal = (text: string) => ({ output: [{ type: 'text' as const, text }], isError: true, control: { terminate: true } });
+
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`): Promise<Verdict> {
   const ev = await opts.evidence(api, sealed, ctx);
   const checks = [...codeResults(opts.rubric, sealed.content, ev), ...(await modelResults(api, opts, ev, memo, ctx))];
@@ -79,7 +93,7 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
   const limit = failedBefore >= opts.maxRevisions;
   const undecided = checks.filter((k) => k.undecided).map((k) => `${k.criterion}.${k.id}`);
-  return { passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
+  return { run: await runOf(api, ctx), passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
 }
 
 /** Judges a sealed version again under opts, without attaching the verdict; memo keeps one replay's answers apart from another's. */
@@ -116,6 +130,8 @@ export function judge(opts: JudgeOptions) {
     parameters: Type.Object({}),
     replay: 'safe',
     async execute(_args, api, ctx) {
+      const refused = await opts.refuse?.(api, ctx);
+      if (refused) return terminal(refused);
       let sealed: SealedArtifact;
       try {
         sealed = await seal(api, opts.kind, ctx);
@@ -123,6 +139,8 @@ export function judge(opts: JudgeOptions) {
         return { output: [{ type: 'text', text: (err as Error).message }], isError: true };
       }
       if (sealed.verdict) return finish(sealed, sealed.verdict as unknown as Verdict, api, ctx);
+      // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
+      if ((await judgedInRun(api, opts.kind.kind, ctx)) > opts.maxRevisions) return terminal(`${opts.kind.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.`);
       const verdict = await judgeVersion(api, opts, sealed, ctx);
       // A verdict missing checks would pass or fail on a model outage; the decided answers are memoized, so calling again asks only the rest.
       if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };

@@ -49,10 +49,10 @@ approve
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
 
-async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[]) {
+async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[], pr: Record<string, unknown> = {}) {
   process.env.QUACK_CLEF_KEY = 'none';
   const { base, head } = await remotes();
-  const live = { headSha: head };
+  const live = { headSha: head, ...pr };
   const service = await fakeService(head, live);
   // Pushes a second commit to the PR (a file the review does not touch) and makes it the live head.
   const advance = () => {
@@ -204,5 +204,37 @@ test('reply_mention sends the answer to the service with the thread it was given
   const { seen, service, session } = await reviewRun((seen) => [call('reply_mention', { repository: 'acme/widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }), recorder(seen)(fauxAssistantMessage('Answered.'))]);
   assert.match(seen[0], /Replied: https:\/\/github.com\/acme\/widgets\/pull\/7#discussion_r56/);
   assert.deepEqual(service.replies, [{ owner: 'acme', repo: 'widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }]);
+  await session.close();
+});
+
+// A looping model: its first turn is `first`, then it alternates a fresh draft with a submit, forever.
+const loop = (first: ReturnType<typeof call>, seen: string[], counter: { turns: number }): FauxResponseStep[] => [
+  ...Array.from({ length: 60 }, (_, i) => (_c: unknown) => {
+    counter.turns++;
+    return i === 0 ? first : i % 2 === 1 ? write(review.replace('constant', `constant${i}`)) : call('submit_review', {});
+  }),
+  recorder(seen)(fauxAssistantMessage('never')),
+];
+
+test('a closed PR ends the run at the first submit: it is refused for good, not sent back for revision', async () => {
+  const counter = { turns: 0 };
+  const { done, service, session } = await reviewRun((seen) => loop(checkout(), seen, counter), { state: 'closed' });
+  assert.equal(done.status, 'done');
+  assert.equal(counter.turns, 3, 'checkout, one draft, one refused submit');
+  assert.equal(service.posted.length, 0);
+  await session.close();
+});
+
+test('submits that keep changing stop at the revision limit: the 4th judged version in a run is refused and ends it', async () => {
+  const counter = { turns: 0 };
+  const bad = (i: number) => review.replace('a named constant would say why the value is 2.', `it still calls \`return computeTotals${i}(a)\`, which is gone.`);
+  const steps = Array.from({ length: 40 }, (_, i) => (_c: unknown) => {
+    counter.turns++;
+    return i === 0 ? checkout() : i % 2 === 1 ? write(bad(i)) : call('submit_review', {});
+  });
+  const { done, service, session } = await reviewRun(() => steps);
+  assert.equal(done.status, 'done');
+  assert.equal(counter.turns, 1 + 2 * 4, 'checkout, then four draft and submit pairs');
+  assert.equal(service.posted.length, 1, 'v3 went out at the limit with its failures marked');
   await session.close();
 });

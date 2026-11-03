@@ -4,8 +4,9 @@ import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { pendingApprovals, statusNote } from '@quack/sdk';
+import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
+import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -16,6 +17,8 @@ export type AgentSpec = {
   instructions?: string;
   /** From the agent's bundle: shortens the deployment's command timeout, never lengthens it. */
   commandTimeoutSeconds?: number;
+  /** Model responses one run may take before it is failed (default TURN_CEILING). */
+  turnCeiling?: number;
 };
 
 export type SubmitResult =
@@ -59,6 +62,16 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
+  // The sink needs the harness, which opens after the registry; hooks only call it once a run is going.
+  let open: Harness | undefined;
+  registry.install(runCeilingExtension(opts.agent.turnCeiling ?? TURN_CEILING, {
+    async record(id, run, error) {
+      const conversation = await open!.conversation(id, ctx);
+      await conversation!.commit(async (tx) => { (await tx.doc(Failures, id)).items.runaway = { error, run: Number(run) || 0, at: Date.now() }; }, ctx);
+      // Not awaited: abort waits for the hook's own task to settle.
+      if (error) void conversation!.abort(ctx).catch(() => undefined);
+    },
+  }));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
   const storage = await openNodeSqliteStorage(join(opts.dir, 'session.sqlite'));
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
@@ -81,6 +94,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them.
     settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue' },
   }, ctx);
+  open = harness;
   const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
   const root = await harness.root(ctx, { agent });
   // A session reopened under a newer definition takes its model and instructions; its history stays.
