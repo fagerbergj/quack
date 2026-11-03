@@ -318,6 +318,18 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     return true;
   }
 
+  // A submission naming another agent changes the session's role if no run is active (D33); an open run, a pending approval or a sleep is still a run.
+  // shortcut: a busy session is refused (409) rather than queued as the next run; queue it if callers need follow-ups across roles.
+  async function switchRole(key: string, agent: string | undefined, request: string) {
+    if (!agent || request !== 'POST /invocations') return;
+    const recorded = await driver.agentOf(key);
+    if (recorded === undefined || recorded === agent) return;
+    const { status, waitingOnHuman, wake } = await ping(key);
+    if (status !== 'Healthy' || waitingOnHuman || wake?.at !== undefined) throw new AgentError(409, `session is mid-run as agent ${recorded}; ${agent} can start once it finishes`);
+    await driver.rebind(key, agent);
+    await stopSession(key, undefined);
+  }
+
   const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res)) || (await agentRoutes(req, res));
 
   const server = createServer(async (req, res) => {
@@ -336,6 +348,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       try {
         await stopping.get(key);
         await removing.get(key);
+        await switchRole(key, agent, `${req.method} ${path}`);
         const url = await driver.ensure(key, agent);
         arm(key, undefined);
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
