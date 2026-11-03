@@ -82,11 +82,14 @@ function Carried({ from }: { from: NonNullable<SealedArtifact['carriedFrom']> })
 function Footer({ a, md }: { a: SealedArtifact; md: string }) {
   return (
     <div className="border-t border-line px-3.5">
-      <div className="flex min-h-11 items-center gap-2 text-[12.5px]">
-        <Verdict artifact={a} />
-        {a.carriedFrom && <Carried from={a.carriedFrom} />}
-      </div>
-      <details className="border-t border-line">
+      {/* No verdict yet (the judge is still running) and nothing carried: no empty row. */}
+      {(a.verdict || a.carriedFrom) && (
+        <div className="flex min-h-11 items-center gap-2 border-b border-line text-[12.5px]">
+          <Verdict artifact={a} />
+          {a.carriedFrom && <Carried from={a.carriedFrom} />}
+        </div>
+      )}
+      <details>
         <summary className={summary}><span>Full review</span><Chev /></summary>
         <div className="pb-3 text-[13.5px] text-ink-2"><Markdown text={md} /></div>
       </details>

@@ -157,3 +157,9 @@ test('a one-sentence finding has nothing to open, so it is a plain row with no c
   // The first match is the finding; the full review further down repeats it inside its own disclosure.
   expect(within(card).getAllByText(/single-sentence note/)[0]!.closest('details')).toBeNull();
 });
+
+test('a review still being double-checked has no empty verdict row above Full review', () => {
+  render(<>{reviewCard(sealed(md('review-approve'), { verdict: null }))}</>);
+  const card = screen.getByRole('region', { name: 'Review' });
+  expect(within(card).getByText('Full review').closest('details')?.previousElementSibling).toBeNull();
+});
