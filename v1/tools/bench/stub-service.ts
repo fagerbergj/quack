@@ -32,7 +32,7 @@ export function stubService(pins: Record<string, { head: string; at: string }>, 
       const checks = gh(`/repos/${owner}/${repo}/commits/${headSha}/check-runs?per_page=100`).check_runs;
       const closes = [...new Set([...String(pr.body ?? '').matchAll(CLOSES)].map((x) => x[1]))];
       const linkedIssues = closes.map((i) => gh(`/repos/${owner}/${repo}/issues/${i}`)).map((i) => ({ number: i.number, title: i.title, body: i.body ?? '' }));
-      const record = { owner, repo, number: Number(n), title: pr.title, body: pr.body ?? '', author: pr.user.login, headSha, headRef: pr.head.ref, baseRef: pr.base.ref, linkedIssues };
+      const record = { owner, repo, number: Number(n), state: 'open', title: pr.title, body: pr.body ?? '', author: pr.user.login, headSha, headRef: pr.head.ref, baseRef: pr.base.ref, linkedIssues };
       return res.end(JSON.stringify({ ...record, checks: checks.map((c: any) => ({ name: c.name, status: c.status, conclusion: c.conclusion })) }));
     }
     if (req.url === '/reviews') {
