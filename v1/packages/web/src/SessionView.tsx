@@ -198,7 +198,7 @@ type MenuActions = { archived: boolean; exportHref: string; rename: () => void; 
 // Grouped from harmless to destructive: stop the run, everyday actions, reversible archive, then delete last.
 function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort: () => void, onOpen: (a: SealedArtifact) => void, manage?: MenuActions): Entry[][] {
   return [
-    running ? [{ label: 'Stop run', run: onAbort }] : [],
+    running ? [{ label: 'Stop', run: onAbort }] : [],
     [
       ...(latest ? [{ label: `Open ${artifactName(latest).toLowerCase()}`, run: () => onOpen(latest) }] : []),
       ...(manage ? [{ label: 'Rename', run: manage.rename }, { label: 'Export', href: manage.exportHref }] : []),

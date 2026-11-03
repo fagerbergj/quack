@@ -548,7 +548,7 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
   ws.frame(view({ run: true }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Stop run' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
   expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
   ws.frame(view({}));
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
@@ -558,7 +558,7 @@ test('a failed abort is reported', async () => {
   const ws = await openSession();
   ws.frame(snapshot({ run: {} }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Stop run' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('not found');
 });
 
@@ -1705,5 +1705,5 @@ test('the session menu runs from harmless to destructive', async () => {
   await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
   const items = await screen.findAllByRole('menuitem');
   const names = items.map((i) => i.textContent);
-  expect(names).toEqual(['Stop run', 'Open review', 'Rename', 'Export', 'Archive', 'Delete']);
+  expect(names).toEqual(['Stop', 'Open review', 'Rename', 'Export', 'Archive', 'Delete']);
 });
