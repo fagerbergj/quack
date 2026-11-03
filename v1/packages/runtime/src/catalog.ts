@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Extension } from '@earendil-works/pi-durable';
-import type { ContributedWorkflows, ExtensionManifest } from '@quack/sdk';
+import type { Action, ContributedWorkflows, ExtensionManifest } from '@quack/sdk';
 import type { Catalog, CatalogEntry, DeploymentExtensions } from '@quack/session';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -14,9 +14,9 @@ export async function loadManifests(list: string[] = extensionList()): Promise<E
   return Promise.all(list.map(async (spec) => (await import(spec.startsWith('.') ? pathToFileURL(join(root, spec)).href : spec)).manifest as ExtensionManifest));
 }
 
-const entry = (m: ExtensionManifest, workflows: ContributedWorkflows): CatalogEntry => {
+const entry = (m: ExtensionManifest, workflows: ContributedWorkflows, actions: Action<any>[]): CatalogEntry => {
   const { env } = m;
-  return Object.assign((config: unknown) => m.session!(config, workflows), { env: typeof env === 'function' ? (config: unknown) => env(config, workflows) : env, requires: m.requires, optional: m.optional });
+  return Object.assign((config: unknown) => m.session!(config, workflows, actions), { env: typeof env === 'function' ? (config: unknown) => env(config, workflows, actions) : env, requires: m.requires, optional: m.optional });
 };
 
 /** Entries by the name agent definitions select them with (A8), and the extensions every session gets, from the manifests. */
@@ -24,9 +24,12 @@ export function buildCatalog(manifests: ExtensionManifest[]): { catalog: Catalog
   const known = new Set(manifests.map((m) => m.name));
   for (const m of manifests) for (const r of m.requires ?? []) if (!known.has(r)) throw new Error(`extension ${m.name} requires ${r}, which this image does not carry`);
   const workflows: ContributedWorkflows = Object.assign({}, ...manifests.map((m) => m.workflows));
+  const actions = manifests.flatMap((m) => m.actions ?? []);
+  const dup = actions.find((a, i) => actions.findIndex((b) => b.name === a.name) !== i);
+  if (dup) throw new Error(`action ${dup.name} is declared by two extensions`);
   const withSession = manifests.filter((m) => m.session);
-  const always = withSession.filter((m) => m.deployment).map((m) => Object.assign(() => m.session!(undefined, workflows) as Extension[], { env: m.env as readonly string[] | undefined }));
-  return { catalog: Object.fromEntries(withSession.filter((m) => !m.deployment).map((m) => [m.name, entry(m, workflows)])), deploymentExtensions: always };
+  const always = withSession.filter((m) => m.deployment).map((m) => Object.assign(() => m.session!(undefined, workflows, actions) as Extension[], { env: m.env as readonly string[] | undefined }));
+  return { catalog: Object.fromEntries(withSession.filter((m) => !m.deployment).map((m) => [m.name, entry(m, workflows, actions)])), deploymentExtensions: always };
 }
 
 export const { catalog, deploymentExtensions } = buildCatalog(await loadManifests());

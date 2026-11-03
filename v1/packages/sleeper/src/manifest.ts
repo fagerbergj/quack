@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '@quack/sdk';
+import { runJob } from './action.ts';
 import { withChat } from './chat.ts';
 import { HISTORY_WORKFLOW, historyFromEnv } from './history/index.ts';
 import { LINEUP_WORKFLOW, lineupFromEnv } from './lineup/index.ts';
@@ -15,6 +16,7 @@ export const manifest: ExtensionManifest = {
   requires: ['workflows'],
   optional: ['judge'],
   evalAdapters: [waiversEvalAdapter],
+  actions: [runJob],
   workflows: {
     [LINEUP_WORKFLOW]: { build: () => withChat(lineupFromEnv()), env },
     [WAIVERS_WORKFLOW]: { build: () => withChat(waiversFromEnv()), env },

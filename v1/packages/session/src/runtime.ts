@@ -139,6 +139,20 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
         return [];
       }
     },
+    // The newest `limit` person and assistant messages, oldest first, so a reader need not hold the socket open for the transcript.
+    async messages(limit: number): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
+      const found: Array<{ role: 'user' | 'assistant'; text: string }> = [];
+      let cursor: unknown;
+      do {
+        const page = await root.commit((tx) => tx.scanEntries({ conversationId: root.id, order: 'descending' }, 64, cursor as never), ctx);
+        for (const e of page.items) {
+          const m = e.model?.[0] as { content?: Parameters<typeof contentText>[0] } | undefined;
+          if ((e.kind === 'pi.user' || e.kind === 'pi.assistant') && m?.content && found.length < limit) found.push({ role: e.kind === 'pi.user' ? 'user' : 'assistant', text: contentText(m.content) });
+        }
+        cursor = page.next as never;
+      } while (cursor && found.length < limit);
+      return found.reverse();
+    },
     // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
     async queued() {
       const inbox = await harness.snapshot(InboxDoc, root.id, ctx);

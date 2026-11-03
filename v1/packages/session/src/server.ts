@@ -90,7 +90,7 @@ async function resume(session: Session): Promise<[number, unknown]> {
   return result ? [202, result] : [409, { error: 'no failed run to resume' }];
 }
 
-// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals, questions, failures, artifacts and abort of this session.
+// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the messages, approvals, questions, failures, artifacts and abort of this session.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => {
     const { busy, waitingOnHuman, wakeAt, note } = await s.standing();
@@ -98,6 +98,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
     return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
+  ['GET', /^\/messages(\?.*)?$/, async (s, req) => [200, { messages: await s.messages(Math.min(50, Number(new URL(req.url ?? '', 'http://x').searchParams.get('limit')) || 10)) }]],
   ['GET', /^\/meta$/, async (s) => [200, { meta: await s.meta() }]],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],

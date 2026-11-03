@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { declaredEnv, deploymentEnv } from '@quack/session';
-import { catalog, deploymentExtensions } from '../src/catalog.ts';
+import { catalog, deploymentExtensions, loadManifests, buildCatalog } from '../src/catalog.ts';
 
 // The hard-coded catalog this one replaced: its entry names, per-extension env, and the workflow env table.
 const SLEEPER = ['QUACK_SLEEPER_URL', 'QUACK_SLEEPER_TOKEN', 'QUACK_EXA_API_KEY'];
@@ -14,13 +14,14 @@ const WORKFLOW_ENV: Record<string, string[]> = {
 const OLD_ENV: Record<string, string[] | ((config: unknown) => string[])> = {
   github: ['QUACK_GH_SERVICE_URL', 'QUACK_GH_SERVICE_TOKEN'],
   research: ['QUACK_EXA_API_KEY'],
+  home: ['QUACK_SLEEPER_URL', 'QUACK_SLEEPER_TOKEN', 'QUACK_INDEX_URL'],
   workflows: (config) => WORKFLOW_ENV[(config as { workflow?: string })?.workflow ?? ''] ?? [],
 };
 
 const agentsDir = new URL('../../../agents/', import.meta.url);
 
 test('the manifest-built catalog has the old entry names and deployment env', () => {
-  assert.deepEqual(Object.keys(catalog).sort(), ['coding', 'github', 'lsp', 'research', 'workflows']);
+  assert.deepEqual(Object.keys(catalog).sort(), ['coding', 'github', 'home', 'lsp', 'research', 'workflows']);
   assert.deepEqual(deploymentEnv(deploymentExtensions), ['QUACK_SLOTS_URL', 'QUACK_SLOTS_TOKEN', 'LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
 });
 
@@ -35,3 +36,14 @@ for (const dir of readdirSync(agentsDir)) {
     assert.deepEqual(declaredEnv(extensions, catalog), expected);
   });
 }
+
+test('every loaded manifest\'s actions reach the home extension, and a name two extensions declare is refused', async () => {
+  const manifests = await loadManifests();
+  assert.deepEqual(manifests.flatMap((m) => m.actions ?? []).map((a) => a.name).sort(), ['research_question', 'review_pull_request', 'run_job']);
+  const dup = { name: 'dup', actions: [{ name: 'run_job', summary: 's', params: {} as never, start: async () => ({ session: 'k', title: 't' }) }] };
+  assert.throws(() => buildCatalog([...manifests, dup]), /action run_job is declared by two extensions/);
+  const seen: string[][] = [];
+  const probe = { name: 'probe', session: (_c: unknown, _w: unknown, actions: Array<{ name: string }>) => (seen.push(actions.map((a) => a.name)), []) };
+  await buildCatalog([...manifests, probe]).catalog.probe({});
+  assert.deepEqual(seen[0].sort(), ['research_question', 'review_pull_request', 'run_job']);
+});
