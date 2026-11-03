@@ -57,3 +57,14 @@ test('New contract asks for the description and starts the contracts agent', asy
   expect(JSON.parse(String(calls[0]![1].body))).toMatchObject({ input: 'GET /x for the page', title: 'GET /x for the page' });
   expect(location.hash).toMatch(/^#\/s\/contracts%3A/);
 });
+
+test('a run still finishing its reply after the approval reads Approved, not Drafting; a newer draft in progress reads Drafting', () => {
+  const rows = [
+    row('g', { active: true, artifacts: [spec(1, 'Schedule'), art('contract.approved', 1, { outcome: 'v1' })] }),
+    row('h', { active: true, artifacts: [spec(1, 'Roster'), art('contract.approved', 1, { outcome: 'v1' }), spec(2, 'Roster')] }),
+  ];
+  render(<Contracts rows={rows} />);
+  const by = (name: string) => screen.getAllByRole('listitem').find((li) => within(li).queryByText(name))!;
+  expect(by('Schedule')).toHaveTextContent('REST · v1Approved v1');
+  expect(by('Roster')).toHaveTextContent('REST · v2 · v1 approvedDrafting');
+});

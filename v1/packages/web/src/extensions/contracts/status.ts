@@ -24,7 +24,8 @@ export function contractOf(row: Row): Contract {
   const base = { key: row.key, name, kind: 'REST', version };
   const stale = approved !== undefined && version !== undefined && version > approved ? `v${version} is not approved yet` : undefined;
   if (row.approvals.length) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
-  if (row.active || row.questions.length) return { ...base, status: 'Drafting', tone: 'plain', note: approved === undefined ? undefined : `v${approved} approved`, rank: 1 };
+  // A run that only finishes its reply after an approval is not drafting anything new.
+  if (row.questions.length || (row.active && approved !== version)) return { ...base, status: 'Drafting', tone: 'plain', note: approved === undefined ? undefined : `v${approved} approved`, rank: 1 };
   if (asked !== undefined && asked === version && asked !== approved) return { ...base, status: 'Changes requested', tone: 'bad', note: named(row, 'contract.changes').at(-1)?.summary || undefined, rank: 2 };
   if (approved !== undefined) return { ...base, status: `Approved v${approved}`, tone: 'ok', note: stale, rank: 4 };
   return { ...base, status: 'Drafting', tone: 'plain', note: passed ? 'not yet proposed for approval' : undefined, rank: 3 };
