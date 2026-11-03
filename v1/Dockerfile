@@ -36,5 +36,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY . .
 COPY --from=web /app/packages/web/dist /app/web
+# npm ci runs before the sources exist, so it links no bin for the workspace CLI.
+RUN printf '#!/bin/sh\nexec node /app/packages/cli/src/main.ts "$@"\n' > /usr/local/bin/quack && chmod +x /usr/local/bin/quack
 ENV QUACK_WEB_DIR=/app/web
 USER node
