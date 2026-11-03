@@ -114,6 +114,16 @@ test('verified webhooks start a review in the PR session, keyed by the delivery 
   assert.doesNotMatch(invocations[0].body.input, /src\/a.ts/);
 });
 
+test('a push to a labelled PR starts a review of the new head; an unlabelled PR is ignored', async () => {
+  invocations.length = 0;
+  const pushed = { ...pr, head: { sha: 'def456', ref: 'fix' }, labels: [{ name: 'quack:review' }] };
+  assert.equal(await deliver('pull_request', { action: 'synchronize', pull_request: { ...pushed, labels: [{ name: 'bug' }] }, repository }, { id: 'd-sync0' }), 200);
+  assert.equal(await deliver('pull_request', { action: 'synchronize', pull_request: pushed, repository }, { id: 'd-sync1' }), 202);
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=reviewer');
+  assert.match(invocations[0].body.input, /Head: def456 on fix/);
+});
+
 test('no notice when a review was posted, and none for a run that is not final', () => {
   assert.equal(noticeFor({ status: 'unanswered', reason: 'run_failed' }, true), undefined);
   assert.equal(noticeFor({ status: 'done' }, true), undefined);
