@@ -297,7 +297,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
+        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <Transcript view={view} meta={meta} load={load} />
@@ -311,7 +311,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
-          <div className="mx-auto flex max-w-[720px] flex-col gap-2">
+          <div className="mx-auto flex max-w-[860px] flex-col gap-2">
             <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
           </div>
         </div>
