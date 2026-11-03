@@ -86,15 +86,12 @@ test('rejects an unknown deployment time zone', () => {
   assert.throws(() => parseDeployment({ providers: {}, timeZone: 'Mars/Olympus' }), /timeZone must be an IANA zone/);
 });
 
-const visionDeployment = (images?: boolean) =>
-  parseDeployment({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { omni: { contextWindow: 8192, maxTokens: 512, ...(images && { images }) } } } } });
-const visionAgent = (modelId: string) => ({ name: 'v', version: 1, model: 'local/omni', extensions: { workflows: { visionModel: { provider: 'local', modelId } } } });
-const workflowsCatalog: Catalog = { workflows: () => [] };
-
-test('refuses a vision model that is not declared with images: true', () => {
-  assert.doesNotThrow(() => parseDefinition(visionAgent('omni'), visionDeployment(true), workflowsCatalog));
-  assert.throws(() => parseDefinition(visionAgent('omni'), visionDeployment(), workflowsCatalog), /visionModel local\/omni must be configured .* images: true/);
-  assert.throws(() => parseDefinition(visionAgent('missing'), visionDeployment(true), workflowsCatalog), /visionModel local\/missing/);
+test('collects the problems each selected extension reports for its own config', () => {
+  const deployment = parseDeployment({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { omni: { contextWindow: 8192, maxTokens: 512 } } } } });
+  const entry = Object.assign(() => [], { validate: (config: unknown, d: unknown) => [`bad ${JSON.stringify(config)} ${Object.keys((d as typeof deployment).providers)}`] });
+  const agent = (extensions: object) => ({ name: 'v', version: 1, model: 'local/omni', extensions });
+  assert.throws(() => parseDefinition(agent({ picky: { a: 1 } }), deployment, { picky: entry }), /bad {"a":1} local/);
+  assert.doesNotThrow(() => parseDefinition(agent({}), deployment, { picky: entry }));
 });
 
 // Real pi-ai conversion: capture the chat-completions request body a model actually sends.

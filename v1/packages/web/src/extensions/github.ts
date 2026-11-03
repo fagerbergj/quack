@@ -28,6 +28,7 @@ function delivered(r: Row): Delivered | undefined {
 }
 
 export const github: Extension = {
+  wholeUnits: ['review'],
   session: {
     label: 'review', match: (r) => KEY.test(r.key), icon: 'M3.5 6a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M15.5 18a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M6 8.5v11M18 15.5V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5', tint: BLUE,
     name: (r) => {

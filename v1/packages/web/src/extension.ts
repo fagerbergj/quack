@@ -34,6 +34,8 @@ export type Extension = {
   suggestion?: { label: string; prompt: string };
   /** An outside page for a session, shown as a header link. */
   link?: (key: string) => { url: string; label: string } | undefined;
+  /** Judge unit ids that stand for the whole artifact; a note prefixed with one needs no chip (verdicts sealed before `scope` was recorded). */
+  wholeUnits?: string[];
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
   scope?: (key: string) => string | undefined;
   /** A nav entry under Apps; without `page` it shows the placeholder. */

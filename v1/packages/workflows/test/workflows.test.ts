@@ -329,7 +329,7 @@ test('a judged card still failing after the last revision is delivered with its 
 });
 
 test('a judged step whose judge model gives no answer fails the step and attaches no verdict', async () => {
-  const asked = { name: 'asks', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'q', label: 'q', weight: 1, question: 'Is it fine?' }] }] };
+  const asked = { name: 'asks', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'q', label: 'q', weight: 1, scope: 'review', question: 'Is it fine?' }] }] };
   const flow = defineWorkflow({
     name: 'judged-outage',
     steps: [{ name: 'card', kind: 'judged', schema: Type.Object({ text: Type.String() }), prompt: () => 'write the text', card: (_c, d) => d as object,

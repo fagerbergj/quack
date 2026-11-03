@@ -62,14 +62,14 @@ export function lineupEvidence(f: Facts) {
     const inBaseline = new Set(f.baseline.map((b) => b.id));
     const close = new Set(closeCalls(f).map((p) => p.id));
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: where(() => true),
       // By membership, not slot: the baseline may seat the same player in RB2 that the card keeps in RB1.
       differs: live((r) => changed(r, f) && !inBaseline.has(r.player.id)),
       changed: live((r) => changed(r, f)),
       close: live((r) => (r.news?.length ?? 0) > 0 && (close.has(r.player.id) || (!!f.current[r.slot] && close.has(f.current[r.slot]!)))),
       designated: live((r) => !!r.player.inj || !!f.players[f.current[r.slot] ?? '']?.inj),
-      card: [{ id: 'card', state: { summary: card.summary, rows: card.starters.map((r) => ({ slot: r.slot, player: r.player.name, why: r.why })) } as never }],
+      card: [{ id: 'card', whole: true as const, state: { summary: card.summary, rows: card.starters.map((r) => ({ slot: r.slot, player: r.player.name, why: r.why })) } as never }],
     };
   };
 }

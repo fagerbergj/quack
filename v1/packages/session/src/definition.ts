@@ -21,7 +21,7 @@ export type DeploymentConfig = { providers: Record<string, ProviderConfig>; time
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
-export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); requires?: readonly string[]; optional?: readonly string[] };
+export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[] };
 /** Extensions compiled into the runtime image, by name (A8). */
 export type Catalog = Record<string, CatalogEntry>;
 
@@ -93,15 +93,6 @@ function modelProblems(model: unknown, deployment: DeploymentConfig): string[] {
   return deployment.providers[provider]?.models[id] ? [] : [`model ${model} is not configured in this deployment`];
 }
 
-function visionProblems(extensions: Record<string, unknown>, deployment: DeploymentConfig): string[] {
-  const workflows = extensions.workflows;
-  const ref = isObject(workflows) && isObject(workflows.visionModel) ? workflows.visionModel : undefined;
-  if (!ref) return [];
-  const { provider, modelId } = ref as { provider?: string; modelId?: string };
-  const limits = typeof provider === 'string' && typeof modelId === 'string' ? deployment.providers[provider]?.models[modelId] : undefined;
-  return limits?.images ? [] : [`workflows.visionModel ${String(provider)}/${String(modelId)} must be configured in this deployment with images: true`];
-}
-
 /** What an agent installs: the names it selects plus their `requires` transitively, each after what it needs (selected `optional` ones too); problems name a missing requirement or a cycle. */
 export function resolveExtensions(selected: readonly string[], catalog: Catalog): { order: string[]; problems: string[] } {
   const order: string[] = [];
@@ -138,8 +129,11 @@ export function parseDefinition(raw: unknown, deployment: DeploymentConfig, cata
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
   else {
-    for (const name of Object.keys(raw.extensions)) if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
-    problems.push(...resolveExtensions(Object.keys(raw.extensions), catalog).problems, ...visionProblems(raw.extensions, deployment));
+    for (const [name, config] of Object.entries(raw.extensions)) {
+      if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
+      else problems.push(...(catalog[name].validate?.(config, deployment) ?? []));
+    }
+    problems.push(...resolveExtensions(Object.keys(raw.extensions), catalog).problems);
   }
   if (problems.length) throw new Error(`invalid agent definition:\n- ${problems.join('\n- ')}`);
   return raw as AgentDefinition;

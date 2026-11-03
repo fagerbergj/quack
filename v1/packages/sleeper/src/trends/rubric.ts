@@ -43,12 +43,12 @@ export function trendsEvidence(f: TrendsFacts) {
     });
     const units = card.items.map(unit);
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: units,
       // Where Sleeper holds a designation and the web has a report on the same player, the two can conflict.
       conflict: units.filter((u, n) => card.items[n].player?.inj && (f.news[card.items[n].player!.id]?.length ?? 0) > 0),
       sourced: units.filter((_, n) => card.items[n].link),
-      card: [{ id: 'card', state: { summary: card.summary, source_note: card.source_note, items: card.items.map((i) => ({ player: i.player?.name, source: i.source, text: i.text })) } as never }],
+      card: [{ id: 'card', whole: true as const, state: { summary: card.summary, source_note: card.source_note, items: card.items.map((i) => ({ player: i.player?.name, source: i.source, text: i.text })) } as never }],
     };
   };
 }

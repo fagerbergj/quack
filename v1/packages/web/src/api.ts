@@ -2,7 +2,7 @@
 export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string };
 export type AgentSummary = { name: string; version: number };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
-export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[] };
+export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[]; scope?: string };
 // Gates and positive checks fail when not fully met; a pitfall (negative weight) fails when it showed up. Not applicable never fails.
 export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? c.met < 1 : c.met > 0);
 export type Verdict = { passed: boolean; gatesFailed: string[]; score: number; checks: Check[] };

@@ -42,10 +42,10 @@ export function digestEvidence(f: DigestFacts) {
     const card = parse<DigestCard>(sealed.content);
     const rows = card.games.map((g) => ({ id: `game${g.id}`, state: { game: g, mode: f.mode, news: g.news, designations: Object.fromEntries(f.games.find((x) => x.id === g.id)?.sides.flatMap((s) => s.designated.map((d) => [d.name, d.inj])) ?? []) } as never }));
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: rows,
       preview: f.mode === 'preview' ? rows : [],
-      card: [{ id: 'card', state: { summary: card.summary, mode: f.mode, week: f.week, games: card.games.map((g) => ({ home: g.home.team, away: g.away.team, margin: g.margin, note: g.note })), standings: f.standings } as never }],
+      card: [{ id: 'card', whole: true as const, state: { summary: card.summary, mode: f.mode, week: f.week, games: card.games.map((g) => ({ home: g.home.team, away: g.away.team, margin: g.margin, note: g.note })), standings: f.standings } as never }],
     };
   };
 }
@@ -101,9 +101,9 @@ export function retroEvidence(f: RetroFacts) {
     const news = [...f.misses, ...f.waiverMisses].map((r) => r.news);
     const unit = (r: Graded, i: number) => ({ id: `row${i + 1}`, state: { row: r, news: news[i] } as never });
     const rows = graded(card).map(unit);
-    const cardUnit = { id: 'card', state: { summary: card.summary, lessons: card.lessons, won: card.won, left: card.left, swings: graded(card).map((r) => ('swing' in r ? r.swing : r.pts - r.over_pts)) } as never };
+    const cardUnit = { id: 'card', whole: true as const, state: { summary: card.summary, lessons: card.lessons, won: card.won, left: card.left, swings: graded(card).map((r) => ('swing' in r ? r.swing : r.pts - r.over_pts)) } as never };
     return {
-      facts: [{ id: 'facts', state: f as never }],
+      facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: rows,
       known: graded(card).flatMap((r, i) => (r.knowable ? [rows[i]] : [])),
       card: [cardUnit],

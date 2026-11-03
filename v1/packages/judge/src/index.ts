@@ -42,7 +42,7 @@ function planModelChecks(rubric: Rubric, ev: Evidence) {
     for (const k of c.checks.filter((x) => x.question)) {
       const key = `${c.id}.${k.id}`;
       const units = unitsFor(k.scope, ev);
-      results.set(key, { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [] });
+      results.set(key, { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], scope: k.scope });
       for (const u of units) {
         const entry = byUnit.get(u.id) ?? { unit: u, checks: [] };
         entry.checks.push({ ...k, id: key });
@@ -63,7 +63,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
       // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
       if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
       if (a.met) r.met! += 1 / r.units;
-      if (a.met === false && a.note) r.notes.push(`${unit.id}: ${a.note}`);
+      if (a.met === false && a.note) r.notes.push(unit.whole ? a.note : `${unit.id}: ${a.note}`);
     }
   }
   for (const r of results.values()) if (r.undecided) r.met = null;
