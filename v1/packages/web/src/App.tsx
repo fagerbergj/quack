@@ -85,15 +85,17 @@ export function App() {
   const data = useWorkspaceData(session?.key);
   const desktop = useDesktop();
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
+  // On desktop the list lives in the sidebar, except on #/sessions itself, where it is the page.
+  const inSidebar = desktop && !(nav === 'sessions' && !session);
   return (
-    <Shell route={nav} bare={Boolean(session)} sidebar={desktop ? list : undefined}>
+    <Shell route={nav} bare={Boolean(session)} sidebar={inSidebar ? list : undefined}>
       {full ? <ArtifactPage sessionKey={full.key} version={full.version} />
         : Page ? <Page rows={data.rows} />
         : nav === 'more' ? <More />
         : nav === 'settings' ? <Settings />
         : nav === 'agents' ? <AgentsRoute hash={hash} />
         : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
-        : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={desktop ? undefined : list} />}
+        : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={inSidebar ? undefined : list} />}
     </Shell>
   );
 }
