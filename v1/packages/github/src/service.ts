@@ -260,10 +260,8 @@ export function createGithubService(app: GithubApp, config: ServiceConfig) {
       if (get) return await get();
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
-      const issue = /^\/issues\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
-      if (req.method === 'GET' && issue) return await issueRoute(res, app, issue[1], issue[2], Number(issue[3]));
-      const pull = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
-      if (req.method === 'GET' && pull) return await pullRequest(res, app, pull[1], pull[2], Number(pull[3]));
+      const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
+      if (item) return await (item[1] === 'issues' ? issueRoute : pullRequest)(res, app, item[2], item[3], Number(item[4]));
       send(res, 404, { error: 'not found' });
     } catch (err) {
       const bad = err instanceof SyntaxError || (err as Error).message === 'body too large';
