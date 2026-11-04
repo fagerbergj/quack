@@ -39,7 +39,7 @@ export function findingItems(report: string): Array<{ first: string; text: strin
   return items.map((l) => ({ first: l[0].trim(), text: l.join('\n') }));
 }
 
-const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/`/g, '');
 const MIN_QUOTE = 12;
 
 /** Quoted spans of a finding, split at elisions; shorter ones are scare quotes or names, not evidence. Edge punctuation is dropped: American style puts the sentence's comma or period inside the marks. */

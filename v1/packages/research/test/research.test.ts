@@ -364,6 +364,12 @@ test('missingQuotes: punctuation the writer put inside the quote marks is not pa
   assert.deepEqual(missingQuotes('It notes "different places and different formats; " [s1]', [PAGE]), []);
 });
 
+test('missingQuotes: code marks the writer added around a term are not part of the quote', () => {
+  const aip = 'If the user does not specify page_size (or specifies 0), the API chooses an appropriate default, which the API should document.';
+  assert.deepEqual(missingQuotes('AIP-158 states: "If the user does not specify `page_size` (or specifies 0), the API chooses an appropriate default" [s1]', [aip]), []);
+  assert.deepEqual(missingQuotes('"If the user does not specify `page_token`"', [aip]), ['If the user does not specify `page_token`']);
+});
+
 test('missingQuotes: a changed word still fails, with or without trailing punctuation', () => {
   const rfc = ['The goal of this document is to remove inconsistencies with other specifications of JSON.'];
   assert.deepEqual(missingQuotes('RFC 8259 "removes inconsistencies with other specifications of JSON."', rfc), ['removes inconsistencies with other specifications of JSON']);
