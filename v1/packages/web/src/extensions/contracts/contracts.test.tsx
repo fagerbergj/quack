@@ -9,6 +9,7 @@ import type { SealedArtifact } from '../../api.ts';
 import { contracts } from './index.ts';
 import v1 from './fixtures/sleeper-schedule-v1.json';
 import v2 from './fixtures/sleeper-schedule-v2.json';
+import settingsSpec from './fixtures/sleeper-settings.json';
 import { fields, parseSpec, toYaml, type ContractSpec } from './spec.ts';
 
 const raw = (v: number) => JSON.stringify(v === 1 ? v1 : v2);
@@ -189,4 +190,31 @@ test('backticks in decisions and why notes render as code', async () => {
   const list = screen.getByRole('region', { name: 'Decisions' });
   expect(within(list).getByText('{ "error": string }').tagName).toBe('CODE');
   expect(list).not.toHaveTextContent('`');
+});
+
+const settings = JSON.stringify(settingsSpec);
+
+test('a json-schema card lists only the top-level fields', () => {
+  render(<>{contracts.card!(sealed(settings))}</>);
+  expect(screen.getByRole('heading', { name: 'Sleeper settings file' })).toBeInTheDocument();
+  expect(screen.getByText('4 fields · version 1')).toBeInTheDocument();
+  const list = within(screen.getByRole('list', { name: 'Fields' }));
+  expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['leagueIdstringREQUIRED', 'modeany', 'notifyobject']);
+  expect(screen.queryByText('notifyTime')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'JSON Schema file' })).toBeInTheDocument();
+});
+
+test('the json-schema full view shows each field with type, required, enum and example, and a why chip opens its choice', async () => {
+  render(<>{contracts.full!(sealed(settings))}</>);
+  const tree = within(screen.getByRole('region', { name: 'Fields' }));
+  const id = tree.getByText('leagueId').closest('li') as HTMLElement;
+  expect(id).toHaveTextContent('string');
+  expect(id).toHaveTextContent('REQUIRED');
+  expect(id).toHaveTextContent('example1234');
+  expect(tree.getByText('mode').closest('li')).toHaveTextContent('one ofLINEUP · WAIVERS');
+  expect(tree.getByText('notifyTime').closest('li')).toHaveTextContent('date-time');
+  await userEvent.click(within(tree.getByText('mode').closest('li') as HTMLElement).getByRole('button', { name: 'Why: Mode is a closed set of two jobs.' }));
+  expect(screen.getByRole('region', { name: 'Why: Mode is a closed set of two jobs.' })).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(2);
 });

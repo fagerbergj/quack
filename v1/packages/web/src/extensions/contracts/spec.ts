@@ -2,7 +2,7 @@
 export type Source = { source: 'answer' | 'guide' | 'code'; text: string; ref: string };
 export type Choice = { id: string; pointer: string; decision: string; why: Source[] };
 export type ContractSpec = {
-  kind: 'rest';
+  kind: 'rest' | 'json-schema';
   title: string;
   version: number;
   intent: { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
@@ -21,7 +21,8 @@ const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null;
 export function parseSpec(content: string): ContractSpec | undefined {
   try {
     const s = JSON.parse(content) as Partial<ContractSpec>;
-    return isObject(s) && s.kind === 'rest' && isObject(s.document) && isObject((s.document as Json).paths) && Array.isArray(s.choices) && isObject(s.intent) ? (s as ContractSpec) : undefined;
+    const drawable = s.kind === 'json-schema' ? isObject(s.document) : s.kind === 'rest' && isObject(s.document) && isObject((s.document as Json).paths);
+    return isObject(s) && drawable && Array.isArray(s.choices) && isObject(s.intent) ? (s as ContractSpec) : undefined;
   } catch {
     return undefined;
   }
@@ -55,7 +56,7 @@ const typeOf = (s: Json) => (s.format as string | undefined) ?? (Array.isArray(s
 const show = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 
 function facts(s: Json): Field['facts'] {
-  return [['default', s.default], ['example', s.example], ['one of', s.enum]]
+  return [['default', s.default], ['example', s.example ?? (Array.isArray(s.examples) ? s.examples[0] : undefined)], ['one of', s.enum]]
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => [k as string, Array.isArray(v) ? v.map(show).join(' · ') : show(v)]);
 }

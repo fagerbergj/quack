@@ -39,7 +39,7 @@ async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchor
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
-      const ref = w.ref.replace(/^rest#|^#/, '');
+      const ref = w.ref.replace(/^(rest|json-schema)#|^#/, '');
       // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
       const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(api, w.ref, ctx);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
@@ -94,7 +94,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
   const named = compatibility?.breaking ?? [];
   const bare = named.filter((b) => !b.callers?.length);
   const ok = named.length > 0 && !bare.length;
-  return { met: ok ? 1 : 0, detail: ok ? undefined : `oasdiff found breaking changes (${list(breaking.map((b) => b.text))}); compatibility.breaking must list each with the callers it breaks, found by reading the code that calls it` };
+  return { met: ok ? 1 : 0, detail: ok ? undefined : `the kind's diff found breaking changes (${list(breaking.map((b) => b.text))}); compatibility.breaking must list each with the callers it breaks, found by reading the code that calls it` };
 }
 
 export const contractRubric: Rubric = {

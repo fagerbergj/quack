@@ -10,7 +10,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { answerQuestion, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { contractsSessionExtensions, type ContractSpec } from '../src/index.ts';
-import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
+import { scheduleSpecV1, scheduleSpecV2, settingsSpec, SLEEPER_PAGE } from './fixtures.ts';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const dirs: string[] = [];
@@ -96,6 +96,23 @@ test('the question flow asks one at a time and seals version 1 only after the an
   assert.equal((v1.verdict as { passed: boolean }).passed, true);
   const spec = JSON.parse(v1.content) as ContractSpec;
   assert.deepEqual(spec.choices.flatMap((c) => c.why.filter((w) => w.source === 'answer').map((w) => w.ref)), [q1.question, q2.question]);
+  await s.close();
+});
+
+test('a json-schema spec reads its own guide, submits and passes', async () => {
+  let guide = '';
+  const s = await open([
+    (c) => call('read_guide', { kind: 'json-schema' })(c),
+    (c) => ((guide = text(c)), write(settingsSpec)(c)),
+    call('submit_contract', {}),
+    () => fauxAssistantMessage('Spec version 1 is sealed.'),
+  ]);
+  const done = await s.submit('Define the Sleeper settings file', 'r-1', true);
+  assert.equal(done.status === 'done' && done.answer, 'Spec version 1 is sealed.');
+  assert.match(guide, /^# JSON Schema contract guide/);
+  const [v] = await versions(s);
+  assert.equal((v.verdict as { passed: boolean }).passed, true);
+  assert.equal((JSON.parse(v.content) as ContractSpec).kind, 'json-schema');
   await s.close();
 });
 
