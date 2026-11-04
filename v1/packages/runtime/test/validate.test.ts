@@ -48,12 +48,12 @@ test('the repo agents load without their service env set', async () => {
 });
 
 test('deployment-level extension env gets a placeholder too, so the slots gate is built', async () => {
-  delete process.env.QUACK_SLOTS_URL;
-  delete process.env.QUACK_SLOTS_TOKEN;
+  delete process.env.QUACK_INDEX_URL;
+  delete process.env.QUACK_INDEX_TOKEN;
   const r = await validate({ ...layout({ 'deployment.json': config }), fetch: noList });
   assert.deepEqual(r.failures, []);
-  assert.equal(process.env.QUACK_SLOTS_URL, 'placeholder');
-  assert.equal(process.env.QUACK_SLOTS_TOKEN, 'placeholder');
+  assert.equal(process.env.QUACK_INDEX_URL, 'placeholder');
+  assert.equal(process.env.QUACK_INDEX_TOKEN, 'placeholder');
 });
 
 test('a defaultModel no provider can serve fails validation before any agent loads', async () => {
@@ -61,12 +61,16 @@ test('a defaultModel no provider can serve fails validation before any agent loa
   await assert.rejects(validate({ ...o, fetch: noList }), /defaultModel: model local\/ghost is not configured/);
 });
 
-test('service settings are checked by the settings check each service publishes', async () => {
-  const withServices = (services: object) => layout({ 'deployment.json': { ...config, services } });
-  const url = 'http://127.0.0.1:1';
-  const ok = { sleeper: { url, tokenEnv: 'T', settings: { league: '1', owner: 'me' } }, schedules: { url, settings: { retentionSweep: true } }, slots: { url } };
-  assert.deepEqual((await validate({ ...withServices(ok), fetch: noList })).failures, []);
-  await assert.rejects(validate({ ...withServices({ sleeper: { url } }), fetch: noList }), /services\.sleeper\.settings: league must be a non-empty string/);
-  await assert.rejects(validate({ ...withServices({ schedules: { url, settings: { retentionSwep: true } } }), fetch: noList }), /services\.schedules\.settings: retentionSwep is not a schedules setting/);
-  await assert.rejects(validate({ ...withServices({ slots: { url, settings: { x: 1 } } }), fetch: noList }), /services\.slots\.settings: no extension named slots publishes settings/);
+test('extension settings are checked by the settings check each extension publishes, and a name nothing mounts is refused', async () => {
+  const withExtensions = (extensions: object) => layout({ 'deployment.json': { ...config, extensions } });
+  const ok = { sleeper: { settings: { league: '1', owner: 'me' } }, schedules: { settings: { retentionSweep: true } }, slots: {} };
+  assert.deepEqual((await validate({ ...withExtensions(ok), fetch: noList })).failures, []);
+  await assert.rejects(validate({ ...withExtensions({ sleeper: {} }), fetch: noList }), /extensions\.sleeper\.settings: league must be a non-empty string/);
+  await assert.rejects(validate({ ...withExtensions({ schedules: { settings: { retentionSwep: true } } }), fetch: noList }), /extensions\.schedules\.settings: retentionSwep is not a schedules setting/);
+  await assert.rejects(validate({ ...withExtensions({ slots: { settings: { x: 1 } } }), fetch: noList }), /extensions\.slots\.settings: slots takes no settings/);
+  await assert.rejects(validate({ ...withExtensions({ ghost: {} }), fetch: noList }), /extensions\.ghost: no extension named ghost mounts an app/);
+});
+
+test('a deployment file that still has a services section is rejected, naming the key', async () => {
+  await assert.rejects(validate({ ...layout({ 'deployment.json': { ...config, services: { sleeper: { url: 'http://x' } } } }), fetch: noList }), /unknown top-level key services: it was renamed extensions/);
 });

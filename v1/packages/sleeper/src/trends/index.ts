@@ -1,3 +1,4 @@
+import { appEndpoint } from '@quack/sdk';
 import { depsFromEnv } from '../deps.ts';
 import { trendsWorkflow, TRENDS_WORKFLOW, type TrendsDeps } from './workflow.ts';
 
@@ -9,9 +10,9 @@ export { trendsWorkflow, TRENDS_WORKFLOW, type TrendsDeps } from './workflow.ts'
 
 /** The trends workflow wired to the Sleeper API and the service half named in the environment. */
 export function trendsFromEnv(env: Record<string, string | undefined> = process.env) {
-  const base = depsFromEnv(TRENDS_WORKFLOW, env);
+  const base = depsFromEnv(env);
   // Read now: the session process deletes these from process.env once its agent has loaded.
-  const [url, token] = [env.QUACK_SLEEPER_URL, env.QUACK_SLEEPER_TOKEN];
+  const { url, token } = appEndpoint('sleeper', env);
   const get = async (path: string) => {
     const res = await fetch(`${url}${path}`, { headers: { authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`sleeper service: ${path} returned ${res.status}`);

@@ -34,3 +34,11 @@ export function buildCatalog(manifests: ExtensionManifest[]): { catalog: Catalog
 
 export const manifests = await loadManifests();
 export const { catalog, deploymentExtensions } = buildCatalog(manifests);
+
+/** The apps a session's agent declares: an extension it selects by name or by a workflow it binds, one every session gets, and every actionable one for the home agent. */
+export function declaredApps(definition: { extensions?: Record<string, any> } | null, list: ExtensionManifest[] = manifests): Set<string> {
+  const selected = definition?.extensions ?? {};
+  const workflow = typeof selected.workflows?.workflow === 'string' ? selected.workflows.workflow : '';
+  const names = list.filter((m) => m.app && (m.deployment || m.name in selected || workflow.startsWith(`${m.name}.`) || (selected.home && m.actions?.length))).map((m) => m.name);
+  return new Set(names);
+}

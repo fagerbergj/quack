@@ -1,6 +1,8 @@
 import type { Extension, JsonObject } from '@earendil-works/pi-durable';
 import type { Schema, Static } from '@earendil-works/pi-schema';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SealedArtifact } from './artifacts.ts';
+import type { DeploymentFile } from './extensions.ts';
 
 /** A workflow an extension contributes: how to build it from an agent's binding, and the variables it reads from the session process. */
 export type ContributedWorkflow = { build: (config: unknown) => unknown; env: readonly string[] };
@@ -23,6 +25,12 @@ export type Action<P extends Schema = Schema> = {
 /** The slice of a deployment's config an extension may check its own config against. */
 export type DeploymentView = { providers: Record<string, { models?: Record<string, { images?: boolean }> }> };
 
+/** An extension's in-process half: it answers /apps/<name>/* with the path relative to its mount, and runs its background loops between start and stop. */
+export type App = { handle(req: IncomingMessage, res: ServerResponse): Promise<unknown>; start?(): void | Promise<void>; stop?(): void | Promise<void> };
+
+/** What the distributor gives an app: its deployment entry, database file, its own address for calls to the distributor, and the process environment (secrets are read from it by name). */
+export type AppContext = { settings: unknown; dbPath: string; distributorUrl: string; deployment: DeploymentFile; env: NodeJS.ProcessEnv };
+
 /** What an extension package exports as `manifest`. `session` installs it for agents selecting `name` (every session if `deployment`); `env` is what it reads from the process. */
 export type ExtensionManifest = {
   name: string;
@@ -31,8 +39,10 @@ export type ExtensionManifest = {
   /** Problems with an agent's config for this extension, given the deployment; empty when it is fine. */
   validate?: (config: unknown, deployment: DeploymentView) => string[];
   deployment?: boolean;
-  /** Problems with `services.<name>.settings` of the deployment file, where name is this manifest's; the service checks the same settings at boot. Absent means the service takes none. */
+  /** Problems with `extensions.<name>.settings` of the deployment file, where name is this manifest's; the app checks the same settings at boot. Absent means it takes none. */
   settings?: (settings: unknown) => string[];
+  /** Mounts the extension's app when the deployment file lists it under `extensions`. */
+  app?: (ctx: AppContext) => App | Promise<App>;
   /** Extensions this one cannot work without; an agent selecting it gets them too, loaded first. */
   requires?: string[];
   /** Extensions it uses when the agent also enables them (judge: results are checked); loaded before it, never added. */

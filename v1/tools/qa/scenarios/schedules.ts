@@ -2,7 +2,7 @@ import { eachView, visible, type Scenario } from '../scenario.ts';
 
 const scenario: Scenario = {
   name: 'schedules',
-  stack: { apps: { schedules: 'stub' } },
+  stack: { apps: ['schedules'] },
   async run(ctx) {
     await eachView(ctx, 'schedules page', async (page, label) => {
       await page.goto(`${ctx.url}/#/schedules`);

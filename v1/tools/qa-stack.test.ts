@@ -10,7 +10,7 @@ const listening = (url: string) => fetch(`${url}/version`).then(() => true, () =
 test('the stack serves /version and its stub app, then leaves no listeners', async () => {
   const web = mkdtempSync(join(tmpdir(), 'qa-web-'));
   writeFileSync(join(web, 'index.html'), '<!doctype html><title>qa</title>');
-  const stack = await startStack({ web, apps: { schedules: 'stub' } });
+  const stack = await startStack({ web, apps: ['schedules'] });
   assert.equal(await listening(stack.url), true);
   const res = await fetch(`${stack.url}/apps/schedules`);
   assert.equal(((await res.json()) as { schedules: unknown[] }).schedules.length, 2);

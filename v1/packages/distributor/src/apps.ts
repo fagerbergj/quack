@@ -1,16 +1,5 @@
 import { request, type IncomingMessage, type ServerResponse } from 'node:http';
-import { sendProblem } from '@quack/sdk';
-import { readBody } from './server.ts';
-
-export type Apps = Record<string, { url: string; tokenEnv?: string }>;
-
-/** The deployment's services, refusing an entry whose tokenEnv names an unset variable. */
-export function appsFrom(services: Apps | undefined, env: NodeJS.ProcessEnv = process.env): Apps {
-  for (const [name, app] of Object.entries(services ?? {})) {
-    if (app.tokenEnv && !env[app.tokenEnv]) throw new Error(`services.${name}.tokenEnv ${app.tokenEnv} is not set`);
-  }
-  return services ?? {};
-}
+import { extensionDbPath, sendProblem, type App, type DeploymentFile, type ExtensionManifest } from '@quack/sdk';
 
 /** Sends the request to `target` with credentials (`auth` headers) the caller never sees; method, content type and body pass through, and so do the status and body back. */
 export function forward(req: IncomingMessage, res: ServerResponse, target: URL, auth: Record<string, string>, body: Buffer): Promise<void> {
@@ -34,20 +23,36 @@ export function forward(req: IncomingMessage, res: ServerResponse, target: URL, 
   });
 }
 
-// Forwards /apps/<name>[/...] to the deployment's service with its bearer token, so a page never holds it.
-// The client's own authorization is dropped; method, query, body and status pass through.
-export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
+const sendFailure = (res: ServerResponse, err: unknown) => (res.headersSent ? res.destroy() : sendProblem(res, 500, err instanceof Error ? err.message : String(err)));
+
+/** Dispatches /apps/<name>[/...] to the mounted app in this process, with the path relative to its mount: a bearer credential must be a current launch one and its session reaches only the apps `granted` lists; none is the page, which passes on the tailnet boundary. */
+export function appsGateway(apps: Record<string, App>, sessionOf: (token: string) => string | undefined, granted: (session: string) => Promise<ReadonlySet<string>>) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
-    const match = /^\/apps\/([^/?]+)(?=[/?]|$)/.exec(req.url ?? '');
-    if (!match) return false;
-    const app = Object.hasOwn(apps, match[1]) ? apps[match[1]] : undefined;
-    const target = app && new URL(req.url!, app.url);
-    // URL resolves `..`; a path leaving /apps/<name> would reach the service's other routes with its token.
-    if (!target || !`${target.pathname}/`.startsWith(`/apps/${match[1]}/`)) return sendProblem(res, 404, 'no such app'), true;
-    // Read up front under the same cap as the session forwarder, so a service never sees an unbounded upload.
-    const body = await readBody(req).catch(() => undefined);
-    if (!body) return sendProblem(res, 413, 'body too large'), true;
-    await forward(req, res, target, app!.tokenEnv ? { authorization: `Bearer ${env[app!.tokenEnv]}` } : {}, body);
+    const name = /^\/apps\/([^/?]+)(?=[/?]|$)/.exec(req.url ?? '')?.[1];
+    if (!name) return false;
+    const presented = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+    const session = presented === undefined ? undefined : sessionOf(presented);
+    if (presented !== undefined && session === undefined) return sendProblem(res, 401, 'unauthorized'), true;
+    const app = Object.hasOwn(apps, name) ? apps[name] : undefined;
+    // URL resolves `..` and `%2e`; a path leaving /apps/<name> would reach another app's routes.
+    const target = new URL(req.url!, 'http://x');
+    const mount = `/apps/${name}`;
+    if (!app || !`${target.pathname}/`.startsWith(`${mount}/`)) return sendProblem(res, 404, 'no such app'), true;
+    if (session !== undefined && !(await granted(session)).has(name)) return sendProblem(res, 403, 'agent has no grant for this app'), true;
+    req.url = `${target.pathname.slice(mount.length) || '/'}${target.search}`;
+    await app.handle(req, res).catch((err) => sendFailure(res, err));
     return true;
   };
+}
+
+/** Builds the app of every extension the deployment file lists; an unlisted extension is not mounted, and a listed name nothing mounts is refused. */
+export async function mountApps(deployment: DeploymentFile, manifests: ExtensionManifest[], o: { distributorUrl: string; env?: NodeJS.ProcessEnv }): Promise<Record<string, App>> {
+  const env = o.env ?? process.env;
+  const apps: Record<string, App> = {};
+  for (const [name, entry] of Object.entries(deployment.extensions ?? {})) {
+    const mount = manifests.find((m) => m.name === name)?.app;
+    if (!mount) throw new Error(`extensions.${name}: no extension named ${name} mounts an app`);
+    apps[name] = await mount({ settings: entry.settings, dbPath: extensionDbPath(deployment, name, env), distributorUrl: o.distributorUrl, deployment, env });
+  }
+  return apps;
 }

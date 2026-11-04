@@ -3,6 +3,7 @@ import { createHmac, createVerify, generateKeyPairSync } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
+import { serveApp } from '@quack/sdk';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
 import { fixRefused, noticeFor } from '../src/notice.ts';
 
@@ -98,8 +99,8 @@ const distributor = await listen(
   }),
 );
 
-const config = { webhookSecret: 'hook-secret', serviceToken: 'svc-secret', distributorUrl: distributor, label: 'quack:review', agent: 'reviewer' };
-const service = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), config));
+const config = { webhookSecret: 'hook-secret', distributorUrl: distributor, label: 'quack:review', agent: 'reviewer' };
+const service = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), config)));
 
 function deliver(event: string, payload: unknown, opts: { secret?: string; id?: string } = {}) {
   const body = JSON.stringify(payload);
@@ -158,7 +159,7 @@ test('/fix runs the implementer in the PR session only where one is configured; 
   invocations.length = 0;
   const fix = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/fix the cache test\nand the lint error', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
   assert.equal(await deliver('issue_comment', fix, { id: 'd-fix0' }), 200);
-  const withFix = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' }));
+  const withFix = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' })));
   const body = JSON.stringify(fix);
   const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
   const status = await fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix1' } }).then((r) => r.status);
@@ -180,7 +181,7 @@ test('/fix runs the implementer in the PR session only where one is configured; 
 test('/implement on an issue runs the implementer in the issue session; a refused start is answered on the issue', async () => {
   invocations.length = 0;
   const implement = { action: 'created', issue: { number: 12, title: 'Add TTL', body: 'b', labels: [{ name: 'bug' }] }, comment: { body: '/implement', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
-  const withFix = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' }));
+  const withFix = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' })));
   const body = JSON.stringify(implement);
   const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
   const send = (id: string) => fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': id } }).then((r) => r.status);
@@ -199,7 +200,6 @@ test('/implement on an issue runs the implementer in the issue session; a refuse
 
 test('the issue route returns an issue with the default branch; a pull request number is not an issue', async () => {
   const get = (n: number, token = 'svc-secret') => fetch(`${service}/issues/acme/widgets/${n}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  assert.equal((await get(12, 'nope')).status, 401);
   assert.deepEqual((await get(12)).body, { owner: 'acme', repo: 'widgets', number: 12, title: 'Add TTL', body: 'b', author: 'dev', state: 'open', labels: ['bug'], baseRef: 'trunk' });
   assert.equal((await get(9)).status, 404);
 });
@@ -219,7 +219,6 @@ test('git credentials are minted per repository and cached until near expiry', a
   const get = (url: string, token = 'svc-secret') =>
     fetch(`${service}/git-credential?url=${encodeURIComponent(url)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: await r.json() }));
   calls.length = 0;
-  assert.equal((await get('https://github.com/acme/widgets.git', 'nope')).status, 401);
   assert.deepEqual((await get('https://github.com/acme/widgets.git')).body, { username: 'x-access-token', token: 'ghs_test' });
   assert.equal((await get('https://github.com/acme/widgets')).status, 200);
   // The webhook test above may already have minted it; either way two requests mint at most once.
@@ -386,7 +385,7 @@ test('a review posts its inline comments on the right side, mentions stripped; a
 });
 
 const pulls = (keys: string, token = 'svc-secret') =>
-  fetch(`${service}/apps/github/pulls?keys=${encodeURIComponent(keys)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: (await r.json()) as any }));
+  fetch(`${service}/pulls?keys=${encodeURIComponent(keys)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: (await r.json()) as any }));
 const reads = (n: number) => calls.filter((c) => c.path === `/repos/acme/widgets/pulls/${n}`).length;
 
 test('closed and reopened webhooks record the PR state and start no run', async () => {
@@ -414,7 +413,11 @@ test('an unseen PR is read from GitHub once; merged and closed stay cached', asy
   assert.deepEqual([reads(9), reads(10), reads(11)], [1, 1, 1]);
 });
 
-test('a PR the app cannot read is left out, and the route needs the service token', async () => {
+test('an oversized body is a 413 problem', async () => {
+  const r = await fetch(`${service}/reviews`, { method: 'POST', body: 'x'.repeat(6 << 20) });
+  assert.deepEqual([r.status, r.headers.get('content-type')], [413, 'application/problem+json']);
+});
+
+test('a PR the app cannot read is left out', async () => {
   assert.deepEqual((await pulls('github:acme/private#1,not-a-key')).body, { pulls: {} });
-  assert.equal((await pulls('github:acme/widgets#9', 'wrong')).status, 401);
 });

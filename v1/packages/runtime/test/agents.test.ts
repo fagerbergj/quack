@@ -18,8 +18,8 @@ const deployment = parseDeployment({
 });
 
 test('the shipped reviewer definition loads with its prompt, and the GitHub tools', async () => {
-  process.env.QUACK_GITHUB_URL = 'http://127.0.0.1:8090';
-  process.env.QUACK_GITHUB_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You review one pull request/);
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
@@ -34,8 +34,8 @@ test('the shipped researcher definition loads with the research tools and the re
 });
 
 test('the shipped sleeper-lineup definition loads its prompt and binds the lineup workflow', async () => {
-  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-lineup/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the lineup analyst/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
@@ -43,8 +43,8 @@ test('the shipped sleeper-lineup definition loads its prompt and binds the lineu
 
 for (const [name, opening] of [['sleeper-trade', /^You are the trade analyst/], ['sleeper-trade-finder', /^You are the trade finder/]] as const) {
   test(`the shipped ${name} definition loads its prompt and binds its workflow`, async () => {
-    process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-    process.env.QUACK_SLEEPER_TOKEN = 'x';
+    process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+    process.env.QUACK_INDEX_TOKEN = 'x';
     const agent = await loadAgent(fileURLToPath(new URL(`../../../agents/${name}/agent.json`, import.meta.url)), deployment, catalog);
     assert.match(agent.instructions!, opening);
     assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
@@ -52,71 +52,62 @@ for (const [name, opening] of [['sleeper-trade', /^You are the trade analyst/], 
 }
 
 test('the shipped sleeper-history definition loads its prompt and binds the history workflow', async () => {
-  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-history/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the history analyst/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-waivers definition loads its prompt and binds the waivers workflow', async () => {
-  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-waivers/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the waiver scout/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-digest definition loads its prompt and binds the digest workflow', async () => {
-  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-digest/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the league reporter/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-retro definition loads its prompt and binds the retro workflow', async () => {
-  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-retro/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the league reporter/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-trends definition loads its prompt and binds the trends workflow', async () => {
-  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
-  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-trends/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the trend scout/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('a session process inherits the deployment-level Langfuse variables whatever its agent selects', () => {
-  const host = { PATH: '/bin', LANGFUSE_BASE_URL: 'http://lf', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk', QUACK_INDEX_TOKEN: 'idx' };
+  const host = { PATH: '/bin', LANGFUSE_BASE_URL: 'http://lf', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' };
   const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
   assert.deepEqual(Object.keys(env).sort(), ['LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'PATH']);
 });
 
-function withServices(services: object) {
-  const dir = mkdtempSync(join(tmpdir(), 'quack-services-'));
-  writeFileSync(join(dir, 'deployment.json'), JSON.stringify({ ...deployment, services }));
-  return join(dir, 'deployment.json');
-}
 const reviewer = fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url));
 
-test('a reviewer session process gets its own service url and token from the deployment file and nothing else secret', () => {
-  const QUACK_CONFIG = withServices({ github: { url: 'http://gh:1', tokenEnv: 'GH_T' }, sleeper: { url: 'http://s:2', tokenEnv: 'S_T' } });
-  const host = { PATH: '/bin', HOME: '/h', QUACK_CONFIG, GH_T: 'gh', S_T: 's', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_OTHER_SECRET: 'l' };
-  const env = sessionEnv(reviewer, host);
-  assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH', 'QUACK_CONFIG', 'QUACK_GITHUB_TOKEN', 'QUACK_GITHUB_URL']);
-  assert.deepEqual([env.QUACK_GITHUB_URL, env.QUACK_GITHUB_TOKEN], ['http://gh:1', 'gh']);
+test('a session process gets no per-service url or token: only what the host lists and the deployment file path', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-env-'));
+  writeFileSync(join(dir, 'deployment.json'), JSON.stringify(deployment));
+  const host = { PATH: '/bin', HOME: '/h', QUACK_CONFIG: join(dir, 'deployment.json'), QUACK_EXA_API_KEY: 'exa', QUACK_ADMIN_TOKEN: 'admin', QUACK_OTHER_SECRET: 'l' };
+  assert.deepEqual(Object.keys(sessionEnv(reviewer, host)).sort(), ['HOME', 'PATH', 'QUACK_CONFIG']);
 });
 
-test('a session process gets the slots url and token from services.slots whatever its agent selects, and slotsFromEnv still sees them', () => {
-  const QUACK_CONFIG = withServices({ slots: { url: 'http://slots:1', tokenEnv: 'SL_T' } });
-  const env = sessionEnv(reviewer, { PATH: '/bin', QUACK_CONFIG, SL_T: 'sl', QUACK_INDEX_TOKEN: 'idx' });
-  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_CONFIG', 'QUACK_SLOTS_TOKEN', 'QUACK_SLOTS_URL']);
-  assert.equal(slotsFromEnv(env).length, 1);
+test('the gate is on for a session that was handed the distributor and its launch credential, and off otherwise', () => {
+  assert.equal(slotsFromEnv({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }).length, 1);
   assert.equal(slotsFromEnv(sessionEnv(undefined, { PATH: '/bin' })).length, 0);
 });
 
@@ -127,11 +118,4 @@ test('the shipped quack definition loads with the home tools, offering every ext
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []));
   assert.deepEqual(tools.map((t) => t.name).sort(), ['find_sessions', 'read_session', 'run_again', 'send_message', 'start', 'stop_session']);
   for (const name of ['review_pull_request', 'research_question', 'run_job']) assert.match(tools.find((t) => t.name === 'start')!.description, new RegExp(`- ${name}:`));
-});
-
-test('a quack session process gets the Sleeper url and token its run_job action reads, and no other secret', () => {
-  const QUACK_CONFIG = withServices({ sleeper: { url: 'http://s:2', tokenEnv: 'S_T' }, github: { url: 'http://gh:1', tokenEnv: 'GH_T' } });
-  const host = { PATH: '/bin', QUACK_CONFIG, S_T: 's', GH_T: 'gh', QUACK_INDEX_TOKEN: 'idx' };
-  const env = sessionEnv(fileURLToPath(new URL('../../../agents/quack/agent.json', import.meta.url)), host);
-  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_CONFIG', 'QUACK_SLEEPER_TOKEN', 'QUACK_SLEEPER_URL']);
 });

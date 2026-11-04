@@ -48,10 +48,9 @@ export async function registerLineupSchedules(config: ScheduleConfig, client: Sl
   const ids: string[] = [];
   for (const run of lineupRuns(kickoffs)) {
     const id = `sleeper/lineup/${league}/${state.week}/${run.id}`;
-    const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {
+    const res = await (config.fetch ?? fetch)(config.url, {
       method: 'POST',
-      headers: { authorization: `Bearer ${config.token}` },
-      body: JSON.stringify({ id, agent: LINEUP_AGENT, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: lineupKey(league, state.week), input: inputOf({ league, week: state.week, owner }) }),
+        body: JSON.stringify({ id, agent: LINEUP_AGENT, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: lineupKey(league, state.week), input: inputOf({ league, week: state.week, owner }) }),
     });
     if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);
     ids.push(id);

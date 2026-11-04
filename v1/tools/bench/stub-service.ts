@@ -22,7 +22,10 @@ export function stubService(pins: Record<string, { head: string; at: string }>, 
   return createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
-    const m = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(req.url ?? '');
+    // The session reaches its apps under /apps/<name> and publishes facts to the same base.
+    const path = (req.url ?? '').replace(/^\/apps\/github/, '');
+    if (path === '/index/facts') return res.writeHead(200).end('{}');
+    const m = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
     if (m) {
       const [, owner, repo, n] = m;
       const pr = gh(`/repos/${owner}/${repo}/pulls/${n}`);
@@ -35,7 +38,7 @@ export function stubService(pins: Record<string, { head: string; at: string }>, 
       const record = { owner, repo, number: Number(n), state: 'open', title: pr.title, body: pr.body ?? '', author: pr.user.login, headSha, headRef: pr.head.ref, baseRef: pr.base.ref, linkedIssues };
       return res.end(JSON.stringify({ ...record, checks: checks.map((c: any) => ({ name: c.name, status: c.status, conclusion: c.conclusion })) }));
     }
-    if (req.url === '/reviews') {
+    if (path === '/reviews') {
       appendFileSync(out, `${raw}\n`);
       return res.writeHead(201).end('{"url":"(benchmark: not posted)"}');
     }

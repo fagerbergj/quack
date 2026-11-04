@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { Artifacts, decide } from '@quack/sdk';
+import { Artifacts, decide, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension } from '@quack/workflows';
 import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
@@ -231,21 +231,21 @@ test('an unreachable service fails the render step as such, not as an rmfakeclou
 });
 
 test('the service serves the PDF and keeps the topic list, and the ingest client reads both', async () => {
-  const service = createRemarkableService({ serviceToken: 't', dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadRmdoc: async () => Buffer.from(await fixture('notebook')), downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
-  await new Promise<void>((r) => service.listen(0, r));
+  const service = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadRmdoc: async () => Buffer.from(await fixture('notebook')), downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
+  const server = serveApp(service).listen(0);
+  await new Promise((r) => server.once('listening', r));
   try {
-    const url = `http://127.0.0.1:${(service.address() as { port: number }).port}`;
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const client = createIngestService(url, 't');
     assert.deepEqual(await client.topics(), []);
     await client.addTopic('  Home   renovation ');
     await client.addTopic('home RENOVATION');
     assert.deepEqual(await client.topics(), ['Home renovation']);
     assert.equal((await renderPages(await client.pdf('n 1'))).length, 1);
-    const denied = await fetch(`${url}/topics`);
-    assert.equal(denied.status, 401);
     await assert.rejects(client.pdf('other'), /returned 502: rmfakecloud GET .*not a PDF/);
     assert.equal((await fetch(`${url}/topics`, { method: 'POST', headers: { authorization: 'Bearer t' }, body: '{"name":""}' })).status, 400);
   } finally {
+    server.close();
     await service.stop();
   }
 });

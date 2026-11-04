@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Readable, Writable } from 'node:stream';
 import { childPort, shellEnv } from '@quack/session';
+import type { CredentialBroker } from './credentials.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
 
 export type AgentStatus = 'draft' | 'promoted';
@@ -62,6 +63,9 @@ export type Launch = (spec: { key: string; dir: string; agentPath: string | unde
 type Child = { launched: Launched; stopping: boolean };
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
+
+/** The agent definition a session was pinned to; the file does not exist for a session with no agent. */
+export const pinnedAgentPath = (dataDir: string, key: string) => join(dataDir, sessionDirName(key), SNAPSHOT, 'agent.json');
 
 const exists = (path: string) => stat(path).then(() => true, () => false);
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
@@ -401,19 +405,21 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 }
 
 /** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */
-export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
+export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }
 
-function processLauncher(opts: { command: string[]; inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): Launch {
+function processLauncher(opts: { command: string[]; inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number }): Launch {
   return async ({ key, dir, agentPath }) => {
     const [cmd, ...args] = opts.command;
     // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
     const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
     const reportDir = await mkdtemp(join(tmpdir(), 'quack-report-'));
-    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
+    const token = opts.broker?.mint(key);
+    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(token && { QUACK_INDEX_TOKEN: token }), ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    if (token) proc.once('exit', () => opts.broker!.revoke(token));
     // Output still reaches this process's streams; the tail only rides along in a startup failure.
     let tail = '';
     const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));

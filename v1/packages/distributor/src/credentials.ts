@@ -6,7 +6,7 @@ import { readBody } from './server.ts';
 
 const TOKEN_TTL_MS = 12 * 3_600_000;
 
-/** A12 for container sessions: long-lived service tokens stay here; a session holds a per-launch token and reaches each service through /svc/<name>. */
+/** A12 for container sessions: third-party keys stay here; a session holds a per-launch token and reaches those services through /svc/<name>, and the distributor's own routes with the same token. */
 /** The session's token as its client presents it: a bearer token, an x-api-key (Exa), or the password of Basic auth (Langfuse). */
 function sessionToken(req: IncomingMessage): string | undefined {
   const auth = req.headers.authorization ?? '';
@@ -22,6 +22,12 @@ export function credentialBroker(opts: { ttlMs?: number; now?: () => number } = 
   const services = new Map<string, { url: string; auth: Record<string, string> }>();
   const issued = new Map<string, { key: string; exp: number }>();
 
+  /** The session a current launch token belongs to; undefined for an unknown, revoked or expired one. */
+  const sessionOf = (token: string): string | undefined => {
+    const grant = issued.get(token);
+    return grant && grant.exp > now() ? grant.key : undefined;
+  };
+
   return {
     /** `auth` is the header set sent upstream; a string is a bearer token. */
     register: (name: string, url: string, auth: string | Record<string, string>) => void services.set(name, { url: url.replace(/\/$/, ''), auth: typeof auth === 'string' ? { authorization: `Bearer ${auth}` } : auth }),
@@ -33,12 +39,12 @@ export function credentialBroker(opts: { ttlMs?: number; now?: () => number } = 
       return token;
     },
     revoke: (token: string) => void issued.delete(token),
+    sessionOf,
     async route(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
       const match = /^\/svc\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(req.url ?? '');
       if (!match) return false;
       const presented = sessionToken(req);
-      const grant = presented ? issued.get(presented) : undefined;
-      if (!grant || grant.exp <= now()) return sendProblem(res, 401, 'unauthorized'), true;
+      if (!presented || sessionOf(presented) === undefined) return sendProblem(res, 401, 'unauthorized'), true;
       const service = services.get(match[1]);
       if (!service) return sendProblem(res, 404, 'no such service'), true;
       const body = await readBody(req).catch(() => undefined);

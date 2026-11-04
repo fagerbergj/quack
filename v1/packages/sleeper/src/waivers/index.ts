@@ -9,4 +9,4 @@ export { waiversEvidence, waiversRubric } from './rubric.ts';
 export { waiversWorkflow, WaiversFactsDoc, WAIVERS_FACTS_KIND, WAIVERS_WORKFLOW, type WaiversDeps } from './workflow.ts';
 
 /** The waivers workflow wired to the Sleeper API and the service half named in the environment. */
-export const waiversFromEnv = (env: Record<string, string | undefined> = process.env) => waiversWorkflow(depsFromEnv(WAIVERS_WORKFLOW, env));
+export const waiversFromEnv = (env: Record<string, string | undefined> = process.env) => waiversWorkflow(depsFromEnv(env));

@@ -11,6 +11,8 @@ const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
 const { send, problem, json: readJson, authorized: bearerOk } = serviceHttp();
 
+export type TokenCheck = string | ((presented: string) => boolean);
+
 const isFact = (f: unknown): f is Fact => {
   const x = f as Record<string, unknown> | null;
   return typeof x === 'object' && x !== null && typeof x.id === 'string' && x.id.length > 0 && KINDS.has(x.kind as string)
@@ -26,8 +28,9 @@ function parseFacts(body: unknown): { session: string; facts: Fact[] } | string 
 
 export const authorized = (req: IncomingMessage, token: string) => bearerOk(req, token);
 
-async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: string, onFacts?: OnFacts) {
-  if (!authorized(req, token)) return problem(res, 401, 'unauthorized');
+async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: TokenCheck, onFacts?: OnFacts) {
+  const ok = typeof token === 'string' ? authorized(req, token) : token(/^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '');
+  if (!ok) return problem(res, 401, 'unauthorized');
   const parsed = parseFacts(await readJson(req));
   if (typeof parsed === 'string') return problem(res, 400, parsed);
   await store.upsert(parsed.session, parsed.facts);
@@ -75,8 +78,8 @@ async function listed(store: IndexStore, path: string, q: URLSearchParams): Prom
   return { body: { [field]: all.slice(page.offset, end), ...(end < all.length && { nextPageToken: Buffer.from(String(end)).toString('base64url') }) } };
 }
 
-// Sessions publish with the service token; reads rely on the proxy for auth. A down database answers 503 and the session retries.
-export function indexRoutes(store: IndexStore, token: string, onFacts?: OnFacts) {
+// Sessions publish with a token (one string, or a check such as the distributor's launch credentials); reads rely on the proxy for auth. A down database answers 503 and the session retries.
+export function indexRoutes(store: IndexStore, token: TokenCheck, onFacts?: OnFacts) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
     const read = req.method === 'GET' && READS[url.pathname];

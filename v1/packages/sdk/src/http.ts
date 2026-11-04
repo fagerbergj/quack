@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
-import { STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { App } from './manifest.ts';
 
 /** Constant-time string equality; unequal lengths answer false without comparing. */
 export function safeEqual(given: string, expected: string): boolean {
@@ -11,6 +12,15 @@ export function safeEqual(given: string, expected: string): boolean {
 /** An RFC 9457 problem reply; `error` repeats `detail` so readers that predate problem+json keep working. */
 export function sendProblem(res: ServerResponse, status: number, detail: string): void {
   res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail }));
+}
+
+/** Whether a body read failed on the app's own size limit, which the app answers 413. */
+export const tooLarge = (err: unknown) => err instanceof Error && err.message === 'body too large';
+
+/** A server around an in-process app, for tests and dev stacks (the distributor mounts apps itself); `stop` closes it and the app. */
+export function serveApp(app: App) {
+  const server = createServer((req, res) => void app.handle(req, res));
+  return Object.assign(server, { stop: () => (server.close(), app.stop?.()) });
 }
 
 /** The scaffolding every extension HTTP service repeats: JSON replies, a bounded body read and a bearer check. */
@@ -31,6 +41,13 @@ export function serviceHttp(opts: { token?: string; maxBody?: number } = {}) {
   const json = async (req: IncomingMessage): Promise<unknown> => JSON.parse((await readBody(req)).toString('utf8'));
   const authorized = (req: IncomingMessage, token = opts.token ?? '') => safeEqual(req.headers.authorization ?? '', `Bearer ${token}`);
   return { send, problem, readBody, json, authorized };
+}
+
+/** Where a session reaches an app, with the launch credential it presents: the distributor that started the session. */
+export function appEndpoint(name: string, env: Record<string, string | undefined> = process.env): { url: string; token: string } {
+  const { QUACK_INDEX_URL: base, QUACK_INDEX_TOKEN: token } = env;
+  if (!base || !token) throw new Error(`QUACK_INDEX_URL and QUACK_INDEX_TOKEN are required to reach the ${name} app`);
+  return { url: `${base.replace(/\/$/, '')}/apps/${name}`, token };
 }
 
 export type SessionSubmission = {

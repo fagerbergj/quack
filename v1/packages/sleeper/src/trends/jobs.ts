@@ -17,14 +17,13 @@ export async function registerTrendsSchedules(config: ScheduleConfig, client: Sl
   const state = await client.state();
   const id = scheduleId(league);
   const call = config.fetch ?? fetch;
-  const headers = { authorization: `Bearer ${config.token}` };
   if (state.season_type !== 'regular') {
-    const res = await call(`${config.url}/schedules/${encodeURIComponent(id)}`, { method: 'DELETE', headers });
+    const res = await call(`${config.url}/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok && res.status !== 404) throw new Error(`schedules: removing ${id} returned ${res.status}`);
     return [];
   }
   const input: LineupInput = { league, week: state.week, owner };
-  const res = await call(`${config.url}/schedules`, { method: 'POST', headers, body: JSON.stringify({ id, agent: TRENDS_AGENT, cron: CRON, tz: ET, sessionKey: trendsKey(league, state.week), input: JSON.stringify(input) }) });
+  const res = await call(config.url, { method: 'POST', body: JSON.stringify({ id, agent: TRENDS_AGENT, cron: CRON, tz: ET, sessionKey: trendsKey(league, state.week), input: JSON.stringify(input) }) });
   if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);
   return [id];
 }

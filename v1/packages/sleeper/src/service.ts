@@ -1,5 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { serviceHttp } from '@quack/sdk';
+import { serviceHttp, type App } from '@quack/sdk';
 import type { SleeperClient } from './client.ts';
 import type { StartConfig } from './jobs.ts';
 import { startLineup } from './lineup/jobs.ts';
@@ -12,8 +11,6 @@ import { takeSnapshot } from './snapshot.ts';
 import { openStore } from './store.ts';
 
 export type ServiceConfig = {
-  /** shortcut: one shared bearer token authenticates callers until workload tokens (A12) land. */
-  serviceToken: string;
   /** SQLite file on the service's volume; ':memory:' for tests. */
   dbPath: string;
   client: SleeperClient;
@@ -23,12 +20,12 @@ export type ServiceConfig = {
   owner?: string;
   /** The league the page's /apps/sleeper routes act on. */
   league?: string;
-  /** The schedules service, read for this league's upcoming runs. */
-  schedules?: { url: string; token: string };
+  /** The schedules app (its mount, such as http://127.0.0.1:8080/apps/schedules), read for this league's upcoming runs. */
+  schedules?: { url: string };
   fetch?: typeof fetch;
 };
 
-const { send, authorized } = serviceHttp();
+const { send } = serviceHttp();
 
 function safeDecode(s: string): string | undefined {
   try {
@@ -40,14 +37,15 @@ function safeDecode(s: string): string | undefined {
 
 const PAGE_JOBS = { lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro, 'trade-finder': startFinder, history: startHistory };
 
-export function createSleeperService(config: ServiceConfig) {
+export function createSleeperService(config: ServiceConfig): App & { stop(): void } {
   const store = openStore(config.dbPath);
   const now = config.now ?? (() => new Date());
 
   // GET /leagues/:id/snapshots[/latest|/YYYY-MM-DD] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
   async function route(method: string, url: URL): Promise<[number, unknown]> {
     const path = url.pathname;
-    if (path.startsWith('/apps/sleeper')) return pageRoute(method, url);
+    const page = pageRoute(method, url);
+    if (page) return page;
     const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers|trends|digest|retro)$/.exec(path);
     if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
     const trade = /^\/leagues\/([^/]+)\/jobs\/(trade-finder|trade)$/.exec(path);
@@ -65,19 +63,19 @@ export function createSleeperService(config: ServiceConfig) {
     return found ? [200, found] : [404, { error: 'no snapshot yet' }];
   }
 
-  // What the page reaches through the distributor's app proxy: the league id and its jobs, for the configured league.
-  async function pageRoute(method: string, url: URL): Promise<[number, unknown]> {
-    const job = /^\/apps\/sleeper\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/.exec(url.pathname)?.[1];
+  // What the page reaches: the league id and its jobs, for the configured league.
+  function pageRoute(method: string, url: URL): Promise<[number, unknown]> | undefined {
+    const job = /^\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/.exec(url.pathname)?.[1];
     if (job) return startOnDemand(PAGE_JOBS[job as keyof typeof PAGE_JOBS], method, config.league, url.searchParams.get('week'), job === 'history' ? historyParams(url.searchParams) : {});
-    if (url.pathname === '/apps/sleeper/schedule' && method === 'GET') return upcomingRuns();
-    if (url.pathname !== '/apps/sleeper' || method !== 'GET') return [404, { error: 'not found' }];
-    return config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }];
+    if (url.pathname === '/schedule' && method === 'GET') return upcomingRuns();
+    if (url.pathname !== '/' || method !== 'GET') return undefined;
+    return Promise.resolve(config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }]);
   }
 
   // Sleeper's live week and the next run of each of this league's schedules, soonest first.
   async function upcomingRuns(): Promise<[number, unknown]> {
     if (!config.schedules || !config.league) return [501, { error: 'schedules are not configured' }];
-    const res = await (config.fetch ?? fetch)(`${config.schedules.url}/schedules`, { headers: { authorization: `Bearer ${config.schedules.token}` } });
+    const res = await (config.fetch ?? fetch)(config.schedules.url);
     if (!res.ok) return [502, { error: `schedules answered ${res.status}` }];
     const league = config.league.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const all = ((await res.json()) as { schedules: Array<{ id: string; nextRun: string | null }> }).schedules;
@@ -100,19 +98,15 @@ export function createSleeperService(config: ServiceConfig) {
     return [r.ok ? 202 : 502, { sessionKey: r.sessionKey, status: r.status }];
   }
 
-  const server = createServer(async (req, res) => {
-    try {
-      if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
-      const [status, body] = await route(req.method ?? 'GET', new URL(req.url ?? '', 'http://x'));
-      send(res, status, body);
-    } catch (err) {
-      send(res, 502, { error: (err as Error).message });
-    }
-  });
-  return Object.assign(server, {
-    stop() {
-      server.close();
-      store.close();
+  return {
+    stop: () => store.close(),
+    async handle(req, res) {
+      try {
+        const [status, body] = await route(req.method ?? 'GET', new URL(req.url ?? '', 'http://x'));
+        send(res, status, body);
+      } catch (err) {
+        send(res, 502, { error: (err as Error).message });
+      }
     },
-  });
+  };
 }

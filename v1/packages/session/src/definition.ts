@@ -4,7 +4,7 @@ import { createModels, createProvider, envApiKeyAuth, type MutableModels } from 
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { Extension } from '@earendil-works/pi-durable';
-import type { ServiceEntry, StoreEntry } from '@quack/sdk';
+import type { ExtensionEntry, StoreEntry } from '@quack/sdk';
 import type { ExecPolicy } from './exec.ts';
 import type { AgentSpec } from './runtime.ts';
 
@@ -16,7 +16,7 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Named services; the shape of each one's `settings` is the service's own. */ services?: Record<string, ServiceEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
 /** Per agent (D48): its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
@@ -93,29 +93,27 @@ function storeProblems(stores: unknown): string[] {
   });
 }
 
-function serviceProblems(services: unknown, stores: unknown): string[] {
-  if (services === undefined) return [];
-  if (!isObject(services)) return ['services must be an object'];
-  return Object.entries(services).flatMap(([name, s]) => {
-    if (!isObject(s)) return [`services.${name} must be an object`];
-    const problems = Object.keys(s).filter((k) => !['url', 'tokenEnv', 'store', 'settings'].includes(k)).map((k) => `services.${name}.${k} is not a service key`);
-    if (typeof s.url !== 'string' || !/^https?:\/\//.test(s.url)) problems.push(`services.${name}.url must be an http(s) URL`);
-    if (s.tokenEnv !== undefined && typeof s.tokenEnv !== 'string') problems.push(`services.${name}.tokenEnv must be a string`);
-    if (s.store !== undefined && !(typeof s.store === 'string' && isObject(stores) && Object.hasOwn(stores, s.store))) problems.push(`services.${name}.store ${String(s.store)} is not in stores`);
-    if (s.settings !== undefined && !isObject(s.settings)) problems.push(`services.${name}.settings must be an object`);
+function deployedExtensionProblems(extensions: unknown, stores: unknown): string[] {
+  if (extensions === undefined) return [];
+  if (!isObject(extensions)) return ['extensions must be an object'];
+  return Object.entries(extensions).flatMap(([name, e]) => {
+    if (!isObject(e)) return [`extensions.${name} must be an object`];
+    const problems = Object.keys(e).filter((k) => !['store', 'settings'].includes(k)).map((k) => `extensions.${name}.${k} is not an extension key`);
+    if (e.store !== undefined && !(typeof e.store === 'string' && isObject(stores) && Object.hasOwn(stores, e.store))) problems.push(`extensions.${name}.store ${String(e.store)} is not in stores`);
+    if (e.settings !== undefined && !isObject(e.settings)) problems.push(`extensions.${name}.settings must be an object`);
     return problems;
   });
 }
 
-const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'services'];
+const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions'];
 
 function rootProblems(raw: Record<string, unknown>): string[] {
-  const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => `unknown top-level key ${k}`);
+  const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => (k === 'services' ? 'unknown top-level key services: it was renamed extensions, and an entry takes only store and settings' : `unknown top-level key ${k}`));
   if (!isObject(raw.providers) || Object.keys(raw.providers).length === 0) problems.push('providers must be an object naming at least one provider');
   else problems.push(...Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p)));
   if (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be "provider/model"');
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
-  problems.push(...storeProblems(raw.stores), ...serviceProblems(raw.services, raw.stores));
+  problems.push(...storeProblems(raw.stores), ...deployedExtensionProblems(raw.extensions, raw.stores));
   if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
   return problems;
 }

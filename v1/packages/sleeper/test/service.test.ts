@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { createSchedulesService } from '@quack/schedules';
+import { serveApp } from '@quack/sdk';
 import { NotFound, createSleeperClient, createSleeperService, leagueDate, removeLegacySnapshotSchedule, removeLegacyUntilDone } from '../src/index.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/league.json', import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -18,15 +19,13 @@ function double() {
   return { calls, doFetch };
 }
 
-const TOKEN = 't';
-
 async function setup(clock: { at: Date }) {
   const api = double();
   const client = createSleeperClient({ fetch: api.doFetch, now: () => +clock.at });
-  const service = createSleeperService({ serviceToken: TOKEN, dbPath: ':memory:', client, now: () => clock.at });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client, now: () => clock.at }));
   await new Promise<void>((r) => service.listen(0, r));
   const base = `http://127.0.0.1:${(service.address() as AddressInfo).port}`;
-  const call = (method: string, path: string) => fetch(base + path, { method, headers: { authorization: `Bearer ${TOKEN}` } });
+  const call = (method: string, path: string) => fetch(base + path, { method });
   return { api, service, call };
 }
 
@@ -81,11 +80,11 @@ test('a malformed league id escape is a 400', async () => {
   }
 });
 
-test('the service rejects callers without the token', async () => {
-  const { service } = await setup({ at: new Date() });
+test('the page routes are relative to the mount: the league id, and an unknown path is a 404', async () => {
+  const { service, call } = await setup({ at: new Date() });
   try {
-    const base = `http://127.0.0.1:${(service.address() as AddressInfo).port}`;
-    assert.equal((await fetch(`${base}/leagues/L1/snapshots`)).status, 401);
+    assert.equal((await call('GET', '/')).status, 501, 'no league configured');
+    assert.equal((await call('GET', '/nope')).status, 404);
   } finally {
     service.stop();
   }
@@ -126,35 +125,36 @@ test('a null body is not found and is never cached', async () => {
 test('the legacy snapshot delete retries with backoff until the schedules service is up, then deletes once', async (t) => {
   t.mock.method(console, 'error', () => {});
   let attempts = 0;
-  const sent: Array<{ url: string; method?: string; auth: string }> = [];
+  const sent: Array<{ url: string; method?: string }> = [];
   const doFetch = (async (url: string, init: RequestInit) => {
     if (++attempts < 3) throw new Error('connection refused');
-    sent.push({ url, method: init.method, auth: (init.headers as any).authorization });
+    sent.push({ url, method: init.method });
     return new Response('{}', { status: 200 });
   }) as unknown as typeof fetch;
   const delays: number[] = [];
-  await removeLegacyUntilDone({ url: 'http://schedules', token: 's', fetch: doFetch }, 'L1', async (ms) => void delays.push(ms));
+  await removeLegacyUntilDone({ url: 'http://schedules', fetch: doFetch }, 'L1', async (ms) => void delays.push(ms));
   assert.deepEqual(delays, [1000, 2000]);
-  assert.deepEqual(sent, [{ url: 'http://schedules/schedules/sleeper%2Fsnapshot%2FL1', method: 'DELETE', auth: 'Bearer s' }]);
+  assert.deepEqual(sent, [{ url: 'http://schedules/sleeper%2Fsnapshot%2FL1', method: 'DELETE' }]);
 });
 
 test('the legacy snapshot delete treats 404 as done and any other failure as an error', async () => {
-  const status = (code: number) => ({ url: 'http://schedules', token: 's', fetch: (async () => new Response('', { status: code })) as unknown as typeof fetch });
+  const status = (code: number) => ({ url: 'http://schedules', fetch: (async () => new Response('', { status: code })) as unknown as typeof fetch });
   await removeLegacySnapshotSchedule(status(404), 'L1');
   await assert.rejects(removeLegacySnapshotSchedule(status(500), 'L1'));
 });
 
 test('the real schedules service drops a stored legacy snapshot schedule on start', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
-  const headers = { authorization: 'Bearer s' };
+  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
   try {
-    await fetch(`${url}/schedules`, { method: 'POST', headers, body: JSON.stringify({ id: 'sleeper/snapshot/L1', agent: 'a', cron: '0 4 * * *', sessionKey: 'k', input: 'x' }) });
-    await removeLegacyUntilDone({ url, token: 's' }, 'L1');
-    await removeLegacyUntilDone({ url, token: 's' }, 'L1');
-    assert.deepEqual((await (await fetch(`${url}/schedules`, { headers })).json()).schedules, []);
+    await fetch(url, { method: 'POST', body: JSON.stringify({ id: 'sleeper/snapshot/L1', agent: 'a', cron: '0 4 * * *', sessionKey: 'k', input: 'x' }) });
+    await removeLegacyUntilDone({ url }, 'L1');
+    await removeLegacyUntilDone({ url }, 'L1');
+    assert.deepEqual((await (await fetch(url)).json()).schedules, []);
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });

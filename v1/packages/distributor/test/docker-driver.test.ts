@@ -100,17 +100,18 @@ test('stop stops the container and lets the session start again; a crash restart
   await until(() => docker.containers.size === 1 && driver.running().includes('a') && docker.containers.get(first.name) !== first);
 });
 
-test('the container gets no service secrets: pairs are proxied, other secrets are dropped', async () => {
+test('the container gets no secrets: keyed services are proxied, the distributor is reached with the launch token, the rest is dropped', async () => {
   const secret = { QUACK_GH_SERVICE_URL: 'http://gh:1', QUACK_GH_SERVICE_TOKEN: 'long-lived-gh', QUACK_EXA_API_KEY: 'exa-secret', LANGFUSE_BASE_URL: 'http://lf', LANGFUSE_PUBLIC_KEY: 'pk-real', LANGFUSE_SECRET_KEY: 'sk-real', QUACK_STRAY_API_KEY: 'stray-secret', PATH: '/usr/bin' };
   const { driver, docker, broker } = await setup(secret);
   await driver.ensure('a');
   const env: string[] = [...docker.containers.values()][0].body.Env;
   const text = env.join('\n');
   for (const leaked of ['long-lived-gh', 'exa-secret', 'pk-real', 'sk-real', 'stray-secret']) assert.ok(!text.includes(leaked), `${leaked} must not reach the container`);
-  assert.ok(env.includes('QUACK_GH_SERVICE_URL=http://quack-v1:8080/svc/QUACK_GH_SERVICE'));
+  assert.ok(env.includes('QUACK_INDEX_URL=http://quack-v1:8080') && env.some((e) => /^QUACK_INDEX_TOKEN=[0-9a-f]{64}$/.test(e)));
+  assert.ok(!text.includes('QUACK_GH_SERVICE'), 'an inherited service pair is no longer registered');
   assert.ok(env.includes('PATH=/usr/bin'));
   assert.ok(env.includes('QUACK_EXA_URL=http://quack-v1:8080/svc/QUACK_EXA') && env.includes('LANGFUSE_BASE_URL=http://quack-v1:8080/svc/LANGFUSE'));
-  assert.ok(broker.has('QUACK_GH_SERVICE') && broker.has('QUACK_EXA') && broker.has('LANGFUSE'));
+  assert.ok(broker.has('QUACK_EXA') && broker.has('LANGFUSE') && !broker.has('QUACK_INDEX'));
 });
 
 test('a session with a named data volume mounts only its subpath of it', async () => {
@@ -151,7 +152,7 @@ test('provider ids that sanitize alike get separate routes', () => {
 
 test('an operator can pass a named secret through', () => {
   const broker = credentialBroker();
-  const { env } = containerEnv({ QUACK_EXA_API_KEY: 'exa' }, { key: 'k', token: 't', broker, distributorUrl: 'http://d', passthrough: ['QUACK_EXA_API_KEY'], alwaysProxied: [], dir: '/data/x' });
+  const { env } = containerEnv({ QUACK_EXA_API_KEY: 'exa' }, { key: 'k', token: 't', broker, distributorUrl: 'http://d', passthrough: ['QUACK_EXA_API_KEY'], dir: '/data/x' });
   assert.equal(env.QUACK_EXA_API_KEY, 'exa');
 });
 

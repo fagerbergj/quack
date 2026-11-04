@@ -1,13 +1,11 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { serviceHttp, submitToSession } from '@quack/sdk';
+import { sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { between, expiry, nextAfter, validate, type Schedule } from './schedule.ts';
 
 export type ServiceConfig = {
-  /** shortcut: one shared bearer token authenticates callers until workload tokens (A12) land. */
-  serviceToken: string;
   distributorUrl: string;
   /** SQLite file on the service's volume (SCH-2); ':memory:' for tests. */
   dbPath: string;
@@ -34,12 +32,13 @@ const parseJson = (text: string) => {
 };
 
 class BadRequest extends Error {}
+class TooLarge extends Error {}
 
 const http = serviceHttp();
-const { send, authorized } = http;
+const { send } = http;
 
 async function body(req: IncomingMessage): Promise<any> {
-  const raw = await http.readBody(req).catch((err) => { throw new BadRequest((err as Error).message); });
+  const raw = await http.readBody(req).catch((err) => { throw tooLarge(err) ? new TooLarge() : new BadRequest((err as Error).message); });
   try {
     return JSON.parse(raw.toString('utf8'));
   } catch {
@@ -47,13 +46,7 @@ async function body(req: IncomingMessage): Promise<any> {
   }
 }
 
-// The page reaches this service through the distributor's /apps/schedules proxy, which keeps the path; reads and deletes only, so the page cannot register.
-function routePath(req: IncomingMessage): string {
-  const raw = new URL(req.url ?? '', 'http://x').pathname;
-  return req.method === 'GET' || req.method === 'DELETE' ? raw.replace(/^\/apps\/schedules(?=\/|$)/, '/schedules') : raw;
-}
-
-export function createSchedulesService(config: ServiceConfig) {
+export function createSchedulesService(config: ServiceConfig): App & { tick(): Promise<void>; stop(): void } {
   const now = config.now ?? (() => new Date());
   const doFetch = config.fetch ?? fetch;
   const db = new DatabaseSync(config.dbPath);
@@ -179,23 +172,23 @@ export function createSchedulesService(config: ServiceConfig) {
     send(res, removed ? 200 : 404, removed ? { id } : { error: 'no such api schedule' });
   }
 
-  const server = createServer(async (req, res) => {
+  async function handle(req: IncomingMessage, res: ServerResponse) {
     try {
-      if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
-      const path = routePath(req);
-      if (req.method === 'GET' && path === '/schedules') return send(res, 200, { schedules: list() });
-      if (req.method === 'POST' && path === '/schedules') {
+      const path = new URL(req.url ?? '', 'http://x').pathname;
+      if (req.method === 'GET' && path === '/') return send(res, 200, { schedules: list() });
+      if (req.method === 'POST' && path === '/') {
         const { status, body: out } = register(await body(req));
         return send(res, status, out);
       }
       if (req.method === 'POST' && path === '/retention/sweep') return send(res, 200, await sweepRetention(dryRunOf(req)));
-      const one = /^\/schedules\/(.+)$/.exec(path);
+      const one = /^\/(.+)$/.exec(path);
       if (req.method === 'DELETE' && one) return removeApi(decodeURIComponent(one[1]), res);
       send(res, 404, { error: 'not found' });
     } catch (err) {
+      if (err instanceof TooLarge) return sendProblem(res, 413, 'body too large');
       send(res, err instanceof BadRequest ? 400 : 500, { error: (err as Error).message });
     }
-  });
+  }
 
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
@@ -206,15 +199,15 @@ export function createSchedulesService(config: ServiceConfig) {
       .finally(() => {
         if (!stopped) timer = setTimeout(loop, config.tickMs ?? 10_000);
       });
-  return Object.assign(server, {
+  return {
+    handle,
     tick,
     /** Starts the timer loop and resolves once the first tick, the downtime catch-up, has settled. */
     start: loop,
     stop() {
       stopped = true;
       clearTimeout(timer);
-      server.close();
       db.close();
     },
-  });
+  };
 }

@@ -2,7 +2,7 @@ import { slotLimits } from '../src/limits.ts';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
-import { observeGeneration, whileWaiting } from '@quack/sdk';
+import { observeGeneration, serveApp, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
@@ -221,15 +221,16 @@ test('an endpoint with no limit is never gated and its heartbeat is never a lost
 
 test('a service fault answers 500 and the service keeps serving', async () => {
   let broken = true;
-  const service = createSlotsService({ serviceToken: 't', dbPath: ':memory:', limits: { swap: 1 }, now: () => { if (broken) throw new Error('disk error'); return clock.now(); } });
-  service.listen(0);
+  const app = createSlotsService({ dbPath: ':memory:', limits: { swap: 1 }, now: () => { if (broken) throw new Error('disk error'); return clock.now(); } });
+  const service = serveApp(app).listen(0);
   await new Promise((r) => service.once('listening', r));
-  const url = `http://127.0.0.1:${(service.address() as AddressInfo).port}/slots/acquire`;
-  const ask = () => fetch(url, { method: 'POST', headers: { authorization: 'Bearer t' }, body: JSON.stringify({ endpoint: 'swap', holder: 'a' }) });
+  const url = `http://127.0.0.1:${(service.address() as AddressInfo).port}/acquire`;
+  const ask = () => fetch(url, { method: 'POST', body: JSON.stringify({ endpoint: 'swap', holder: 'a' }) });
   assert.equal((await ask()).status, 500);
   broken = false;
   assert.equal((await ask()).status, 200);
   await new Promise((r) => service.close(r));
+  app.stop?.();
 });
 
 test('a parent run waiting on six child runs with six slots does not deadlock', async () => {
@@ -258,29 +259,31 @@ test('a run held past the cap requeues behind waiters at its next generation', a
   assert.deepEqual([waiter.granted, again.granted], [true, false]);
 });
 
-test('the service guards its API with the token and serves acquire, heartbeat and release', async () => {
-  const service = createSlotsService({ serviceToken: 't', dbPath: ':memory:', limits: { swap: 1 } });
-  service.listen(0);
+test('the service serves acquire, heartbeat and release relative to its mount', async () => {
+  const app = createSlotsService({ dbPath: ':memory:', limits: { swap: 1 } });
+  const service = serveApp(app).listen(0);
   await new Promise((r) => service.once('listening', r));
   const base = `http://127.0.0.1:${(service.address() as AddressInfo).port}`;
-  const call = (path: string, body?: unknown, token = 't') => fetch(base + path, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}` }, body: body ? JSON.stringify(body) : undefined }).then(async (r) => ({ status: r.status, json: await r.json() as any }));
-  assert.equal((await call('/slots', undefined, 'bad')).status, 401);
-  assert.deepEqual((await call('/slots/acquire', { endpoint: 'swap', holder: 'a' })).json, { status: 'granted' });
-  assert.deepEqual((await call('/slots/acquire', { endpoint: 'swap', holder: 'b' })).json, { status: 'queued', ahead: 0 });
-  assert.deepEqual((await call('/slots/heartbeat', { endpoint: 'swap', holder: 'a' })).json, { held: true });
-  await call('/slots/release', { endpoint: 'swap', holder: 'a' });
-  assert.deepEqual((await call('/slots/acquire', { endpoint: 'swap', holder: 'b' })).json, { status: 'granted' });
-  assert.equal((await call('/slots/acquire', { endpoint: 'swap' })).status, 400);
-  assert.deepEqual((await call('/slots/acquire', { endpoint: 'unlisted', holder: 'z' })).json, { status: 'granted' });
+  const call = (path: string, body?: unknown) => fetch(base + path, { method: body ? 'POST' : 'GET', body: body ? JSON.stringify(body) : undefined }).then(async (r) => ({ status: r.status, json: await r.json() as any }));
+  assert.equal((await call('/')).status, 200);
+  assert.equal((await fetch(base + '/acquire', { method: 'POST', body: 'x'.repeat(70_000) })).status, 413);
+  assert.deepEqual((await call('/acquire', { endpoint: 'swap', holder: 'a' })).json, { status: 'granted' });
+  assert.deepEqual((await call('/acquire', { endpoint: 'swap', holder: 'b' })).json, { status: 'queued', ahead: 0 });
+  assert.deepEqual((await call('/heartbeat', { endpoint: 'swap', holder: 'a' })).json, { held: true });
+  await call('/release', { endpoint: 'swap', holder: 'a' });
+  assert.deepEqual((await call('/acquire', { endpoint: 'swap', holder: 'b' })).json, { status: 'granted' });
+  assert.equal((await call('/acquire', { endpoint: 'swap' })).status, 400);
+  assert.deepEqual((await call('/acquire', { endpoint: 'unlisted', holder: 'z' })).json, { status: 'granted' });
   await new Promise((r) => service.close(r));
+  app.stop?.();
 });
 
-test('an agent that selects no slots entry is gated when the deployment sets the env, and ungated when it does not', async () => {
+test('an agent that selects no slots entry is gated when the session has a distributor and credential, and ungated when it does not', async () => {
   const def = { name: 'plain', version: 1, model: 'swap/m', extensions: {} };
   const names = async (env: Record<string, string>) => (await agentSpec(def, {}, [() => slotsFromEnv(env)])).extensions!.map((e) => e.name);
-  assert.deepEqual(await names({ QUACK_SLOTS_URL: 'http://slots', QUACK_SLOTS_TOKEN: 't' }), ['slots']);
+  assert.deepEqual(await names({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), ['slots']);
   assert.deepEqual(await names({}), []);
-  assert.deepEqual(await names({ QUACK_SLOTS_URL: 'http://slots' }), []);
+  assert.deepEqual(await names({ QUACK_INDEX_URL: 'http://d' }), []);
 });
 
 test('the real clock\'s sleep rejects at once on an already-aborted signal', async () => {

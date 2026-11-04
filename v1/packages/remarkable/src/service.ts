@@ -1,12 +1,10 @@
 import { request } from 'node:http';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { invocationRequest, serviceHttp } from '@quack/sdk';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { invocationRequest, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
 import { openStore } from './store.ts';
 
 export type ServiceConfig = {
-  /** shortcut: one shared bearer token authenticates callers until workload tokens (A12) land. */
-  serviceToken: string;
   /** SQLite file on the service's volume; ':memory:' for tests. */
   dbPath: string;
   distributorUrl: string;
@@ -22,7 +20,7 @@ export type ServiceConfig = {
 
 const MAX_BACKOFF_MS = 60_000;
 
-const { send, authorized, json: readJson } = serviceHttp();
+const { send, json: readJson } = serviceHttp();
 
 // A 200 only means the session answered; an unanswered result (an operator abort, say) is not an ingested document.
 function failure(res: { status: number; text: string }): string | undefined {
@@ -43,7 +41,7 @@ const isReset = (err: unknown) => (err as { code?: string }).code === 'ECONNRESE
 // Only rmfakecloud failures are the upstream's fault; store errors and the like are this service's own.
 const upstream = (err: unknown) => err instanceof Error && (err.message.startsWith('rmfakecloud') || err.message === 'fetch failed');
 
-export function createRemarkableService(config: ServiceConfig) {
+export function createRemarkableService(config: ServiceConfig): App & { settled(): Promise<void>; stop(): Promise<void> } {
   const store = openStore(config.dbPath, config.now ?? (() => new Date()));
   const inflight = new Set<Promise<void>>();
   const aborts = new Set<() => void>();
@@ -107,14 +105,8 @@ export function createRemarkableService(config: ServiceConfig) {
   }
   const withState = (es: RmEntry[]): unknown[] => es.map((e) => (e.folder ? { ...e, children: withState(e.children ?? []) } : { ...e, ...stateOf(e) }));
 
-  // What the page reaches through the distributor's app proxy: the tree with ingest states, and ingest (failed ones retry on their own).
-  async function pageRoute(req: IncomingMessage, path: string): Promise<[number, unknown]> {
-    if (req.method === 'GET' && path === '/apps/remarkable') return [200, { tree: withState(await config.client.tree()) }];
-    if (req.method === 'POST' && path === '/apps/remarkable/ingest') return ingest(req, true);
-    return [404, { error: 'not found' }];
-  }
-
-  async function ingest(req: IncomingMessage, auto = false): Promise<[number, unknown]> {
+  // Failed documents retry on their own; `retry: true` instead refuses any whose last attempt did not fail.
+  async function ingest(req: IncomingMessage): Promise<[number, unknown]> {
     const body = (await readJson(req)) as { ids?: unknown; retry?: unknown } | null;
     const ids = body?.ids;
     if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => typeof i === 'string' && i.length > 0)) return [400, { error: 'ids must be a non-empty array of document ids' }];
@@ -126,7 +118,7 @@ export function createRemarkableService(config: ServiceConfig) {
     const jobs = wanted.map((id) => {
       const d = listed.get(id)!;
       const last = store.last(d.id, d.version);
-      return { id: d.id, name: d.name, version: d.version, attempt: auto ? (last?.status === 'failed' ? last.attempt + 1 : (last?.attempt ?? 0)) : body?.retry === true ? (last?.status === 'failed' ? last.attempt + 1 : -1) : (last?.attempt ?? 0) };
+      return { id: d.id, name: d.name, version: d.version, attempt: last?.status === 'failed' ? last.attempt + 1 : body?.retry === true ? -1 : (last?.attempt ?? 0) };
     });
     const refused = jobs.filter((j) => j.attempt < 0).map((j) => j.id);
     if (refused.length) return [409, { error: 'only documents whose last attempt failed can be retried', ids: refused }];
@@ -144,7 +136,7 @@ export function createRemarkableService(config: ServiceConfig) {
 
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
     const path = new URL(req.url ?? '', 'http://x').pathname;
-    if (path.startsWith('/apps/remarkable')) return pageRoute(req, path);
+    if (req.method === 'GET' && path === '/') return [200, { tree: withState(await config.client.tree()) }];
     if (req.method === 'GET' && path === '/documents') return [200, { documents: await config.client.tree() }];
     if (req.method === 'POST' && path === '/ingest') return ingest(req);
     if (path === '/topics') return req.method === 'POST' ? addTopic(req) : [200, { topics: store.topics() }];
@@ -156,8 +148,7 @@ export function createRemarkableService(config: ServiceConfig) {
     return [404, { error: 'not found' }];
   }
 
-  const server = createServer(async (req, res) => {
-    if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
+  async function handle(req: IncomingMessage, res: ServerResponse) {
     try {
       const file = req.method === 'GET' ? /^\/documents\/([^/]+)\/(pdf|rmdoc)$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
       if (file) {
@@ -168,20 +159,21 @@ export function createRemarkableService(config: ServiceConfig) {
       }
       send(res, ...(await route(req)));
     } catch (err) {
-      const bad = err instanceof SyntaxError || err instanceof URIError || (err as Error).message === 'body too large';
+      if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
+      const bad = err instanceof SyntaxError || err instanceof URIError;
       send(res, bad ? 400 : upstream(err) ? 502 : 500, { error: (err as Error).message });
     }
-  });
+  }
   for (const p of store.pending()) track(p.batch, { id: p.document, name: p.name, version: p.version, attempt: p.attempt });
-  return Object.assign(server, {
+  return {
+    handle,
     /** Resolves when every submission started so far has been answered. */
     settled: async () => void (await Promise.all(inflight)),
     stop: async () => {
       stopped = true;
       aborts.forEach((abort) => abort());
-      server.close();
       await Promise.all(inflight);
       store.close();
     },
-  });
+  };
 }

@@ -7,8 +7,5 @@
   },
   "dependencies": {
     "@quack/sdk": "*"
-  },
-  "scripts": {
-    "start": "node src/main.ts"
   }
 }
