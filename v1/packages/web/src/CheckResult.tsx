@@ -59,19 +59,30 @@ export const progressLabel = (checks: Live['checks']) => {
   return `Double-checking · ${checkedCount(checks)} of ${checks.length} · ${failed ? `${failed} problem${failed > 1 ? 's' : ''}` : 'nothing found yet'}`;
 };
 
-/** The double-check while it runs: a bar with one segment per check, the problems as they land, the rest folded. */
+const doneSummary = (done: Live['checks']) => {
+  const n = (f: (c: LiveCheck) => boolean) => done.filter(f).length;
+  const parts = [[n(failedNow), 'problem'], [n((c) => c.met !== null && !failedNow(c)), 'nothing found'], [n((c) => c.met === null), "didn't apply"]] as const;
+  return parts.filter(([k]) => k > 0).map(([k, w]) => (w === 'problem' ? `${k} problem${k > 1 ? 's' : ''}` : `${k} ${w}`)).join(' · ');
+};
+
+/** The double-check while it runs: a bar with one segment per check, the checks still running, and each finished one folded away. */
 export function CheckProgress({ checks }: { checks: Live['checks'] }) {
-  const failed = checks.filter(failedNow);
+  const running = checks.filter((c) => c.met === undefined);
+  const done = checks.filter((c) => c.met !== undefined);
   return (
     <div className="ml-[34px] flex flex-col gap-2 text-[13px]">
       <div aria-hidden="true" className="flex h-1.5 gap-0.5">{checks.map((c) => <span key={`${c.criterion}.${c.id}`} className={`flex-1 rounded-full ${SEGMENT(c)}`} />)}</div>
-      {failed.map((c) => <div key={`${c.criterion}.${c.id}`} className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><Pill check={{ ...c, met: c.met!, notes: [] }} /></div>)}
-      <details>
-        <summary className="flex min-h-11 cursor-pointer list-none items-center text-muted hover:text-ink lg:min-h-8 [&::-webkit-details-marker]:hidden">{`Show all ${checks.length} checks`}</summary>
-        <ul aria-label="Double-check progress" className="m-0 flex list-none flex-col p-0">
-          {checks.map((c) => <li key={`${c.criterion}.${c.id}`} className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className={`flex-none text-[11px] ${failedNow(c) ? 'text-danger' : 'text-muted'}`}>{STATE(c)}</span></li>)}
-        </ul>
-      </details>
+      <ul aria-label="Checks running" className="m-0 flex list-none flex-col p-0">
+        {running.map((c) => <li key={`${c.criterion}.${c.id}`} className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className="flex-none text-[11px] text-muted">Checking</span></li>)}
+      </ul>
+      {done.length > 0 && (
+        <details>
+          <summary className="flex min-h-11 cursor-pointer list-none items-center text-muted hover:text-ink lg:min-h-8 [&::-webkit-details-marker]:hidden">{`Done · ${doneSummary(done)}`}</summary>
+          <ul aria-label="Checks done" className="m-0 flex list-none flex-col p-0">
+            {done.map((c) => <li key={`${c.criterion}.${c.id}`} className="flex min-h-8 items-center gap-2"><span className="min-w-0 flex-1 break-words">{c.label}</span><span className={`flex-none text-[11px] ${failedNow(c) ? 'text-danger' : 'text-muted'}`}>{STATE(c)}</span></li>)}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }
