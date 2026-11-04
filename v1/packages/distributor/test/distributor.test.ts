@@ -116,6 +116,19 @@ test('a malformed session key is a client error', async () => {
   assert.equal((await fetch(`${base}/sessions/%ZZ/invocations`, { method: 'POST', body: '{}' })).status, 400);
 });
 
+const PROBLEM = 'application/problem+json';
+
+test('the distributor answers its own errors as problem+json: 404 for an unknown key, 400 for a bad one', async () => {
+  const { base } = await startDistributor(60_000);
+  const missing = await fetch(`${base}/sessions/research%3Aghost/messages`);
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers.get('content-type'), PROBLEM);
+  assert.deepEqual(await missing.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'no such session', error: 'no such session' });
+  const bad = await fetch(`${base}/sessions/%ZZ/invocations`, { method: 'POST', body: '{}' });
+  assert.equal(bad.headers.get('content-type'), PROBLEM);
+  assert.deepEqual(await bad.json(), { type: 'about:blank', title: 'Bad Request', status: 400, detail: 'invalid session key', error: 'invalid session key' });
+});
+
 test('an unknown or deleted key answers 404 on every route and starts nothing; an invocation still creates it', async () => {
   const { driver, base, invoke, dataDir } = await startDistributor(60_000);
   const key = encodeURIComponent('research:ghost');
