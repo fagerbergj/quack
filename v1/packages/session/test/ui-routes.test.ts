@@ -102,6 +102,23 @@ test('GET /export returns the transcript with tool calls and results, and the se
   await h.stop();
 });
 
+test('errors are RFC 9457 problem+json, and an oversized body is 413', async () => {
+  const { base, stop } = await serve(defineExtension({ name: 'none' }));
+  try {
+    const missing = await fetch(`${base}/nope`);
+    assert.equal(missing.headers.get('content-type'), 'application/problem+json');
+    assert.deepEqual(await missing.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'not found', error: 'not found' });
+    const bad = await fetch(`${base}/invocations`, { method: 'POST', body: 'not json' });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.headers.get('content-type'), 'application/problem+json');
+    const big = await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'x'.repeat(2 * 1024 * 1024) }) });
+    assert.equal(big.status, 413);
+    assert.equal((await big.json()).detail, 'body too large');
+  } finally {
+    await stop();
+  }
+});
+
 test('a query string does not change which route answers', async () => {
   const { base, stop } = await serve(defineExtension({ name: 'none' }));
   try {
