@@ -4,7 +4,9 @@ import { answerQuestion, type AnswerInput, Artifacts, closeQuestions, failedRows
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
-const { send, json: readJson } = serviceHttp();
+const { send, problem, json: readJson } = serviceHttp();
+// Routes say { error }; the wire speaks RFC 9457.
+const reply = (res: ServerResponse, status: number, body: unknown) => (status >= 400 ? problem(res, status, (body as { error: string }).error) : send(res, status, body));
 
 // The decider comes from the proxy's identity header, never the body; the tailnet port has no header and the tailnet is its auth boundary.
 const decider = (req: IncomingMessage): string => String(req.headers['x-authentik-username'] ?? '') || 'tailnet';
@@ -126,12 +128,12 @@ export function createSessionServer(session: Session) {
       const path = new URL(req.url ?? '', 'http://x').pathname;
       for (const [method, pattern, route] of ROUTES) {
         const match = req.method === method ? pattern.exec(path) : null;
-        if (match) return send(res, ...(await route(session, req, match)));
+        if (match) return reply(res, ...(await route(session, req, match)));
       }
-      send(res, 404, { error: 'not found' });
+      problem(res, 404, 'not found');
     } catch (err) {
-      const bad = err instanceof SyntaxError || (err instanceof Error && err.message === 'body too large');
-      send(res, bad ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      problem(res, message === 'body too large' ? 413 : err instanceof SyntaxError ? 400 : 500, message);
     }
   });
   server.on('upgrade', liveUpgrade(session));
