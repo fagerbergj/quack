@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { appsProxy, parseApps } from '../src/apps.ts';
@@ -41,6 +41,21 @@ test('an unknown app is a 404, a non-app path is left alone, and an unreachable 
   assert.equal((await fetch(`${app}/apps/constructor`)).status, 404);
   assert.equal(await (await fetch(`${app}/sessions`)).text(), 'other');
   assert.equal((await fetch(`${app}/apps/down/x`)).status, 502);
+});
+
+// fetch would resolve `..` before sending; a raw request sends the path as an attacker would.
+const rawGet = (base: string, path: string) => new Promise<number>((resolve, reject) => request(base + '/', { path }, (r) => (r.resume(), resolve(r.statusCode!))).on('error', reject).end());
+
+test('a path that dot-segments out of /apps/<name> is a 404 and never reaches the service', async () => {
+  const seen: string[] = [];
+  const upstream = await start((req, res) => (seen.push(req.url!), res.writeHead(200).end('{}')));
+  const proxy = appsProxy({ demo: { url: upstream, tokenEnv: 'T' } }, { T: 't' });
+  const app = await start(async (req, res) => { if (!(await proxy(req, res))) res.writeHead(404).end('other'); });
+  for (const path of ['/apps/demo/../../git-credential', '/apps/demo/%2e%2e/%2E%2E/schedules', '/apps/demo/../other/x', '/apps/demo/..']) {
+    assert.equal(await rawGet(app, path), 404, path);
+  }
+  assert.equal(await rawGet(app, '/apps/demo/a/../b'), 200);
+  assert.deepEqual(seen, ['/apps/demo/b']);
 });
 
 test('a body over 1 MiB is a 413 and never reaches the service', async () => {

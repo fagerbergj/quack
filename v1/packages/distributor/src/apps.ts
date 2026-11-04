@@ -43,11 +43,13 @@ export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
     const match = /^\/apps\/([^/?]+)(?=[/?]|$)/.exec(req.url ?? '');
     if (!match) return false;
     const app = Object.hasOwn(apps, match[1]) ? apps[match[1]] : undefined;
-    if (!app) return sendProblem(res, 404, 'no such app'), true;
+    const target = app && new URL(req.url!, app.url);
+    // URL resolves `..`; a path leaving /apps/<name> would reach the service's other routes with its token.
+    if (!target || !`${target.pathname}/`.startsWith(`/apps/${match[1]}/`)) return sendProblem(res, 404, 'no such app'), true;
     // Read up front under the same cap as the session forwarder, so a service never sees an unbounded upload.
     const body = await readBody(req).catch(() => undefined);
     if (!body) return sendProblem(res, 413, 'body too large'), true;
-    await forward(req, res, new URL(req.url!, app.url), { authorization: `Bearer ${env[app.tokenEnv]}` }, body);
+    await forward(req, res, target, { authorization: `Bearer ${env[app!.tokenEnv]}` }, body);
     return true;
   };
 }
