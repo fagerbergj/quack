@@ -328,7 +328,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
   useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
   return (
-    <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
+    <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered} onDetails={details.show}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
@@ -350,7 +350,8 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
             <Running view={view} waiting={waiting > 0} active={tone === 'run'} />
           </div>
         </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
+        {/* On a phone the keyboard leaves room for an open answer field or the composer, not both; focus would flicker it under a tap. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 max-lg:group-has-[[data-answer]]/pane:hidden bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[860px] flex-col gap-2">
             <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
           </div>

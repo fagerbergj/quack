@@ -15,19 +15,20 @@ const rowClass = 'flex min-h-11 w-full cursor-pointer flex-col items-start justi
 const linkBtn = 'min-h-11 cursor-pointer self-start bg-transparent px-1 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline';
 const field = 'w-full rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
 
-// With a note open an option is selected rather than sent, so a plain answer stays one click.
+// A note rides along with the option tapped, so every answer stays one tap.
 function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Answer) => void }) {
   const [mode, setMode] = useState<'' | 'note' | 'text'>('');
-  const [picked, setPicked] = useState('');
   const [value, setValue] = useState('');
   const pick = d.suggested ?? -1;
   const labels = pick > 0 && pick < d.options.length ? [d.options[pick]!, ...d.options.filter((_, i) => i !== pick)] : d.options;
-  const choose = (o: string) => (mode === 'note' ? setPicked(o) : send({ choice: o }));
-  const toggle = (m: 'note' | 'text') => { setMode(mode === m ? '' : m); setPicked(''); setValue(''); };
+  const note = mode === 'note' ? value.trim() : '';
+  const choose = (o: string) => send(note ? { choice: o, note } : { choice: o });
+  const toggle = (m: 'note' | 'text') => { setMode(mode === m ? '' : m); setValue(''); };
   return (
     <div className="flex flex-col gap-2">
+      {mode === 'note' && <textarea data-answer aria-label="Note" placeholder="Your note goes with the option you tap" maxLength={2000} rows={2} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
       {labels.filter((o) => o !== YOU_DECIDE).map((o) => (
-        <button key={o} type="button" disabled={busy} aria-pressed={mode === 'note' ? picked === o : undefined} onClick={() => choose(o)} className={`${rowClass} ${picked === o ? 'border-ink' : ''}`}>
+        <button key={o} type="button" disabled={busy} onClick={() => choose(o)} className={rowClass}>
           <span className="flex flex-wrap items-center gap-2 text-sm font-semibold [overflow-wrap:anywhere]">
             {o}
             {pick >= 0 && o === d.options[pick] && <span className="rounded-full bg-soft px-2 py-0.5 text-[11px] font-medium text-ink-2">Suggested</span>}
@@ -36,13 +37,12 @@ function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Answ
         </button>
       ))}
       <div className="flex flex-wrap gap-x-3">
-        {labels.includes(YOU_DECIDE) && <button type="button" disabled={busy} aria-pressed={mode === 'note' ? picked === YOU_DECIDE : undefined} onClick={() => choose(YOU_DECIDE)} className={linkBtn}>{YOU_DECIDE}</button>}
-        {d.freeText && <button type="button" onClick={() => toggle('note')} className={linkBtn}>Add a note</button>}
-        {d.freeText && <button type="button" onClick={() => toggle('text')} className={linkBtn}>Something else…</button>}
+        {labels.includes(YOU_DECIDE) && <button type="button" disabled={busy} onClick={() => choose(YOU_DECIDE)} className={linkBtn}>{YOU_DECIDE}</button>}
+        {d.freeText && <button type="button" aria-expanded={mode === 'note'} onClick={() => toggle('note')} className={linkBtn}>{mode === 'note' ? 'Remove note' : 'Add a note'}</button>}
+        {d.freeText && <button type="button" aria-expanded={mode === 'text'} onClick={() => toggle('text')} className={linkBtn}>Something else…</button>}
       </div>
-      {mode === 'note' && <input aria-label="Note" maxLength={2000} value={value} onChange={(e) => setValue(e.target.value)} className={`${field} min-h-11`} />}
-      {mode === 'text' && <textarea aria-label="Your answer" maxLength={2000} rows={3} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
-      {mode && <button type="button" disabled={busy || (mode === 'note' ? !picked : !value.trim())} onClick={() => send(mode === 'note' ? { choice: picked, note: value } : { text: value })} className="min-h-11 cursor-pointer self-start rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:opacity-50">Send</button>}
+      {mode === 'text' && <textarea data-answer aria-label="Your answer" maxLength={2000} rows={3} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
+      {mode === 'text' && <button type="button" disabled={busy || !value.trim()} onClick={() => send({ text: value })} className="min-h-11 cursor-pointer self-start rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:opacity-50">Send</button>}
     </div>
   );
 }
