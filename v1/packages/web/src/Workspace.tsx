@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { indexApprovals, indexArtifacts, indexFailures, indexQuestions, indexSessions, listApprovals, listQuestions, listSessions, type Approval, type Question } from './api.ts';
+import { approvalOf, indexApprovals, indexArtifacts, indexFailures, indexQuestions, indexSessions, listApprovals, listQuestions, listSessions, type Question } from './api.ts';
 import { Home } from './Home.tsx';
 import { look, sessionTitle } from './kinds.ts';
 import { multiScope, type Row } from './sessions.ts';
@@ -23,7 +23,7 @@ async function loadRows(): Promise<Row[]> {
     spend: spendBy.get(s.key),
     artifacts: artifacts.get(s.key) ?? [],
     failures: failuresBy.get(s.key) ?? [],
-    approvals: indexed ? (approvalsBy.get(s.key) ?? []).map((a): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: Date.parse(a.at) })) : s.running ? await listApprovals(s.key).catch(() => []) : [],
+    approvals: indexed ? (approvalsBy.get(s.key) ?? []).map(approvalOf) : s.running ? await listApprovals(s.key).catch(() => []) : [],
     questions: asked ? (questionsBy.get(s.key) ?? []).map((q): Question => ({ ...q, askedAt: Date.parse(q.at) })) : s.running ? await listQuestions(s.key).catch(() => []) : [],
   })));
 }

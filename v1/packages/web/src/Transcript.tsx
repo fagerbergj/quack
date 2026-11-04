@@ -206,11 +206,12 @@ function build(view: View, artifacts: SealedArtifact[]): Item[] {
   const results = new Map(messages.flatMap(({ m }) => (m.role === 'toolResult' ? [[m.toolCallId, m] as const] : [])));
   const called = new Set(messages.flatMap(({ m }) => (m.role === 'assistant' ? m.content.flatMap((b) => (b.type === 'toolCall' ? [b.id] : [])) : [])));
   const items: Item[] = [];
-  const add = (key: string, start: number, x: Item | Step) => {
+  // A work fold is keyed by its first message's timestamp, which a streamed message keeps on commit, so an open fold stays open.
+  const add = (start: number, x: Item | Step) => {
     if ('k' in x) return void items.push(x);
     const last = items.at(-1);
     if (last?.k === 'work') last.steps.push(x);
-    else items.push({ k: 'work', key, start, steps: [x] });
+    else items.push({ k: 'work', key: `work:${start}`, start, steps: [x] });
   };
   const waiting = ledger(artifacts);
   const seal = (until: number) => {
@@ -227,8 +228,8 @@ function build(view: View, artifacts: SealedArtifact[]): Item[] {
     const { key, m, compaction } = x;
     seal(m.timestamp);
     if (m.role === 'user') items.push({ k: compaction ? 'compact' : 'user', key, m });
-    else if (m.role === 'assistant') blocks(m, key, results).forEach((x) => add(key, m.timestamp, x));
-    else if (m.role === 'toolResult' && !called.has(m.toolCallId)) add(key, m.timestamp, { t: 'orphan', result: m });
+    else if (m.role === 'assistant') blocks(m, key, results).forEach((x) => add(m.timestamp, x));
+    else if (m.role === 'toolResult' && !called.has(m.toolCallId)) add(m.timestamp, { t: 'orphan', result: m });
   }
   seal(Infinity);
   return items;

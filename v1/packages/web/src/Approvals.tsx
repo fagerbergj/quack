@@ -1,41 +1,22 @@
 import { useEffect, useState } from 'react';
-import { age, needId } from './sessions.ts';
-import { decideApproval, listApprovals, type Approval } from './api.ts';
-import { Args } from './JsonView.tsx';
-import { describe } from './Needs.tsx';
-
-const clip = (s = '', n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
+import { sessionApprovals, type Approval } from './api.ts';
+import { ApprovalCard } from './Needs.tsx';
 
 // `refresh` changes whenever the session saw tool activity, which is when an approval can appear.
-export function Approvals({ sessionKey, refresh, onItems }: { sessionKey: string; refresh: number; onItems?: (a: Approval[]) => void }) {
+export function useApprovals(sessionKey: string, refresh: number) {
   const [items, setItems] = useState<Approval[]>([]);
+  const [decided, setDecided] = useState<string[]>([]);
   const [error, setError] = useState('');
-  const load = () => listApprovals(sessionKey).then(setItems, (e: Error) => setError(e.message));
-  useEffect(() => void load(), [sessionKey, refresh]);
-  useEffect(() => onItems?.(items), [items]);
-  const decide = (id: string, decision: 'approve' | 'reject') =>
-    decideApproval(sessionKey, id, decision).then(load, (e: Error) => setError(e.message));
-  if (!items.length && !error) return null;
+  useEffect(() => void sessionApprovals(sessionKey).then(setItems, (e: Error) => setError(e.message)), [sessionKey, refresh]);
+  // A decided card stays gone: the index lags the session's own record, so the next read can still list it.
+  return { items: items.filter((a) => !decided.includes(a.id)), error, decide: (id: string) => setDecided((d) => [...d, id]) };
+}
+
+export function ApprovalCards({ sessionKey, title, items, error, decide }: { sessionKey: string; title: string; items: Approval[]; error: string; decide: (id: string) => void }) {
   return (
-    <div className="flex flex-col gap-3">
+    <>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
-      {items.map((a) => (
-        <section key={a.id} id={needId(a.id)} aria-label="Approval" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm p-3.5">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold tracking-[.06em] text-warning">NEEDS YOU</span>
-            <span className="ml-auto text-[12px] text-muted">{age(new Date(a.requestedAt).toISOString(), Date.now())}</span>
-          </div>
-          <p className="m-0 text-[14.5px] font-semibold">{describe(a.args) ?? a.tool}</p>
-          <details className="text-[13px] text-ink-2">
-            <summary className="cursor-pointer">{clip(JSON.stringify(a.args), 100)}</summary>
-            <div className="mt-2"><Args value={a.args} /></div>
-          </details>
-          <div className="flex gap-2">
-            <button type="button" aria-label={`Approve ${a.tool}`} onClick={() => decide(a.id, 'approve')} className="h-11 flex-1 cursor-pointer rounded-xl border-0 bg-ink text-sm font-semibold text-on-ink hover:bg-ink-2">Approve</button>
-            <button type="button" aria-label={`Reject ${a.tool}`} onClick={() => decide(a.id, 'reject')} className="h-11 flex-1 cursor-pointer rounded-xl border border-line-strong bg-transparent text-sm text-ink hover:text-danger">Reject</button>
-          </div>
-        </section>
-      ))}
-    </div>
+      {items.map((a) => <ApprovalCard key={a.id} sessionKey={sessionKey} title={title} a={a} now={Date.now()} done={() => decide(a.id)} />)}
+    </>
   );
 }
