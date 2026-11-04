@@ -21,7 +21,7 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
       throw new ApiError(`cannot reach ${root}: ${e.cause instanceof Error ? e.cause.message : e.message}`, 0);
     });
     const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiError(data?.error ?? `HTTP ${res.status}`, res.status);
+    if (!res.ok) throw new ApiError(data?.detail ?? data?.error ?? `HTTP ${res.status}`, res.status);
     return data;
   }
 

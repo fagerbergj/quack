@@ -30,7 +30,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
   const call = async (method: string, path: string, body: unknown = {}, headers: Record<string, string> = { 'content-type': 'application/json' }) => {
     const res = await fetch(url(path), { method, headers, body: JSON.stringify(body) });
-    return { status: res.status, body: (await res.json()) as { error?: string } };
+    return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as { error?: string; detail?: string; title?: string; status?: number } };
   };
   const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; archived?: boolean }> }).sessions;
   return { url, call, listed, forgotten, dataDir, sweep: () => server.sweep() };
@@ -58,6 +58,7 @@ test('archive is refused for a session mid-run or waiting on a person, and renam
   for (const key of ['busy', 'asking']) {
     const res = await call('PATCH', `/sessions/${key}`, { archived: true });
     assert.deepEqual([res.status, res.body.error], [409, "Can't archive a session that is running or waiting on you."]);
+    assert.deepEqual([res.type, res.body.title, res.body.status, res.body.detail], ['application/problem+json', 'Conflict', 409, res.body.error]);
   }
   assert.equal((await call('PATCH', '/sessions/busy', { title: 'Still renamable' })).status, 200);
   assert.deepEqual((await listed()).filter((s) => s.archived), []);

@@ -92,7 +92,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
-    if (busy) return res.writeHead(409).end(JSON.stringify({ error: 'session is mid-run as agent reviewer; implementer can start once it finishes' }));
+    if (busy) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: 'session is mid-run as agent reviewer; implementer can start once it finishes' }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
