@@ -1900,6 +1900,16 @@ test('a running session waiting for a model slot says so on its row, instead of 
   expect(screen.getByRole('link', { name: /Working one/ })).not.toHaveTextContent('Waiting for a model slot');
 });
 
+test('a contract session is named by its latest spec in the list, not by the text that started it', async () => {
+  routes['GET /sessions'] = { sessions: [sess('contracts:c1', { title: 'The quack v1 distributor HTTP API (contract distributor.http in…' })] };
+  routes['GET /index/artifacts'] = { artifacts: [{ session: 'contracts:c1', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Distributor HTTP API, version 1', outcome: 'v1' }] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Distributor HTTP API/ })).toHaveAttribute('href', '#/s/contracts%3Ac1');
+  expect(screen.queryByText(/contract distributor\.http in/)).toBeNull();
+});
+
 test('the session menu names what it opens: Open review, not Work', async () => {
   routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }] };
   const ws = await openSession();
@@ -1930,4 +1940,21 @@ test('nothing above the nav duplicates Home: no link to #/new on desktop or on t
   stubViewport(false);
   render(<App />);
   expect(document.querySelector('a[href="#/new"]')).toBeNull();
+});
+
+test('a contract session reads its spec name on Home and in its header, and Changes requested on its row', async () => {
+  const spec = { session: 'contracts:c2', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Roster API, version 1', outcome: 'v1' };
+  const changes = { session: 'contracts:c2', kind: 'contract.changes', version: 1, hash: 'c', verdict: null, sealedAt: 2, summary: 'Use cursor paging', outcome: 'v1' };
+  routes['GET /sessions'] = { sessions: [sess('contracts:c2', { title: 'A long working title from the description' })] };
+  routes['GET /index/artifacts'] = { artifacts: [spec, changes] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  const { unmount } = render(<App />);
+  const row = await screen.findByRole('link', { name: /Roster API/ });
+  expect(row).toHaveTextContent('Changes requested');
+  expect(row).not.toHaveTextContent('Spec ready');
+  unmount();
+  location.hash = '#/s/contracts%3Ac2';
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: /Roster API/ })).toBeInTheDocument();
 });
