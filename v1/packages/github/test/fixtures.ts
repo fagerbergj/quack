@@ -47,8 +47,10 @@ export async function listen(server: Server) {
 }
 
 /** The service half's session-facing API, faked: PR metadata, credentials, and posted reviews recorded. */
-export async function fakeService(head: string, extra: Record<string, unknown> = {}) {
+/** With `issue`, number 12 is that issue: /pulls/12 is a 404 and /issues/12 returns it; POST /pulls records the opened pull request in `opened`. */
+export async function fakeService(head: string, extra: Record<string, unknown> = {}, issue?: Record<string, unknown>) {
   const posted: any[] = [];
+  const opened: any[] = [];
   const replies: any[] = [];
   const url = await listen(
     createServer(async (req, res) => {
@@ -60,6 +62,12 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
         replies.push(JSON.parse(raw));
         return res.writeHead(201).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7#discussion_r56' }));
       }
+      if (req.url === '/pulls' && req.method === 'POST') {
+        opened.push(JSON.parse(raw));
+        return res.writeHead(201).end(JSON.stringify({ number: 13, url: 'https://github.com/acme/widgets/pull/13' }));
+      }
+      if (issue && req.url === '/pulls/acme/widgets/12') return res.writeHead(404).end('{}');
+      if (issue && req.url === '/issues/acme/widgets/12') return res.writeHead(200).end(JSON.stringify(issue));
       if (req.url === '/reviews') {
         posted.push(JSON.parse(raw));
         return res.writeHead(201).end(JSON.stringify({ id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' }));
@@ -68,5 +76,5 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       res.writeHead(200).end(JSON.stringify(pr));
     }),
   );
-  return { url, posted, replies };
+  return { url, posted, replies, opened };
 }
