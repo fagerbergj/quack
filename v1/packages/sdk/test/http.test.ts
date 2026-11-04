@@ -61,3 +61,14 @@ test('inProcessFetch rejects an aborted call while the handler still holds it', 
   await assert.rejects(call, { name: 'AbortError' });
   await assert.rejects(held('http://app/wait', { signal: AbortSignal.abort() }), { name: 'AbortError' });
 });
+
+test('a handler that answers after the abort neither resolves the call nor throws', async () => {
+  let ended!: () => void;
+  const done = new Promise<void>((r) => (ended = r));
+  const late = inProcessFetch((_req, res) => void setTimeout(() => (res.writeHead(200), res.end('{}'), ended()), 10));
+  const ctl = new AbortController();
+  const call = late('http://app/wait', { signal: ctl.signal });
+  ctl.abort();
+  await assert.rejects(call, { name: 'AbortError' });
+  await done;
+});

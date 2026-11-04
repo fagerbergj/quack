@@ -140,8 +140,10 @@ test('with concurrency set, units are classified at once and the verdict matches
   };
   const serial = await once();
   const parallel = await once(4);
+  const capped = await once(2);
   assert.equal(serial.peak, 1);
   assert.equal(parallel.peak, 4, 'the review unit and the three findings go out together');
+  assert.equal(capped.peak, 2, 'never more than `concurrency` at once');
   assert.deepEqual(parallel.verdict, serial.verdict);
 });
 
