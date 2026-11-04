@@ -8,12 +8,12 @@ export interface Validation { loaded: number; failures: string[] }
 
 const subdirs = (root: string) => (existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => join(root, d.name)) : []);
 
-/** Each service's settings against the check its manifest publishes; the service runs the same check at boot. */
-export function serviceSettingsProblems(services: DeploymentConfig['services'], list: ExtensionManifest[] = manifests): string[] {
-  return Object.entries(services ?? {}).flatMap(([name, s]) => {
-    const check = list.find((m) => m.name === name)?.settings;
-    if (check) return check(s.settings).map((p) => `services.${name}.settings: ${p}`);
-    return s.settings && Object.keys(s.settings).length ? [`services.${name}.settings: no extension named ${name} publishes settings`] : [];
+/** Each extension's settings against the check its manifest publishes, and each listed name against an extension that mounts an app; the app runs the same settings check at boot. */
+export function extensionProblems(extensions: DeploymentConfig['extensions'], list: ExtensionManifest[] = manifests): string[] {
+  return Object.entries(extensions ?? {}).flatMap(([name, e]) => {
+    const m = list.find((x) => x.name === name);
+    if (!m?.app) return [`extensions.${name}: no extension named ${name} mounts an app`];
+    return m.settings ? m.settings(e.settings).map((p) => `extensions.${name}.settings: ${p}`) : e.settings && Object.keys(e.settings).length ? [`extensions.${name}.settings: ${name} takes no settings`] : [];
   });
 }
 
@@ -21,7 +21,7 @@ export function serviceSettingsProblems(services: DeploymentConfig['services'], 
 export async function validate(opts: { config: string; agentsDir: string; dataDir: string; fetch?: typeof fetch }): Promise<Validation> {
   // Models are listed from the providers; a provider that cannot be reached falls back to its hand-written entries.
   const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8'))), opts.fetch);
-  const settingsProblems = serviceSettingsProblems(deployment.services);
+  const settingsProblems = extensionProblems(deployment.extensions);
   if (settingsProblems.length) throw new Error(`invalid deployment config:\n- ${settingsProblems.join('\n- ')}`);
   const paths = [...subdirs(opts.agentsDir).map((d) => join(d, 'agent.json')), ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
   const result: Validation = { loaded: 0, failures: [] };

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -142,7 +142,7 @@ test('the workflow seals a history card whose figures are the tools and the judg
 test('the history job starts on demand under the week key with an optional seasons cap, and is never scheduled', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(0) });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(0) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {

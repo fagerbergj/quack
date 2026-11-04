@@ -1,4 +1,4 @@
-/** `services.sleeper.settings`: the league the service acts on, and the owner whose lineup, waiver and trade jobs it schedules (absent: no jobs are registered). */
+/** `extensions.sleeper.settings`: the league the service acts on, and the owner whose lineup, waiver and trade jobs it schedules (absent: no jobs are registered). */
 export type SleeperSettings = { league: string; owner?: string };
 
 export const settingsProblems = (settings: unknown): string[] => {

@@ -9,7 +9,7 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
@@ -236,14 +236,15 @@ test('the lineup runs are after Wednesday and Sunday morning, each ending an hou
 });
 
 test('the schedules service lists the week with the lineup session key and deadlines, once however often it registers', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
   try {
-    await registerLineupSchedules({ url, token: 's' }, client(), 'L1', 'mallard');
-    const ids = await registerLineupSchedules({ url, token: 's' }, client(), 'L1', 'mallard');
+    await registerLineupSchedules({ url }, client(), 'L1', 'mallard');
+    const ids = await registerLineupSchedules({ url }, client(), 'L1', 'mallard');
     assert.deepEqual(ids, ['sleeper/lineup/L1/9/wed', 'sleeper/lineup/L1/9/sun']);
-    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
+    const { schedules: listed } = await (await fetch(url)).json();
     assert.equal(listed.length, 2);
     assert.equal(lineupKey('L1', 9), 'sleeper:L1:9:lineup');
     assert.partialDeepStrictEqual(listed[1], {
@@ -251,6 +252,7 @@ test('the schedules service lists the week with the lineup session key and deadl
     });
     assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/lineup/L1/9/sun', times: ['2026-11-08T14:00:00.000Z'], deadline: '2026-11-08T17:00:00.000Z', sessionKey: 'sleeper:L1:9:lineup' });
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });
@@ -259,16 +261,18 @@ test('a lineup registered after its Wednesday run time but before the deadline s
   const fired: string[] = [];
   let at = Date.parse('2026-11-05T12:00:00Z');
   const fake = (async (u: string) => (fired.push(decodeURIComponent(u)), new Response('{}'))) as unknown as typeof fetch;
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://d', dbPath: ':memory:', now: () => new Date(at), fetch: fake });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const schedules = createSchedulesService({ distributorUrl: 'http://d', dbPath: ':memory:', now: () => new Date(at), fetch: fake });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
   try {
-    await registerLineupSchedules({ url, token: 's' }, client(), 'L1', 'mallard');
+    await registerLineupSchedules({ url }, client(), 'L1', 'mallard');
     await schedules.tick();
-    await registerLineupSchedules({ url, token: 's' }, client(), 'L1', 'mallard');
+    await registerLineupSchedules({ url }, client(), 'L1', 'mallard');
     await schedules.tick();
     assert.deepEqual(fired, ['http://d/sessions/sleeper:L1:9:lineup/invocations?agent=sleeper-lineup']);
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });
@@ -277,8 +281,8 @@ test('the lineup job starts on demand under the week session key, each click its
   const calls: Array<{ url: string; body: { input: string; requestId: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
   let tick = 0;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: client(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT + tick++) });
-  const bare = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: client() });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: client(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT + tick++) }));
+  const bare = serveApp(createSleeperService({ dbPath: ':memory:', client: client() }));
   await Promise.all([service, bare].map((x) => new Promise<void>((r) => x.listen(0, r))));
   const post = (x: typeof service, path: string) => fetch(`http://127.0.0.1:${(x.address() as AddressInfo).port}${path}`, { method: 'POST', headers: { authorization: 'Bearer t' } });
   try {

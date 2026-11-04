@@ -57,7 +57,7 @@ const inputOf = (i: LineupInput) => JSON.stringify(i);
 
 /** The schedules service keeps fired occurrences, and a late re-registration would otherwise start another run for the same processing. */
 async function firedSince(config: ScheduleConfig, id: string, start: number): Promise<boolean> {
-  const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, { headers: { authorization: `Bearer ${config.token}` } });
+  const res = await (config.fetch ?? fetch)(config.url);
   if (!res.ok) throw new Error(`schedules: listing returned ${res.status}`);
   const entry = ((await res.json()) as { schedules: Array<{ id: string; lastRun: string | null }> }).schedules.find((x) => x.id === id);
   return !!entry?.lastRun && Date.parse(entry.lastRun) >= start;
@@ -74,9 +74,8 @@ export async function registerWaiversSchedules(config: ScheduleConfig, client: S
   // One pending run per league: re-registering replaces its time and input, even after the processing day or the NFL week changes.
   const id = `sleeper/waivers/${league}`;
   if (await firedSince(config, id, run.start)) return [];
-  const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {
+  const res = await (config.fetch ?? fetch)(config.url, {
     method: 'POST',
-    headers: { authorization: `Bearer ${config.token}` },
     body: JSON.stringify({ id, agent: WAIVERS_AGENT, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: waiversKey(league, state.week), input: inputOf({ league, week: state.week, owner }) }),
   });
   if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);

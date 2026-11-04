@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -224,22 +224,24 @@ test('the weekly finder run starts two hours after waivers process and stays use
 });
 
 test('the schedules service lists the finder run once however often it registers, under the week session key', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
   try {
     const now = () => AT;
-    await registerFinderSchedules({ url, token: 's' }, clientOf(), 'L1', 'mallard', now);
-    const ids = await registerFinderSchedules({ url, token: 's' }, clientOf(), 'L1', 'mallard', now);
+    await registerFinderSchedules({ url }, clientOf(), 'L1', 'mallard', now);
+    const ids = await registerFinderSchedules({ url }, clientOf(), 'L1', 'mallard', now);
     assert.deepEqual(ids, ['sleeper/trade-finder/L1/2026-11-11']);
-    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
+    const { schedules: listed } = await (await fetch(url)).json();
     assert.equal(listed.length, 1);
     assert.partialDeepStrictEqual(listed[0], { id: ids[0], agent: 'sleeper-trade-finder', times: ['2026-11-11T10:00:00.000Z'], deadline: '2026-11-18T10:00:00.000Z', sessionKey: 'sleeper:L1:9:trade-finder', input: JSON.stringify(FINDER) });
     const noDay = { ...fixtures, '/v1/league/L1': { ...fixtures['/v1/league/L1'], settings: { waiver_type: 0 } } };
-    assert.deepEqual(await registerFinderSchedules({ url, token: 's' }, clientOf(noDay), 'L1', 'mallard', now), []);
+    assert.deepEqual(await registerFinderSchedules({ url }, clientOf(noDay), 'L1', 'mallard', now), []);
     const offseason = { ...fixtures, '/v1/state/nfl': { ...fixtures['/v1/state/nfl'], season_type: 'off' } };
-    assert.deepEqual(await registerFinderSchedules({ url, token: 's' }, clientOf(offseason), 'L1', 'mallard', now), []);
+    assert.deepEqual(await registerFinderSchedules({ url }, clientOf(offseason), 'L1', 'mallard', now), []);
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });
@@ -247,7 +249,7 @@ test('the schedules service lists the finder run once however often it registers
 test('the trade jobs start on demand: the finder under the week key, a trade under its own key, and a bad trade is a 400', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {

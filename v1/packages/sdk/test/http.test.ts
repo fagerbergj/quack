@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { invocationRequest, safeEqual, serviceHttp, submitToSession } from '../src/index.ts';
+import { inProcessFetch, invocationRequest, safeEqual, serviceHttp, submitToSession } from '../src/index.ts';
 
 async function serve(opts: Parameters<typeof serviceHttp>[0]) {
   const http = serviceHttp(opts);
@@ -51,4 +51,13 @@ test('problem answers RFC 9457 JSON that still carries error', async () => {
   } finally {
     server.close();
   }
+});
+
+test('inProcessFetch rejects an aborted call while the handler still holds it', async () => {
+  const held = inProcessFetch(() => new Promise(() => {}));
+  const ctl = new AbortController();
+  const call = held('http://app/wait', { method: 'POST', body: '{}', signal: ctl.signal });
+  ctl.abort();
+  await assert.rejects(call, { name: 'AbortError' });
+  await assert.rejects(held('http://app/wait', { signal: AbortSignal.abort() }), { name: 'AbortError' });
 });

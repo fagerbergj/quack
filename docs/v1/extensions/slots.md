@@ -31,9 +31,7 @@ Both halves read the deployment file (`QUACK_CONFIG`):
 | Key | Half | Meaning |
 | --- | --- | --- |
 | `providers.<id>.slots` | service | How many runs the provider admits at once, for example `"local": {"slots": 6}`. A provider without `slots` is not gated. |
-| `services.slots.url` | session | The service's base URL. No `services.slots` entry: the gate is off. |
-| `services.slots.tokenEnv` | both | The variable holding the shared bearer token (A12 until workload tokens land). |
-| `services.slots.store` | service | A sqlite store; the file is `slots.db` in `QUACK_DATA_DIR`. |
-| `PORT` | service | Default 8092. |
+| `extensions.slots` | both | Mounts the service in the distributor at `/apps/slots`. No entry: the gate finds no service and fails open. |
+| `extensions.slots.store` | service | A sqlite store; the file is `slots.db` in `QUACK_DATA_DIR`. |
 
-The deployment enables the gate for every session, whatever its agent selects: a provider limit only works if every session obeys it. A `services.slots` entry whose `tokenEnv` variable is set turns it on; otherwise it is off.
+The deployment enables the gate for every session, whatever its agent selects: a provider limit only works if every session obeys it. A session reaches the service at `${QUACK_INDEX_URL}/apps/slots` with its launch credential (`QUACK_INDEX_TOKEN`); without an `extensions.slots` entry the app is not mounted and the gate fails open (SLT-6).

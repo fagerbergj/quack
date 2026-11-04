@@ -1,8 +1,9 @@
-export type ScheduleConfig = { url: string; token: string; fetch?: typeof fetch };
+/** `url` is a base URL that `fetch` resolves to the schedules app, whose routes are `/` and `/<id>`. */
+export type ScheduleConfig = { url: string; fetch?: typeof fetch };
 
 /** Deletes the retired daily snapshot schedule (trends takes its own snapshot); 404 means it is already gone. */
 export async function removeLegacySnapshotSchedule(config: ScheduleConfig, league: string) {
-  const res = await (config.fetch ?? fetch)(`${config.url}/schedules/${encodeURIComponent(`sleeper/snapshot/${league}`)}`, { method: 'DELETE', headers: { authorization: `Bearer ${config.token}` } });
+  const res = await (config.fetch ?? fetch)(`${config.url}/${encodeURIComponent(`sleeper/snapshot/${league}`)}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 404) throw new Error(`schedules: removing the legacy snapshot job returned ${res.status}`);
 }
 

@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import type { SetTimer } from '@earendil-works/pi-durable';
 import { createSchedulesService } from '@quack/schedules';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { outcomeOf, runWorkflow, startWorkflow, workflowExtension, type Workflow } from '@quack/workflows';
 import {
@@ -267,20 +267,22 @@ test('the report runs are a preview an hour before the first kickoff and a recap
 });
 
 test('the schedules service lists the three runs with their session keys and deadlines, once however often they register', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
   const week9 = { ...fixtures, '/v1/state/nfl': { ...fixtures['/v1/state/nfl'], week: 9 } };
   try {
-    await registerReportSchedules({ url, token: 's' }, clientOf(week9), 'L1', 'mallard');
-    const ids = await registerReportSchedules({ url, token: 's' }, clientOf(week9), 'L1', 'mallard');
+    await registerReportSchedules({ url }, clientOf(week9), 'L1', 'mallard');
+    const ids = await registerReportSchedules({ url }, clientOf(week9), 'L1', 'mallard');
     assert.deepEqual(ids, ['sleeper/digest/L1/9/preview', 'sleeper/digest/L1/9/recap', 'sleeper/retro/L1/9']);
-    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
+    const { schedules: listed } = await (await fetch(url)).json();
     assert.equal(listed.length, 3);
     assert.partialDeepStrictEqual(listed.find((s: { id: string }) => s.id === 'sleeper/retro/L1/9'), { agent: 'sleeper-retro', times: ['2026-11-10T06:15:00.000Z'], deadline: '2026-11-13T06:15:00.000Z', sessionKey: 'sleeper:L1:9:retro', input: JSON.stringify(RECAP) });
     const off = { ...week9, '/v1/state/nfl': { ...week9['/v1/state/nfl'], season_type: 'post' } };
-    assert.deepEqual(await registerReportSchedules({ url, token: 's' }, clientOf(off), 'L1', 'mallard'), []);
+    assert.deepEqual(await registerReportSchedules({ url }, clientOf(off), 'L1', 'mallard'), []);
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });
@@ -288,7 +290,7 @@ test('the schedules service lists the three runs with their session keys and dea
 test('the digest and retro start on demand under their own week session keys', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(fixtures), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixtures), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string) => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method: 'POST', headers: { authorization: 'Bearer t' } });
   try {

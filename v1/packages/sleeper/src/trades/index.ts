@@ -8,5 +8,5 @@ export { tradeEvidence, tradeRubric } from './rubric.ts';
 export { finderWorkflow, FINDER_WORKFLOW, tradeWorkflow, TRADE_WORKFLOW, type TradeJobDeps } from './workflow.ts';
 
 /** The trade workflows wired to the Sleeper API and the service half named in the environment. */
-export const finderFromEnv = (env: Record<string, string | undefined> = process.env) => finderWorkflow(depsFromEnv(FINDER_WORKFLOW, env));
-export const tradeFromEnv = (env: Record<string, string | undefined> = process.env) => tradeWorkflow(depsFromEnv(TRADE_WORKFLOW, env));
+export const finderFromEnv = (env: Record<string, string | undefined> = process.env) => finderWorkflow(depsFromEnv(env));
+export const tradeFromEnv = (env: Record<string, string | undefined> = process.env) => tradeWorkflow(depsFromEnv(env));

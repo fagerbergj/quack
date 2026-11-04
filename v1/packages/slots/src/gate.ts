@@ -138,7 +138,7 @@ export class SlotGate {
 /** The service over HTTP; any non-2xx or network error throws, which the gate treats as the service being down. */
 export function httpClient(url: string, token: string, doFetch: typeof fetch = fetch): SlotClient {
   const post = async (path: string, endpoint: string, holder: string) => {
-    const res = await doFetch(`${url}/slots/${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ endpoint, holder }), signal: AbortSignal.timeout(5000) });
+    const res = await doFetch(`${url}/${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ endpoint, holder }), signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error(`slots service answered ${res.status}`);
     return res.json();
   };

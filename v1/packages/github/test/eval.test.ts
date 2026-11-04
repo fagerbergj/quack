@@ -14,10 +14,10 @@ const pr: PullRequestRecord = { owner: 'acme', repo: 'widgets', number: 7, title
 
 test('a replay is served the pinned pull request, and its reviews are captured, never posted', async () => {
   const svc = await evalService({ pr });
-  const url = svc.env.QUACK_GITHUB_URL;
-  const auth = { authorization: `Bearer ${svc.env.QUACK_GITHUB_TOKEN}` };
+  const url = svc.env.QUACK_INDEX_URL;
+  const auth = { authorization: `Bearer ${svc.env.QUACK_INDEX_TOKEN}` };
   try {
-    assert.deepEqual(await (await fetch(`${url}/pulls/acme/widgets/7`, { headers: auth })).json(), pr);
+    assert.deepEqual(await (await fetch(`${url}/apps/github/pulls/acme/widgets/7`, { headers: auth })).json(), pr);
     assert.equal((await fetch(`${url}/pulls/acme/widgets/8`, { headers: auth })).status, 404, 'only the pinned PR exists');
     assert.equal((await fetch(`${url}/git-credential?url=https://github.com/acme/widgets`, { headers: auth })).status, 404, 'no credentials, so nothing can be pushed');
     assert.equal((await fetch(`${url}/pulls/acme/widgets/7`)).status, 401);

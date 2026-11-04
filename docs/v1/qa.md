@@ -17,7 +17,7 @@ node tools/qa/run.ts --out /tmp/qa-out
 ## The stack
 
 ```
-node tools/qa/stack.ts up --web <dist dir|current> --seed <dir|demo|none> [--apps schedules=stub|real,sleeper=stub.json] [--model local|none|fake]
+node tools/qa/stack.ts up --web <dist dir|current> --seed <dir|demo|none> [--apps schedules,slots] [--model local|none|fake]
 node tools/qa/stack.ts down
 ```
 
@@ -25,7 +25,7 @@ node tools/qa/stack.ts down
 
 - `--web`: a built `packages/web/dist`, or `current` to build this tree first.
 - `--seed`: a directory of session data dirs to copy in (`session.sqlite` and its wal/shm, `session-key`, `agent`, `agent-def`, `meta.json`, `title`, `created`, `touched`; the workspace is skipped), `demo` to create one session (`qa-review`) through a canned model, or `none`.
-- `--apps`: registers extension services behind `/apps/<name>`. `stub` serves canned JSON (schedules has a two-entry list), a `.json` path serves that file for every request, `real` starts the real schedules service. Only schedules has a real mode.
+- `--apps`: mounts the named extensions in the distributor under `/apps/<name>` (they are listed under `extensions` in the deployment file). Schedules is seeded with two sample schedules.
 - `--model`: `none` (default) points the deployment's providers at a refused port, but keeps the pinned model names so copied sessions load. `fake` is a canned OpenAI-compatible endpoint, implied by `--seed demo`. `local` uses `QA_MODEL_URL` (default `http://127.0.0.1:11436/v1`, llm-swap with `qwen3.8-27b`) for flows that need a real model; run such a scenario by hand against `up --model local` and click the suggested option on question cards.
 
 ## Starter scenarios
@@ -33,7 +33,7 @@ node tools/qa/stack.ts down
 | Scenario | Checks |
 | --- | --- |
 | `home-sessions` | Home, the Sessions list and the session view of a seeded review-style session, at 1280 and 400 px, light and dark |
-| `schedules` | The Schedules page against a stubbed schedules service |
+| `schedules` | The Schedules page against the schedules app with two sample schedules |
 | `contracts` | The Contracts empty state, and that New contract opens its dialog (nothing is submitted) |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed <dir>` with a copied session to check a real artifact card.

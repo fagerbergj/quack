@@ -1,22 +1,23 @@
-import type { ExtensionManifest } from '@quack/sdk';
+import { appEndpoint, type ExtensionManifest } from '@quack/sdk';
 import { reviewPullRequest } from './action.ts';
 import { evalAdapter } from './eval.ts';
+import { mountGithub } from './mount.ts';
 import { settingsProblems } from './settings.ts';
 import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required by the github extension`);
-  return value;
-}
-
-// The service secret comes from the environment, never the definition file (D56).
+// The launch credential comes from the environment, never the definition file (D56).
 export const manifest: ExtensionManifest = {
   name: 'github',
   optional: ['judge'],
   settings: settingsProblems,
-  env: ['QUACK_GITHUB_URL', 'QUACK_GITHUB_TOKEN'],
+  app: mountGithub,
+  // The pull-request badges the page reads, and the webhook GitHub signs (the app verifies the signature).
+  pages: [{ method: 'GET', path: '/pulls' }, { method: 'POST', path: '/webhook' }],
+  env: ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'],
   evalAdapters: [evalAdapter],
   actions: [reviewPullRequest],
-  session: (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GITHUB_URL'), serviceToken: required('QUACK_GITHUB_TOKEN') }),
+  session: (config) => {
+    const { url, token } = appEndpoint('github');
+    return githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: url, serviceToken: token });
+  },
 };

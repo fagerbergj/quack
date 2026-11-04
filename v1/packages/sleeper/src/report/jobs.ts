@@ -38,10 +38,9 @@ export async function registerReportSchedules(config: ScheduleConfig, client: Sl
   const input = JSON.stringify({ league, week: state.week, owner } satisfies LineupInput);
   const ids: string[] = [];
   for (const run of reportRuns(starts, league, state.week)) {
-    const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {
+    const res = await (config.fetch ?? fetch)(config.url, {
       method: 'POST',
-      headers: { authorization: `Bearer ${config.token}` },
-      body: JSON.stringify({ id: run.id, agent: run.agent, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: run.sessionKey, input }),
+        body: JSON.stringify({ id: run.id, agent: run.agent, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: run.sessionKey, input }),
     });
     if (!res.ok) throw new Error(`schedules: registering ${run.id} returned ${res.status}`);
     ids.push(run.id);

@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '@quack/sdk';
+import { sleeperApp } from './app.ts';
 import { settingsProblems } from './settings.ts';
 import { runJob } from './action.ts';
 import { withChat } from './chat.ts';
@@ -9,7 +10,7 @@ import { FINDER_WORKFLOW, finderFromEnv, TRADE_WORKFLOW, tradeFromEnv } from './
 import { TRENDS_WORKFLOW, trendsFromEnv } from './trends/index.ts';
 import { waiversEvalAdapter, WAIVERS_WORKFLOW, waiversFromEnv } from './waivers/index.ts';
 
-const env = ['QUACK_SLEEPER_URL', 'QUACK_SLEEPER_TOKEN', 'QUACK_EXA_API_KEY'];
+const env = ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN', 'QUACK_EXA_API_KEY'];
 
 /** Sleeper contributes workflows and an eval adapter for its waivers card; an agent binds one through the workflows extension. */
 export const manifest: ExtensionManifest = {
@@ -17,6 +18,9 @@ export const manifest: ExtensionManifest = {
   requires: ['workflows'],
   optional: ['judge'],
   settings: settingsProblems,
+  app: sleeperApp,
+  peers: ['schedules'],
+  pages: [{ method: 'GET', path: '/' }, { method: 'GET', path: '/schedule' }, { method: 'POST', path: /^\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/ }],
   evalAdapters: [waiversEvalAdapter],
   actions: [runJob],
   workflows: {

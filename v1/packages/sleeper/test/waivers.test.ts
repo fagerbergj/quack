@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { adapterScores, readSession } from '@quack/eval';
 import { createSchedulesService } from '@quack/schedules';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -330,30 +330,32 @@ test('the run starts 12 hours before processing and is due an hour ahead of it; 
 });
 
 test('the schedules service lists the waivers run with its session key and deadline, once however often it registers', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
   try {
     const now = () => AT;
-    await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', now);
-    const ids = await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', now);
+    await registerWaiversSchedules({ url }, clientOf(base), 'L1', 'mallard', now);
+    const ids = await registerWaiversSchedules({ url }, clientOf(base), 'L1', 'mallard', now);
     assert.deepEqual(ids, ['sleeper/waivers/L1']);
-    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
+    const { schedules: listed } = await (await fetch(url)).json();
     assert.equal(listed.length, 1);
     assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
     const noDay = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0 } } };
-    assert.deepEqual(await registerWaiversSchedules({ url, token: 's' }, clientOf(noDay), 'L1', 'mallard', now), []);
+    assert.deepEqual(await registerWaiversSchedules({ url }, clientOf(noDay), 'L1', 'mallard', now), []);
     const unknown = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0, daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 } } };
     const logged: unknown[] = [];
     const orig = console.error;
     console.error = (m: unknown) => void logged.push(m);
     try {
-      assert.deepEqual(await registerWaiversSchedules({ url, token: 's' }, clientOf(unknown), 'L1', 'mallard', now), []);
+      assert.deepEqual(await registerWaiversSchedules({ url }, clientOf(unknown), 'L1', 'mallard', now), []);
     } finally {
       console.error = orig;
     }
     assert.match(String(logged[0]), /league L1.*1152/);
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });
@@ -362,7 +364,7 @@ test('the waivers job starts on demand under the week session key, beside the li
   const calls: Array<{ url: string; body: { input: string; requestId: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
   let tick = 0;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(base), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT + tick++) });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(base), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT + tick++) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
@@ -384,17 +386,19 @@ async function withSchedules(run: (h: { url: string; list: () => Promise<any[]>;
   const clock = { at: AT };
   const fired: string[] = [];
   const fake = (async (u: string) => (fired.push(decodeURIComponent(u)), new Response('{}'))) as unknown as typeof fetch;
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://d', dbPath: ':memory:', now: () => new Date(clock.at), fetch: fake });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
-  const list = async () => (await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json()).schedules;
+  const schedules = createSchedulesService({ distributorUrl: 'http://d', dbPath: ':memory:', now: () => new Date(clock.at), fetch: fake });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
+  const list = async () => (await (await fetch(url)).json()).schedules;
   try {
     await run({ url, list, clock, fired, tick: () => schedules.tick() });
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 }
-const register = (url: string, fixtures: Fixtures, at: number) => registerWaiversSchedules({ url, token: 's' }, clientOf(fixtures), 'L1', 'mallard', () => at);
+const register = (url: string, fixtures: Fixtures, at: number) => registerWaiversSchedules({ url }, clientOf(fixtures), 'L1', 'mallard', () => at);
 const withSettings = (fx: Fixtures, settings: object, week = 9): Fixtures => ({ ...fx, '/v1/state/nfl': { ...fx['/v1/state/nfl'], week }, '/v1/league/L1': { ...fx['/v1/league/L1'], settings: { ...fx['/v1/league/L1'].settings, ...settings } } });
 
 test('re-registering after the NFL week rolls over leaves exactly one waivers entry, with the new week and input', async () => {

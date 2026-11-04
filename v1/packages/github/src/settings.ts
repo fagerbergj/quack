@@ -1,4 +1,4 @@
-/** `services.github.settings`: implementerAgent is the agent a trusted `/fix` comment runs; absent, `/fix` does nothing. */
+/** `extensions.github.settings`: implementerAgent is the agent a trusted `/fix` comment runs; absent, `/fix` does nothing. */
 export type GithubSettings = { implementerAgent?: string };
 
 export const settingsProblems = (settings: unknown): string[] => {

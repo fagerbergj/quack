@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { after, test } from 'node:test';
+import { serveApp } from '@quack/sdk';
 import { createRemarkableService, createRmClient } from '../src/index.ts';
 
 const servers: Server[] = [];
@@ -107,20 +108,18 @@ const distributor = await listen(
 );
 
 const service = createRemarkableService({
-  serviceToken: 'svc-secret',
   dbPath: ':memory:',
   distributorUrl: distributor,
   agent: 'remarkable-ingest',
   client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }),
   onSettle: () => settledDocs.shift()?.(),
 });
-const base = await listen(service);
+const base = await listen(serveApp(service));
 const call = (method: string, path: string, body?: unknown, auth = 'Bearer svc-secret') =>
-  fetch(base + path, { method, headers: { authorization: auth }, body: body === undefined ? undefined : JSON.stringify(body) });
+  fetch(base + path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 const batch = async (id: string) => (await call('GET', `/batches/${id}`)).json() as Promise<any>;
 
-test('picker data needs the service token and carries id, name, version and modified', async () => {
-  assert.equal((await call('GET', '/documents', undefined, 'Bearer nope')).status, 401);
+test('picker data carries id, name, version and modified', async () => {
   const { documents } = (await (await call('GET', '/documents')).json()) as any;
   assert.deepEqual(documents[0], { id: 'n1', name: 'Notes', version: '3', modified: '2026-10-01T10:00:00Z', folder: false });
   assert.equal(documents[1].children[0].name, 'Plan');
@@ -205,17 +204,17 @@ test('a restart resubmits pending items with the same request id and the batch c
     waiters.add(w);
     w();
   });
-  const start = () => createRemarkableService({ serviceToken: 'svc-secret', dbPath: `${dir}/rm.db`, distributorUrl: slow, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
+  const start = () => createRemarkableService({ dbPath: `${dir}/rm.db`, distributorUrl: slow, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
   const headers = { authorization: 'Bearer svc-secret' };
 
   const first = start();
-  const firstUrl = await listen(first);
+  const firstUrl = await listen(serveApp(first));
   const { batch: id } = (await (await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2'] }) })).json()) as any;
   await arrivedAtLeast(1);
   await first.stop();
 
   const second = start();
-  const secondUrl = await listen(second);
+  const secondUrl = await listen(serveApp(second));
   await arrivedAtLeast(2);
   assert.deepEqual(requests, ['1', '1'], 'resubmitted with the stored request id');
   held[1](200);
@@ -236,8 +235,8 @@ test('a 200 whose result is unanswered settles the item failed with the reason',
 });
 
 test('an unreachable distributor settles the item failed', async () => {
-  const down = createRemarkableService({ serviceToken: 'svc-secret', dbPath: ':memory:', distributorUrl: 'http://127.0.0.1:1', agent: 'remarkable-ingest', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
-  const downBase = await listen(down);
+  const down = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://127.0.0.1:1', agent: 'remarkable-ingest', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
+  const downBase = await listen(serveApp(down));
   const headers = { authorization: 'Bearer svc-secret' };
   const { batch: id } = (await (await fetch(`${downBase}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) })).json()) as any;
   await down.settled();
@@ -292,19 +291,18 @@ test('a failed ingest of an unchanged document retries as a new attempt; a retry
 
 test('the page routes list notebook states and ingest a failed one as a new attempt', async () => {
   notes = { version: 11, lastModified: '2026-10-11T10:00:00Z' };
-  const states = async () => (((await (await call('GET', '/apps/remarkable')).json()) as any).tree as any[]).flatMap((e) => (e.folder ? e.children : [e])).map((e) => [e.id, e.state]);
-  assert.equal((await call('GET', '/apps/remarkable', undefined, 'Bearer nope')).status, 401);
+  const states = async () => (((await (await call('GET', '/')).json()) as any).tree as any[]).flatMap((e) => (e.folder ? e.children : [e])).map((e) => [e.id, e.state]);
   assert.equal((await call('GET', '/documents/x/other')).status, 404);
-  assert.equal((await call('GET', '/apps/remarkable/ingest')).status, 404);
+  assert.equal((await call('GET', '/ingest')).status, 404);
   const before = await states();
   assert.equal(before.find((s) => s[0] === 'n1')![1], 'changed', 'edited since earlier tests ingested it');
   autoAnswer = 500;
-  await call('POST', '/apps/remarkable/ingest', { ids: ['n1'] });
+  await call('POST', '/ingest', { ids: ['n1'] });
   await service.settled();
   assert.equal((await states()).find((s) => s[0] === 'n1')![1], 'failed');
   autoAnswer = 200;
   seen.length = 0;
-  await call('POST', '/apps/remarkable/ingest', { ids: ['n1'] });
+  await call('POST', '/ingest', { ids: ['n1'] });
   await service.settled();
   assert.deepEqual(seen.map((s) => s.body.requestId), ['11#1']);
   assert.equal((await states()).find((s) => s[0] === 'n1')![1], 'current');
@@ -326,8 +324,8 @@ test('a 502, a 504 or a reset mid-wait resubmits the same request id with backof
     }),
   );
   const delays: number[] = [];
-  const retrying = createRemarkableService({ serviceToken: 'svc-secret', dbPath: ':memory:', distributorUrl: flaky, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }), sleep: async (ms) => void delays.push(ms) });
-  const url = await listen(retrying);
+  const retrying = createRemarkableService({ dbPath: ':memory:', distributorUrl: flaky, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }), sleep: async (ms) => void delays.push(ms) });
+  const url = await listen(serveApp(retrying));
   const headers = { authorization: 'Bearer svc-secret' };
   const { batch: id } = (await (await fetch(`${url}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) })).json()) as any;
   await retrying.settled();

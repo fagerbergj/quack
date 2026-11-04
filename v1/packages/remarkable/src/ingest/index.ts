@@ -1,3 +1,4 @@
+import { appEndpoint } from '@quack/sdk';
 import type { ClassifierRef, ModelRef } from '@quack/judge';
 import { ingestWorkflow, INGEST_WORKFLOW, UNREACHABLE, type IngestService } from './workflow.ts';
 
@@ -26,12 +27,8 @@ export function createIngestService(url: string, token: string, doFetch: typeof 
   };
 }
 
-/** The workflow wired to the service half named in the environment (QUACK_REMARKABLE_URL, QUACK_REMARKABLE_TOKEN); the models come from the agent definition. */
+/** The workflow wired to the service half named in the environment (QUACK_INDEX_URL, QUACK_INDEX_TOKEN); the models come from the agent definition. */
 export function ingestFromEnv(config: { visionModel?: ModelRef; classifier?: ClassifierRef } = {}, env: Record<string, string | undefined> = process.env) {
-  const need = (name: string) => {
-    const value = env[name];
-    if (!value) throw new Error(`${name} is required by the ${INGEST_WORKFLOW} workflow`);
-    return value;
-  };
-  return ingestWorkflow({ service: createIngestService(need('QUACK_REMARKABLE_URL'), need('QUACK_REMARKABLE_TOKEN')), visionModel: config.visionModel, classifier: config.classifier });
+  const { url, token } = appEndpoint('remarkable', env);
+  return ingestWorkflow({ service: createIngestService(url, token), visionModel: config.visionModel, classifier: config.classifier });
 }

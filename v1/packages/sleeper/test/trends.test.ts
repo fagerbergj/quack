@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -228,23 +228,25 @@ test('with a news source the conflict, original-source and aggregator checks are
 });
 
 test('the schedules service lists one daily run after the snapshot, replaced by the next week and removed outside the season', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
-  const list = async () => (await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json()).schedules;
+  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
+  const schedulesServer = serveApp(schedules).listen(0);
+  await new Promise((r) => schedulesServer.once('listening', r));
+  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
+  const list = async () => (await (await fetch(url)).json()).schedules;
   const stateOf = (state: object) => createSleeperClient({ fetch: (async () => new Response(JSON.stringify(state))) as unknown as typeof fetch });
   try {
     const regular = (week: number) => stateOf({ week, season: '2026', season_type: 'regular' });
-    assert.deepEqual(await registerTrendsSchedules({ url, token: 's' }, regular(9), 'L1', 'mallard'), ['sleeper/trends/L1']);
-    await registerTrendsSchedules({ url, token: 's' }, regular(10), 'L1', 'mallard');
+    assert.deepEqual(await registerTrendsSchedules({ url }, regular(9), 'L1', 'mallard'), ['sleeper/trends/L1']);
+    await registerTrendsSchedules({ url }, regular(10), 'L1', 'mallard');
     const listed = await list();
     assert.equal(listed.length, 1);
     assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/trends/L1', agent: 'sleeper-trends', cron: '30 4 * * *', tz: 'America/New_York', sessionKey: 'sleeper:L1:10:trends', input: JSON.stringify({ league: 'L1', week: 10, owner: 'mallard' }) });
-    assert.deepEqual(await registerTrendsSchedules({ url, token: 's' }, stateOf({ week: 1, season_type: 'off' }), 'L1', 'mallard'), []);
+    assert.deepEqual(await registerTrendsSchedules({ url }, stateOf({ week: 1, season_type: 'off' }), 'L1', 'mallard'), []);
     assert.deepEqual(await list(), []);
-    assert.deepEqual(await registerTrendsSchedules({ url, token: 's' }, stateOf({ week: 1, season_type: 'off' }), 'L1', 'mallard'), [], 'nothing to remove is fine');
+    assert.deepEqual(await registerTrendsSchedules({ url }, stateOf({ week: 1, season_type: 'off' }), 'L1', 'mallard'), [], 'nothing to remove is fine');
     assert.equal(trendsKey('L1', 9), 'sleeper:L1:9:trends');
   } finally {
+    schedulesServer.close();
     schedules.stop();
   }
 });
@@ -252,7 +254,7 @@ test('the schedules service lists one daily run after the snapshot, replaced by 
 test('the trends job starts on demand under the week session key, and a snapshot is read by date', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
@@ -270,7 +272,7 @@ test('the trends job starts on demand under the week session key, and a snapshot
 });
 
 test('the trends workflow keeps reading the service after the session process drops its env vars', async (t) => {
-  const env: Record<string, string | undefined> = { QUACK_SLEEPER_URL: 'http://service', QUACK_SLEEPER_TOKEN: 'tok' };
+  const env: Record<string, string | undefined> = { QUACK_INDEX_URL: 'http://service', QUACK_INDEX_TOKEN: 'tok' };
   const seen: string[] = [];
   const api = createSleeperClient({ fetch: (async (u: string) => new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[new URL(u).pathname] ?? null))) as unknown as typeof fetch, now: () => AT });
   const snap = { date: TODAY, data: await buildSnapshot(api, 'L1') };
@@ -282,31 +284,31 @@ test('the trends workflow keeps reading the service after the session process dr
   });
   // The client binds global fetch when built, so build the workflow after the mock or it reaches the real API.
   const workflow = trendsFromEnv(env);
-  delete env.QUACK_SLEEPER_URL;
-  delete env.QUACK_SLEEPER_TOKEN;
+  delete env.QUACK_INDEX_URL;
+  delete env.QUACK_INDEX_TOKEN;
   const facts = await (workflow.steps[0] as { run(c: never): unknown }).run({ input: JSON.stringify(INPUT), api: { now: () => AT } } as never);
   assert.equal((facts as { date: string }).date, TODAY);
-  assert.deepEqual(seen, ['POST http://service/leagues/L1/snapshots Bearer tok', 'GET http://service/leagues/L1/snapshots Bearer tok']);
+  assert.deepEqual(seen, ['POST http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots Bearer tok']);
 });
 
 test('the page routes answer the configured league and start its lineup job', async () => {
   const calls: string[] = [];
   const listing = { schedules: [{ id: 'sleeper/waivers/L1', nextRun: '2026-11-03T20:00:00.000Z' }, { id: 'sleeper/digest/L1/9/recap', nextRun: '2026-11-03T06:15:00.000Z' }, { id: 'sleeper/waivers/OTHER', nextRun: '2026-11-03T01:00:00.000Z' }, { id: 'sleeper/lineup/L1/9/wed', nextRun: null }] };
-  const fake = (async (u: string) => (calls.push(u), new Response(u.endsWith('/schedules') ? JSON.stringify(listing) : '{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', schedules: { url: 'http://sched', token: 's' }, fetch: fake, now: () => new Date(AT) });
+  const fake = (async (u: string) => (calls.push(u), new Response(u === 'http://sched' ? JSON.stringify(listing) : '{}', { status: 202 }))) as unknown as typeof fetch;
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', schedules: { url: 'http://sched', fetch: fake }, fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    assert.deepEqual(await (await call('/apps/sleeper')).json(), { league: 'L1' });
-    const started = await call('/apps/sleeper/lineup?week=8', 'POST');
+    assert.deepEqual(await (await call('/')).json(), { league: 'L1' });
+    const started = await call('/lineup?week=8', 'POST');
     assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:8:lineup', status: 202 }]);
     assert.equal(calls.length, 1);
-    assert.deepEqual(await (await call('/apps/sleeper/schedule')).json(), { week: 9, runs: [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }] });
-    const waivers = await call('/apps/sleeper/waivers?week=8', 'POST');
+    assert.deepEqual(await (await call('/schedule')).json(), { week: 9, runs: [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }] });
+    const waivers = await call('/waivers?week=8', 'POST');
     assert.deepEqual([waivers.status, ((await waivers.json()) as { sessionKey: string }).sessionKey], [202, 'sleeper:L1:8:waivers']);
-    assert.equal((await call('/apps/sleeper/history?seasons=x', 'POST')).status, 400);
-    assert.equal((await call('/apps/sleeper/lineup?week=x', 'POST')).status, 400);
-    assert.equal((await call('/apps/sleeper/lineup')).status, 405);
+    assert.equal((await call('/history?seasons=x', 'POST')).status, 400);
+    assert.equal((await call('/lineup?week=x', 'POST')).status, 400);
+    assert.equal((await call('/lineup')).status, 405);
   } finally {
     service.stop();
   }

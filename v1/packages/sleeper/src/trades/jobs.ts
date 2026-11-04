@@ -32,9 +32,8 @@ export async function registerFinderSchedules(config: ScheduleConfig, client: Sl
   if (!run) return [];
   const id = `sleeper/trade-finder/${league}/${etDate(run.at)}`;
   const input: FinderInput = { league, week: state.week, owner };
-  const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {
+  const res = await (config.fetch ?? fetch)(config.url, {
     method: 'POST',
-    headers: { authorization: `Bearer ${config.token}` },
     body: JSON.stringify({ id, agent: FINDER_AGENT, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: finderKey(league, state.week), input: JSON.stringify(input) }),
   });
   if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);

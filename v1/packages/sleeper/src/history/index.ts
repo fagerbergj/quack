@@ -8,4 +8,4 @@ export { historyEvidence, historyRubric } from './rubric.ts';
 export { historyWorkflow, HISTORY_WORKFLOW, type HistoryDeps } from './workflow.ts';
 
 /** The history workflow wired to the Sleeper API and the service half named in the environment. */
-export const historyFromEnv = (env: Record<string, string | undefined> = process.env) => historyWorkflow(depsFromEnv(HISTORY_WORKFLOW, env));
+export const historyFromEnv = (env: Record<string, string | undefined> = process.env) => historyWorkflow(depsFromEnv(env));

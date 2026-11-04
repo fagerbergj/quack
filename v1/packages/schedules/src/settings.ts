@@ -1,4 +1,4 @@
-/** `services.schedules.settings`: retentionSweep turns on the daily sweep that deletes sessions idle past their agent's retention. */
+/** `extensions.schedules.settings`: retentionSweep turns on the daily sweep that deletes sessions idle past their agent's retention. */
 export type SchedulesSettings = { retentionSweep?: boolean };
 
 export const settingsProblems = (settings: unknown): string[] => {

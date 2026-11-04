@@ -1,5 +1,5 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { invocationRequest, serviceHttp, submitToSession } from '@quack/sdk';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
 import { fixRefused, noticeFor, settled } from './notice.ts';
 import { prStateKey, pullStates, stateOf } from './pulls.ts';
@@ -7,9 +7,9 @@ import { stripMentions, triggerFor, verifySignature, type Trigger } from './webh
 
 export type ServiceConfig = {
   webhookSecret: string;
-  /** shortcut: one shared secret authenticates sessions to this service until workload tokens (A12) land. */
-  serviceToken: string;
   distributorUrl: string;
+  /** Reaches the distributor; in the distributor's process it is an in-process call. */
+  fetch?: typeof fetch;
   label: string;
   /** The agent that backs unattended triggers; it must be promoted (DEP-6). */
   agent: string;
@@ -23,11 +23,11 @@ const BACKOFF_CAP_MS = 30_000;
 const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // Throws unless the distributor lists `agent` as promoted (no unattended draft). Unreachable is retried with backoff, since compose starts both together.
-export async function assertPromoted(distributorUrl: string, agent: string, sleep: (ms: number) => Promise<void> = pause): Promise<void> {
+export async function assertPromoted(distributorUrl: string, agent: string, sleep: (ms: number) => Promise<void> = pause, doFetch: typeof fetch = fetch): Promise<void> {
   let agents: Array<{ name: string; status: string }> | undefined;
   for (let delay = 1_000; !agents; delay = Math.min(delay * 2, BACKOFF_CAP_MS)) {
     try {
-      const res = await fetch(`${distributorUrl}/agents`);
+      const res = await doFetch(`${distributorUrl}/agents`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       agents = ((await res.json()) as { agents: NonNullable<typeof agents> }).agents;
     } catch {
@@ -39,7 +39,7 @@ export async function assertPromoted(distributorUrl: string, agent: string, slee
   if (found.status !== 'promoted') throw new Error(`agent ${agent} is ${found.status}; only a promoted agent can back the unattended GitHub trigger`);
 }
 
-const { send, authorized, readBody: raw } = serviceHttp({ maxBody: 5 << 20 });
+const { send, readBody: raw } = serviceHttp({ maxBody: 5 << 20 });
 const EVENTS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 
 /** owner/repo from a github.com URL such as https://github.com/acme/widgets(.git); undefined for any other host. */
@@ -60,9 +60,9 @@ type RunState = { posted: Map<string, number>; watched: Set<string> };
 const prKey = (owner: string, repo: string, number: number) => `${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`;
 
 // Waits out a run the webhook started and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
-async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number) {
+async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number, doFetch?: typeof fetch) {
   try {
-    const outcome = await settled(target, { ...payload, wait: true });
+    const outcome = await settled(target, { ...payload, wait: true }, doFetch);
     const note = noticeFor(outcome, (state.posted.get(prKey(t.repo.owner, t.repo.name, t.number)) ?? 0) > before);
     if (note) await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: note });
   } catch (err) {
@@ -91,7 +91,7 @@ function recordState(states: States, event: string | undefined, p: Record<string
 }
 
 async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trigger, session: { key: string; agent: string }, requestId: string) {
-  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' });
+  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' }, config.fetch);
   send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
 }
 
@@ -111,12 +111,12 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
-  const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload });
+  const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload }, config.fetch);
   if (await noticeRefusedFix(app, trigger, upstream)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
   if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
     state.watched.add(requestId);
-    void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before);
+    void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before, config.fetch);
   }
   send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
 }
@@ -249,15 +249,14 @@ async function pullStatesRoute(req: IncomingMessage, res: ServerResponse, app: G
   send(res, 200, await states.lookup(app, keys));
 }
 
-export function createGithubService(app: GithubApp, config: ServiceConfig) {
+export function createGithubService(app: GithubApp, config: ServiceConfig): App {
   const state: RunState = { posted: new Map(), watched: new Set() };
   const states = pullStates(config.statesFile);
-  return createServer(async (req, res) => {
+  return { handle: async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;
       if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state, states);
-      if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
-      const get = req.method === 'GET' ? { '/git-credential': () => gitCredential(req, res, app), '/apps/github/pulls': () => pullStatesRoute(req, res, app, states) }[path] : undefined;
+      const get = req.method === 'GET' ? { '/git-credential': () => gitCredential(req, res, app), '/pulls': () => pullStatesRoute(req, res, app, states) }[path] : undefined;
       if (get) return await get();
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
@@ -265,8 +264,8 @@ export function createGithubService(app: GithubApp, config: ServiceConfig) {
       if (item) return await (item[1] === 'issues' ? issueRoute : pullRequest)(res, app, item[2], item[3], Number(item[4]));
       send(res, 404, { error: 'not found' });
     } catch (err) {
-      const bad = err instanceof SyntaxError || (err as Error).message === 'body too large';
-      send(res, bad ? 400 : 502, { error: (err as Error).message });
+      if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
+      send(res, err instanceof SyntaxError ? 400 : 502, { error: (err as Error).message });
     }
-  });
+  } };
 }

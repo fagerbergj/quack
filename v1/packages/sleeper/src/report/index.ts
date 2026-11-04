@@ -8,5 +8,5 @@ export { digestEvidence, digestRubric, retroEvidence, retroRubric } from './rubr
 export { digestWorkflow, DIGEST_WORKFLOW, retroWorkflow, RETRO_WORKFLOW, type ReportDeps } from './workflow.ts';
 
 /** The report workflows wired to the Sleeper API and the service half named in the environment. */
-export const digestFromEnv = (env: Record<string, string | undefined> = process.env) => digestWorkflow(depsFromEnv(DIGEST_WORKFLOW, env));
-export const retroFromEnv = (env: Record<string, string | undefined> = process.env) => retroWorkflow(depsFromEnv(RETRO_WORKFLOW, env));
+export const digestFromEnv = (env: Record<string, string | undefined> = process.env) => digestWorkflow(depsFromEnv(env));
+export const retroFromEnv = (env: Record<string, string | undefined> = process.env) => retroWorkflow(depsFromEnv(env));

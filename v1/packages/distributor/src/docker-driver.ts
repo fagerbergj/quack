@@ -25,8 +25,6 @@ export type DockerLauncherOptions = {
   inherit: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
   /** Variables copied into containers as they are; these are secrets the container then holds until they are proxied. */
   passthrough?: string[];
-  /** Service name prefixes (QUACK_INDEX for QUACK_INDEX_URL/_TOKEN) every session gets, whether or not its agent declares them. */
-  alwaysProxied?: string[];
   command?: string[];
   startTimeoutMs?: number;
   /** Test seams: the session's address from its container name, and the pause between readiness probes. */
@@ -34,24 +32,9 @@ export type DockerLauncherOptions = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-const PAIR = /^(.+)_TOKEN$/;
-
-/** The environment a session container gets: toolchain basics, proxied service pairs, session paths, and nothing else unless passed through. */
-export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; token: string; broker: CredentialBroker; distributorUrl: string; passthrough: string[]; alwaysProxied: string[]; agentPath?: string; dir: string }): { env: Record<string, string>; dropped: string[] } {
-  const env: Record<string, string> = { ...shellEnv(inherited) };
-  const proxied = new Set(o.alwaysProxied);
-  for (const name of Object.keys(inherited)) {
-    const prefix = PAIR.exec(name)?.[1];
-    if (prefix && inherited[`${prefix}_URL`]) {
-      o.broker.register(prefix, inherited[`${prefix}_URL`]!, inherited[name]!);
-      proxied.add(prefix);
-    }
-  }
-  for (const prefix of proxied) {
-    if (!o.broker.has(prefix)) continue;
-    env[`${prefix}_URL`] = `${o.distributorUrl}/svc/${prefix}`;
-    env[`${prefix}_TOKEN`] = o.token;
-  }
+/** The environment a session container gets: toolchain basics, the distributor and its launch credential, session paths, and nothing else unless passed through. */
+export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; token: string; broker: CredentialBroker; distributorUrl: string; passthrough: string[]; agentPath?: string; dir: string }): { env: Record<string, string>; dropped: string[] } {
+  const env: Record<string, string> = { ...shellEnv(inherited), QUACK_INDEX_URL: o.distributorUrl, QUACK_INDEX_TOKEN: o.token };
   Object.assign(env, proxyKeyedServices(inherited, { broker: o.broker, distributorUrl: o.distributorUrl, token: o.token }));
   for (const name of o.passthrough) if (inherited[name] !== undefined) env[name] = inherited[name]!;
   const dropped = Object.keys(inherited).filter((n) => !(n in env) && !n.startsWith('QUACK_CONFIG'));
@@ -103,7 +86,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
     const token = opts.broker.mint(key);
     try {
       const inherited = await opts.inherit(agentPath);
-      const { env, dropped } = containerEnv(inherited, { key, token, broker: opts.broker, distributorUrl: opts.distributorUrl, passthrough: opts.passthrough ?? [], alwaysProxied: opts.alwaysProxied ?? [], agentPath, dir });
+      const { env, dropped } = containerEnv(inherited, { key, token, broker: opts.broker, distributorUrl: opts.distributorUrl, passthrough: opts.passthrough ?? [], agentPath, dir });
       // Rewritten on every start, so a session that edits its copy keeps the change only until it next restarts.
       if (inherited.QUACK_CONFIG) {
         const proxied = proxyProviders(await readConfig(inherited.QUACK_CONFIG), inherited, { broker: opts.broker, distributorUrl: opts.distributorUrl, token });
