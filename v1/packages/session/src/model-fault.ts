@@ -11,7 +11,8 @@ const isAbort = (detail?: string) => /finish_reason:\s*abort/i.test(detail ?? ''
 async function setRow(root: Conversation, error: string | null, run = 0) {
   await root.commit(async (tx) => {
     const doc = await tx.doc(Failures, root.id);
-    if (error !== null || doc.items[MODEL_STEP]?.error) doc.items[MODEL_STEP] = { error, run, at: Date.now() };
+    const row = doc.items[MODEL_STEP];
+    if (error === null ? row?.error : row?.error !== error || row.run !== run) doc.items[MODEL_STEP] = { error, run, at: Date.now() };
   }, ctx);
 }
 
@@ -29,7 +30,7 @@ export async function watchModelFaults(harness: Harness, root: Conversation, log
     const f = live?.runFailure;
     if (!f) {
       if (!live?.run) retrying = false;
-      return void (await setRow(root, null));
+      return void (await setRow(root, null, Number(live?.run?.taskId) || 0));
     }
     if (f.reason !== 'model_error' || String(f.taskId) === seen) return;
     seen = String(f.taskId);
@@ -44,14 +45,14 @@ export async function watchModelFaults(harness: Harness, root: Conversation, log
 }
 
 /** Reruns the run a model error ended; null when no such failure is recorded. */
-export async function resumeModelFault(root: Conversation, harness: Harness): Promise<{ submissionId: string; status: 'placed' } | null> {
+export async function resumeModelFault(root: Conversation, harness: Harness): Promise<{ submissionId: string; status: 'placed' } | 'busy' | null> {
   const row = (await harness.snapshot(Failures, root.id, ctx))?.items[MODEL_STEP];
   if (!row?.error) return null;
-  // The rerun's start commit clears the row through the watch; a busy conversation is a 409, not a 500.
+  // The rerun's start commit clears the row through the watch; a busy conversation is a 409 that says so, not a 500.
   try {
     return { submissionId: String((await root.submit({ type: 'continue' }, ctx)).id), status: 'placed' };
   } catch (e) {
-    if (e instanceof ConversationBusy) return null;
+    if (e instanceof ConversationBusy) return 'busy';
     throw e;
   }
 }

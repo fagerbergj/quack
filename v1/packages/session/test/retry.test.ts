@@ -111,9 +111,14 @@ test('a second abort records a failure that resume accepts, and the rerun clears
   await settle(async () => (await failures(session)).length > 0);
   assert.match((await failures(session))[0].error, /abort/);
   assert.equal(faux.state.callCount, 2);
-  assert.equal((await session.resume())?.status, 'placed');
+  const failed = (await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT))!.items.model;
+  assert.ok(failed.run > 0);
+  assert.equal((await session.resume() as { status: string }).status, 'placed');
   await settle(() => answered(session));
   assert.deepEqual(await failures(session), []);
+  // The index orders a row by its run, so the clear must outrank the failure it supersedes.
+  const cleared = (await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT))!.items.model;
+  assert.ok(cleared.run > failed.run);
   assert.equal(faux.state.callCount, 3);
   await session.close();
 });
@@ -132,7 +137,7 @@ test('two concurrent resumes do not throw', async () => {
   await session.submit('Capital of France?', 'q');
   await settle(async () => (await failures(session)).length > 0);
   const results = await Promise.all([session.resume(), session.resume()]);
-  assert.ok(results.some((r) => r?.status === 'placed'));
+  assert.ok(results.some((r) => typeof r === 'object' && r?.status === 'placed'));
   await session.close();
 });
 
