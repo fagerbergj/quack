@@ -525,10 +525,10 @@ test('approving posts the verdict and clears the item', async () => {
   routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
   const ws = await openSession();
   ws.frame(snapshot());
-  const approve = await screen.findByRole('button', { name: 'Approve bash' });
+  const approve = await screen.findByRole('button', { name: /^Approve/ });
   routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [] };
   await userEvent.click(approve);
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve bash' })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull());
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
   expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve' });
 });
@@ -538,7 +538,7 @@ test('an approval that appears mid-run shows up when tool activity arrives', asy
   ws.frame(snapshot());
   routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] };
   ws.frame(view({ run: true, tools: [{ callId: 't', name: 'push', status: 'running' }] }));
-  expect(await screen.findByRole('button', { name: 'Reject push' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Reject/ })).toBeInTheDocument();
 });
 
 test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
@@ -863,22 +863,63 @@ test('with the index on, an idle session waiting on approval is in Needs you on 
   expect(within(home).getByText('github_post_review', { exact: false })).not.toBeVisible();
 });
 
-test('Home posts approve to the owning session, and reject with its reason', async () => {
+const homeApprovals = async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = pendingIndex;
   routes['POST /sessions/gh%3A3/approvals/a%2F1'] = { resolved: true };
   stubViewport(false);
   location.hash = '#/';
   render(<App />);
-  const post = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string);
-  await userEvent.click(await screen.findByRole('button', { name: 'Approve gh:3' }));
-  expect(post()).toEqual({ decision: 'approve' });
+  return screen.findByRole('button', { name: 'Approve gh:3' });
+};
+const lastPost = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string);
 
+test('Home approve posts to the owning session and the card goes while the index still lists it as pending', async () => {
+  await userEvent.click(await homeApprovals());
+  expect(lastPost()).toEqual({ decision: 'approve' });
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
+  expect(routes['GET /index/approvals?state=pending']).toBe(pendingIndex);
+});
+
+test('Home reject posts its reason', async () => {
+  await homeApprovals();
   await userEvent.click(screen.getByRole('button', { name: 'Reject gh:3' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'wrong repo');
-  routes['GET /index/approvals?state=pending'] = { approvals: [] };
   await userEvent.click(screen.getByRole('button', { name: 'Confirm reject gh:3' }));
-  expect(post()).toEqual({ decision: 'reject', reason: 'wrong repo' });
+  expect(lastPost()).toEqual({ decision: 'reject', reason: 'wrong repo' });
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
+});
+
+test('a decision the session says is unknown or already decided removes the stale card', async () => {
+  const approve = await homeApprovals();
+  fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ error: 'unknown or already decided' }), { status: 409, headers: { 'content-type': 'application/json' } }));
+  await userEvent.click(approve);
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
+});
+
+test('a failed decision keeps the card with its error', async () => {
+  const approve = await homeApprovals();
+  fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ error: 'session is down' }), { status: 503, headers: { 'content-type': 'application/json' } }));
+  await userEvent.click(approve);
+  expect(await screen.findByRole('alert')).toHaveTextContent('session is down');
+  expect(screen.getByRole('region', { name: 'Approval' })).toBeInTheDocument();
+});
+
+test('a stopped session shows its pending approval from the index, with the reason field, and the rail lists it', async () => {
+  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'ui:u1', id: 'a/1', tool: 'propose_contract', args: { summary: 'Ship the contract' }, state: 'pending', decision: null, by: null, at: iso(1) }, { session: 'gh:9', id: 'x', tool: 'other', state: 'pending', decision: null, by: null, at: iso(1) }] };
+  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
+  stubViewport(true, true);
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const card = await screen.findByRole('region', { name: 'Approval' });
+  expect(within(card).getAllByText('Ship the contract').length).toBeGreaterThan(0);
+  expect(screen.getAllByRole('region', { name: 'Approval' })).toHaveLength(1);
+  expect(fetchMock.mock.calls.some(([u]) => u === 'sessions/ui%3Au1/approvals')).toBe(false);
+  expect(within(screen.getByRole('complementary', { name: 'Context' })).getByRole('button', { name: 'Ship the contract' })).toBeInTheDocument();
+  await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'no');
+  await userEvent.click(screen.getByRole('button', { name: /^Confirm reject/ }));
+  expect(lastPost()).toEqual({ decision: 'reject', reason: 'no' });
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
 });
 

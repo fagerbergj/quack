@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
-import { Approvals } from './Approvals.tsx';
+import { ApprovalCards, useApprovals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
 import { artifactName, useArtifacts } from './Artifacts.tsx';
@@ -317,7 +317,8 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
-  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const pending = useApprovals(sessionKey, approvalTick);
+  const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
   const details = useDetails();
   const open = state === 'open';
@@ -344,7 +345,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
             <SessionKeyContext value={sessionKey}>
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             </SessionKeyContext>
-            <Approvals sessionKey={sessionKey} refresh={approvalTick} onItems={setApprovals} />
+            <ApprovalCards sessionKey={sessionKey} title={name.text} {...pending} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
             <Running view={view} waiting={waiting > 0} active={tone === 'run'} />

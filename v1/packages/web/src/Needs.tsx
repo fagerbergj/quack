@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { decideApproval, resumeRun } from './api.ts';
+import { decideApproval, resumeRun, type Approval } from './api.ts';
 import { Args } from './JsonView.tsx';
 import { QuestionCard } from './Questions.tsx';
-import { age, failedLine, titleOf, type Row } from './sessions.ts';
+import { age, failedLine, needId, titleOf, type Row } from './sessions.ts';
 
 const btn = 'min-h-11 cursor-pointer rounded-lg px-3 text-xs lg:min-h-0 lg:py-1';
 const prim = `${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2 disabled:opacity-50`;
@@ -14,7 +14,8 @@ export function describe(args: unknown): string | undefined {
   return typeof s === 'string' && s.trim() ? s.trim() : undefined;
 }
 
-function ApprovalCard({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; now: number; done: () => void }) {
+/** One pending approval, answerable in place; `done` runs once the server has the decision or says it was already made. */
+export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: string; title: string; a: Approval; now: number; done: () => void }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
@@ -22,13 +23,12 @@ function ApprovalCard({ row, a, now, done }: { row: Row; a: Row['approvals'][num
   const decide = (decision: 'approve' | 'reject') => {
     if (busy) return;
     setBusy(true);
-    void decideApproval(row.key, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
+    void decideApproval(sessionKey, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
-  const title = titleOf(row);
   const what = describe(a.args);
-  const href = `#/s/${encodeURIComponent(row.key)}`;
+  const href = `#/s/${encodeURIComponent(sessionKey)}`;
   return (
-    <section aria-label="Approval" className={`${card} border-warning/40 bg-warm`}>
+    <section id={needId(a.id)} aria-label="Approval" className={`${card} border-warning/40 bg-warm`}>
       <div className="flex items-start gap-3">
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           {what ? <span className="text-[14.5px] font-semibold [overflow-wrap:anywhere]">{what}</span> : <a href={href} className="text-[14.5px] font-semibold text-ink no-underline [overflow-wrap:anywhere]">{`${title} wants to continue`}</a>}
@@ -87,7 +87,9 @@ function FailedCard({ row, done }: { row: Row; done: () => void }) {
 /** Everything waiting on the person, answerable in place. A running session's failure is already being retried, so it is not listed. */
 export function Needs({ rows, now, reload }: { rows: Row[]; now: number; reload: () => void }) {
   const asked = rows.flatMap((row) => row.questions.map((d) => ({ row, d })));
-  const waiting = rows.flatMap((row) => row.approvals.map((a) => ({ row, a })));
+  // A decided card stays gone: the index lags the session's own record, so the next read can still list it.
+  const [decided, setDecided] = useState<string[]>([]);
+  const waiting = rows.flatMap((row) => row.approvals.map((a) => ({ row, a }))).filter(({ row, a }) => !decided.includes(`${row.key}:${a.id}`));
   const failed = rows.filter((r) => r.failures.length && !r.running);
   const count = asked.length + waiting.length + failed.length;
   if (!count) return null;
@@ -95,7 +97,7 @@ export function Needs({ rows, now, reload }: { rows: Row[]; now: number; reload:
     <section aria-label="Needs you" className="flex flex-col gap-2">
       <h2 className="m-0 font-sans text-xs font-semibold tracking-[.06em] text-warning uppercase">{`Needs you · ${count}`}</h2>
       {asked.map(({ row, d }) => <QuestionCard key={`${row.key}:${d.id}`} sessionKey={row.key} d={d} now={now} title={titleOf(row)} done={reload} />)}
-      {waiting.map(({ row, a }) => <ApprovalCard key={`${row.key}:${a.id}`} row={row} a={a} now={now} done={reload} />)}
+      {waiting.map(({ row, a }) => <ApprovalCard key={`${row.key}:${a.id}`} sessionKey={row.key} title={titleOf(row)} a={a} now={now} done={() => (setDecided((d) => [...d, `${row.key}:${a.id}`]), reload())} />)}
       {failed.map((row) => <FailedCard key={row.key} row={row} done={reload} />)}
     </section>
   );

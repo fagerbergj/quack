@@ -74,17 +74,23 @@ export type IndexFailure = Failure & { session: string; at: string };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
 export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
 export const indexSessions = () => indexRead<{ key: string } & Spend>('index/sessions', 'sessions');
+export const approvalOf = (a: IndexApproval): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: Date.parse(a.at) });
+/** A session's pending approvals from the index, which knows stopped sessions too; the session's own peek (empty while it is stopped) only when the index is off. */
+export async function sessionApprovals(key: string): Promise<Approval[]> {
+  const indexed = await indexApprovals();
+  return indexed ? indexed.filter((a) => a.session === key).map(approvalOf) : listApprovals(key);
+}
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 
 export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string) {
-  await json(
-    await fetch(`${base(key)}/approvals/${encodeURIComponent(id)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
-    }),
-  );
+  const res = await fetch(`${base(key)}/approvals/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
+  });
+  // 409 means it is unknown or already decided: the caller's card is stale, not failed.
+  if (res.status !== 409) await json(res);
 }
 
 // Starts the contracts agent on a description as the define_contract action does; the distributor creates the session on first use.
