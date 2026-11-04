@@ -83,3 +83,32 @@ v0 `web-researcher/prompt.md` against v1 `researcher/prompt.md`.
 - Build a labelled research set (known-good reports, and reports with a seeded unsupported claim, a wrong-year search, an unanswered constraint), replay the checks with `quack judge replay`-style measurement, and report catch and false-block rates before rubric v2 ships. v0's 0.10-0.15 swing on interpretive criteria means the model checks need that proof, not an assumption.
 - Decide how a claim from a cloned repository is cited (a source id for a repo file) so RES-2's code sources pass the provenance gate.
 - Single-query `web_search` and single-URL `web_fetch` cost round trips v0 removed with batching (#1489); that is a tool change, tracked outside this audit.
+
+## Rubric v2 measurement (2026-11-04)
+
+Rubric `research.report` v3 adds the five model checks and the `request` evidence scope (the session's first user message plus the report, one unit). `supported_by_source` and `contradicted_by_source` read a per-finding `claim` scope: the cited sources' kept text, cut to the ~4,000 characters most like the finding. A finding whose sources were not kept has no claim unit. Every question says an unfamiliar fact is not evidence of error (86833b31).
+
+**Set.** 20 hand-built reports in `v1/tools/research/cases.ts` (no recorded research sessions exist locally; invented towns, agencies and programs, so the judge's own knowledge cannot settle a case), each with a 400-600 character source page: 5 good (one names an unanswerable ask under Assumptions), 3 unsupported claim, 3 contradicted by source, 3 unanswered ask, 2 wrong year, 2 summary overreach, 2 self-contradiction. All 20 pass the three code gates (`tools/research-set.test.ts`), so only a model check can catch a flaw.
+
+**Run.** `node tools/research/measure.ts http://127.0.0.1:9993/v1 qwen3.8-27b-vllm http://127.0.0.1:9993/metrics 3`: local qwen3.8-27b on vLLM, no classifier, concurrency 1, each case judged 3 times (60 case runs, 0 undecided checks), a case starting only when `vllm:num_requests_running` was at most 2. A check is flagged when a positive check is below 1 or a pitfall is above 0. Catch is over the cases whose flaw targets that check; false-block is over the 5 good cases x 3 runs.
+
+| check | audit weight | shipped weight | catch on seeded-bad | false-block on good | cases whose 3 runs disagree | mean swing |
+| --- | --- | --- | --- | --- | --- | --- |
+| `supported_by_source` | 4 | 4 | 100% (12/12) | 0% (0/15) | 0 of 20 | 0.00 |
+| `contradicted_by_source` | -4 | -4 | 100% (9/9) | 0% (0/15) | 0 of 20 | 0.00 |
+| `no_self_contradiction` | -4 | -4 | 100% (6/6) | 0% (0/15) | 0 of 20 | 0.00 |
+| `answers_every_ask` | 4 | 0 (observe-only) | 100% (12/12) | 13% (2/15) | 2 of 20 | 0.10 |
+| `summary_follows_findings` | 3 | 0 (observe-only) | 100% (6/6) | 33% (5/15) | 6 of 20 | 0.30 |
+
+Whole-report block rate (a gate failed or score under 0.8): with all five scored, 40% of good runs (6/15) and 91% of seeded-bad runs (41/45); with the shipped weights, 0% of good (0/15) and 60% of seeded-bad (27/45).
+
+**Gate and decision.** The gate was a false-block rate above 10% or a large swing. `answers_every_ask` misses it narrowly: both false blocks are `good-unsettled-cost` (the report names the missing price under Assumptions; the judge accepted it once in three). `summary_follows_findings` fails clearly: it flagged three of the five good reports in some run (5 of 15 runs) and its runs disagreed on 6 of 20 cases. Both ship at weight 0, so they run and appear in the verdict but add no score and no feedback (`feedback` skips weight 0). An undecided weight-0 check still asks for a retry, like any model check. The three other checks ship at the audit weights. Prompts and questions were not tuned to the set.
+
+**What it does not show.**
+- 15 good runs over 5 reports is a small base: 0 of 15 puts the true false-block rate somewhere under about 20%, not at 0.
+- The flaws are single and blatant, in two-sentence-per-claim pages. Real sources are longer and noisier, and the 4,000-character window can miss the passage that settles a claim. A subtle unsupported claim (a number that is close) is untested.
+- `contradicted_by_source` and `supported_by_source` flag the same finding in every contradicted case, and `no_self_contradiction` cases also trip both (their seeded error is wrong against the source too), so the per-check catch rates are not independent evidence of three separate detectors.
+- Wrong year: caught by `supported_by_source` when the report restates the stale year as the current one (3/3) and by `answers_every_ask` when it states the right figures under the old year (3/3). A date-injecting harness change (Missing item 3) is still the fix; this only measures the net.
+- v0's 0.10-0.15 swing appeared on interpretive criteria; here the three claim-level checks showed none, and the two interpretive ones (ask coverage, summary overreach) are the two that swung, which is why they are observe-only.
+
+Re-run the measure after any change to a question, the window size or the judge model, and move `ASKS_WEIGHT` and `SUMMARY_WEIGHT` in `report.ts` to their audit values only when a larger good set (target 15+ reports, more than one source per report) stays under 10% false-block.
