@@ -14,6 +14,8 @@ export type Backend = {
 
 export type IndexStore = ReturnType<typeof createStore>;
 
+/** Facts keep epoch ms and the wire speaks RFC 3339; the first usable candidate wins, so a fact missing a field cannot 503 a whole list. */
+const iso = (...candidates: unknown[]) => new Date((candidates.find((c) => typeof c === 'number' && Math.abs(c) <= 8.64e15) as number | undefined) ?? 0).toISOString();
 const newestFirst = (a: { at: number; session: string; id: string }, b: typeof a) => b.at - a.at || a.session.localeCompare(b.session) || a.id.localeCompare(b.id);
 const field = (f: FactRow | undefined, key: string) => (f?.data as Record<string, unknown> | undefined)?.[key];
 
@@ -42,7 +44,7 @@ export function createStore(backend: Backend) {
           status: (field(of('status'), 'state') as string) ?? null, cost: (field(of('cost'), 'total') as number) ?? 0,
           tokens: Object.fromEntries(['input', 'output', 'cacheRead', 'cacheWrite'].map((k) => [k, (field(of('cost'), k) as number) ?? 0])) as Record<'input' | 'output' | 'cacheRead' | 'cacheWrite', number>, at: Math.max(...rows.map((f) => f.at)),
         };
-      }).sort((a, b) => b.at - a.at || a.key.localeCompare(b.key)).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
+      }).sort((a, b) => b.at - a.at || a.key.localeCompare(b.key)).map(({ at, ...s }) => ({ ...s, lastActivity: iso(at) }));
     },
     async forget(session: string) {
       await ensure();
@@ -54,24 +56,24 @@ export function createStore(backend: Backend) {
     },
     async artifacts() {
       return (await facts(['artifact'])).sort(newestFirst).map((f) => ({
-        session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), links: field(f, 'links') ?? [], outcome: field(f, 'outcome') ?? undefined, summary: field(f, 'summary') ?? undefined, sealedAt: f.at,
+        session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), links: field(f, 'links') ?? [], outcome: field(f, 'outcome') ?? undefined, summary: field(f, 'summary') ?? undefined, sealedAt: iso(f.at),
       }));
     },
     async questions(state?: string) {
       return (await facts(['question'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
         session: f.session, id: f.id.slice('question:'.length), question: field(f, 'question'), options: field(f, 'options'), evidence: field(f, 'evidence'),
         header: field(f, 'header') ?? null, title: field(f, 'title') ?? null, detail: field(f, 'detail') ?? null, optionDescriptions: field(f, 'optionDescriptions') ?? {}, suggested: field(f, 'suggested') ?? null, freeText: field(f, 'freeText') ?? false,
-        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: field(f, 'askedAt'),
+        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: iso(field(f, 'askedAt'), f.at),
       }));
     },
     async failures(state = 'failed') {
       return (await facts(['failure'])).filter((f) => field(f, 'state') === state).sort(newestFirst).map((f) => ({
-        session: f.session, step: field(f, 'step'), error: field(f, 'error'), state: field(f, 'state'), at: f.at,
+        session: f.session, step: field(f, 'step'), error: field(f, 'error'), state: field(f, 'state'), at: iso(f.at),
       }));
     },
     async approvals(state?: string) {
       return (await facts(['approval'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
-        session: f.session, id: f.id.slice('approval:'.length), tool: field(f, 'tool'), state: field(f, 'state'), decision: field(f, 'decision'), by: field(f, 'by'), args: field(f, 'args'), at: f.at,
+        session: f.session, id: f.id.slice('approval:'.length), tool: field(f, 'tool'), state: field(f, 'state'), decision: field(f, 'decision'), by: field(f, 'by'), args: field(f, 'args'), at: iso(f.at),
       }));
     },
   };

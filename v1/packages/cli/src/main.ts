@@ -22,7 +22,6 @@ function table(rows: Array<Array<string | number | undefined>>, head: string[]):
   return all.map((r) => r.map((v, i) => v.padEnd(widths[i]!)).join('  ').trimEnd()).join('\n');
 }
 
-const when = (ms: number) => new Date(ms).toISOString();
 
 // A key the distributor does not list is not found; a read of one answers 404, so check first for a clear message.
 async function known(c: Client, key: string): Promise<any> {
@@ -111,7 +110,7 @@ async function send(c: Client, [key, ...text]: string[], o: Opts): Promise<Resul
 
 async function approvals(c: Client): Promise<Result> {
   const list = await c.index('approvals', '?state=pending');
-  return { data: { approvals: list }, text: table(list.map((a) => [a.session, a.id, a.tool, when(a.at)]), ['SESSION', 'ID', 'TOOL', 'ASKED']) };
+  return { data: { approvals: list }, text: table(list.map((a) => [a.session, a.id, a.tool, a.at]), ['SESSION', 'ID', 'TOOL', 'ASKED']) };
 }
 
 async function artifacts(c: Client, [key]: string[]): Promise<Result> {

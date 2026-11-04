@@ -12,7 +12,7 @@ const DOC = 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6';
 
 // The newest sealed version of a kind for this session, from the index.
 function newest(r: Row, kind: string): IndexArtifact | undefined {
-  return r.artifacts.filter((a) => a.kind === kind).sort((a, b) => b.version - a.version || b.sealedAt - a.sealedAt)[0];
+  return r.artifacts.filter((a) => a.kind === kind).sort((a, b) => b.version - a.version || Date.parse(b.sealedAt) - Date.parse(a.sealedAt))[0];
 }
 
 

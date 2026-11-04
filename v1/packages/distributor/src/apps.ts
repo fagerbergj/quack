@@ -1,5 +1,5 @@
 import { request, type IncomingMessage, type ServerResponse } from 'node:http';
-import { sendProblem } from './problem.ts';
+import { sendProblem } from '@quack/sdk';
 import { readBody } from './server.ts';
 
 export type Apps = Record<string, { url: string; tokenEnv: string }>;

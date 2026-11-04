@@ -5,8 +5,7 @@ import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { authorized } from '@quack/index';
-import { serviceHttp } from '@quack/sdk';
-import { sendProblem } from './problem.ts';
+import { sendProblem, serviceHttp } from '@quack/sdk';
 import { AgentError, type HostDriver, type SessionInfo } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;

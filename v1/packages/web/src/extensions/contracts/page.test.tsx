@@ -5,7 +5,7 @@ import type { IndexArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 import { Contracts } from './Contracts.tsx';
 
-const art = (kind: string, version: number, over: Partial<IndexArtifact> = {}): IndexArtifact => ({ session: 's', kind, version, verdict: null, sealedAt: 1, ...over });
+const art = (kind: string, version: number, over: Partial<IndexArtifact> = {}): IndexArtifact => ({ session: 's', kind, version, verdict: null, sealedAt: new Date(1).toISOString(), ...over });
 const spec = (version: number, title = 'Sleeper schedule endpoint') => art('contract.spec', version, { verdict: { passed: true }, summary: `${title}, version ${version}`.slice(0, 80), outcome: `v${version}` });
 const row = (id: string, over: Partial<Row> = {}): Row => ({ key: `contracts:${id}`, agent: 'contracts', title: `Draft ${id}`, running: false, active: false, createdAt: '', lastActivity: '', approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false, ...over });
 

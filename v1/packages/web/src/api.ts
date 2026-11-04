@@ -46,24 +46,31 @@ export const deleteSession = (key: string) => housekeep(`${base(key)}/delete`, '
 export const exportUrl = (key: string) => `${base(key)}/export`;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
-export type IndexApproval = { session: string; id: string; tool: string; args?: unknown; at: number };
-export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; summary?: string; sealedAt: number };
+export type IndexApproval = { session: string; id: string; tool: string; args?: unknown; at: string };
+export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; summary?: string; sealedAt: string };
 
 // The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
 async function indexRead<T>(path: string, field: string): Promise<T[] | undefined> {
-  const res = await fetch(path).catch(() => undefined);
-  return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
+  const rows: T[] = [];
+  for (let token = ''; ;) {
+    const res = await fetch(`${path}${token && `${path.includes('?') ? '&' : '?'}pageToken=${token}`}`).catch(() => undefined);
+    if (!res?.ok) return undefined;
+    const page = (await res.json()) as Record<string, T[]> & { nextPageToken?: string };
+    rows.push(...(page[field] ?? []));
+    if (!page.nextPageToken) return rows;
+    token = page.nextPageToken;
+  }
 }
 /** A question an extension escalated to a person; `askedAt` is when it was asked. */
 export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number; header?: string | null; title?: string | null; detail?: string | null; optionDescriptions?: Record<string, string>; suggested?: number | null; freeText?: boolean };
-export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: number };
+export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: string };
 export const indexQuestions = () => indexRead<IndexQuestion>('index/questions?state=pending', 'questions');
 export const listQuestions = async (key: string) => (await json<{ questions: Question[] }>(await fetch(`${base(key)}/questions`))).questions;
 export type Answer = { choice: string; note?: string } | { text: string };
 export const answerQuestion = async (key: string, id: string, answer: Answer) =>
   void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(answer) })));
 export type Failure = { step: string; error: string };
-export type IndexFailure = Failure & { session: string; at: number };
+export type IndexFailure = Failure & { session: string; at: string };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
 export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
 export const indexSessions = () => indexRead<{ key: string } & Spend>('index/sessions', 'sessions');

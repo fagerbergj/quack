@@ -23,8 +23,8 @@ async function loadRows(): Promise<Row[]> {
     spend: spendBy.get(s.key),
     artifacts: artifacts.get(s.key) ?? [],
     failures: failuresBy.get(s.key) ?? [],
-    approvals: indexed ? (approvalsBy.get(s.key) ?? []).map((a): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: a.at })) : s.running ? await listApprovals(s.key).catch(() => []) : [],
-    questions: asked ? (questionsBy.get(s.key) ?? []).map((q): Question => ({ ...q, askedAt: q.at })) : s.running ? await listQuestions(s.key).catch(() => []) : [],
+    approvals: indexed ? (approvalsBy.get(s.key) ?? []).map((a): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: Date.parse(a.at) })) : s.running ? await listApprovals(s.key).catch(() => []) : [],
+    questions: asked ? (questionsBy.get(s.key) ?? []).map((q): Question => ({ ...q, askedAt: Date.parse(q.at) })) : s.running ? await listQuestions(s.key).catch(() => []) : [],
   })));
 }
 

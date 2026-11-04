@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { sendProblem } from './problem.ts';
+import { sendProblem } from '@quack/sdk';
 import { forward } from './apps.ts';
 import { readBody } from './server.ts';
 
