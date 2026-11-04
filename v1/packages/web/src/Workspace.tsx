@@ -62,7 +62,7 @@ export function Workspace({ data, selected, home, list }: { data: WorkspaceData;
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} delivered={l?.delivered ? l : undefined} spend={row?.spend} manage={row && { archived: Boolean(row.archived), changed: data.reload }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} delivered={l?.delivered ? l : undefined} spend={row?.spend} about={row && { agent: row.agent, created: row.createdAt, activity: row.lastActivity }} manage={row && { archived: Boolean(row.archived), changed: data.reload }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
       ) : (
         <div className="overflow-y-auto">
           <Home rows={data.rows?.filter((r) => !r.archived)} error={data.error} now={data.now} reload={data.reload} />

@@ -1,0 +1,45 @@
+{
+  "kind": "json-schema",
+  "title": "Sleeper settings file",
+  "version": 1,
+  "intent": {
+    "purpose": "The shape of the Sleeper settings file.",
+    "nonGoals": ["Secrets"],
+    "audience": "internal",
+    "consumers": ["Sleeper extension"],
+    "guarantees": ["A typo in a key fails loudly"]
+  },
+  "document": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "description": "Per-league settings the Sleeper extension reads at startup.",
+    "additionalProperties": false,
+    "required": ["leagueId"],
+    "properties": {
+      "leagueId": { "type": "string", "description": "Sleeper league id, opaque.", "examples": ["1234"] },
+      "mode": { "enum": ["LINEUP", "WAIVERS"], "description": "Which job runs by default.", "default": "LINEUP" },
+      "notify": {
+        "type": "object",
+        "description": "Weekly digest delivery.",
+        "additionalProperties": false,
+        "properties": {
+          "notifyTime": { "type": "string", "format": "date-time", "description": "When the digest goes out, RFC 3339." }
+        }
+      }
+    }
+  },
+  "choices": [
+    {
+      "id": "mode-closed",
+      "pointer": "/properties/mode",
+      "decision": "Mode is a closed set of two jobs.",
+      "why": [{ "source": "guide", "text": "A closed enum is only for a fixed set.", "ref": "json-schema#enums" }]
+    },
+    {
+      "id": "closed",
+      "pointer": "/additionalProperties",
+      "decision": "The file is closed: unknown keys are rejected.",
+      "why": [{ "source": "answer", "text": "Fail loudly on a typo", "ref": "Open or closed?" }]
+    }
+  ]
+}

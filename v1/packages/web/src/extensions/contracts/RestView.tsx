@@ -12,10 +12,10 @@ const SOURCE: Record<Choice['why'][number]['source'], { label: string; cls: stri
 };
 // An answer's `ref` is the question as the user saw it and its `text` their answer.
 const gist = (w: Choice['why'][number]) => (w.source === 'answer' ? `You answered “${w.ref}”: ${w.text}` : w.text);
-const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
+export const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
 const dt = 'w-20 flex-none whitespace-nowrap';
-const card = 'rounded-[18px] border border-line bg-surface';
-const pill = 'inline-flex min-h-11 flex-none cursor-pointer items-center rounded-full border border-line-strong bg-transparent px-4 text-[13.5px] text-ink-2 hover:text-ink';
+export const card = 'rounded-[18px] border border-line bg-surface';
+export const pill = 'inline-flex min-h-11 flex-none cursor-pointer items-center rounded-full border border-line-strong bg-transparent px-4 text-[13.5px] text-ink-2 hover:text-ink';
 
 // Decision and why text is Markdown-flavoured prose; only `code` spans are rendered, inline.
 // One span, so a flex parent keeps the sentence and its code on one line instead of stacking each piece.
@@ -28,7 +28,7 @@ function Method({ m }: { m: string }) {
 }
 
 // The reasons behind one choice, each tagged by where it came from; sticky so it stays in view while the page scrolls.
-function WhyPanel({ choice, onClose }: { choice: Choice; onClose: () => void }) {
+export function WhyPanel({ choice, onClose }: { choice: Choice; onClose: () => void }) {
   return (
     <section role="region" aria-label={`Why: ${choice.decision}`} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }} className="sticky bottom-0 z-10 flex flex-col gap-3 rounded-[22px] border border-line-strong bg-surface p-4 shadow-lift @3xl:top-0 @3xl:bottom-auto">
       <div className="flex items-center gap-2">
@@ -59,7 +59,7 @@ function WhyPanel({ choice, onClose }: { choice: Choice; onClose: () => void }) 
   );
 }
 
-function Changes({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => void }) {
+export function Changes({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => void }) {
   const byId = new Map(spec.choices.map((c) => [c.id, c]));
   if (!spec.changes?.length) return null;
   return (
@@ -86,7 +86,7 @@ function Changes({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => vo
   );
 }
 
-function Compatibility({ spec }: { spec: ContractSpec }) {
+export function Compatibility({ spec }: { spec: ContractSpec }) {
   const c = spec.compatibility;
   if (!c) return null;
   return (
@@ -107,6 +107,9 @@ function Compatibility({ spec }: { spec: ContractSpec }) {
     </section>
   );
 }
+
+const routes = (ops: Operation[]) => `${ops.length} ${ops.length === 1 ? 'route' : 'routes'}`;
+const openapiFile = (doc: Json) => ({ label: 'OpenAPI file', save: () => download(`${toYaml(doc)}\n`, 'application/yaml', 'openapi.yaml') });
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return <section className="flex flex-col gap-2"><h4 className={`m-0 font-sans ${label}`}>{title}</h4>{children}</section>;
@@ -196,7 +199,7 @@ function Routes({ ops, sel, onPick }: { ops: Operation[]; sel: number; onPick: (
 }
 
 // Every decision in one list, so each has a way to its reasons even when no field on screen carries its chip.
-function Decisions({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => void }) {
+export function Decisions({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => void }) {
   return (
     <section aria-label="Decisions" className={`${card} overflow-hidden`}>
       <h3 className={`m-0 px-4 py-3 font-sans ${label}`}>Decisions</h3>
@@ -212,37 +215,37 @@ function Decisions({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => 
   );
 }
 
-function download(doc: unknown) {
+export function download(body: string, type: string, filename: string) {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([`${toYaml(doc)}\n`], { type: 'application/yaml' }));
-  a.download = 'openapi.yaml';
+  a.href = URL.createObjectURL(new Blob([body], { type }));
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
 }
 
 // Links to the spec's own page, where the three-column layout has room; from a session page the hash names the session.
-function FullViewLink({ version }: { version: number }) {
+export function FullViewLink({ version }: { version: number }) {
   const ctx = useContext(SessionKeyContext);
   const key = ctx === undefined ? /^#\/s\/([^/?]+)/.exec(location.hash)?.[1] : encodeURIComponent(ctx);
   return key ? <a href={`#/s/${key}/spec?v=${version}`} className={`${pill} no-underline`}>Open full view</a> : null;
 }
 
-const decisionCount = (spec: ContractSpec) => `${spec.choices.length} ${spec.choices.length === 1 ? 'decision' : 'decisions'} · ${spec.choices.filter((c) => c.why.some((w) => w.source === 'answer')).length} answered by you`;
+export const decisionCount = (spec: ContractSpec) => `${spec.choices.length} ${spec.choices.length === 1 ? 'decision' : 'decisions'} · ${spec.choices.filter((c) => c.why.some((w) => w.source === 'answer')).length} answered by you`;
 
-function Header({ spec, count, full, doc }: { spec: ContractSpec; count: number; full: boolean; doc: Json }) {
+export function Header({ spec, count, full, file }: { spec: ContractSpec; count: string; full: boolean; file: { label: string; save: () => void } }) {
   return (
     <header className="flex flex-wrap items-center gap-3">
       <div className="flex min-w-0 flex-1 basis-48 flex-col">
         <h2 className="m-0 text-xl [overflow-wrap:anywhere]">{spec.title}</h2>
-        <span className="text-xs text-muted">{count} {count === 1 ? 'route' : 'routes'} · version {spec.version}</span>
+        <span className="text-xs text-muted">{count} · version {spec.version}</span>
       </div>
       {!full && <FullViewLink version={spec.version} />}
-      <button type="button" onClick={() => download(doc)} className={pill}>OpenAPI file</button>
+      <button type="button" onClick={file.save} className={pill}>{file.label}</button>
     </header>
   );
 }
 
-function Purpose({ spec }: { spec: ContractSpec }) {
+export function Purpose({ spec }: { spec: ContractSpec }) {
   return (
     <section aria-label="What it does" className={`${card} flex flex-col gap-1.5 px-4 py-3.5`}>
       <h3 className={`m-0 font-sans ${label}`}>What it does</h3>
@@ -255,7 +258,7 @@ function Purpose({ spec }: { spec: ContractSpec }) {
 function CardView({ spec, ops, doc }: { spec: ContractSpec; ops: Operation[]; doc: Json }) {
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
-      <Header spec={spec} count={ops.length} full={false} doc={doc} />
+      <Header spec={spec} count={routes(ops)} full={false} file={openapiFile(doc)} />
       <Purpose spec={spec} />
       <ul aria-label="Routes" className="m-0 flex list-none flex-col gap-1.5 p-0">
         {ops.map((o) => <li key={o.ptr} className="flex items-center gap-2.5 text-[13px]"><Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span></li>)}
@@ -276,7 +279,7 @@ export function RestView({ spec, full = false }: { spec: ContractSpec; full?: bo
   const many = ops.length > 1;
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
-      <Header spec={spec} count={ops.length} full doc={doc} />
+      <Header spec={spec} count={routes(ops)} full file={openapiFile(doc)} />
       <Changes spec={spec} onWhy={setWhy} />
       <Compatibility spec={spec} />
       <Purpose spec={spec} />

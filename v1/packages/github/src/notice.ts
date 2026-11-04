@@ -26,5 +26,5 @@ export function noticeFor(outcome: RunOutcome, delivered: boolean): string | und
   return undefined;
 }
 
-/** Said on the PR when the distributor refuses a `/fix`, with the distributor's own reason. */
-export const fixRefused = (reason: string) => `Quack could not start \`/fix\` on this pull request: ${reason}.`;
+/** Said on the PR (or issue) when the distributor refuses a `/fix` (`/implement`), with the distributor's own reason. */
+export const fixRefused = (reason: string, issue = false) => `Quack could not start \`${issue ? '/implement' : '/fix'}\` on this ${issue ? 'issue' : 'pull request'}: ${reason}.`;

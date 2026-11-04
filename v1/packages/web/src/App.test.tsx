@@ -48,8 +48,8 @@ const snapshot = (o: Parameters<typeof view>[0] = {}) => view({ entries: [], ...
 const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
 
 // Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
-const stubViewport = (desktop: boolean) =>
-  vi.stubGlobal('matchMedia', () => ({ matches: desktop, addEventListener() {}, removeEventListener() {} }));
+const stubViewport = (desktop: boolean, wide = false) =>
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('1440') ? wide : desktop, addEventListener() {}, removeEventListener() {} }));
 
 let routes: Record<string, unknown>;
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -1959,6 +1959,91 @@ test('nothing above the nav duplicates Home: no link to #/new on desktop or on t
   stubViewport(false);
   render(<App />);
   expect(document.querySelector('a[href="#/new"]')).toBeNull();
+});
+
+describe('the session context rail', () => {
+  const key = 'github%3Ao%2Fr%231';
+  const opening = 'Review pull request o/r#1 (label quack:review).\nTitle: Cost per run\nHead: 9f43b50aaaa on feat/x; base: v1\n\nWhat changed';
+  const sealed = (version: number, over: object = {}) => ({ kind: 'github.review', version, hash: `h${version}`, content: '## Takeaway\nx\n\n## Verdict\napprove', sealedAt: Date.parse('2026-11-01T14:00:00Z') + version, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, ...over });
+  const check = (name: string, status: string, conclusion: string | null) => ({ name, status, conclusion });
+
+  async function openReview(wide: boolean, over: { checks?: object[]; artifacts?: object[]; approvals?: object[] } = {}) {
+    stubViewport(true, wide);
+    Element.prototype.scrollIntoView = vi.fn();
+    routes['GET /sessions'] = { sessions: [sess('github:o/r#1', { agent: 'reviewer', createdAt: '2026-11-01T13:00:00Z', lastActivity: '2026-11-01T15:00:00Z' })] };
+    routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 3, status: 'promoted', model: 'qwen3.8-27b' }] };
+    routes[`GET /sessions/${key}/artifacts`] = { artifacts: over.artifacts ?? [sealed(1, { verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [] } }), sealed(2, { links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#r' }] })] };
+    routes[`GET /sessions/${key}/approvals`] = { approvals: over.approvals ?? [] };
+    routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 200, deletions: 10 }, { path: 'b.ts', additions: 12, deletions: 4 }], checks: over.checks ?? [check('test', 'completed', 'success'), check('image', 'completed', 'skipped')] }] };
+    location.hash = `#/s/${key}`;
+    render(<App />);
+    const ws = FakeSocket.all[0];
+    ws.open();
+    ws.frame(snapshot({ entries: [entry('u', [{ role: 'user', content: opening, timestamp: 1 }])] }));
+    return ws;
+  }
+
+  test('at 1440px a review session shows every section beside the ledger', async () => {
+    await openReview(true);
+    const rail = await screen.findByRole('complementary', { name: 'Context' });
+    const pr = within(rail).getByRole('region', { name: 'Pull request' });
+    expect(await within(pr).findByText('#1 Cost per run')).toBeInTheDocument();
+    expect(within(pr).getByText('feat/x → v1')).toBeInTheDocument();
+    expect(within(pr).getByText('✓ All passed')).toHaveClass('text-success');
+    expect(within(pr).queryByText(/image|skipped/i)).toBeNull();
+    expect(within(pr).getByText(/2 files changed/)).toHaveTextContent('2 files changed +212 −14');
+    expect(within(pr).getByRole('link', { name: 'Open on GitHub ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
+    const versions = within(rail).getByRole('region', { name: 'Versions' });
+    expect(await within(versions).findByText('Review v1')).toBeInTheDocument();
+    expect(within(versions).getByText("Didn't pass its checks, 50%")).toBeInTheDocument();
+    expect(within(versions).getByText('Double-checked · Posted to GitHub as Approve')).toBeInTheDocument();
+    expect(within(rail).getByText('Nothing is waiting on you.')).toBeInTheDocument();
+    expect(within(rail).queryByRole('region', { name: 'Cost' })).toBeNull();
+    expect(await within(rail).findByText('Agent reviewer on qwen3.8-27b')).toBeInTheDocument();
+    expect(within(rail).getByText(/^Started .* · Last activity /)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Details' })).toBeNull();
+  });
+
+  test('failed and running checks are named and skipped ones never show', async () => {
+    await openReview(true, { checks: [check('test', 'completed', 'failure'), check('lint', 'in_progress', null), check('build', 'completed', 'success'), check('image', 'completed', 'skipped')] });
+    const pr = within(await screen.findByRole('complementary', { name: 'Context' })).getByRole('region', { name: 'Pull request' });
+    expect(await within(pr).findByText('✗ test failed')).toHaveClass('text-danger');
+    expect(within(pr).getByText('… lint running')).toBeInTheDocument();
+    expect(within(pr).queryByText(/All passed|image|build/)).toBeNull();
+  });
+
+  test('a version row scrolls the ledger to that version, and a pending approval to its card', async () => {
+    const user = userEvent.setup();
+    await openReview(true, { approvals: [{ id: 'a1', tool: 'push', args: { summary: 'Push the fix' }, requestedAt: 1 }] });
+    const rail = await screen.findByRole('complementary', { name: 'Context' });
+    await user.click(await within(rail).findByRole('button', { name: /Review v1/ }));
+    const target = vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1) as HTMLElement;
+    expect(target.id).toMatch(/^v-github\.review-1-/);
+    expect(target).toHaveAttribute('data-ledger');
+    await user.click(await within(rail).findByRole('button', { name: 'Push the fix' }));
+    expect((vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1) as HTMLElement).id).toBe('need-a1');
+  });
+
+  test('below 1440px a Details button opens the same content as a sheet that Escape closes', async () => {
+    const user = userEvent.setup();
+    await openReview(false);
+    expect(screen.queryByRole('complementary', { name: 'Context' })).toBeNull();
+    await user.click(await screen.findByRole('button', { name: 'Details' }));
+    const sheet = screen.getByRole('dialog', { name: 'Details' });
+    expect(await within(sheet).findByText('#1 Cost per run')).toBeInTheDocument();
+    expect(within(sheet).getByText('Nothing is waiting on you.')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Details' })).toBeNull();
+  });
+
+  test('a session that is not a pull request has no Pull request section', async () => {
+    stubViewport(true, true);
+    const ws = await openSession();
+    ws.frame(snapshot());
+    const rail = await screen.findByRole('complementary', { name: 'Context' });
+    expect(within(rail).queryByRole('region', { name: 'Pull request' })).toBeNull();
+    expect(within(rail).getByText('Nothing is waiting on you.')).toBeInTheDocument();
+  });
 });
 
 test('a contract session reads its spec name on Home and in its header, and Changes requested on its row', async () => {

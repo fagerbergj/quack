@@ -6,22 +6,25 @@ export type Contract = { key: string; name: string; kind: string; version?: numb
 
 const SUFFIX = /, version \d+$/;
 const named = (row: Row, kind: string) => row.artifacts.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version);
-const outcomeOf = (a: IndexArtifact | undefined) => (a?.outcome ? Number(a.outcome.slice(1)) : undefined);
+const outcomeOf = (a: IndexArtifact | undefined) => (a?.outcome ? Number.parseInt(a.outcome.slice(1), 10) : undefined);
+// A spec's outcome is "v2", or "v2 json-schema" for a kind other than REST.
+const KIND_NAMES: Record<string, string> = { 'json-schema': 'JSON Schema' };
+const kindOf = (a: IndexArtifact | undefined) => KIND_NAMES[a?.outcome?.split(' ')[1] ?? ''] ?? 'REST';
 
 // The newest spec that passed its checks names the contract (summary, cut at 80 characters) and gives its version (outcome).
 function latestSpec(row: Row) {
   const specs = named(row, 'contract.spec');
   const hit = specs.filter((a) => a.verdict?.passed).at(-1) ?? specs.at(-1);
   const name = hit?.summary?.replace(SUFFIX, '');
-  return { name: name || (row.title ?? 'New contract'), version: outcomeOf(hit), passed: Boolean(hit?.verdict?.passed) };
+  return { name: name || (row.title ?? 'New contract'), kind: kindOf(hit), version: outcomeOf(hit), passed: Boolean(hit?.verdict?.passed) };
 }
 
 /** What the Contracts page says about one contract session, from the index rows it already loaded. */
 export function contractOf(row: Row): Contract {
-  const { name, version, passed } = latestSpec(row);
+  const { name, kind, version, passed } = latestSpec(row);
   const approved = outcomeOf(named(row, 'contract.approved').at(-1));
   const asked = outcomeOf(named(row, 'contract.changes').at(-1));
-  const base = { key: row.key, name, kind: 'REST', version };
+  const base = { key: row.key, name, kind, version };
   const stale = approved !== undefined && version !== undefined && version > approved ? `v${version} is not approved yet` : undefined;
   if (row.approvals.length) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
   // A run that only finishes its reply after an approval is not drafting anything new.

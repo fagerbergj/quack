@@ -8,7 +8,7 @@ const kind = oneOf(Object.keys(kinds), { default: 'rest', description: 'The cont
 
 const extractTool = defineTool({
   name: 'extract_contract',
-  description: 'Read an existing contract file (an OpenAPI document in JSON or YAML) and return its document as JSON, to base a spec on.',
+  description: 'Read an existing contract file (an OpenAPI document for rest, a .schema.json for json-schema; JSON or YAML) and return its document as JSON, to base a spec on.',
   parameters: obj({ path: str({ minLength: 1 }), kind: opt(kind) }, { open: true }),
   replay: 'safe',
   async execute({ path, kind: k }, api, ctx) {
