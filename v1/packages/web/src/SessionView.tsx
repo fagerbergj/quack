@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
 import { Approvals } from './Approvals.tsx';
@@ -9,6 +9,7 @@ import { artifactName, useArtifacts } from './Artifacts.tsx';
 import { CheckProgress, checkedCount, liveChecks } from './CheckResult.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { Work } from './Work.tsx';
+import { ContextRail, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
@@ -240,7 +241,7 @@ function Result({ result }: { result: Look }) {
   );
 }
 
-function Header({ sessionKey, name, back, status, tone, spend, link, result, children }: { sessionKey: string; name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
+function Header({ sessionKey, name, back, status, tone, spend, link, result, onDetails, children }: { sessionKey: string; name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; result?: Look; onDetails?: () => void; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
         <a href={back.href} aria-label={back.label} className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
@@ -256,6 +257,7 @@ function Header({ sessionKey, name, back, status, tone, spend, link, result, chi
         </div>
         <PrChip sessionKey={sessionKey} />
         <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
+        {onDetails && <button type="button" onClick={onDetails} className="h-11 flex-none cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-link hover:bg-soft lg:h-9">Details</button>}
         {link && (
           <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
             <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
@@ -308,30 +310,33 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
   );
 }
 
-export function SessionView({ sessionKey, agent, name, delivered, spend, manage }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage }) {
+export function SessionView({ sessionKey, agent, name, delivered, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
-  const [approvals, setApprovals] = useState(0);
-  const waiting = approvals + standing.questions.length;
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const waiting = approvals.length + standing.questions.length;
+  const details = useDetails();
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
   const [meta, setMeta] = useState<Array<Record<string, unknown>>>([]);
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
+  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered} onDetails={details.show}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
@@ -339,7 +344,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
             <SessionKeyContext value={sessionKey}>
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             </SessionKeyContext>
-            <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
+            <Approvals sessionKey={sessionKey} refresh={approvalTick} onItems={setApprovals} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
             <Running view={view} waiting={waiting > 0} active={tone === 'run'} />
@@ -351,6 +356,9 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage 
           </div>
         </div>
       </div>
+      <ContextRail {...rail} details={details} placement="rail" />
+      </div>
+      <ContextRail {...rail} details={details} placement="sheet" />
       {work && <Work artifact={work} session={sessionKey} onClose={() => setWork(null)} />}
     </div>
   );

@@ -42,6 +42,9 @@ export function group(rows: Row[]): Groups {
 /** The row's line for a failed run: the step and the error's first line. */
 export const failedLine = (f: Failure) => `Run failed at ${f.step} · ${f.error.split('\n')[0]}`;
 
+/** The anchor an approval or question card carries in the ledger, which the context rail scrolls to. */
+export const needId = (id: string) => `need-${id}`;
+
 export const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 /** The short spend reading (dollars when the model is priced, else input plus output tokens) and its token breakdown for the tooltip; undefined when nothing was spent. */

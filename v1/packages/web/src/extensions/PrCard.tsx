@@ -19,7 +19,7 @@ export function parseOpening(text: string): Opening | undefined {
 
 const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure']);
 const SKIPPED = new Set(['skipped', 'neutral']);
-const checkState = (c: NonNullable<PrMeta['checks']>[number]) => (c.status !== 'completed' ? 'running' : FAILING.has(c.conclusion ?? '') ? 'failing' : SKIPPED.has(c.conclusion ?? '') ? 'skipped' : 'passing');
+export const checkState = (c: NonNullable<PrMeta['checks']>[number]) => (c.status !== 'completed' ? 'running' : FAILING.has(c.conclusion ?? '') ? 'failing' : SKIPPED.has(c.conclusion ?? '') ? 'skipped' : 'passing');
 
 const row = 'flex min-h-11 cursor-pointer list-none items-center gap-2 border-t border-line px-3.5 text-[13.5px] text-ink-2 lg:min-h-9 [&::-webkit-details-marker]:hidden';
 const chip = 'rounded-lg bg-soft px-2 py-0.5 font-mono text-[12px] [overflow-wrap:anywhere]';

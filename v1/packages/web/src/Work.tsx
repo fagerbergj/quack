@@ -1,10 +1,11 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useId, useState, type KeyboardEvent } from 'react';
 import type { SealedArtifact } from './api.ts';
 import { artifactCard, artifactName } from './Artifacts.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { delivered, versionOf } from './delivered.ts';
 import { CheckRow } from './CheckList.tsx';
 import { Content } from './JsonView.tsx';
+import { useModal } from './useModal.ts';
 
 const tab = (on: boolean) =>
   `h-11 lg:h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
@@ -22,8 +23,6 @@ function Checks({ a }: { a: SealedArtifact }) {
   );
 }
 
-const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-
 // Modal drawer: Esc, the close button or the backdrop closes it, Tab stays inside, focus returns to the opener.
 export function Work({ artifact, versions, session, onClose }: { artifact: SealedArtifact; versions?: SealedArtifact[]; session?: string; onClose: () => void }) {
   const [picked, setPicked] = useState(versionOf(artifact));
@@ -39,23 +38,7 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
     setShown(next);
     document.getElementById(`${id}-tab-${next}`)?.focus();
   };
-  const panel = useRef<HTMLElement>(null);
-  const closeBtn = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    closeBtn.current?.focus();
-    return () => opener?.focus();
-  }, []);
-  const keys = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key === 'Escape') return onClose();
-    if (e.key !== 'Tab') return;
-    const f = [...(panel.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter((el) => el.tabIndex >= 0);
-    const end = e.shiftKey ? f[0] : f.at(-1);
-    if (document.activeElement === end) {
-      e.preventDefault();
-      (e.shiftKey ? f.at(-1) : f[0])?.focus();
-    }
-  };
+  const { panel, closeBtn, keys } = useModal(onClose);
   return (
     <>
       <div aria-hidden="true" onClick={onClose} className="fixed inset-0 z-40 bg-ink/25 backdrop-blur-[2px]" />

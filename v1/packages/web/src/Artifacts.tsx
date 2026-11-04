@@ -41,6 +41,9 @@ export function ledger(items: SealedArtifact[]): Array<{ a: SealedArtifact; roun
   });
 }
 
+/** The anchor a version's ledger item carries, which the context rail scrolls to. */
+export const ledgerId = (a: SealedArtifact) => `v-${a.kind}-${a.version}-${a.sealedAt}`;
+
 const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
 
 // One version in the transcript: its line (the newest of a kind as the owning extension's card) and its check result.
@@ -50,7 +53,7 @@ export function LedgerItem({ a, round, latest, running, meta, onOpen }: { a: Sea
   const card = latest && !named?.previous ? artifactCard(a, { running, meta }) : undefined;
   const label = [a.version > 1 ? `Version ${a.version}` : '', round > 0 ? `revision ${round}` : ''].filter(Boolean).join(' · ');
   return (
-    <div data-ledger className="flex flex-col gap-1 text-[13px] text-muted">
+    <div data-ledger id={ledgerId(a)} className="flex flex-col gap-1 text-[13px] text-muted">
       <div className="flex items-center gap-2">
         {!named?.previous && <StatusIcon verdict={a.verdict} />}
         <span className="min-w-0 truncate">{lineOf(a, named)}</span>
