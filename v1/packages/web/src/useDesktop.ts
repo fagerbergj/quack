@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 
-const QUERY = '(min-width: 1024px)';
+export const WIDE = '(min-width: 1440px)';
 
-// True from lg up, where the session list lives in the sidebar. Without matchMedia (tests) it is the phone layout.
-export function useDesktop(): boolean {
-  const mq = useMemo(() => (typeof matchMedia === 'function' ? matchMedia(QUERY) : undefined), []);
+// Without matchMedia (tests) every query is false, the phone layout.
+export function useMedia(query: string): boolean {
+  const mq = useMemo(() => (typeof matchMedia === 'function' ? matchMedia(query) : undefined), [query]);
   const [on, setOn] = useState(mq?.matches ?? false);
   useEffect(() => {
     if (!mq) return;
@@ -14,3 +14,6 @@ export function useDesktop(): boolean {
   }, [mq]);
   return on;
 }
+
+// True from lg up, where the session list lives in the sidebar.
+export const useDesktop = () => useMedia('(min-width: 1024px)');
