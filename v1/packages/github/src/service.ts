@@ -73,8 +73,9 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
 // A /fix or /implement the distributor refused is answered where it was written with its reason, never dropped.
 async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response): Promise<boolean> {
   if (upstream.status !== 409 || t.role !== 'implementer') return false;
-  const { error = 'the distributor refused the run' } = (await upstream.json().catch(() => ({}))) as { error?: string };
-  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: fixRefused(error, t.issue) });
+  const problem = (await upstream.json().catch(() => ({}))) as { detail?: string; error?: string };
+  const reason = problem.detail ?? problem.error ?? 'the distributor refused the run';
+  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: fixRefused(reason, t.issue) });
   return true;
 }
 

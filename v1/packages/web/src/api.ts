@@ -15,7 +15,10 @@ export type ArtifactLink = { label: string; url: string };
 export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string; carriedFrom?: { sha: string; url?: string } };
 
 export async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const p = (await res.json().catch(() => null)) as { detail?: string; error?: string } | null;
+    throw new Error(p?.detail ?? p?.error ?? `HTTP ${res.status}`);
+  }
   return (await res.json()) as T;
 }
 

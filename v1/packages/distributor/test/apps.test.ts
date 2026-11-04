@@ -63,6 +63,16 @@ test('an upstream that fails mid-body leaves the client with a broken response, 
   await assert.rejects(async () => (await fetch(`${app}/apps/demo/x`)).text());
 });
 
+test('an unreachable service is a 502 problem+json', async () => {
+  const proxy = appsProxy({ demo: { url: 'http://127.0.0.1:1', tokenEnv: 'T' } }, { T: 't' });
+  const app = await start(async (req, res) => { if (!(await proxy(req, res))) res.writeHead(404).end(); });
+  const r = await fetch(`${app}/apps/demo/x`);
+  assert.equal(r.status, 502);
+  assert.equal(r.headers.get('content-type'), 'application/problem+json');
+  const body = (await r.json()) as { title: string; status: number; detail: string; error: string };
+  assert.deepEqual([body.title, body.status, body.error === body.detail && body.detail.length > 0], ['Bad Gateway', 502, true]);
+});
+
 test('QUACK_APPS is optional and refuses an entry whose token env is unset', () => {
   assert.deepEqual(parseApps(undefined), {});
   assert.deepEqual(parseApps('{"a":{"url":"http://a","tokenEnv":"T"}}', { T: 'x' }), { a: { url: 'http://a', tokenEnv: 'T' } });

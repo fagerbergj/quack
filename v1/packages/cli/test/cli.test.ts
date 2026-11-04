@@ -51,7 +51,7 @@ before(async () => {
     if (path.endsWith('/artifacts')) return reply(200, { artifacts: sealed });
     if (path.endsWith('/questions')) return reply(200, { questions: [{ id: 'q1', question: 'Which?' }] });
     if (path.endsWith('/approvals')) return reply(200, { approvals: [{ id: 'ap1', tool: 'bash' }] });
-    if (path.endsWith('/approvals/ap9')) return reply(409, { error: 'unknown or already decided' });
+    if (path.endsWith('/approvals/ap9')) { res.writeHead(409, { 'content-type': 'application/problem+json' }); return res.end(JSON.stringify({ title: 'Conflict', status: 409, detail: 'unknown or already decided' })); }
     if (path.endsWith('/delete') && path.includes('ui:b')) return reply(409, { error: 'session is running' });
     reply(200, { key: 'ok' });
   });

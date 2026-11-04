@@ -8,8 +8,8 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
   const path = (key: string, rest: string) => `${url}/sessions/${encodeURIComponent(key)}${rest}`;
   async function call<T>(target: string, init?: RequestInit): Promise<T> {
     const res = await doFetch(target, init);
-    const body = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-    if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
+    const body = (await res.json().catch(() => null)) as (T & { detail?: string; error?: string }) | null;
+    if (!res.ok) throw new Error(body?.detail ?? body?.error ?? `HTTP ${res.status}`);
     return body as T;
   }
   const post = (target: string, body?: unknown) => call<unknown>(target, { method: 'POST', ...(body !== undefined && { body: JSON.stringify(body) }) });
