@@ -9,7 +9,7 @@ const subdirs = (root: string) => (existsSync(root) ? readdirSync(root, { withFi
 
 /** Loads every bundle under agentsDir and every session's pinned agent-def/agent.json under dataDir the way main.ts does. */
 export async function validate(opts: { config: string; agentsDir: string; dataDir: string; fetch?: typeof fetch }): Promise<Validation> {
-  // Models are listed from the providers, so a deployment that cannot reach one validates against its hand-written entries only.
+  // Models are listed from the providers; a provider that cannot be reached falls back to its hand-written entries.
   const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8'))), opts.fetch);
   const paths = [...subdirs(opts.agentsDir).map((d) => join(d, 'agent.json')), ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
   const result: Validation = { loaded: 0, failures: [] };

@@ -217,7 +217,15 @@ test('an endpoint that is missing or down leaves the hand-written models as the 
   const down = (async () => { throw new Error('refused'); }) as unknown as typeof fetch;
   const warn = mock.method(console, 'error', () => {});
   for (const fetched of [down, listing([], false)]) assert.deepEqual((await resolveDeployment(parseDeployment(thin), fetched)).providers.local.models, { a: { contextWindow: 4096 } });
+  assert.equal(warn.mock.callCount(), 2, 'a refusal and a non-ok status both say the list fell back');
   warn.mock.restore();
+});
+
+test('a classifier provider is not asked for /models', async () => {
+  let asked = 0;
+  const counting = (async () => ((asked += 1), { ok: true, json: async () => ({ data: [] }) })) as unknown as typeof fetch;
+  await resolveDeployment(parseDeployment({ ...thin, providers: { ...thin.providers, clef: { baseUrl: 'http://clef/v1', api: 'systemone', models: { clef: { contextWindow: 8192 } } } } }), counting);
+  assert.equal(asked, 1, 'only the local provider');
 });
 
 test('defaultModel must resolve to a selectable model', async () => {

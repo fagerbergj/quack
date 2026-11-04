@@ -114,10 +114,14 @@ function listed(body: unknown): Record<string, ModelLimits> {
 }
 
 async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): Promise<Record<string, ModelLimits>> {
-  const key = process.env[providerEnv({ providers: { [id]: p } } as DeploymentConfig)[0]];
+  // Classifier endpoints such as Clef list no models; their limits are always hand-written.
+  if (p.api === 'systemone') return {};
+  const key = process.env[providerEnv({ providers: { [id]: p } })[0]];
   try {
     const res = await fetchFn(`${p.baseUrl.replace(/\/$/, '')}/models`, { signal: AbortSignal.timeout(10_000), headers: key ? { authorization: `Bearer ${key}` } : {} });
-    return res.ok ? listed(await res.json()) : {};
+    if (res.ok) return listed(await res.json());
+    console.error(`providers.${id}: listing models failed with ${res.status}, using the hand-written ones`);
+    return {};
   } catch (err) {
     console.error(`providers.${id}: could not list models, using the hand-written ones: ${err instanceof Error ? err.message : String(err)}`);
     return {};
