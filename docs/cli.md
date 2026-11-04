@@ -74,7 +74,7 @@ Runs can be recorded to the ledger and re-driven later - the basis for regressio
 | Command | Does |
 | --- | --- |
 | `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for `eval` or a fixture. Both need `--server` or an active server and never boot one in-process. |
-| `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). `show`, `recover` and `rebuild` (like `experiment run`) never talk to a server, so they refuse `--server` rather than ignore it; `ledger export --server <url>` fetches a recording from a server. |
+| `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (from the local quack.yaml's stores). `show`, `recover` and `rebuild` (like `experiment run`) never talk to a server, so they refuse `--server` rather than ignore it; `ledger export --server <url>` fetches a recording from a server. |
 | `quack ledger recover [chat-id] [--dry-run] [--json]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
 | `quack ledger rebuild <chat-id> [--dry-run] [--json]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
 | `quack decisions report [--since 7d] [--point <id>] [--chat <id>...] [--json]` | Per decision point, compare the decision model against quack's own outcome: call count, unavailable calls, coverage, agreement, confident disagreements, latency, input tokens, and a top-vs-baseline confusion table. See [`docs/configuration/decisions.md`](configuration/decisions.md#reading-the-data). |
