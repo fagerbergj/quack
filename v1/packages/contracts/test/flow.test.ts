@@ -258,3 +258,14 @@ test('propose_contract refuses while the newest version has not passed, rather t
   assert.equal((await pendingApprovals(s.root, ctx)).length, 0);
   await s.close();
 });
+
+test('a later run gets a fresh revision limit, and a version released at the limit is not counted as delivered', async () => {
+  const attempt = (n: number) => [write(() => ({ ...scheduleSpecV1({ versioning: 'nope:1', time: 'nope:2' }), title: `Attempt ${n}` })), call('submit_contract', {})];
+  const s = await open([...attempt(1), ...attempt(2), () => fauxAssistantMessage('stopped'), ...attempt(3), ...attempt(4), () => fauxAssistantMessage('stopped')], 1);
+  await s.submit('Define it', 'r-1', true);
+  await s.submit('Try again', 'r-2', true);
+  const verdicts = (await versions(s)).map((v) => v.verdict as { limitReached: boolean; gatesFailed: string[] });
+  assert.deepEqual(verdicts.map((v) => v.limitReached), [false, true, false, true]);
+  assert.deepEqual(verdicts[2].gatesFailed, ['justified.links_resolve'], 'still spec version 1');
+  await s.close();
+});
