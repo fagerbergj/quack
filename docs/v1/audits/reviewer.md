@@ -58,7 +58,7 @@ Prompt (733 to 850 words, +16%), three commits:
 | Change | Commit | Why |
 | --- | --- | --- |
 | Step 4 no longer calls `post_review`; a passing `submit_review` posts the review and returns the link | #2039 | The reviewer posts automatically when the gate passes; the separate tool was dropped. |
-| Step 1 passes the head sha and says `checkout_pr` always checks out the live head, and to stop if it is already reviewed. Step 4 says to re-check out when the PR moved | #2047 | A webhook for an older head reviewed stale code, and a re-delivered event reviewed the same head twice. |
+| Step 1 passes the head sha and says `checkout_pr` always checks out the live head, and to stop if it is already reviewed. Step 4 says to re-check out when the PR moved | #2047 | From the commit title: review the live head, and end when it is already reviewed. |
 | New "Answering a mention" section (about 75 words) and `reply_mention` | #2051 | `@quack` comments get an answer in their own thread. The same PR made `path:line` findings post as inline comments, which needed no prompt text because the finding format is unchanged. |
 
 Nothing else moved: the check order, the verification paragraph, the format and the style rules are word-for-word the v1 text. The lsp cut (#2086) and the removal of `maxTurns` (#1884) touched `agent.json` and packages, not the prompt; the prompt never mentioned either.
@@ -69,7 +69,7 @@ Rubric (v3 to v4; the code started at v2 in #1830):
 | --- | --- | --- |
 | `quotes_exist` gate: a finding that names an identifier found nowhere in the repo, diff or dependencies fails (v3) | #1832, tightened in #1833, #2019 | The classifier judges whether a finding sounds right, not whether its quoted code exists. #2019 narrowed it to identifiers found nowhere, and #1833 made the failure list every missing quote and say fenced output is skipped. |
 | `no_silent_approval` scope `change` to `approve`; v4 | #1956 | A question about an approve has no unit on any other verdict, so it scores null instead of a vacuous miss. |
-| Plain-words `label` on every check | #2017 | The Sleeper-style labels let the posted review and the UI show a failed check in words. No change to any question or weight. |
+| Plain-words `label` on every check | #2017 | Failed checks read in plain words. No change to any question or weight. |
 
 `be007dbb` (#2019) and `27766d10` (#1833) changed `quotes_exist` behaviour without a version bump, so "rubric v4" covers two different gate behaviours. The baseline ran before both.
 
@@ -84,7 +84,6 @@ Rubric (v3 to v4; the code started at v2 in #1830):
 - **Dead instructions.** None found. The plain-writing line still has no check (unchanged from the first audit).
 - **Gap: mentions are not graded.** The "Answering a mention" section (75 words, 9% of the prompt) has no rubric criterion and no replay case, since the judge gates only `submit_review`. Its "cite `path:line`, say what you could not check" rules are unchecked.
 - **Gap: `quotes_exist` has no prompt line.** The gate fails reviews for quoting missing identifiers, and the prompt says only "Every finding must rest on code you read at the path and line you cite." The gate message tells the model what to do on revision, so this costs a revision round, not a miss. Whether to add one sentence is for the replay to decide.
-- **Overlap.** Step 3's "revise and submit again until it passes" and the 2-revision cap (`maxRevisions: 2`) can disagree: after the cap the judge refuses rather than passes. The prompt does not say what to do then.
 
 ### Conciseness
 
