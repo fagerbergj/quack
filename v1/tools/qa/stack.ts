@@ -86,25 +86,28 @@ function launch(parts: Parts, args: string[], env: Record<string, string>): Chil
   return child;
 }
 
-async function startApps(parts: Parts, specs: Record<string, AppSpec>, distributorUrl: string): Promise<{ apps: Record<string, { url: string; tokenEnv: string }>; env: Record<string, string> }> {
-  const apps: Record<string, { url: string; tokenEnv: string }> = {};
+type Services = Record<string, { url: string; tokenEnv: string }>;
+
+/** Starts each app (stubs at once, real schedules after the deployment file naming every service is written) and returns the services entries and their token variables. */
+async function startApps(parts: Parts, specs: Record<string, AppSpec>, distributorUrl: string, config: string, base: object): Promise<{ env: Record<string, string> }> {
+  const services: Services = {};
   const env: Record<string, string> = {};
+  const real: Array<[string, number]> = [];
   for (const [name, spec] of Object.entries(specs)) {
     const port = await freePort();
     const tokenEnv = `QUACK_QA_${name.toUpperCase()}_TOKEN`;
     env[tokenEnv] = 'qa-token';
-    if (spec === 'real') {
-      if (name !== 'schedules') throw new Error(`only schedules has a real mode, not ${name}`);
-      const db = join(parts.tmp, 'schedules.db');
-      launch(parts, ['packages/schedules/src/main.ts'], { PORT: String(port), QUACK_SCHEDULES_TOKEN: 'qa-token', QUACK_SCHEDULES_DB: db, QUACK_DISTRIBUTOR_URL: distributorUrl });
-      await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/`)).status > 0, `${name} service`);
-    } else {
-      const body = spec === 'stub' ? STUB_BODIES[name] ?? {} : JSON.parse(readFileSync(spec, 'utf8'));
-      parts.servers.push(await stubServer(body, port));
-    }
-    apps[name] = { url: `http://127.0.0.1:${port}`, tokenEnv };
+    services[name] = { url: `http://127.0.0.1:${port}`, tokenEnv };
+    if (spec === 'real') real.push([name, port]);
+    else parts.servers.push(await stubServer(spec === 'stub' ? STUB_BODIES[name] ?? {} : JSON.parse(readFileSync(spec, 'utf8')), port));
   }
-  return { apps, env };
+  writeFileSync(config, JSON.stringify({ ...base, services }));
+  for (const [name, port] of real) {
+    if (name !== 'schedules') throw new Error(`only schedules has a real mode, not ${name}`);
+    launch(parts, ['packages/schedules/src/main.ts'], { ...env, PORT: String(port), QUACK_CONFIG: config, QUACK_DATA_DIR: parts.tmp, QUACK_DISTRIBUTOR_URL: distributorUrl });
+    await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/`)).status > 0, `${name} service`);
+  }
+  return { env };
 }
 
 async function seedDemo(url: string): Promise<void> {
@@ -149,13 +152,12 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     mkdirSync(dataDir);
     if (opts.seed && opts.seed !== 'none' && opts.seed !== 'demo') copySeed(resolve(opts.seed), dataDir);
     const config = join(parts.tmp, 'deployment.json');
-    writeFileSync(config, JSON.stringify(deployment(await modelUrl(parts, opts))));
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
-    const { apps, env } = await startApps(parts, opts.apps ?? {}, url);
+    const { env } = await startApps(parts, opts.apps ?? {}, url, config, deployment(await modelUrl(parts, opts)));
     launch(parts, ['packages/distributor/src/main.ts'], {
       ...env, PORT: String(port), QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: join(ROOT, 'agents'), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
-      QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', QUACK_GH_SERVICE_URL: 'http://127.0.0.1:9', QUACK_GH_SERVICE_TOKEN: 'x', QUACK_APPS: JSON.stringify(apps),
+      QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x',
     });
     await waitFor(reachable(`${url}/version`), 'the distributor');
     if (opts.seed === 'demo') await seedDemo(url);

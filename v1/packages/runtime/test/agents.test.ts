@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadAgent, parseDeployment } from '@quack/session';
@@ -15,8 +18,8 @@ const deployment = parseDeployment({
 });
 
 test('the shipped reviewer definition loads with its prompt, and the GitHub tools', async () => {
-  process.env.QUACK_GH_SERVICE_URL = 'http://127.0.0.1:8090';
-  process.env.QUACK_GH_SERVICE_TOKEN = 'x';
+  process.env.QUACK_GITHUB_URL = 'http://127.0.0.1:8090';
+  process.env.QUACK_GITHUB_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You review one pull request/);
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
@@ -94,16 +97,25 @@ test('a session process inherits the deployment-level Langfuse variables whateve
   assert.deepEqual(Object.keys(env).sort(), ['LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'PATH']);
 });
 
-test('a reviewer session process inherits its own service token and nothing else secret', () => {
-  const host = { PATH: '/bin', HOME: '/h', QUACK_GH_SERVICE_URL: 'u', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_SLEEPER_TOKEN: 's', QUACK_OTHER_SECRET: 'l' };
-  const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
-  assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH', 'QUACK_GH_SERVICE_TOKEN', 'QUACK_GH_SERVICE_URL']);
+function withServices(services: object) {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-services-'));
+  writeFileSync(join(dir, 'deployment.json'), JSON.stringify({ ...deployment, services }));
+  return join(dir, 'deployment.json');
+}
+const reviewer = fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url));
+
+test('a reviewer session process gets its own service url and token from the deployment file and nothing else secret', () => {
+  const QUACK_CONFIG = withServices({ github: { url: 'http://gh:1', tokenEnv: 'GH_T' }, sleeper: { url: 'http://s:2', tokenEnv: 'S_T' } });
+  const host = { PATH: '/bin', HOME: '/h', QUACK_CONFIG, GH_T: 'gh', S_T: 's', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_OTHER_SECRET: 'l' };
+  const env = sessionEnv(reviewer, host);
+  assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH', 'QUACK_CONFIG', 'QUACK_GITHUB_TOKEN', 'QUACK_GITHUB_URL']);
+  assert.deepEqual([env.QUACK_GITHUB_URL, env.QUACK_GITHUB_TOKEN], ['http://gh:1', 'gh']);
 });
 
-test('a session process inherits the deployment-level slots variables whatever its agent selects, and slotsFromEnv still sees them', () => {
-  const host = { PATH: '/bin', QUACK_SLOTS_URL: 'http://slots', QUACK_SLOTS_TOKEN: 'sl', QUACK_INDEX_TOKEN: 'idx' };
-  const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
-  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_SLOTS_TOKEN', 'QUACK_SLOTS_URL']);
+test('a session process gets the slots url and token from services.slots whatever its agent selects, and slotsFromEnv still sees them', () => {
+  const QUACK_CONFIG = withServices({ slots: { url: 'http://slots:1', tokenEnv: 'SL_T' } });
+  const env = sessionEnv(reviewer, { PATH: '/bin', QUACK_CONFIG, SL_T: 'sl', QUACK_INDEX_TOKEN: 'idx' });
+  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_CONFIG', 'QUACK_SLOTS_TOKEN', 'QUACK_SLOTS_URL']);
   assert.equal(slotsFromEnv(env).length, 1);
   assert.equal(slotsFromEnv(sessionEnv(undefined, { PATH: '/bin' })).length, 0);
 });
@@ -117,8 +129,9 @@ test('the shipped quack definition loads with the home tools, offering every ext
   for (const name of ['review_pull_request', 'research_question', 'run_job']) assert.match(tools.find((t) => t.name === 'start')!.description, new RegExp(`- ${name}:`));
 });
 
-test('a quack session process inherits the Sleeper service variables its run_job action reads, and no other secret', () => {
-  const host = { PATH: '/bin', QUACK_SLEEPER_URL: 'u', QUACK_SLEEPER_TOKEN: 's', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_INDEX_TOKEN: 'idx' };
+test('a quack session process gets the Sleeper url and token its run_job action reads, and no other secret', () => {
+  const QUACK_CONFIG = withServices({ sleeper: { url: 'http://s:2', tokenEnv: 'S_T' }, github: { url: 'http://gh:1', tokenEnv: 'GH_T' } });
+  const host = { PATH: '/bin', QUACK_CONFIG, S_T: 's', GH_T: 'gh', QUACK_INDEX_TOKEN: 'idx' };
   const env = sessionEnv(fileURLToPath(new URL('../../../agents/quack/agent.json', import.meta.url)), host);
-  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_SLEEPER_TOKEN', 'QUACK_SLEEPER_URL']);
+  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_CONFIG', 'QUACK_SLEEPER_TOKEN', 'QUACK_SLEEPER_URL']);
 });

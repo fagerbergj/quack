@@ -12,7 +12,7 @@ const WORKFLOW_ENV: Record<string, string[]> = {
   'remarkable.ingest': ['QUACK_REMARKABLE_URL', 'QUACK_REMARKABLE_TOKEN'],
 };
 const OLD_ENV: Record<string, string[] | ((config: unknown) => string[])> = {
-  github: ['QUACK_GH_SERVICE_URL', 'QUACK_GH_SERVICE_TOKEN'],
+  github: ['QUACK_GITHUB_URL', 'QUACK_GITHUB_TOKEN'],
   research: ['QUACK_EXA_API_KEY'],
   home: ['QUACK_SLEEPER_URL', 'QUACK_SLEEPER_TOKEN', 'QUACK_INDEX_URL'],
   workflows: (config) => WORKFLOW_ENV[(config as { workflow?: string })?.workflow ?? ''] ?? [],

@@ -32,4 +32,5 @@ export function buildCatalog(manifests: ExtensionManifest[]): { catalog: Catalog
   return { catalog: Object.fromEntries(withSession.filter((m) => !m.deployment).map((m) => [m.name, entry(m, workflows, actions)])), deploymentExtensions: always };
 }
 
-export const { catalog, deploymentExtensions } = buildCatalog(await loadManifests());
+export const manifests = await loadManifests();
+export const { catalog, deploymentExtensions } = buildCatalog(manifests);

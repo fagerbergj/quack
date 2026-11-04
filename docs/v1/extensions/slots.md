@@ -26,12 +26,14 @@ Residency (never admit a second model while the first holds a single-resident ho
 
 ## Configuration
 
-| Variable | Half | Meaning |
-| --- | --- | --- |
-| `QUACK_CONFIG` | service | The deployment file; each provider's `slots` is how many runs it admits at once, for example `"local": {"slots": 6}`. A provider without `slots` is not gated. |
-| `QUACK_SLOTS_TOKEN` | both | Shared bearer token (A12 until workload tokens land). |
-| `QUACK_SLOTS_DB` | service | SQLite file, default `/data/slots.db`. |
-| `PORT` | service | Default 8092. |
-| `QUACK_SLOTS_URL` | session | The service's base URL. Unset: the gate is off. |
+Both halves read the deployment file (`QUACK_CONFIG`):
 
-The deployment enables the gate for every session, whatever its agent selects: a provider limit only works if every session obeys it. Setting `QUACK_SLOTS_URL` and `QUACK_SLOTS_TOKEN` turns it on; leaving either unset turns it off.
+| Key | Half | Meaning |
+| --- | --- | --- |
+| `providers.<id>.slots` | service | How many runs the provider admits at once, for example `"local": {"slots": 6}`. A provider without `slots` is not gated. |
+| `services.slots.url` | session | The service's base URL. No `services.slots` entry: the gate is off. |
+| `services.slots.tokenEnv` | both | The variable holding the shared bearer token (A12 until workload tokens land). |
+| `services.slots.store` | service | A sqlite store; the file is `slots.db` in `QUACK_DATA_DIR`. |
+| `PORT` | service | Default 8092. |
+
+The deployment enables the gate for every session, whatever its agent selects: a provider limit only works if every session obeys it. A `services.slots` entry whose `tokenEnv` variable is set turns it on; otherwise it is off.

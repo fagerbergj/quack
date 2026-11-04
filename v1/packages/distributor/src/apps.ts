@@ -2,16 +2,14 @@ import { request, type IncomingMessage, type ServerResponse } from 'node:http';
 import { sendProblem } from '@quack/sdk';
 import { readBody } from './server.ts';
 
-export type Apps = Record<string, { url: string; tokenEnv: string }>;
+export type Apps = Record<string, { url: string; tokenEnv?: string }>;
 
-// QUACK_APPS is a JSON object of name -> { url, tokenEnv }; tokenEnv names the env var holding that service's bearer token.
-export function parseApps(raw: string | undefined, env: NodeJS.ProcessEnv = process.env): Apps {
-  if (!raw) return {};
-  const apps = JSON.parse(raw) as Apps;
-  for (const [name, app] of Object.entries(apps)) {
-    if (!app?.url || !app.tokenEnv || !env[app.tokenEnv]) throw new Error(`QUACK_APPS.${name} needs url and a set tokenEnv`);
+/** The deployment's services, refusing an entry whose tokenEnv names an unset variable. */
+export function appsFrom(services: Apps | undefined, env: NodeJS.ProcessEnv = process.env): Apps {
+  for (const [name, app] of Object.entries(services ?? {})) {
+    if (app.tokenEnv && !env[app.tokenEnv]) throw new Error(`services.${name}.tokenEnv ${app.tokenEnv} is not set`);
   }
-  return apps;
+  return services ?? {};
 }
 
 /** Sends the request to `target` with credentials (`auth` headers) the caller never sees; method, content type and body pass through, and so do the status and body back. */
@@ -36,7 +34,7 @@ export function forward(req: IncomingMessage, res: ServerResponse, target: URL, 
   });
 }
 
-// Forwards /apps/<name>[/...] to the registered service with its bearer token, so a page never holds it.
+// Forwards /apps/<name>[/...] to the deployment's service with its bearer token, so a page never holds it.
 // The client's own authorization is dropped; method, query, body and status pass through.
 export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
@@ -49,7 +47,7 @@ export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
     // Read up front under the same cap as the session forwarder, so a service never sees an unbounded upload.
     const body = await readBody(req).catch(() => undefined);
     if (!body) return sendProblem(res, 413, 'body too large'), true;
-    await forward(req, res, target, { authorization: `Bearer ${env[app!.tokenEnv]}` }, body);
+    await forward(req, res, target, app!.tokenEnv ? { authorization: `Bearer ${env[app!.tokenEnv]}` } : {}, body);
     return true;
   };
 }

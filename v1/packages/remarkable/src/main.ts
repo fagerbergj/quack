@@ -1,3 +1,4 @@
+import { readDeploymentFile, serviceDbPath, serviceEntry, serviceToken } from '@quack/sdk';
 import { createRmClient } from './client.ts';
 import { createRemarkableService } from './service.ts';
 
@@ -7,9 +8,10 @@ function env(name: string, fallback?: string): string {
   return value;
 }
 
+const file = readDeploymentFile();
 const service = createRemarkableService({
-  serviceToken: env('QUACK_REMARKABLE_TOKEN'),
-  dbPath: env('QUACK_REMARKABLE_DB', '/data/remarkable.db'),
+  serviceToken: serviceToken(serviceEntry(file, 'remarkable'), 'remarkable'),
+  dbPath: serviceDbPath(file, 'remarkable'),
   distributorUrl: env('QUACK_DISTRIBUTOR_URL'),
   agent: env('QUACK_REMARKABLE_AGENT', 'remarkable-ingest'),
   client: createRmClient({ url: env('RMFAKECLOUD_URL'), email: env('RMFAKECLOUD_EMAIL'), password: env('RMFAKECLOUD_PASSWORD') }),

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { storeFor, readDeploymentFile } from '@quack/sdk';
 import { fileURLToPath } from 'node:url';
 import { indexRoutes, openPush, openStore } from '@quack/index';
 import { createDistributor } from './server.ts';
@@ -10,7 +11,7 @@ import { parseHostConfig } from './host-config.ts';
 import { sessionEnv } from '@quack/runtime';
 import { loadManifests } from '@quack/runtime/catalog';
 import { rubricFrom } from './rubrics.ts';
-import { appsProxy, parseApps } from './apps.ts';
+import { appsFrom, appsProxy } from './apps.ts';
 
 function env(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -23,7 +24,9 @@ const runtime = fileURLToPath(new URL('../../runtime/src/main.ts', import.meta.u
 const port = Number(env('PORT', '8080'));
 const dataDir = env('QUACK_DATA_DIR');
 const token = randomBytes(24).toString('hex');
-const { store } = openStore({ QUACK_INDEX_DATABASE_URL: process.env.QUACK_INDEX_DATABASE_URL, QUACK_DATA_DIR: dataDir });
+// The index keeps a store named `index` when the deployment file has one, otherwise a sqlite file in the data dir.
+const deployment = readDeploymentFile();
+const { store } = openStore({ dataDir, store: storeFor(deployment, deployment.stores?.index && 'index') });
 void store.ensure().catch((err) => console.error('index migrations will retry:', err.message));
 const broker = credentialBroker();
 const manifests = await loadManifests();
@@ -44,8 +47,8 @@ function sessionDriver(): HostDriver {
   return sessionHost(base, async (spec) => (await reaped, launch(spec)));
 }
 const driver = sessionDriver();
-// Opt-in: QUACK_APPS registers extension services the page may reach through /apps/<name>/*.
-const apps = appsProxy(parseApps(process.env.QUACK_APPS));
+// The deployment's services are what the page may reach through /apps/<name>/*.
+const apps = appsProxy(appsFrom(deployment.services));
 // The page's rename, archive and delete always work; a token set also lets the retention sweep delete idle sessions.
 const retire = { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) };
 // VAPID keys are made on first boot under the data dir; QUACK_VAPID_PUBLIC_KEY, QUACK_VAPID_PRIVATE_KEY and QUACK_VAPID_SUBJECT override them.

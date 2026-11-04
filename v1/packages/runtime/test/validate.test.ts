@@ -60,3 +60,13 @@ test('a defaultModel no provider can serve fails validation before any agent loa
   const o = layout({ 'deployment.json': { ...config, defaultModel: 'local/ghost' } });
   await assert.rejects(validate({ ...o, fetch: noList }), /defaultModel: model local\/ghost is not configured/);
 });
+
+test('service settings are checked by the settings check each service publishes', async () => {
+  const withServices = (services: object) => layout({ 'deployment.json': { ...config, services } });
+  const url = 'http://127.0.0.1:1';
+  const ok = { sleeper: { url, tokenEnv: 'T', settings: { league: '1', owner: 'me' } }, schedules: { url, settings: { retentionSweep: true } }, slots: { url } };
+  assert.deepEqual((await validate({ ...withServices(ok), fetch: noList })).failures, []);
+  await assert.rejects(validate({ ...withServices({ sleeper: { url } }), fetch: noList }), /services\.sleeper\.settings: league must be a non-empty string/);
+  await assert.rejects(validate({ ...withServices({ schedules: { url, settings: { retentionSwep: true } } }), fetch: noList }), /services\.schedules\.settings: retentionSwep is not a schedules setting/);
+  await assert.rejects(validate({ ...withServices({ slots: { url, settings: { x: 1 } } }), fetch: noList }), /services\.slots\.settings: no extension named slots publishes settings/);
+});

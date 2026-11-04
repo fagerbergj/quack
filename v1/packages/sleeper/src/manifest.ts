@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '@quack/sdk';
+import { settingsProblems } from './settings.ts';
 import { runJob } from './action.ts';
 import { withChat } from './chat.ts';
 import { HISTORY_WORKFLOW, historyFromEnv } from './history/index.ts';
@@ -15,6 +16,7 @@ export const manifest: ExtensionManifest = {
   name: 'sleeper',
   requires: ['workflows'],
   optional: ['judge'],
+  settings: settingsProblems,
   evalAdapters: [waiversEvalAdapter],
   actions: [runJob],
   workflows: {

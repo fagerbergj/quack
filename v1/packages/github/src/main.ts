@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkedSettings, readDeploymentFile, serviceEntry, serviceToken } from '@quack/sdk';
 import { githubApp } from './app.ts';
 import { startRedelivery } from './redeliver.ts';
+import { settingsProblems, type GithubSettings } from './settings.ts';
 import { assertPromoted, createGithubService } from './service.ts';
 
 function env(name: string, fallback?: string): string {
@@ -11,12 +13,13 @@ function env(name: string, fallback?: string): string {
 }
 
 await assertPromoted(env('QUACK_DISTRIBUTOR_URL'), env('QUACK_GH_AGENT', 'reviewer'));
-const implementerAgent = process.env.QUACK_GH_IMPLEMENTER_AGENT;
+const entry = serviceEntry(readDeploymentFile(), 'github');
+const implementerAgent = checkedSettings<GithubSettings>('github', entry.settings, settingsProblems)?.implementerAgent;
 if (implementerAgent) await assertPromoted(env('QUACK_DISTRIBUTOR_URL'), implementerAgent);
 const app = githubApp({ appId: env('QUACK_GH_APP_ID'), privateKey: readFileSync(env('QUACK_GH_PRIVATE_KEY_FILE'), 'utf8') });
 const service = createGithubService(app, {
   webhookSecret: env('QUACK_GH_WEBHOOK_SECRET'),
-  serviceToken: env('QUACK_GH_SERVICE_TOKEN'),
+  serviceToken: serviceToken(entry, 'github'),
   distributorUrl: env('QUACK_DISTRIBUTOR_URL'),
   label: env('QUACK_GH_LABEL', 'quack:review'),
   agent: env('QUACK_GH_AGENT', 'reviewer'),

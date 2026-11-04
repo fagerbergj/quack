@@ -199,6 +199,18 @@ test('the root is closed: a removed or misspelled top-level key is rejected and 
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
 });
 
+test('stores and services are checked: kinds, postgres urlEnv, service keys, and store references', () => {
+  const ok = { stores: { main: { kind: 'postgres', urlEnv: 'QUACK_DATABASE_URL' }, local: { kind: 'sqlite' } }, services: { sleeper: { url: 'http://s:1', tokenEnv: 'T', store: 'main', settings: { league: '1' } }, bare: { url: 'http://b:2' } } };
+  assert.deepEqual(parseDeployment({ ...deployment, ...ok }).services?.bare, { url: 'http://b:2' });
+  const bad = (extra: object) => () => parseDeployment({ ...deployment, ...extra });
+  assert.throws(bad({ stores: { x: { kind: 'mysql' } } }), /stores\.x\.kind must be sqlite or postgres/);
+  assert.throws(bad({ stores: { x: { kind: 'postgres' } } }), /stores\.x\.urlEnv must name/);
+  assert.throws(bad({ stores: { x: { kind: 'sqlite', urlEnv: 'U' } } }), /stores\.x\.urlEnv is not a sqlite store key/);
+  assert.throws(bad({ services: { s: { url: 'ftp://s', token: 't' } } }), (err: Error) => /services\.s\.url must be an http\(s\) URL/.test(err.message) && /services\.s\.token is not a service key/.test(err.message));
+  assert.throws(bad({ services: { s: { url: 'http://s', store: 'typo' } }, stores: ok.stores }), /services\.s\.store typo is not in stores/);
+  assert.throws(bad({ services: { s: { url: 'http://s', settings: null } } }), /settings must be an object/);
+});
+
 const listing = (data: unknown[], ok = true) => (async () => ({ ok, json: async () => ({ data }) })) as unknown as typeof fetch;
 const thin = { defaultModel: 'local/a', providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 } } } } };
 

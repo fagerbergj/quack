@@ -31,6 +31,8 @@ export type ExtensionManifest = {
   /** Problems with an agent's config for this extension, given the deployment; empty when it is fine. */
   validate?: (config: unknown, deployment: DeploymentView) => string[];
   deployment?: boolean;
+  /** Problems with `services.<name>.settings` of the deployment file, where name is this manifest's; the service checks the same settings at boot. Absent means the service takes none. */
+  settings?: (settings: unknown) => string[];
   /** Extensions this one cannot work without; an agent selecting it gets them too, loaded first. */
   requires?: string[];
   /** Extensions it uses when the agent also enables them (judge: results are checked); loaded before it, never added. */

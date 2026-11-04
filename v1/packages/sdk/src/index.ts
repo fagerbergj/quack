@@ -6,3 +6,4 @@ export { Artifacts, artifactsExtension, attachLink, attachVerdict, seal, sealedV
 export { gateGenerations, observeGeneration, onGeneration, onWaiting, statusNote, whileWaiting, type Generation, type GenerationGate, type GenerationRequest } from './signals.ts';
 export type { Action, ActionContext, ContributedWorkflow, ContributedWorkflows, DeploymentView, EvalAdapter, EvalService, ExtensionManifest, RecordedSession } from './manifest.ts';
 export { invocationRequest, safeEqual, sendProblem, serviceHttp, submitToSession, type SessionSubmission } from './http.ts';
+export { checkedSettings, readDeploymentFile, serviceDbPath, serviceEntry, serviceToken, storeFor, type DeploymentFile, type ServiceEntry, type StoreChoice, type StoreEntry } from './services.ts';

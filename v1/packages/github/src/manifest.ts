@@ -1,6 +1,7 @@
 import type { ExtensionManifest } from '@quack/sdk';
 import { reviewPullRequest } from './action.ts';
 import { evalAdapter } from './eval.ts';
+import { settingsProblems } from './settings.ts';
 import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 
 function required(name: string): string {
@@ -13,8 +14,9 @@ function required(name: string): string {
 export const manifest: ExtensionManifest = {
   name: 'github',
   optional: ['judge'],
-  env: ['QUACK_GH_SERVICE_URL', 'QUACK_GH_SERVICE_TOKEN'],
+  settings: settingsProblems,
+  env: ['QUACK_GITHUB_URL', 'QUACK_GITHUB_TOKEN'],
   evalAdapters: [evalAdapter],
   actions: [reviewPullRequest],
-  session: (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GH_SERVICE_URL'), serviceToken: required('QUACK_GH_SERVICE_TOKEN') }),
+  session: (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GITHUB_URL'), serviceToken: required('QUACK_GITHUB_TOKEN') }),
 };
