@@ -11,7 +11,7 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { feedback, judge, score, unitsFor, type Evidence, type Rubric } from '../src/index.ts';
+import { feedback, judge, progressOf, score, settled, unitsFor, type CheckResult, type Evidence, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -156,4 +156,19 @@ test('a whole-artifact unit adds no prefix to its notes, another unit keeps its 
 test('a check without a scope is an error, not a default scope', () => {
   assert.throws(() => unitsFor(undefined, { review: [] }), /name its evidence scope/);
   assert.deepEqual(unitsFor('review', { review: [] }), []);
+});
+
+test('progress withholds a check until every unit is judged and decided, and passes code results through', () => {
+  const r = (id: string, over: Partial<CheckResult>): CheckResult => ({ criterion: 'c', id, label: id, weight: 2, met: 0, units: 2, resolvers: {}, notes: [], ...over });
+  const code = r('verdict_present', { met: 1, units: 1 });
+  const rubric2: Rubric = { name: 'x', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id: 'verdict_present', label: 'v', weight: 'gate' }, { id: 'a', label: 'a', weight: 2 }, { id: 'b', label: 'b', weight: 2 }, { id: 'u', label: 'u', weight: 2 }] }] };
+  const results = new Map([['c.a', r('a', { met: 0.5 })], ['c.b', r('b', { met: 1 })], ['c.u', r('u', { met: 0.5, undecided: 1 })]]);
+  const left = new Map([['c.a', 1], ['c.b', 0], ['c.u', 0]]);
+  const mets = () => progressOf(rubric2, [code, ...settled(results, left)]).checks.map((c) => c.met);
+  assert.deepEqual(mets(), [1, undefined, 1, undefined], 'a partial and an undecided check are still checking');
+  left.set('c.a', 0);
+  assert.deepEqual(mets(), [1, 0.5, 1, undefined], 'once every unit is judged the weighted fraction shows');
+  results.get('c.u')!.met = null;
+  results.get('c.u')!.undecided = undefined;
+  assert.deepEqual(mets(), [1, 0.5, 1, null], 'a check with no applicable unit is decided as null');
 });

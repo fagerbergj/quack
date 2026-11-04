@@ -608,10 +608,10 @@ test('lists artifacts with their check status and failing criteria', async () =>
   };
   const ws = await openSession();
   ws.frame(snapshot());
-  const section = await screen.findByRole('region', { name: 'Artifacts' });
-  expect(within(section).getAllByRole('listitem')).toHaveLength(1);
-  await userEvent.click(within(section).getByRole('button', { name: '1 earlier version' }));
-  const items = within(section).getAllByRole('listitem');
+  const section = await screen.findByRole('log', { name: 'Transcript' });
+  await waitFor(() => expect(ledgerOf(section)).toHaveLength(2));
+  const items = ledgerOf(section);
+  expect(items).toHaveLength(2);
   expect(items[0]).toHaveTextContent("Review didn't pass its checks");
   expect(items[1]).toHaveTextContent(/Review ready/);
   expect(items[1]).not.toHaveTextContent(/Cards|github\.review|v2|sealed/);
@@ -758,8 +758,8 @@ test('the Work drawer opens from the status line, shows report then checks, trap
   expect(work).toHaveTextContent('Cites a source that does not say it');
   expect(work).not.toHaveTextContent('citations.support');
   expect(work).toHaveTextContent('S7 does not mention TP');
-  expect(within(work).getByText('Fail')).toBeInTheDocument();
-  expect(within(work).getByText('Pass')).toBeInTheDocument();
+  expect(within(work).getByText(/^Fail/)).toBeInTheDocument();
+  expect(within(work).getByText(/^Pass/)).toBeInTheDocument();
   await userEvent.tab({ shift: true });
   await userEvent.tab({ shift: true });
   expect(work).toContainElement(document.activeElement as HTMLElement);
@@ -1307,9 +1307,9 @@ test('the transcript line names each artifact in plain words and never shows the
   };
   const ws = await openSession();
   ws.frame(snapshot());
-  const section = await screen.findByRole('region', { name: 'Artifacts' });
-  await userEvent.click(within(section).getByRole('button', { name: /earlier versions/ }));
-  const lines = within(section).getAllByRole('listitem').map((li) => li.textContent ?? '');
+  const section = await screen.findByRole('log', { name: 'Transcript' });
+  await waitFor(() => expect(ledgerOf(section).length).toBeGreaterThan(0));
+  const lines = ledgerOf(section).map((li) => li.textContent ?? '');
   const has = (x: string) => expect(lines.some((l) => l.includes(x)), x).toBe(true);
   for (const x of ['Lineup picks ready', 'Waiver claims ready', 'Trade ideas ready', 'Trade check ready', 'Trends ready', 'Week 7 recap ready', 'Week 8 preview ready', 'Week 6 retro ready', 'League history ready']) has(x);
   expect(lines.some((l) => l.replace('✓', '').startsWith('Ready'))).toBe(true);
@@ -1408,17 +1408,17 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   ws.open();
   ws.frame(snapshot());
   ws.frame(view({ run: true }));
-  const line = (await screen.findByText('Previous review')).closest('li')!;
+  const line = (await screen.findByText('Previous review')).closest<HTMLElement>('[data-ledger]')!;
   expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
   expect(within(line).queryByRole('region', { name: 'Review' })).toBeNull();
   expect(line).not.toHaveTextContent('Double-checked');
   ws.frame(view({}));
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
-  const done = screen.getByText('Review posted').closest('li')!;
+  const done = screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!;
   expect(within(done).getByRole('region', { name: 'Review' })).toBeInTheDocument();
   expect(done).toHaveTextContent('Double-checked');
   // The card carries the one Posted link; the pinned line drops its own.
-  expect(within(screen.getByText('Review posted').closest('li')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
+  expect(within(screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
 });
 
 test('the transcript scroller is the containing block for absolute children, so sr-only headings cannot stretch main', async () => {
@@ -1809,6 +1809,86 @@ test('a Home approval card says what it will do, from the args the index carries
   // The headline, then again in the Details tree.
   expect(within(needs).getAllByText(args.summary)[0]).toBeInTheDocument();
   expect(within(needs).getByText(/abc1234 docs: fix typo/)).toBeInTheDocument();
+});
+
+const ledgerOf = (root: HTMLElement) => Array.from(root.querySelectorAll<HTMLElement>('[data-ledger]'));
+
+describe('the session page as a ledger', () => {
+  const at = (ts: number, content: object[]) => ({ ...assistant(content), timestamp: ts });
+  const call = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: {} });
+  const result = (id: string, name: string, ts: number) => ({ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: ts });
+  const check = (id: string, met: number | null, notes: string[] = []) => ({ criterion: 'c', id, label: `Label ${id}`, weight: 2, met, notes });
+  const fail = { passed: false, gatesFailed: [], score: 0.4, checks: [check('cites', 0, ['Finding 2 has no line number.']), check('tone', 1)] };
+  const pass = { passed: true, gatesFailed: [], score: 1, checks: [check('cites', 1), check('tone', 1)] };
+  const review = (version: number, sealedAt: number, verdict: object) => ({ kind: 'github.review', version, hash: `h${version}`, content: `body ${version}`, sealedAt, verdict });
+  // draft work, submit (v1 sealed at 30, fails), revision work, submit again (v2 sealed at 70, passes)
+  const entries = [
+    entry('e1', [{ role: 'user', content: 'review it', timestamp: 10 }]),
+    entry('e2', [at(20, [call('a', 'read'), call('b', 'submit_review')]), result('a', 'read', 25), result('b', 'submit_review', 40)]),
+    entry('e3', [at(50, [call('c', 'bash'), call('d', 'submit_review')]), result('c', 'bash', 55), result('d', 'submit_review', 80)]),
+    entry('e4', [at(90, [{ type: 'text', text: 'All done.' }])]),
+  ];
+
+  test('each version sits in time order between the work around it, and a revised version shows its round', async () => {
+    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, fail), review(2, 70, pass)] };
+    const ws = await openSession();
+    ws.frame(snapshot({ entries }));
+    const log = await screen.findByRole('log', { name: 'Transcript' });
+    await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
+    const text = log.textContent ?? '';
+    const order = ['Worked', "Review didn't pass its checks", 'Worked', 'Review ready', 'All done.'].reduce<number[]>((acc, s) => [...acc, text.indexOf(s, (acc.at(-1) ?? -1) + 1)], []);
+    expect(order.every((n) => n >= 0)).toBe(true);
+    const [one, two] = ledgerOf(log);
+    expect(one).not.toHaveTextContent(/revision \d/);
+    expect(two).toHaveTextContent('Version 2 · revision 1');
+    expect(screen.queryByRole('region', { name: 'Artifacts' })).toBeNull();
+  });
+
+  test('a failed check opens on what the revision must fix; a passed one lists every criterion', async () => {
+    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, fail), review(2, 70, pass)] };
+    const ws = await openSession();
+    ws.frame(snapshot({ entries }));
+    const log = await screen.findByRole('log', { name: 'Transcript' });
+    await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
+    const [one, two] = ledgerOf(log);
+    expect(within(one).getByText(/Double-check failed · 1 to fix · 40%/).closest('details')).toHaveAttribute('open');
+    expect(within(one).getByText('The revision must fix')).toBeInTheDocument();
+    expect(within(one).getByText('Finding 2 has no line number.')).toBeInTheDocument();
+    const done = within(two).getByText(/^Double-check passed$/).closest('details')!;
+    expect(done).not.toHaveAttribute('open');
+    await userEvent.click(within(done).getByText(/Double-check passed/));
+    // Passed checks are named by the problem they looked for: listed under "Checked, nothing found", no Pass pill.
+    expect(within(done).getByText('Checked, nothing found')).toBeInTheDocument();
+    expect(within(done).queryByText('Pass')).toBeNull();
+    expect(within(done).getByText('Label cites')).toBeInTheDocument();
+  });
+
+  test('a failed latest version opens on what to fix even with an extension card, and a partial check shows its score', async () => {
+    const half = { ...check('cites', 0.5, ['Half the findings cite lines.']), weight: 2 };
+    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, pass), review(2, 70, { ...fail, checks: [half] })] };
+    const ws = await openSession();
+    ws.frame(snapshot({ entries }));
+    const log = await screen.findByRole('log', { name: 'Transcript' });
+    await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
+    const latest = ledgerOf(log)[1]!;
+    expect(within(latest).getByText(/Double-check failed/).closest('details')).toHaveAttribute('open');
+    expect(within(latest).getByText('Fail · 50%')).toBeInTheDocument();
+  });
+
+  test('while the judge runs, its criteria show with each result as it lands', async () => {
+    const ws = await openSession();
+    const checking = (checks: object[]) => view({ entries: entries.slice(0, 2), run: true, tools: [{ callId: 'b', name: 'submit_review', status: 'running', details: { rubric: 'r', checks } }] });
+    const base = { criterion: 'c', weight: 2 };
+    ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines' }, { ...base, id: 'tone', label: 'Polite tone' }]));
+    const list = await screen.findByRole('list', { name: 'Double-check progress' });
+    expect(within(list).getAllByText('Checking')).toHaveLength(2);
+    expect(screen.getByLabelText('Double-checking · 0 of 2 checked')).toBeInTheDocument();
+    ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines', met: 0 }, { ...base, id: 'tone', label: 'Polite tone' }]));
+    expect(within(list).getByText('Fail')).toBeInTheDocument();
+    expect(within(list).getAllByText('Checking')).toHaveLength(1);
+    expect(screen.getByLabelText('Double-checking · 1 of 2 checked')).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for the double-check')).toBeNull();
+  });
 });
 
 test('a running session waiting for a model slot says so on its row, instead of looking like it works', async () => {

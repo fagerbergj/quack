@@ -3,6 +3,7 @@ import { ArtifactBoundary } from './ArtifactBoundary.tsx';
 import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { listArtifacts, type SealedArtifact } from './api.ts';
+import { CheckResult } from './CheckResult.tsx';
 
 // A pass is a tick with a tooltip, a fail an x; no verdict yet shows nothing.
 export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
@@ -29,22 +30,37 @@ function lineOf(a: SealedArtifact, named: ReturnType<typeof namedBy>): string {
   return sentence(`${name} ready`.trim());
 }
 
-// One muted line per artifact; the drawer's Checks tab holds the detail.
-function Item({ a, running, meta, onOpen }: { a: SealedArtifact; running: boolean; meta: readonly Record<string, unknown>[]; onOpen: (a: SealedArtifact) => void }) {
+/** Each version's place in the ledger: its revision round (failed versions just before it, in a row), and whether it is the newest of its kind. */
+export function ledger(items: SealedArtifact[]): Array<{ a: SealedArtifact; round: number; latest: boolean }> {
+  const sorted = items.toSorted((x, y) => x.sealedAt - y.sealedAt || x.version - y.version);
+  return sorted.map((a) => {
+    const same = sorted.filter((b) => b.kind === a.kind);
+    const before = same.slice(0, same.indexOf(a)).reverse();
+    const round = before.findIndex((b) => b.verdict?.passed !== false);
+    return { a, round: round < 0 ? before.length : round, latest: same.at(-1) === a };
+  });
+}
+
+const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
+
+// One version in the transcript: its line (the newest of a kind as the owning extension's card) and its check result.
+export function LedgerItem({ a, round, latest, running, meta, onOpen }: { a: SealedArtifact; round: number; latest: boolean; running: boolean; meta: readonly Record<string, unknown>[]; onOpen: (a: SealedArtifact) => void }) {
   const named = namedBy(a, running);
   const hasCard = Boolean(artifactCard(a));
-  const card = named?.previous ? undefined : artifactCard(a, { running, meta });
-  const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
+  const card = latest && !named?.previous ? artifactCard(a, { running, meta }) : undefined;
+  const label = [a.version > 1 ? `Version ${a.version}` : '', round > 0 ? `revision ${round}` : ''].filter(Boolean).join(' · ');
   return (
-    <li className="flex flex-col gap-2 text-[13px] text-muted">
+    <div data-ledger className="flex flex-col gap-1 text-[13px] text-muted">
       <div className="flex items-center gap-2">
-      {!named?.previous && <StatusIcon verdict={a.verdict} />}
-      <span className="min-w-0 truncate">{lineOf(a, named)}</span>
-      <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
-      {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
+        {!named?.previous && <StatusIcon verdict={a.verdict} />}
+        <span className="min-w-0 truncate">{lineOf(a, named)}</span>
+        {label && <span className="flex-none text-[12px]">{label}</span>}
+        <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
+        {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
       </div>
       {card}
-    </li>
+      {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} />}
+  </div>
   );
 }
 
@@ -54,28 +70,4 @@ export function useArtifacts(sessionKey: string, refresh: number) {
   const [error, setError] = useState('');
   useEffect(() => void listArtifacts(sessionKey).then(setItems, (e: Error) => setError(e.message)), [sessionKey, refresh]);
   return { items, error };
-}
-
-export function Artifacts({ items, error, running = false, meta = [], onOpen }: { items: SealedArtifact[]; error: string; running?: boolean; meta?: readonly Record<string, unknown>[]; onOpen: (a: SealedArtifact) => void }) {
-  const [all, setAll] = useState(false);
-  if (!items.length && !error) return null;
-  // Only the newest version of each kind shows; earlier ones stay a toggle away.
-  const newest = new Map(items.map((a) => [a.kind, a.version]));
-  for (const a of items) newest.set(a.kind, Math.max(a.version, newest.get(a.kind)!));
-  const shown = all ? items : items.filter((a) => a.version === newest.get(a.kind));
-  const hidden = items.length - shown.length;
-  return (
-    <section aria-labelledby="artifacts-h" className="flex flex-col gap-2">
-      <h2 id="artifacts-h" className="sr-only">Artifacts</h2>
-      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
-      <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
-        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} running={running} meta={meta} onOpen={onOpen} />)}
-      </ul>
-      {(hidden > 0 || all) && (
-        <button type="button" onClick={() => setAll(!all)} className="min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-[13px] text-muted hover:text-ink lg:min-h-0">
-          {all ? 'Hide earlier versions' : `${hidden} earlier ${hidden === 1 ? 'version' : 'versions'}`}
-        </button>
-      )}
-    </section>
-  );
 }
