@@ -12,11 +12,11 @@ import { registerWaiversSchedules } from './waivers/jobs.ts';
 const REREGISTER_MS = 6 * 60 * 60_000;
 
 /** The Sleeper app: its routes, plus the schedule registration that keeps the league's jobs current. */
-export function sleeperApp({ settings, dbPath, distributorUrl }: AppContext): App {
+export function sleeperApp({ settings, dbPath, distributorUrl, fetch, peerFetch }: AppContext): App {
   const { owner, league } = checkedSettings<SleeperSettings>('sleeper', settings, settingsProblems);
   const client = createSleeperClient();
-  const schedules = { url: `${distributorUrl}/apps/schedules` };
-  const service = createSleeperService({ dbPath, client, distributorUrl, owner, league, schedules });
+  const schedules = { url: distributorUrl, fetch: peerFetch('schedules') };
+  const service = createSleeperService({ dbPath, client, distributorUrl, owner, league, schedules, fetch });
   const timers: NodeJS.Timeout[] = [];
   return {
     handle: service.handle,

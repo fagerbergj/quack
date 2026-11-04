@@ -1,4 +1,3 @@
-import { request } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
@@ -8,6 +7,8 @@ export type ServiceConfig = {
   /** SQLite file on the service's volume; ':memory:' for tests. */
   dbPath: string;
   distributorUrl: string;
+  /** Reaches the distributor; in the distributor's process it is an in-process call. */
+  fetch?: typeof fetch;
   /** The promoted agent that runs `remarkable.ingest`. */
   agent: string;
   client: Pick<RmClient, 'tree' | 'documents' | 'downloadPdf' | 'downloadRmdoc'>;
@@ -36,7 +37,7 @@ function failure(res: { status: number; text: string }): string | undefined {
 
 // A gateway error or reset means the hold broke, not that the run did; the same request id joins it again.
 const dropped = (res: { status: number }) => res.status === 502 || res.status === 504;
-const isReset = (err: unknown) => (err as { code?: string }).code === 'ECONNRESET';
+const isReset = (err: unknown) => ['ECONNRESET', 'UND_ERR_SOCKET'].includes((err as { cause?: { code?: string } }).cause?.code ?? '');
 
 // Only rmfakecloud failures are the upstream's fault; store errors and the like are this service's own.
 const upstream = (err: unknown) => err instanceof Error && (err.message.startsWith('rmfakecloud') || err.message === 'fetch failed');
@@ -47,18 +48,14 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
   const aborts = new Set<() => void>();
   let stopped = false;
 
-  // node:http, not fetch: undici gives up on response headers after 300s, and a vision-model ingest can run longer.
+  // Aborting a held request is how stop() cuts the wait; an in-process fetch has no socket to time out, and tests inject a real URL.
   const post = (url: string, body: string) => {
-    let abort = () => {};
-    return new Promise<{ status: number; text: string }>((resolve, reject) => {
-      const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(c)).on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
-      });
-      abort = req.destroy.bind(req);
-      aborts.add(abort);
-      req.on('error', reject).end(body);
-    }).finally(() => aborts.delete(abort));
+    const ac = new AbortController();
+    const abort = () => ac.abort();
+    aborts.add(abort);
+    return (config.fetch ?? fetch)(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: ac.signal })
+      .then(async (res) => ({ status: res.status, text: await res.text() }))
+      .finally(() => aborts.delete(abort));
   };
 
   const sleep = config.sleep ?? ((ms: number) => new Promise<void>((resolve) => {

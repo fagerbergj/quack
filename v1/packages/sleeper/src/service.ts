@@ -20,8 +20,8 @@ export type ServiceConfig = {
   owner?: string;
   /** The league the page's /apps/sleeper routes act on. */
   league?: string;
-  /** The schedules app (its mount, such as http://127.0.0.1:8080/apps/schedules), read for this league's upcoming runs. */
-  schedules?: { url: string };
+  /** The schedules app (a base URL and the fetch that reaches it), read for this league's upcoming runs. */
+  schedules?: { url: string; fetch?: typeof fetch };
   fetch?: typeof fetch;
 };
 
@@ -75,7 +75,7 @@ export function createSleeperService(config: ServiceConfig): App & { stop(): voi
   // Sleeper's live week and the next run of each of this league's schedules, soonest first.
   async function upcomingRuns(): Promise<[number, unknown]> {
     if (!config.schedules || !config.league) return [501, { error: 'schedules are not configured' }];
-    const res = await (config.fetch ?? fetch)(config.schedules.url);
+    const res = await (config.schedules.fetch ?? fetch)(config.schedules.url);
     if (!res.ok) return [502, { error: `schedules answered ${res.status}` }];
     const league = config.league.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const all = ((await res.json()) as { schedules: Array<{ id: string; nextRun: string | null }> }).schedules;

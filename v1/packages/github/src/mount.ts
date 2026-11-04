@@ -13,7 +13,7 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 /** The GitHub app; its webhook is /apps/github/webhook, which GitHub signs instead of presenting a credential. */
-export function mountGithub({ settings, distributorUrl, env }: AppContext): App {
+export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext): App {
   const implementerAgent = checkedSettings<GithubSettings>('github', settings, settingsProblems)?.implementerAgent;
   const agent = env.QUACK_GH_AGENT || 'reviewer';
   const dataDir = env.QUACK_DATA_DIR ?? '.';
@@ -21,6 +21,7 @@ export function mountGithub({ settings, distributorUrl, env }: AppContext): App 
   const service = createGithubService(app, {
     webhookSecret: required(env, 'QUACK_GH_WEBHOOK_SECRET'),
     distributorUrl,
+    fetch,
     label: env.QUACK_GH_LABEL || 'quack:review',
     agent,
     implementerAgent,
@@ -31,8 +32,8 @@ export function mountGithub({ settings, distributorUrl, env }: AppContext): App 
     handle: service.handle,
     // Needs the distributor listening, so it runs from start; a draft agent must not back unattended triggers.
     async start() {
-      await assertPromoted(distributorUrl, agent);
-      if (implementerAgent) await assertPromoted(distributorUrl, implementerAgent);
+      await assertPromoted(distributorUrl, agent, undefined, fetch);
+      if (implementerAgent) await assertPromoted(distributorUrl, implementerAgent, undefined, fetch);
       stopRedelivery = startRedelivery(app, join(dataDir, 'github-redeliver.json'));
     },
     stop: () => stopRedelivery(),

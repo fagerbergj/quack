@@ -4,6 +4,8 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createSchedulesService } from '@quack/schedules';
+import { inProcessFetch } from '@quack/sdk';
 import { FAKE_MODEL, fakeModel } from './fake-model.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -14,7 +16,7 @@ export type StackOpts = {
   web?: string;
   /** A directory of session data dirs to copy in, `demo` to create sessions through the fake model, or `none`. */
   seed?: string;
-  /** Extensions to mount in the distributor (listed under `extensions` in the deployment file); schedules also gets two sample schedules. */
+  /** Extensions to mount in the distributor (listed under `extensions` in the deployment file); schedules also gets two sample schedules in its database. */
   apps?: string[];
   /** `local` points the deployment at QA_MODEL_URL (default llm-swap); `none` and `fake` use a canned local endpoint. */
   model?: 'local' | 'none' | 'fake';
@@ -79,11 +81,15 @@ function launch(parts: Parts, args: string[], env: Record<string, string>): Chil
   return child;
 }
 
-async function seedSchedules(url: string): Promise<void> {
+/** Writes the sample schedules into the schedules database before the distributor opens it (the page cannot register). */
+async function seedSchedules(dataDir: string): Promise<void> {
+  const svc = createSchedulesService({ distributorUrl: 'http://unused', dbPath: join(dataDir, 'schedules.db') });
+  const post = inProcessFetch((req, res) => svc.handle(req, res));
   for (const schedule of SAMPLE_SCHEDULES) {
-    const res = await fetch(`${url}/apps/schedules`, { method: 'POST', body: JSON.stringify(schedule) });
+    const res = await post('http://unused/', { method: 'POST', body: JSON.stringify(schedule) });
     if (!res.ok) throw new Error(`schedule seed failed: ${res.status} ${await res.text()}`);
   }
+  svc.stop();
 }
 
 async function seedDemo(url: string): Promise<void> {
@@ -130,6 +136,7 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     const config = join(parts.tmp, 'deployment.json');
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
+    if (opts.apps?.includes('schedules')) await seedSchedules(dataDir);
     const extensions = Object.fromEntries((opts.apps ?? []).map((name) => [name, {}]));
     writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts)), extensions }));
     launch(parts, ['packages/distributor/src/main.ts'], {
@@ -137,7 +144,6 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x',
     });
     await waitFor(reachable(`${url}/version`), 'the distributor');
-    if (opts.apps?.includes('schedules')) await seedSchedules(url);
     if (opts.seed === 'demo') await seedDemo(url);
     return { url, dataDir, stop: async () => { process.off('exit', onExit); await stop(); } };
   } catch (err) {

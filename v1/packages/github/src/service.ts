@@ -8,6 +8,8 @@ import { stripMentions, triggerFor, verifySignature, type Trigger } from './webh
 export type ServiceConfig = {
   webhookSecret: string;
   distributorUrl: string;
+  /** Reaches the distributor; in the distributor's process it is an in-process call. */
+  fetch?: typeof fetch;
   label: string;
   /** The agent that backs unattended triggers; it must be promoted (DEP-6). */
   agent: string;
@@ -21,11 +23,11 @@ const BACKOFF_CAP_MS = 30_000;
 const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // Throws unless the distributor lists `agent` as promoted (no unattended draft). Unreachable is retried with backoff, since compose starts both together.
-export async function assertPromoted(distributorUrl: string, agent: string, sleep: (ms: number) => Promise<void> = pause): Promise<void> {
+export async function assertPromoted(distributorUrl: string, agent: string, sleep: (ms: number) => Promise<void> = pause, doFetch: typeof fetch = fetch): Promise<void> {
   let agents: Array<{ name: string; status: string }> | undefined;
   for (let delay = 1_000; !agents; delay = Math.min(delay * 2, BACKOFF_CAP_MS)) {
     try {
-      const res = await fetch(`${distributorUrl}/agents`);
+      const res = await doFetch(`${distributorUrl}/agents`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       agents = ((await res.json()) as { agents: NonNullable<typeof agents> }).agents;
     } catch {
@@ -58,9 +60,9 @@ type RunState = { posted: Map<string, number>; watched: Set<string> };
 const prKey = (owner: string, repo: string, number: number) => `${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`;
 
 // Waits out a run the webhook started and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
-async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number) {
+async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number, doFetch?: typeof fetch) {
   try {
-    const outcome = await settled(target, { ...payload, wait: true });
+    const outcome = await settled(target, { ...payload, wait: true }, doFetch);
     const note = noticeFor(outcome, (state.posted.get(prKey(t.repo.owner, t.repo.name, t.number)) ?? 0) > before);
     if (note) await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: note });
   } catch (err) {
@@ -89,7 +91,7 @@ function recordState(states: States, event: string | undefined, p: Record<string
 }
 
 async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trigger, session: { key: string; agent: string }, requestId: string) {
-  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' });
+  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' }, config.fetch);
   send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
 }
 
@@ -109,12 +111,12 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
-  const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload });
+  const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload }, config.fetch);
   if (await noticeRefusedFix(app, trigger, upstream)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
   if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
     state.watched.add(requestId);
-    void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before);
+    void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before, config.fetch);
   }
   send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
 }

@@ -6,8 +6,11 @@ import { settingsProblems, type SchedulesSettings } from './settings.ts';
 export const manifest: ExtensionManifest = {
   name: 'schedules',
   settings: settingsProblems,
-  app: ({ settings, dbPath, distributorUrl, env }) => createSchedulesService({
+  // The schedules page lists and deletes; registering is for sessions and the sleeper app.
+  pages: [{ method: 'GET', path: '/' }, { method: 'DELETE', path: /^\/.+$/ }],
+  app: ({ settings, dbPath, distributorUrl, fetch, env }) => createSchedulesService({
     distributorUrl,
+    fetch,
     dbPath,
     agentsDir: env.QUACK_AGENTS_DIR,
     distributorToken: env.QUACK_ADMIN_TOKEN,

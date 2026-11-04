@@ -11,6 +11,8 @@ export const manifest: ExtensionManifest = {
   optional: ['judge'],
   settings: settingsProblems,
   app: mountGithub,
+  // The pull-request badges the page reads, and the webhook GitHub signs (the app verifies the signature).
+  pages: [{ method: 'GET', path: '/pulls' }, { method: 'POST', path: '/webhook' }],
   env: ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'],
   evalAdapters: [evalAdapter],
   actions: [reviewPullRequest],

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
+import { Readable, Writable } from 'node:stream';
 import type { App } from './manifest.ts';
 
 /** Constant-time string equality; unequal lengths answer false without comparing. */
@@ -41,6 +42,42 @@ export function serviceHttp(opts: { token?: string; maxBody?: number } = {}) {
   const json = async (req: IncomingMessage): Promise<unknown> => JSON.parse((await readBody(req)).toString('utf8'));
   const authorized = (req: IncomingMessage, token = opts.token ?? '') => safeEqual(req.headers.authorization ?? '', `Bearer ${token}`);
   return { send, problem, readBody, json, authorized };
+}
+
+/** A `fetch` that hands the request to an HTTP handler in this process: no socket, no credential. Only what the sdk's apps and the distributor use of the response API is supported. */
+export function inProcessFetch(dispatch: (req: IncomingMessage, res: ServerResponse) => unknown): typeof fetch {
+  return async (input, init) => {
+    const request = new Request(input as RequestInfo, init);
+    const url = new URL(request.url);
+    const body = request.body ? Buffer.from(await request.arrayBuffer()) : undefined;
+    const req = Object.assign(Readable.from(body ? [body] : []), { method: request.method, url: url.pathname + url.search, headers: Object.fromEntries(request.headers) });
+    return new Promise<Response>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const pending: Record<string, string> = {};
+      let head: { status: number; headers: Record<string, string> } | undefined;
+      const res = Object.assign(new Writable({
+        write: (chunk, _enc, done) => (chunks.push(Buffer.from(chunk)), done()),
+        final: (done) => {
+          const status = head?.status ?? 200;
+          resolve(new Response([204, 304].includes(status) ? null : Buffer.concat(chunks), { status, headers: head?.headers }));
+          done();
+        },
+      }), {
+        setHeader(name: string, value: string) { pending[name.toLowerCase()] = value; },
+        writeHead(status: number, headers: Record<string, string> = {}) {
+          head = { status, headers: { ...pending, ...headers } };
+          return this;
+        },
+      });
+      Object.defineProperty(res, 'headersSent', { get: () => head !== undefined });
+      res.once('error', reject);
+      try {
+        void Promise.resolve(dispatch(req as unknown as IncomingMessage, res as unknown as ServerResponse)).catch(reject);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  };
 }
 
 /** Where a session reaches an app, with the launch credential it presents: the distributor that started the session. */

@@ -295,7 +295,7 @@ test('the page routes answer the configured league and start its lineup job', as
   const calls: string[] = [];
   const listing = { schedules: [{ id: 'sleeper/waivers/L1', nextRun: '2026-11-03T20:00:00.000Z' }, { id: 'sleeper/digest/L1/9/recap', nextRun: '2026-11-03T06:15:00.000Z' }, { id: 'sleeper/waivers/OTHER', nextRun: '2026-11-03T01:00:00.000Z' }, { id: 'sleeper/lineup/L1/9/wed', nextRun: null }] };
   const fake = (async (u: string) => (calls.push(u), new Response(u === 'http://sched' ? JSON.stringify(listing) : '{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', schedules: { url: 'http://sched' }, fetch: fake, now: () => new Date(AT) }));
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', schedules: { url: 'http://sched', fetch: fake }, fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {

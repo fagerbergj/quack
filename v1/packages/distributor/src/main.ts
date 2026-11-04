@@ -45,8 +45,8 @@ function sessionDriver(): HostDriver {
   return sessionHost(base, async (spec) => (await reaped, launch(spec)));
 }
 const driver = sessionDriver();
-// The extensions the deployment file lists run in this process, under /apps/<name>/*; their own calls back here go over loopback.
-const mounted = await mountApps(deployment, manifests, { distributorUrl: `http://127.0.0.1:${port}` });
+// The extensions the deployment file lists run in this process, under /apps/<name>/*; their calls back here, and to each other, are in-process.
+const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.emit('request', req, res) });
 const pinnedDefinition = (key: string) => readFile(pinnedAgentPath(dataDir, key), 'utf8').then(JSON.parse, () => null);
 const apps = appsGateway(mounted, broker.sessionOf, async (key) => declaredApps(await pinnedDefinition(key), manifests));
 // The page's rename, archive and delete always work; a token set also lets the retention sweep delete idle sessions.

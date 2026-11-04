@@ -15,9 +15,11 @@ export const manifest: ExtensionManifest = {
   optional: ['judge'],
   workflows: { [INGEST_WORKFLOW]: { build: (config) => ingestFromEnv(config as Parameters<typeof ingestFromEnv>[0]), env: ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'] } },
   // The rmfakecloud login is read from the environment by name, never the deployment file.
-  app: ({ dbPath, distributorUrl, env }) => createRemarkableService({
+  pages: [{ method: 'GET', path: '/' }, { method: 'POST', path: '/ingest' }],
+  app: ({ dbPath, distributorUrl, fetch, env }) => createRemarkableService({
     dbPath,
     distributorUrl,
+    fetch,
     agent: env.QUACK_REMARKABLE_AGENT || 'remarkable-ingest',
     client: createRmClient({ url: required(env, 'RMFAKECLOUD_URL'), email: required(env, 'RMFAKECLOUD_EMAIL'), password: required(env, 'RMFAKECLOUD_PASSWORD') }),
   }),

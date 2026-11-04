@@ -1,4 +1,4 @@
-/** `url` is the schedules app's mount, such as http://127.0.0.1:8080/apps/schedules. */
+/** `url` is a base URL that `fetch` resolves to the schedules app, whose routes are `/` and `/<id>`. */
 export type ScheduleConfig = { url: string; fetch?: typeof fetch };
 
 /** Deletes the retired daily snapshot schedule (trends takes its own snapshot); 404 means it is already gone. */

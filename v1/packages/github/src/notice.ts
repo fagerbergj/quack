@@ -2,8 +2,9 @@ import { request } from 'node:http';
 
 export type RunOutcome = { status?: string; reason?: string; detail?: unknown };
 
-// node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
-export function settled(url: string, body: unknown): Promise<RunOutcome> {
+// Without an injected fetch, node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
+export async function settled(url: string, body: unknown, doFetch?: typeof fetch): Promise<RunOutcome> {
+  if (doFetch) return (await doFetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
   return new Promise((resolve, reject) => {
     const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
       let text = '';

@@ -175,8 +175,7 @@ test('the broker forwards with the real token for a live session token and refus
     seen = `${req.method} ${req.url} ${req.headers.authorization} ${req.headers['x-api-key']}`;
     res.end('{"ok":true}');
   });
-  let clock = 0;
-  const broker = credentialBroker({ ttlMs: 1000, now: () => clock });
+  const broker = credentialBroker();
   broker.register('QUACK_SLEEPER', upstream, 'long-lived');
   const front = await listen((req, res) => void broker.route(req, res).then((handled) => handled || res.writeHead(404).end()));
   const token = broker.mint('a');
@@ -191,8 +190,8 @@ test('the broker forwards with the real token for a live session token and refus
   await fetch(`${front}/svc/LANGFUSE/api/x`, { method: 'POST', headers: { authorization: `Basic ${basic}` }, body: '{}' });
   assert.equal(seen, 'POST /api/x Basic real undefined');
   assert.equal((await fetch(`${front}/svc/NOPE/x`, { headers: { authorization: `Bearer ${token}` } })).status, 404);
-  clock = 1000;
-  assert.equal((await fetch(`${front}/svc/QUACK_SLEEPER/predict`, { headers: { authorization: `Bearer ${token}` } })).status, 401, 'expired');
+  broker.revoke(token);
+  assert.equal((await fetch(`${front}/svc/QUACK_SLEEPER/predict`, { headers: { authorization: `Bearer ${token}` } })).status, 401, 'revoked');
 });
 
 test('a stopped session loses its token', async () => {

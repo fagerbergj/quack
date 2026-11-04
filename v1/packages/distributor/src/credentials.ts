@@ -4,8 +4,6 @@ import { sendProblem } from '@quack/sdk';
 import { forward } from './apps.ts';
 import { readBody } from './server.ts';
 
-const TOKEN_TTL_MS = 12 * 3_600_000;
-
 /** A12 for container sessions: third-party keys stay here; a session holds a per-launch token and reaches those services through /svc/<name>, and the distributor's own routes with the same token. */
 /** The session's token as its client presents it: a bearer token, an x-api-key (Exa), or the password of Basic auth (Langfuse). */
 function sessionToken(req: IncomingMessage): string | undefined {
@@ -17,25 +15,21 @@ function sessionToken(req: IncomingMessage): string | undefined {
   return /^Bearer (.+)$/.exec(auth)?.[1];
 }
 
-export function credentialBroker(opts: { ttlMs?: number; now?: () => number } = {}) {
-  const now = opts.now ?? Date.now;
+export function credentialBroker() {
   const services = new Map<string, { url: string; auth: Record<string, string> }>();
-  const issued = new Map<string, { key: string; exp: number }>();
+  const issued = new Map<string, string>();
 
-  /** The session a current launch token belongs to; undefined for an unknown, revoked or expired one. */
-  const sessionOf = (token: string): string | undefined => {
-    const grant = issued.get(token);
-    return grant && grant.exp > now() ? grant.key : undefined;
-  };
+  /** The session a current launch token belongs to; undefined for an unknown or revoked one. */
+  const sessionOf = (token: string): string | undefined => issued.get(token);
 
   return {
     /** `auth` is the header set sent upstream; a string is a bearer token. */
     register: (name: string, url: string, auth: string | Record<string, string>) => void services.set(name, { url: url.replace(/\/$/, ''), auth: typeof auth === 'string' ? { authorization: `Bearer ${auth}` } : auth }),
     has: (name: string) => services.has(name),
-    /** A new opaque token for one launch of the session; it dies on revoke or after the TTL. */
+    /** A new opaque token for one launch of the session; it lives until revoked or the distributor restarts. */
     mint(key: string): string {
       const token = randomBytes(32).toString('hex');
-      issued.set(token, { key, exp: now() + (opts.ttlMs ?? TOKEN_TTL_MS) });
+      issued.set(token, key);
       return token;
     },
     revoke: (token: string) => void issued.delete(token),
