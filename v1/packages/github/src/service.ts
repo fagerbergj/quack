@@ -70,11 +70,11 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
   }
 }
 
-// A /fix the distributor refused is answered on the PR with its reason, never dropped.
+// A /fix or /implement the distributor refused is answered where it was written with its reason, never dropped.
 async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response): Promise<boolean> {
   if (upstream.status !== 409 || t.role !== 'implementer') return false;
   const { error = 'the distributor refused the run' } = (await upstream.json().catch(() => ({}))) as { error?: string };
-  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: fixRefused(error) });
+  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: fixRefused(error, t.issue) });
   return true;
 }
 
@@ -203,6 +203,23 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
   };
 }
 
+// An issue the session may implement: its text, labels and the repository's default branch.
+async function issueRoute(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+  const issue = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${number}`)).json;
+  if (!issue || issue.pull_request) return send(res, 404, { error: 'no such issue' });
+  const baseRef = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}`)).json?.default_branch;
+  send(res, 200, { owner, repo, number, title: issue.title, body: issue.body ?? '', author: issue.user?.login ?? null, state: issue.state, labels: (issue.labels ?? []).map((l: any) => (typeof l === 'string' ? l : l.name)), baseRef });
+}
+
+// Opens the pull request a session pushed a branch for, after its approval; the session never holds the token (D56).
+async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
+  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
+  if (!['owner', 'repo', 'head', 'base', 'title', 'body'].every((k) => typeof r[k] === 'string' && r[k])) return send(res, 400, { error: 'need owner, repo, head, base, title and body' });
+  const slug = await app.slug();
+  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `/repos/${r.owner}/${r.repo}/pulls`, { head: r.head, base: r.base, title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
+  send(res, 201, { number: json?.number, url: json?.html_url });
+}
+
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const facts = await prFacts(app, owner, repo, number);
   send(res, facts ? 200 : 404, facts ?? { error: 'no such pull request' });
@@ -241,10 +258,10 @@ export function createGithubService(app: GithubApp, config: ServiceConfig) {
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
       const get = req.method === 'GET' ? { '/git-credential': () => gitCredential(req, res, app), '/apps/github/pulls': () => pullStatesRoute(req, res, app, states) }[path] : undefined;
       if (get) return await get();
-      const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app) }[path] : undefined;
+      const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
-      const pull = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
-      if (req.method === 'GET' && pull) return await pullRequest(res, app, pull[1], pull[2], Number(pull[3]));
+      const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
+      if (item) return await (item[1] === 'issues' ? issueRoute : pullRequest)(res, app, item[2], item[3], Number(item[4]));
       send(res, 404, { error: 'not found' });
     } catch (err) {
       const bad = err instanceof SyntaxError || (err as Error).message === 'body too large';

@@ -45,6 +45,15 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
     // Every page full: a commit whose check runs never end.
     if (url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
+    if (url === '/repos/acme/widgets/issues/12' && auth === 'token ghs_test') return reply(200, { number: 12, title: 'Add TTL', body: 'b', state: 'open', user: { login: 'dev' }, labels: [{ name: 'bug' }] });
+    if (url === '/repos/acme/widgets/issues/9') return reply(200, { number: 9, pull_request: {} });
+    if (url === '/repos/acme/widgets' && auth === 'token ghs_test') return reply(200, { default_branch: 'trunk' });
+    if (url === '/repos/acme/widgets/pulls' && req.method === 'POST') return reply(201, { number: 13, html_url: 'https://github.com/acme/widgets/pull/13' });
+    if (url === '/repos/acme/widgets/issues/12/comments') {
+      commented.push(calls.at(-1)!.body.body);
+      commentWaiters.splice(0).forEach((f) => f());
+      return reply(201, {});
+    }
     if (url === '/repos/acme/widgets/issues/7/comments') {
       commented.push(calls.at(-1)!.body.body);
       commentWaiters.splice(0).forEach((f) => f());
@@ -166,6 +175,44 @@ test('/fix runs the implementer in the PR session only where one is configured; 
   busy = false;
   assert.equal(invocations.length, 1);
   assert.deepEqual(commented, [fixRefused('session is mid-run as agent reviewer; implementer can start once it finishes')]);
+});
+
+test('/implement on an issue runs the implementer in the issue session; a refused start is answered on the issue', async () => {
+  invocations.length = 0;
+  const implement = { action: 'created', issue: { number: 12, title: 'Add TTL', body: 'b', labels: [{ name: 'bug' }] }, comment: { body: '/implement', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
+  const withFix = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer' }));
+  const body = JSON.stringify(implement);
+  const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
+  const send = (id: string) => fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': id } }).then((r) => r.status);
+  assert.equal(await send('d-imp1'), 202);
+  assert.equal(invocations[0].path, '/sessions/github:acme/widgets#12/invocations?agent=implementer');
+  assert.match(invocations[0].body.input, /Implement issue acme\/widgets#12/);
+
+  busy = true;
+  commented.length = 0;
+  assert.equal(await send('d-imp2'), 200);
+  busy = false;
+  assert.equal(invocations.length, 1);
+  assert.deepEqual(commented, [fixRefused('session is mid-run as agent reviewer; implementer can start once it finishes', true)]);
+  assert.match(commented[0], /`\/implement` on this issue/);
+});
+
+test('the issue route returns an issue with the default branch; a pull request number is not an issue', async () => {
+  const get = (n: number, token = 'svc-secret') => fetch(`${service}/issues/acme/widgets/${n}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  assert.equal((await get(12, 'nope')).status, 401);
+  assert.deepEqual((await get(12)).body, { owner: 'acme', repo: 'widgets', number: 12, title: 'Add TTL', body: 'b', author: 'dev', state: 'open', labels: ['bug'], baseRef: 'trunk' });
+  assert.equal((await get(9)).status, 404);
+});
+
+test('a pull request is opened with the installation token, mentions of the bot defanged', async () => {
+  const open = (body: unknown) => fetch(`${service}/pulls`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  assert.equal((await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'main', title: 't' })).status, 400);
+  calls.length = 0;
+  const made = await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping @quack-app\n\nCloses #12' });
+  assert.deepEqual(made, { status: 201, body: { number: 13, url: 'https://github.com/acme/widgets/pull/13' } });
+  const sent = calls.find((c) => c.path === '/repos/acme/widgets/pulls')!;
+  assert.equal(sent.auth, 'token ghs_test');
+  assert.deepEqual(sent.body, { head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping quack-app\n\nCloses #12' });
 });
 
 test('git credentials are minted per repository and cached until near expiry', async () => {
