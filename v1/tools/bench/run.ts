@@ -56,8 +56,8 @@ for (const n of prs) {
   const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), PORT: '0', QUACK_GH_SERVICE_URL: serviceUrl, QUACK_GH_SERVICE_TOKEN: 'bench' };
   const child = spawn(process.execPath, [main], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const log: string[] = [];
-  child.stdout.on('data', (d) => log.push(String(d)));
-  child.stderr.on('data', (d) => log.push(String(d)));
+  child.stdout?.on('data', (d) => log.push(String(d)));
+  child.stderr?.on('data', (d) => log.push(String(d)));
   const started = Date.now();
   let result: unknown;
   try {
