@@ -21,7 +21,7 @@ export type Action<P extends Schema = Schema> = {
 };
 
 /** The slice of a deployment's config an extension may check its own config against. */
-export type DeploymentView = { providers: Record<string, { models: Record<string, { images?: boolean }> }> };
+export type DeploymentView = { providers: Record<string, { models?: Record<string, { images?: boolean }> }> };
 
 /** What an extension package exports as `manifest`. `session` installs it for agents selecting `name` (every session if `deployment`); `env` is what it reads from the process. */
 export type ExtensionManifest = {

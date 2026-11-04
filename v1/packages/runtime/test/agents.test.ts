@@ -7,6 +7,7 @@ import { slotsFromEnv } from '@quack/slots';
 import { sessionEnv } from '../src/session-env.ts';
 
 const deployment = parseDeployment({
+  defaultModel: 'local/qwen3.8-27b',
   providers: {
     local: { baseUrl: 'http://127.0.0.1:11436/v1', models: { 'qwen3.8-27b': { contextWindow: 262144, maxTokens: 16384 } } },
     clef: { baseUrl: 'http://127.0.0.1:11436/upstream/clef/v1', api: 'systemone', models: { clef: { contextWindow: 8192 } } },

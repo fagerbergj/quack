@@ -7,7 +7,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
-import { lookExtension, NO_IMAGE_MODEL, saveImages } from './images.ts';
+import { CANNOT_SEE_IMAGES } from './images.ts';
 import { resumeModelFault, watchModelFaults } from './model-fault.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
@@ -61,7 +61,7 @@ export function reportLine({ error, ...info }: Report): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; /** Answers questions about images for an agent whose own model cannot see them. */ imageModel?: { provider: string; modelId: string }; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
@@ -81,7 +81,6 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
   const sees = !!opts.models.getModel(opts.agent.model.provider, opts.agent.model.modelId)?.input.includes('image');
-  if (!sees && opts.imageModel) registry.install(lookExtension(workspace, opts.models, opts.imageModel));
   const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
   const log = opts.log ?? console.error;
   const onReport = (report: Report) => {
@@ -200,13 +199,11 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       if (steer) await this.submitContent(item.content, undefined, false, 'steer');
       return true;
     },
-    // Images ride in the user message, so the transcript shows them after a reload; a model without image input gets a placeholder from pi-ai and asks look_at_image about the saved copy.
+    // Images ride in the user message, so the transcript shows them after a reload; a model without image input is refused.
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp', images: ImageContent[] = []): Promise<SubmitResult> {
       if (!images.length) return this.submitContent(input, requestId, wait, whenBusy);
-      if (!sees && !opts.imageModel) throw new Error(NO_IMAGE_MODEL);
-      const note = sees ? '' : `\n\n[Attached images ${(await saveImages(workspace, images)).join(', ')}. You cannot see images: use look_at_image to ask about one.]`;
-      const text = `${input}${note}`.trim();
-      return this.submitContent([...(text ? [{ type: 'text' as const, text }] : []), ...images], requestId, wait, whenBusy);
+      if (!sees) throw new Error(CANNOT_SEE_IMAGES);
+      return this.submitContent([...(input ? [{ type: 'text' as const, text: input }] : []), ...images], requestId, wait, whenBusy);
     },
     async submitContent(content: UserInput, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       const taken = typeof content === 'string' ? await dispatch?.({ harness, root }, content, requestId, wait) : undefined;

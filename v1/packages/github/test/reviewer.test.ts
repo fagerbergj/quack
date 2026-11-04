@@ -65,7 +65,7 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(responses(seen, advance));
-  const models = buildModels(parseDeployment({ providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
+  const models = buildModels(parseDeployment({ defaultModel: 'clef/clef', providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];

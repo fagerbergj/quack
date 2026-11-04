@@ -7,17 +7,17 @@ import type { Extension } from '@earendil-works/pi-durable';
 import type { ExecPolicy } from './exec.ts';
 import type { AgentSpec } from './runtime.ts';
 
-/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. */
-type ModelLimits = { contextWindow: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };
+/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. A model with no `contextWindow` is listed but not selectable. */
+export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };
 type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
 const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 /** `systemone` providers are decision models such as Clef: classifiers with an input cap and no generation (D54). */
-type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; models: Record<string, ModelLimits> };
+type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; timeZone?: string; /** A provider/model with `images: true` that answers questions about images for agents whose own model cannot see them. */ imageModel?: string; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
-/** Per agent (D48): its model as provider/model, a prompt file beside it, and the extensions it selects by name with their config. */
+/** Per agent (D48): its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
@@ -34,13 +34,17 @@ function providerProblems(id: string, p: unknown): string[] {
   if (typeof p.baseUrl !== 'string' || !/^https?:\/\//.test(p.baseUrl)) problems.push(`providers.${id}.baseUrl must be an http(s) URL`);
   if (p.apiKeyEnv !== undefined && typeof p.apiKeyEnv !== 'string') problems.push(`providers.${id}.apiKeyEnv must be a string`);
   if (p.api !== undefined && p.api !== 'openai-completions' && p.api !== 'systemone') problems.push(`providers.${id}.api must be openai-completions or systemone`);
-  if (!isObject(p.models) || Object.keys(p.models).length === 0) return [...problems, `providers.${id}.models must name at least one model`];
-  return [...problems, ...Object.entries(p.models).flatMap(([m, l]) => limitProblems(`providers.${id}.models.${m}`, l, p.api === 'systemone'))];
+  if (p.slots !== undefined && !positive(p.slots)) problems.push(`providers.${id}.slots must be a positive integer`);
+  if (p.models === undefined) return problems;
+  if (!isObject(p.models)) return [...problems, `providers.${id}.models must be an object`];
+  return [...problems, ...Object.entries(p.models).flatMap(([m, l]) => limitProblems(`providers.${id}.models.${m}`, l))];
 }
 
-function limitProblems(at: string, l: unknown, classifier: boolean): string[] {
-  const ok = isObject(l) && positive(l.contextWindow) && (classifier || positive(l.maxTokens));
-  return [...(ok ? [] : [`${at} needs positive integer contextWindow${classifier ? '' : ' and maxTokens'}`]), ...(isObject(l) ? priceProblems(`${at}.price`, l.price) : [])];
+function limitProblems(at: string, l: unknown): string[] {
+  if (!isObject(l)) return [`${at} must be an object`];
+  const problems = ['contextWindow', 'maxTokens'].filter((k) => l[k] !== undefined && !positive(l[k])).map((k) => `${at}.${k} must be a positive integer`);
+  problems.push(...['reasoning', 'images'].filter((k) => l[k] !== undefined && typeof l[k] !== 'boolean').map((k) => `${at}.${k} must be a boolean`));
+  return [...problems, ...priceProblems(`${at}.price`, l.price)];
 }
 
 function priceProblems(at: string, p: unknown): string[] {
@@ -78,31 +82,70 @@ function validZone(z: unknown): boolean {
   }
 }
 
-function imageModelProblems(d: DeploymentConfig): string[] {
-  const ref = String(d.imageModel);
-  const limits = d.providers[ref.slice(0, ref.indexOf('/'))]?.models[ref.slice(ref.indexOf('/') + 1)];
-  return limits?.images ? [] : ['imageModel must be a provider/model of this config declared with images: true'];
+const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec'];
+
+function rootProblems(raw: Record<string, unknown>): string[] {
+  const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => `unknown top-level key ${k}`);
+  if (!isObject(raw.providers) || Object.keys(raw.providers).length === 0) problems.push('providers must be an object naming at least one provider');
+  else problems.push(...Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p)));
+  if (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be "provider/model"');
+  if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
+  if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
+  return problems;
 }
 
-/** The deployment's image model as pi-ai names it; absent when none is configured. */
-export const imageModelRef = (d: DeploymentConfig) => d.imageModel ? { provider: d.imageModel.slice(0, d.imageModel.indexOf('/')), modelId: d.imageModel.slice(d.imageModel.indexOf('/') + 1) } : undefined;
-
-/** Validates the deployment config, reporting every problem at once. */
+/** Validates the deployment file's shape, reporting every problem at once. Model limits are not complete until `resolveDeployment` merges what the providers state. */
 export function parseDeployment(raw: unknown): DeploymentConfig {
-  const problems = !isObject(raw) || !isObject(raw.providers)
-    ? ['config must have a providers object']
-    : Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p));
-  if (isObject(raw) && raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
-  if (isObject(raw) && raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
-  if (isObject(raw) && raw.imageModel !== undefined) problems.push(...imageModelProblems(raw as DeploymentConfig));
+  const problems = isObject(raw) ? rootProblems(raw) : ['config must be an object'];
   if (problems.length) throw new Error(`invalid deployment config:\n- ${problems.join('\n- ')}`);
   return raw as DeploymentConfig;
 }
 
+const splitRef = (ref: string) => [ref.slice(0, ref.indexOf('/')), ref.slice(ref.indexOf('/') + 1)] as const;
+
+/** What `GET {baseUrl}/models` states: ids always, and for llama.cpp upstreams `meta.n_ctx` and `architecture.input_modalities`. */
+function listed(body: unknown): Record<string, ModelLimits> {
+  const data = isObject(body) && Array.isArray(body.data) ? body.data : [];
+  return Object.fromEntries(data.filter((m) => isObject(m) && typeof m.id === 'string').map((m) => {
+    const nCtx = isObject(m.meta) ? m.meta.n_ctx : undefined;
+    const modalities = isObject(m.architecture) && Array.isArray(m.architecture.input_modalities) ? m.architecture.input_modalities : undefined;
+    return [m.id, { ...(positive(nCtx) && { contextWindow: nCtx as number }), ...(modalities && { images: modalities.includes('image') }) }];
+  }));
+}
+
+async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): Promise<Record<string, ModelLimits>> {
+  // Classifier endpoints such as Clef list no models; their limits are always hand-written.
+  if (p.api === 'systemone') return {};
+  const key = process.env[providerEnv({ providers: { [id]: p } })[0]];
+  try {
+    const res = await fetchFn(`${p.baseUrl.replace(/\/$/, '')}/models`, { signal: AbortSignal.timeout(10_000), headers: key ? { authorization: `Bearer ${key}` } : {} });
+    if (res.ok) return listed(await res.json());
+    console.error(`providers.${id}: listing models failed with ${res.status}, using the hand-written ones`);
+    return {};
+  } catch (err) {
+    console.error(`providers.${id}: could not list models, using the hand-written ones: ${err instanceof Error ? err.message : String(err)}`);
+    return {};
+  }
+}
+
+/** Fills each provider's models with the merge rule: discovered ids plus hand-written ids, a hand-written field winning; throws when defaultModel is not selectable (one with a contextWindow). */
+export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch): Promise<DeploymentConfig> {
+  const providers = Object.fromEntries(await Promise.all(Object.entries(deployment.providers).map(async ([id, p]) => {
+    const models = await discover(id, p, fetchFn);
+    for (const [m, l] of Object.entries(p.models ?? {})) models[m] = { ...models[m], ...l };
+    return [id, { ...p, models }] as const;
+  })));
+  const resolved = { ...deployment, providers };
+  const problem = modelProblems(resolved.defaultModel, resolved);
+  if (problem.length) throw new Error(`invalid deployment config:\n- defaultModel: ${problem.join('; ')}`);
+  return resolved;
+}
+
 function modelProblems(model: unknown, deployment: DeploymentConfig): string[] {
   if (typeof model !== 'string' || !model.includes('/')) return ['model must be "provider/model"'];
-  const [provider, id] = [model.slice(0, model.indexOf('/')), model.slice(model.indexOf('/') + 1)];
-  return deployment.providers[provider]?.models[id] ? [] : [`model ${model} is not configured in this deployment`];
+  const limits = deployment.providers[splitRef(model)[0]]?.models?.[splitRef(model)[1]];
+  if (!limits) return [`model ${model} is not configured in this deployment`];
+  return limits.contextWindow ? [] : [`model ${model} has no contextWindow, so it cannot be selected; write one in providers.${splitRef(model)[0]}.models`];
 }
 
 /** What an agent installs: the names it selects plus their `requires` transitively, each after what it needs (selected `optional` ones too); problems name a missing requirement or a cycle. */
@@ -137,6 +180,14 @@ function withoutRemoved(raw: Record<string, unknown>): Record<string, unknown> {
   return gone.length ? { ...raw, extensions: Object.fromEntries(Object.entries(raw.extensions).filter(([name]) => !gone.includes(name))) } : raw;
 }
 
+function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
+  if (!isObject(extensions)) return ['extensions must be an object of name to config'];
+  const problems = Object.entries(extensions).flatMap(([name, config]) => catalog[name]
+    ? (catalog[name].validate?.(config, deployment) ?? [])
+    : [`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`]);
+  return [...problems, ...resolveExtensions(Object.keys(extensions), catalog).problems];
+}
+
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
 export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
@@ -144,22 +195,16 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
-  problems.push(...modelProblems(raw.model, deployment));
+  const model = raw.model ?? deployment.defaultModel;
+  problems.push(...modelProblems(model, deployment));
   // Pinned snapshots are immutable history and may still carry the removed key (D58), so it is ignored, not rejected.
   if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed (D58) and is ignored`);
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
   problems.push(...retentionProblems(raw.retention), ...ceilingProblems(raw.turnCeiling));
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
-  if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
-  else {
-    for (const [name, config] of Object.entries(raw.extensions)) {
-      if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
-      else problems.push(...(catalog[name].validate?.(config, deployment) ?? []));
-    }
-    problems.push(...resolveExtensions(Object.keys(raw.extensions), catalog).problems);
-  }
+  problems.push(...extensionProblems(raw.extensions, deployment, catalog));
   if (problems.length) throw new Error(`invalid agent definition:\n- ${problems.join('\n- ')}`);
-  return raw as AgentDefinition;
+  return { ...raw, model } as AgentDefinition;
 }
 
 /** The variables the extensions an agent definition selects declare, for the session process to receive (and drop once read). */
@@ -171,28 +216,30 @@ export function declaredEnv(extensions: Record<string, unknown>, catalog: Catalo
 }
 
 /** The variables a deployment's model providers read their API keys from. */
-export function providerEnv(deployment: DeploymentConfig): string[] {
+export function providerEnv(deployment: Pick<DeploymentConfig, 'providers'>): string[] {
   return Object.entries(deployment.providers).map(([id, p]) => p.apiKeyEnv ?? `QUACK_${id.toUpperCase().replace(/\W/g, '_')}_API_KEY`);
 }
 
 /** The configured price of a `provider/modelId` key, for pricing recorded tokens at today's rates. */
 export const priceOf = (d: DeploymentConfig) => (key: string): Partial<Price> | undefined => {
   const i = key.indexOf('/');
-  return d.providers[key.slice(0, i)]?.models[key.slice(i + 1)]?.price;
+  return d.providers[key.slice(0, i)]?.models?.[key.slice(i + 1)]?.price;
 };
 
 export function buildModels(deployment: DeploymentConfig): MutableModels {
   const models = createModels();
   const priced = (l: ModelLimits): Price => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...l.price });
   for (const [id, p] of Object.entries(deployment.providers)) {
+    const entries = Object.entries(p.models ?? {}).filter(([, l]) => l.contextWindow);
     const auth = { apiKey: envApiKeyAuth(id, [providerEnv({ providers: { [id]: p } })[0]]) };
     if (p.api === 'systemone') {
-      const list = Object.entries(p.models).map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost: priced(l), contextWindow: l.contextWindow }));
+      const list = entries.map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost: priced(l), contextWindow: l.contextWindow }));
       models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
       continue;
     }
-    const list = Object.entries(p.models).map(([m, l]) => ({
-      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow, maxTokens: l.maxTokens,
+    // Without a hand-written maxTokens the model's context window caps a completion.
+    const list = entries.map(([m, l]) => ({
+      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow, maxTokens: l.maxTokens ?? l.contextWindow,
     }));
     models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, api: openAICompletionsApi() }));
   }

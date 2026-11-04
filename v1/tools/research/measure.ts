@@ -61,7 +61,7 @@ if (import.meta.main) {
   if (!baseUrl || !modelId || !metricsUrl) throw new Error('usage: measure.ts <base-url> <model-id> <metrics-url> [repeat] [rows.jsonl]');
   const repeat = Number(repeatArg ?? 3);
   const cases = researchCases();
-  const deployment = parseDeployment({ providers: { local: { baseUrl, models: { [modelId]: { contextWindow: 262144, maxTokens: 16384 } } } } });
+  const deployment = parseDeployment({ defaultModel: `local/${modelId}`, providers: { local: { baseUrl, models: { [modelId]: { contextWindow: 262144, maxTokens: 16384 } } } } });
   const rows: Row[] = existsSync(out) ? readFileSync(out, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
   const done = new Set(rows.map((r) => `${r.rep}\t${r.case}`));
   const adapters = [{ kind: 'research.report', judge: { rubric: researchRubric, evidence: async () => undefined } }];

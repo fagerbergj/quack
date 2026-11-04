@@ -9,13 +9,13 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { reviewEvidence, reviewerRubric, reviewKind } from '@quack/github';
 import { feedback, rejudge, type Verdict } from '@quack/judge';
 import { Artifacts } from '@quack/sdk';
-import { buildModels, openSession, parseDeployment } from '@quack/session';
+import { buildModels, openSession, parseDeployment, resolveDeployment } from '@quack/session';
 
 const [deploymentPath, judgeRef, ...dirs] = process.argv.slice(2);
 if (!deploymentPath || !judgeRef?.includes('/') || !dirs.length) throw new Error('usage: replay.ts <deployment.json> <provider/model> <session-dir>...');
 const slash = judgeRef.indexOf('/');
 const judgeModel = { provider: judgeRef.slice(0, slash), modelId: judgeRef.slice(slash + 1) };
-const deployment = parseDeployment(JSON.parse(readFileSync(deploymentPath, 'utf8')));
+const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(deploymentPath, 'utf8'))));
 const classifier = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
 const opts = { kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(), maxRevisions: 2, classifier, judgeModel };
 const run = Date.now();

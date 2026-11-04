@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, imageModelRef, loadAgent, openSession, parseDeployment, priceOf } from '@quack/session';
+import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, resolveDeployment } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -16,11 +16,11 @@ function readJson(path: string) {
     throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
-const deployment = parseDeployment(readJson(env('QUACK_CONFIG')));
+const deployment = await resolveDeployment(parseDeployment(readJson(env('QUACK_CONFIG'))));
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions);
 const { name: agentName, version: agentVersion, extensions } = readJson(env('QUACK_AGENT'));
 
-const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, imageModel: imageModelRef(deployment) });
+const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec });
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
   ? await startPublisher(session, { url: process.env.QUACK_INDEX_URL, token: process.env.QUACK_INDEX_TOKEN, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion }, priceOf: priceOf(deployment) })
   : undefined;

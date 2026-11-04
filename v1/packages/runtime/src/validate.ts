@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { declaredEnv, deploymentEnv, loadAgent, parseDeployment } from '@quack/session';
+import { declaredEnv, deploymentEnv, loadAgent, parseDeployment, resolveDeployment } from '@quack/session';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
 export interface Validation { loaded: number; failures: string[] }
@@ -8,8 +8,9 @@ export interface Validation { loaded: number; failures: string[] }
 const subdirs = (root: string) => (existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => join(root, d.name)) : []);
 
 /** Loads every bundle under agentsDir and every session's pinned agent-def/agent.json under dataDir the way main.ts does. */
-export async function validate(opts: { config: string; agentsDir: string; dataDir: string }): Promise<Validation> {
-  const deployment = parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8')));
+export async function validate(opts: { config: string; agentsDir: string; dataDir: string; fetch?: typeof fetch }): Promise<Validation> {
+  // Models are listed from the providers; a provider that cannot be reached falls back to its hand-written entries.
+  const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8'))), opts.fetch);
   const paths = [...subdirs(opts.agentsDir).map((d) => join(d, 'agent.json')), ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
   const result: Validation = { loaded: 0, failures: [] };
   for (const name of deploymentEnv(deploymentExtensions)) process.env[name] ??= 'placeholder';

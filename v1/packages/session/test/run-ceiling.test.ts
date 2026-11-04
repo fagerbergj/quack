@@ -52,7 +52,7 @@ test('a run within the ceiling is untouched, and a later run clears an earlier c
 });
 
 test('turnCeiling is a positive integer in an agent definition', () => {
-  const deployment = parseDeployment({ providers: { local: { baseUrl: 'http://x/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } });
+  const deployment = parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl: 'http://x/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } });
   const catalog: Catalog = { coding: () => [] };
   const base = { name: 'r', version: 1, model: 'local/m', extensions: {} };
   assert.equal(parseDefinition({ ...base, turnCeiling: 50 }, deployment, catalog).turnCeiling, 50);
