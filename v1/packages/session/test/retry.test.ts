@@ -118,6 +118,36 @@ test('a second abort records a failure that resume accepts, and the rerun clears
   await session.close();
 });
 
+test('an abort whose queued follow-up already started keeps its retry for that run', async () => {
+  const { session, faux } = await open('abort-followup', [abort(), abort(), fauxAssistantMessage('Paris')]);
+  await session.submit('first', 'q1');
+  await session.submit('second', 'q2', false, 'followUp');
+  await settle(() => answered(session));
+  assert.equal(faux.state.callCount, 3);
+  await session.close();
+});
+
+test('two concurrent resumes do not throw', async () => {
+  const { session } = await open('double-resume', [abort(), abort(), fauxAssistantMessage('Paris')]);
+  await session.submit('Capital of France?', 'q');
+  await settle(async () => (await failures(session)).length > 0);
+  const results = await Promise.all([session.resume(), session.resume()]);
+  assert.ok(results.some((r) => r?.status === 'placed'));
+  await session.close();
+});
+
+test('a model failure present at open is recorded, not retried', async () => {
+  const first = await open('crash-window', [abort(), abort()]);
+  await first.session.submit('hi', 'q');
+  await settle(async () => (await failures(first.session)).length > 0);
+  await first.session.root.commit(async (tx) => { delete (await tx.doc(Failures, first.session.root.id)).items.model; }, BACKGROUND_CONTEXT);
+  await first.session.close();
+  const again = await open('crash-window', [fauxAssistantMessage('never')]);
+  assert.equal((await failures(again.session)).length, 1);
+  assert.equal(again.faux.state.callCount, 0);
+  await again.session.close();
+});
+
 test('a non-abort model error records a failure at once without a rerun', async () => {
   const { session, faux } = await open('bad-request-failure', [fail('400 invalid request'), fauxAssistantMessage('never')]);
   await session.submit('hi', 'q', true);
