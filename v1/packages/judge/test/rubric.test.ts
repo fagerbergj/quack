@@ -29,6 +29,6 @@ test('the threshold decides a pass when no gate fails', () => {
 });
 
 test('feedback names failed gates, missed checks with shares, and pitfalls present', () => {
-  const lines = feedback([r('cites', 'gate', 0.5, 2, ['f2: no line cited']), r('why', 3, 1), r('show', 2, 0.5, 4), r('pref', -3, 0), r('contradicted', -4, 0.5, 2)]);
+  const lines = feedback([r('cites', 'gate', 0.5, 2, ['f2: no line cited']), r('why', 3, 1), r('show', 2, 0.5, 4), r('pref', -3, 0), r('contradicted', -4, 0.5, 2), r('observed', 0, 0), r('seen', 0, 1)]);
   assert.deepEqual(lines, ['gate c.cites (1 of 2): f2: no line cited', 'missed c.show (2 of 4)', 'pitfall c.contradicted (1 of 2)']);
 });

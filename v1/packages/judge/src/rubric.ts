@@ -71,10 +71,10 @@ export function score(rubric: Rubric, results: CheckResult[]): Score {
   return { score: value, gatesFailed, passed: gatesFailed.length === 0 && value >= rubric.threshold };
 }
 
-/** Feedback names every failed gate and every check that fell short, with what the resolvers said. */
+/** Feedback names every failed gate and every check that fell short, with what the resolvers said; a weight-0 check is observe-only and never appears. */
 export function feedback(results: CheckResult[]): string[] {
   return results
-    .filter((r) => r.met !== null && (r.weight === 'gate' || (typeof r.weight === 'number' && r.weight > 0) ? r.met < 1 : r.met > 0))
+    .filter((r) => r.met !== null && r.weight !== 0 && (r.weight === 'gate' || (typeof r.weight === 'number' && r.weight > 0) ? r.met < 1 : r.met > 0))
     .map((r) => {
       const kind = r.weight === 'gate' ? 'gate' : r.weight > 0 ? 'missed' : 'pitfall';
       const share = r.units > 1 ? ` (${Math.round(r.met! * r.units)} of ${r.units})` : '';

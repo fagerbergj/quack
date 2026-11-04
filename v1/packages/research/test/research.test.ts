@@ -13,7 +13,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { deliveredReport, findingItems, formatResults, htmlToText, isPublicAddress, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
-import { missingQuotes } from '../src/report.ts';
+import { excerpt, missingQuotes } from '../src/report.ts';
 
 const servers: Server[] = [];
 const dirs: string[] = [];
@@ -99,16 +99,25 @@ const report = (cite: string) => `## Summary\nDucks fly.\n## Assumptions\nNone.\
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const seeing = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
+// The judge model answers each model check from its question: pitfalls (contradiction, conflict) no, the rest yes.
+function judgeFaux() {
+  const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  const answer = (c: { messages: unknown[] }) => fauxAssistantMessage(JSON.stringify({ choice: /contradict|conflict/.test(JSON.stringify(c.messages)) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+  faux.setResponses(Array.from({ length: 200 }, () => answer));
+  return faux;
+}
+
 async function run(config: Parameters<typeof researchSessionExtensions>[0], steps: (step: ReturnType<typeof seeing>) => FauxResponseStep[], deps?: Parameters<typeof researchSessionExtensions>[1], extra: Extension[] = []) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(steps(seeing(seen)));
   const models = buildModels(parseDeployment({ providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
+  models.setProvider(judgeFaux().provider);
   const m = faux.getModel();
   const dir = await mkdtemp(join(tmpdir(), 'quack-research-'));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...researchSessionExtensions(config, deps), ...extra] } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...researchSessionExtensions({ judgeModel: { provider: 'judge', modelId: 'j' }, ...config }, deps), ...extra] } });
   const done = await session.submit('Do ducks fly?', 'r-1', true);
   return { done, seen, session };
 }
@@ -373,14 +382,23 @@ test('a report with a real quote passes all gates; an invented quote and a bare 
   };
   const good = await verdictOf(GOOD);
   assert.equal((good.verdict as any).passed, true);
+  const units = Object.fromEntries((good.verdict as any).checks.map((c: any) => [c.id, c.units]));
+  assert.deepEqual([units.supported_by_source, units.answers_every_ask, units.no_self_contradiction], [2, 1, 1], 'claim, request and review scopes all reached the judge');
   assert.equal(deliveredReport(good.content, good.verdict as any), GOOD);
 
   const badContent = GOOD.replace('Ducks are birds. [s1]', 'Ducks swim.').replace('"Ducks & geese fly."', '"Geese never fly south"');
   const bad = await verdictOf(badContent);
-  const checks = (bad.verdict as any).checks.filter((c: any) => c.met < 1).map((c: any) => c.id);
+  const checks = (bad.verdict as any).checks.filter((c: any) => c.weight === 'gate' && c.met < 1).map((c: any) => c.id);
   assert.deepEqual(checks, ['findings_cited', 'quotes_exist']);
   const text = deliveredReport(bad.content, bad.verdict as any)!;
   assert.match(text, /^- Ducks swim\. \(no source cited\)$/m);
   assert.match(text, /^- The page says "Geese never fly south" \[s1\] \(quote not found in the cited source\)$/m);
   assert.match(text, /gate claims_grounded\.findings_cited/);
+});
+
+test('excerpt keeps the pieces that share the claim\'s figures and words, in page order, and short pages whole', () => {
+  const page = Array.from({ length: 200 }, (_, i) => `Filler line ${i} about nothing relevant at all.`).join('\n') + '\nThe city council approved a budget of 4.2 million for harbour repairs.\n' + 'More filler. '.repeat(200);
+  const out = excerpt(page, 'Council approved a 4.2 million harbour budget');
+  assert.ok(out.length <= 4000 && out.includes('approved a budget of 4.2 million'));
+  assert.equal(excerpt('short page', 'anything'), 'short page');
 });
