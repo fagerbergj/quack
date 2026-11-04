@@ -8,6 +8,7 @@ import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
 import { lookExtension, NO_IMAGE_MODEL, saveImages } from './images.ts';
+import { resumeModelFault, watchModelFaults } from './model-fault.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -106,6 +107,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const stale = current.instructions !== agent.instructions || current.model?.provider !== agent.model.provider || current.model?.modelId !== agent.model.modelId;
   if (stale) await root.configure({ model: agent.model, instructions: agent.instructions ?? null }, ctx);
   harness.resume();
+  await watchModelFaults(harness, root, log);
 
   const dispatch = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.dispatch)?.dispatch;
   const resume = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.resume)?.resume;
@@ -216,7 +218,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       if (record.status === 'unanswered') return { submissionId, status: 'unanswered', reason: String(record.reason), detail: record.detail === undefined ? undefined : String(record.detail) };
       return { submissionId, status: record.status };
     },
-    resume: async () => (await resume?.({ harness, root })) ?? null,
+    resume: async () => (await resume?.({ harness, root })) ?? (await resumeModelFault(root, harness)),
     close: async () => {
       await harness.close(ctx);
     },

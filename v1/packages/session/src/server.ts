@@ -94,6 +94,7 @@ async function abort(session: Session): Promise<[number, unknown]> {
 
 async function resume(session: Session): Promise<[number, unknown]> {
   const result = await session.resume();
+  if (result === 'busy') return [409, { error: 'session busy: a run is in progress' }];
   return result ? [202, result] : [409, { error: 'no failed run to resume' }];
 }
 
