@@ -43,7 +43,7 @@ function questionFacts(questions: { items: Record<string, Question> } | undefine
     const state = q.answer ? 'answered' : q.closed ? 'closed' : 'pending';
     return {
       id: `question:${id}`, kind: 'question', rev: state === 'pending' ? 1 : 2, at: q.answer?.at ?? q.askedAt,
-      data: { question: q.question, options: q.options, evidence: q.evidence, askedAt: q.askedAt, state, choice: q.answer?.choice ?? null, by: q.answer?.by ?? null },
+      data: { question: q.question, options: q.options, evidence: q.evidence, header: q.header ?? null, title: q.title ?? null, detail: q.detail ?? null, optionDescriptions: q.optionDescriptions ?? {}, suggested: q.suggested ?? null, freeText: q.freeText ?? false, askedAt: q.askedAt, state, choice: q.answer?.choice ?? null, by: q.answer?.by ?? null },
     };
   });
 }

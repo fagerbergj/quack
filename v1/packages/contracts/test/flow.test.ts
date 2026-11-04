@@ -55,13 +55,14 @@ async function nextQuestion(s: Open, seen: string[] = []) {
 const versions = async (s: Open) => (await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds['contract.spec']?.versions ?? [];
 
 const refs = { versioning: '', time: '' };
-const askVersioning = call('ask_question', { id: 'versioning', question: 'Keep the existing unversioned route, or add /v1?', matters: 'A new major version is a new contract for every caller.', suggested: 'Keep the existing unversioned route', alternatives: [{ answer: 'Add /v1 (AIP-185)', tradeoff: 'Room for a breaking change later, but the Sleeper page must move.' }] });
+const received = { versioning: '', time: '' };
+const askVersioning = call('ask_question', { id: 'versioning', header: 'Versioning', title: 'Keep the route or add `/v1`?', detail: 'The Sleeper page calls the route today.', suggestedTradeoff: 'No client change.', question: 'Keep the existing unversioned route, or add /v1?', matters: 'A new major version is a new contract for every caller.', suggested: 'Keep the existing unversioned route', alternatives: [{ answer: 'Add /v1 (AIP-185)', tradeoff: 'Room for a breaking change later, but the Sleeper page must move.' }] });
 const askTime = call('ask_question', { id: 'time', question: 'How are run times written?', matters: 'Callers parse them.', suggested: 'ISO 8601 string', alternatives: [{ answer: 'Unix seconds', tradeoff: 'Smaller, but unreadable in logs.' }] });
 const v1Script: Step[] = [
   call('read_guide', {}),
   askVersioning,
-  (c) => ((refs.versioning = refIn(c)), askTime(c)),
-  (c) => ((refs.time = refIn(c)), call('read', { path: 'packages/sleeper/src/service.ts' })(c)),
+  (c) => ((refs.versioning = refIn(c)), (received.versioning = text(c)), askTime(c)),
+  (c) => ((refs.time = refIn(c)), (received.time = text(c)), call('read', { path: 'packages/sleeper/src/service.ts' })(c)),
   write(() => scheduleSpecV1(refs)),
   call('submit_contract', {}),
   () => fauxAssistantMessage('Spec version 1 is sealed.'),
@@ -71,12 +72,14 @@ async function defineV1(s: Open) {
   const run = s.submit('Define GET /apps/sleeper/schedule for the Sleeper page', 'r-1', true);
   const q1 = (await nextQuestion(s))[0];
   assert.deepEqual(q1.options, ['Keep the existing unversioned route', 'Add /v1 (AIP-185)', 'You decide']);
+  assert.deepEqual([q1.header, q1.title, q1.detail, q1.suggested, q1.optionDescriptions], ['Versioning', 'Keep the route or add `/v1`?', 'The Sleeper page calls the route today.', 0, { 'Keep the existing unversioned route': 'No client change.', 'Add /v1 (AIP-185)': 'Room for a breaking change later, but the Sleeper page must move.' }]);
   assert.match(q1.evidence!, /Suggested: Keep the existing unversioned route[\s\S]*- Add \/v1 \(AIP-185\): Room for a breaking change/);
   assert.equal((await versions(s)).length, 0, 'nothing is sealed while a question is open');
-  assert.equal(await answerQuestion(s.root, q1.id, q1.options[0], 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, q1.id, { choice: q1.options[0], note: 'Keep it boring.' }, 'jf', ctx), 'ok');
   const q2 = (await nextQuestion(s, [q1.id]))[0];
   assert.equal(q2.question, 'How are run times written?');
-  assert.equal(await answerQuestion(s.root, q2.id, 'You decide', 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, q2.id, { text: 'ISO 8601, always UTC' }, 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, q2.id, 'You decide', 'jf', ctx), 'answered', 'the first answer stands');
   return { run, q1, q2 };
 }
 
@@ -84,6 +87,8 @@ test('the question flow asks one at a time and seals version 1 only after the an
   const s = await open(v1Script);
   const { run, q1, q2 } = await defineV1(s);
   const done = await run;
+  assert.match(received.versioning, /^Answer: Keep the existing unversioned route\. Note: Keep it boring\.\n/);
+  assert.match(received.time, /^Answer in their own words: ISO 8601, always UTC\n/);
   assert.equal(done.status === 'done' && done.answer, 'Spec version 1 is sealed.');
   const [v1] = await versions(s);
   assert.equal(v1.summary, 'Sleeper schedule endpoint, version 1');

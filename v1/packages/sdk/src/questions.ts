@@ -8,8 +8,15 @@ export type Question = {
   question: string;
   options: string[];
   evidence: string | null;
+  // Absent in questions stored before these existed; readers treat undefined as null / {}.
+  header?: string | null;
+  title?: string | null;
+  detail?: string | null;
+  optionDescriptions?: Record<string, string>;
+  suggested?: number | null;
+  freeText?: boolean;
   askedAt: number;
-  answer: { choice: string; by: string; at: number } | null;
+  answer: { choice: string; by: string; at: number; note?: string; text?: string } | null;
   /** The run that asked ended without an answer, so nobody is waiting on it. */
   closed: boolean;
 };
@@ -32,16 +39,33 @@ export type OpenQuestion = Question & { id: string };
 export const pendingQuestions = (doc: Readonly<QuestionsDoc> | null | undefined): OpenQuestion[] =>
   Object.entries(doc?.items ?? {}).filter(([, q]) => !q.answer && !q.closed).map(([id, q]) => ({ id, ...q }));
 
+/** Longest note or free-text answer accepted. */
+export const MAX_ANSWER_CHARS = 2000;
+
 export type AnswerResult = 'ok' | 'not-asking' | 'answered' | 'bad-choice';
 
 /** Records a person's answer; the first answer stands. */
-export async function answerQuestion(conversation: Conversation, id: string, choice: string, by: string, ctx: Context): Promise<AnswerResult> {
+export type AnswerInput = { choice?: string; note?: string; text?: string };
+
+// Exactly one of choice or text; a note rides with a choice. Both are trimmed, capped, and only taken from questions that opted in.
+function checkInput(q: Question, input: AnswerInput): Omit<NonNullable<Question['answer']>, 'by' | 'at'> | undefined {
+  const note = input.note?.trim();
+  const text = input.text?.trim();
+  if ((input.choice === undefined) === (text === undefined) || (note && text !== undefined)) return undefined;
+  if (note !== undefined && (note.length > MAX_ANSWER_CHARS || (note && !q.freeText))) return undefined;
+  if (text !== undefined) return q.freeText && text && text.length <= MAX_ANSWER_CHARS ? { choice: text, text } : undefined;
+  return q.options.includes(input.choice!) ? { choice: input.choice!, ...(note && { note }) } : undefined;
+}
+
+export async function answerQuestion(conversation: Conversation, id: string, input: AnswerInput | string, by: string, ctx: Context): Promise<AnswerResult> {
+  const given = typeof input === 'string' ? { choice: input } : input;
   return conversation.commit(async (tx): Promise<AnswerResult> => {
     const q = (await tx.doc(Questions, conversation.id)).items[id];
     if (!q || q.closed) return 'not-asking';
     if (q.answer) return 'answered';
-    if (!q.options.includes(choice)) return 'bad-choice';
-    q.answer = { choice, by, at: Date.now() };
+    const checked = checkInput(q, given);
+    if (!checked) return 'bad-choice';
+    q.answer = { ...checked, by, at: Date.now() };
     return 'ok';
   }, ctx);
 }
@@ -62,7 +86,7 @@ export function person(signal?: AbortSignal): Resolver {
       const id = `${String(api.taskId)}:${point.name}`;
       await api.commit(async (tx) => {
         const doc = await tx.doc(Questions, api.conversationId);
-        doc.items[id] ??= { question: point.question, options: point.options, evidence: point.evidence ?? null, askedAt: api.now(), answer: null, closed: false };
+        doc.items[id] ??= { question: point.question, options: point.options, evidence: point.evidence ?? null, header: point.header ?? null, title: point.title ?? null, detail: point.detail ?? null, optionDescriptions: point.optionDescriptions ?? {}, suggested: point.suggested ?? null, freeText: point.freeText ?? false, askedAt: api.now(), answer: null, closed: false };
       }, ctx);
       const watch = await api.watchDoc(Questions, api.conversationId, ctx);
       if (!watch) throw new Error('question state is unavailable');
@@ -75,7 +99,7 @@ export function person(signal?: AbortSignal): Resolver {
         stop?.addEventListener('abort', () => reject(stop.reason), { once: true });
         watch.start(async () => { const a = found(); if (a) resolve({ ...a }); });
       }).finally(() => watch.stop()));
-      return { choice: answer.choice, confidence: 1, reason: `answered by ${answer.by}` };
+      return { choice: answer.choice, confidence: 1, reason: `answered by ${answer.by}`, ...(answer.note && { note: answer.note }), ...(answer.text && { text: answer.text }) };
     },
   };
 }

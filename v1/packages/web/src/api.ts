@@ -52,12 +52,13 @@ async function indexRead<T>(path: string, field: string): Promise<T[] | undefine
   return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
 }
 /** A question an extension escalated to a person; `askedAt` is when it was asked. */
-export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number };
+export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number; header?: string | null; title?: string | null; detail?: string | null; optionDescriptions?: Record<string, string>; suggested?: number | null; freeText?: boolean };
 export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: number };
 export const indexQuestions = () => indexRead<IndexQuestion>('index/questions?state=pending', 'questions');
 export const listQuestions = async (key: string) => (await json<{ questions: Question[] }>(await fetch(`${base(key)}/questions`))).questions;
-export const answerQuestion = async (key: string, id: string, choice: string) =>
-  void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice }) })));
+export type Answer = { choice: string; note?: string } | { text: string };
+export const answerQuestion = async (key: string, id: string, answer: Answer) =>
+  void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(answer) })));
 export type Failure = { step: string; error: string };
 export type IndexFailure = Failure & { session: string; at: number };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');

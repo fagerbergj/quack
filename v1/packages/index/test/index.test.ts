@@ -187,7 +187,7 @@ test('a failed sqlite migration rolls back, so ensure recovers once the cause is
 const ask = defineWorkflow({
   name: 'ask',
   steps: [
-    { name: 'type', kind: 'decision', point: () => ({ question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup' }), resolvers: [{ id: 'unsure', resolve: async () => undefined }] },
+    { name: 'type', kind: 'decision', point: () => ({ question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', title: 'Which kind?', detail: 'Read **the agenda**.', optionDescriptions: { idea: 'A loose thought.' }, suggested: 0 }), resolvers: [{ id: 'unsure', resolve: async () => undefined }] },
     { name: 'file', kind: 'code', run: (c) => `filed as ${(c.prior.type as { choice: string }).choice}` },
   ],
 });
@@ -217,6 +217,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a quest
   const [open] = await until(async () => { const d = await listed('pending'); return d.length ? d : undefined; });
   const id = String(open.id);
   assert.deepEqual([open.session, open.question, open.options, open.evidence], ['chat:9', 'What kind of document is this?', ['meeting', 'idea'], 'Agenda: standup']);
+  assert.deepEqual([open.title, open.detail, open.optionDescriptions, open.suggested], ['Which kind?', 'Read **the agenda**.', { idea: 'A loose thought.' }, 0]);
   const served = ((await (await fetch(`${base}/questions`)).json()) as { questions: Array<Record<string, unknown>> }).questions;
   assert.deepEqual(served.map((q) => [q.id, q.question, q.options, q.evidence, q.askedAt]), [[id, open.question, open.options, open.evidence, open.at]]);
 
