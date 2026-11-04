@@ -936,15 +936,19 @@ async function showFreeText() {
   return within(await screen.findByRole('region', { name: 'Question' }));
 }
 
-test('Add a note selects an option, then Send posts the choice with the note; a plain click is still one step', async () => {
+test('Add a note opens a note that goes with the option tapped, in one tap', async () => {
   const card = await showFreeText();
   await userEvent.click(card.getByRole('button', { name: 'Add a note' }));
-  expect(card.getByRole('button', { name: 'Send' })).toBeDisabled();
-  await userEvent.click(card.getByRole('button', { name: 'idea' }));
-  expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(false);
   await userEvent.type(card.getByLabelText('Note'), 'loose thought');
-  await userEvent.click(card.getByRole('button', { name: 'Send' }));
+  await userEvent.click(card.getByRole('button', { name: 'idea' }));
   expect(sendBody()).toEqual({ choice: 'idea', note: 'loose thought' });
+});
+
+test('an empty note sends the option alone', async () => {
+  const card = await showFreeText();
+  await userEvent.click(card.getByRole('button', { name: 'Add a note' }));
+  await userEvent.click(card.getByRole('button', { name: 'idea' }));
+  expect(sendBody()).toEqual({ choice: 'idea' });
 });
 
 test('Something else sends the typed text; a plain option click posts only the label', async () => {
