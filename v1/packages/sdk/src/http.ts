@@ -8,13 +8,16 @@ export function safeEqual(given: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** An RFC 9457 problem reply; `error` repeats `detail` so readers that predate problem+json keep working. */
+export function sendProblem(res: ServerResponse, status: number, detail: string): void {
+  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail }));
+}
+
 /** The scaffolding every extension HTTP service repeats: JSON replies, a bounded body read and a bearer check. */
 export function serviceHttp(opts: { token?: string; maxBody?: number } = {}) {
   const maxBody = opts.maxBody ?? 1 << 20;
   const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-  // RFC 9457 body; `error` repeats `detail` so readers that predate it keep working.
-  const problem = (res: ServerResponse, status: number, detail: string) =>
-    res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail }));
+  const problem = sendProblem;
   async function readBody(req: IncomingMessage): Promise<Buffer> {
     let size = 0;
     const chunks: Buffer[] = [];
