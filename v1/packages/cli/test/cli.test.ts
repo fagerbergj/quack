@@ -30,6 +30,7 @@ let url: string;
 let calls: Array<{ method: string; path: string; body: unknown; auth?: string }>;
 let frames: unknown[];
 let indexOff = false;
+let streaming = false;
 
 const readBody = async (req: IncomingMessage) => { let s = ''; for await (const c of req) s += c; return s ? JSON.parse(s) : undefined; };
 
@@ -38,6 +39,10 @@ before(async () => {
     const path = decodeURIComponent(req.url!);
     calls.push({ method: req.method!, path, body: await readBody(req), auth: req.headers.authorization });
     const reply = (status: number, body: object) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (path.includes('/invocations')) {
+      const body = calls.at(-1)!.body as { input: string; wait?: boolean };
+      return reply(body.wait ? 200 : 202, body.input === 'fail' ? { status: 'unanswered', reason: 'model_fault' } : body.wait ? { status: 'done', answer: 'final answer' } : { status: 'running' });
+    }
     const idx = /^\/index\/(\w+)/.exec(path);
     if (path === '/sessions') return reply(200, { sessions });
     if (path === '/agents') return reply(200, { agents: [{ name: 'chat', version: 3 }] });
@@ -46,12 +51,19 @@ before(async () => {
     if (path.endsWith('/artifacts')) return reply(200, { artifacts: sealed });
     if (path.endsWith('/questions')) return reply(200, { questions: [{ id: 'q1', question: 'Which?' }] });
     if (path.endsWith('/approvals')) return reply(200, { approvals: [{ id: 'ap1', tool: 'bash' }] });
-    if (path.endsWith('/approvals/ap9')) return reply(409, { error: 'unknown or already decided' });
+    if (path.endsWith('/approvals/ap9')) { res.writeHead(409, { 'content-type': 'application/problem+json' }); return res.end(JSON.stringify({ title: 'Conflict', status: 409, detail: 'unknown or already decided' })); }
     if (path.endsWith('/delete') && path.includes('ui:b')) return reply(409, { error: 'session is running' });
     reply(200, { key: 'ok' });
   });
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
+    if (streaming) {
+      const entry = (role: string, text: string) => ({ kind: 'entry', entry: { model: [{ role, content: [{ type: 'text', text }] }] } });
+      ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go')], live: { run: {} } }));
+      setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20);
+      setTimeout(() => ws.send(JSON.stringify({ type: 'view', live: {} })), 40);
+      return;
+    }
     ws.send(JSON.stringify({ type: 'view', items: [{ kind: 'earlier' }, { kind: 'entry', entry: { model: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] }] } }], live: {} }));
     ws.on('message', (d) => {
       frames.push(JSON.parse(String(d)));
@@ -75,7 +87,7 @@ describe('quack', () => {
   it('lists commands for --help', async () => {
     const r = await cli(['--help']);
     assert.equal(r.code, 0);
-    for (const c of ['sessions', 'show', 'send', 'stop', 'resume', 'rename', 'archive', 'delete', 'export', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
+    for (const c of ['sessions', 'show', 'new', 'send', 'stop', 'resume', 'rename', 'archive', 'unarchive', 'delete', 'export', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents', 'completion', 'eval']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
   });
 
   it('sessions prints the API JSON unchanged with --json and filters by agent', async () => {
@@ -142,6 +154,66 @@ describe('quack', () => {
       ['PATCH', '/sessions/ui:a', { archived: true }],
       ['POST', '/sessions/ui:a/delete', {}],
     ]);
+  });
+
+  it('new starts a session through invocations and prints its key', async () => {
+    const r = await cli(['new', '--agent', 'chat', 'plan', 'it']);
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /^ui:[0-9a-f-]{36}$/);
+    const post = calls.find((c) => c.method === 'POST')!;
+    assert.equal(post.path, `/sessions/${r.stdout}/invocations?agent=chat`);
+    assert.equal((post.body as { input: string }).input, 'plan it');
+    assert.equal((await cli(['new'])).code, 1);
+  });
+
+  it('-p waits for the run and prints only the answer, failing non-zero when it does not finish', async () => {
+    const n = await cli(['new', '-p', '--agent', 'chat', 'hi']);
+    assert.deepEqual([n.code, n.stdout], [0, 'final answer']);
+    assert.match(n.stderr, /^session ui:/);
+    assert.equal((calls.find((c) => c.method === 'POST')!.body as { wait: boolean }).wait, true);
+    const s = await cli(['send', '-p', 'ui:a', 'hi']);
+    assert.deepEqual([s.code, s.stdout], [0, 'final answer']);
+    assert.deepEqual(frames, []);
+    const bad = await cli(['send', '-p', 'ui:a', 'fail']);
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /run unanswered: model_fault/);
+    assert.equal(bad.stdout, '');
+  });
+
+  it('show -f prints new transcript lines until the run ends, and returns at once for an idle session', async () => {
+    assert.equal((await cli(['show', 'ui:a', '-f'])).code, 0);
+    streaming = true;
+    try {
+      const r = await cli(['show', '-f', 'ui:a']);
+      assert.equal(r.code, 0);
+      assert.match(r.stdout, /user: go/);
+      assert.match(r.stdout, /assistant: streamed one$/);
+    } finally {
+      streaming = false;
+    }
+  });
+
+  it('unarchive clears the archived flag', async () => {
+    await cli(['unarchive', 'ui:a']);
+    assert.deepEqual(calls.filter((c) => c.method === 'PATCH').map((c) => c.body), [{ archived: false }]);
+  });
+
+  it('sessions --keys prints one key per line', async () => {
+    assert.equal((await cli(['sessions', '--keys'])).stdout, 'ui:a\nui:b\nui:c');
+  });
+
+  it('completion prints a static script and rejects other shells', async () => {
+    const bash = (await cli(['completion', 'bash'])).stdout;
+    assert.match(bash, /complete -F _quack quack/);
+    assert.match(bash, /compgen -W "sessions show new send /);
+    assert.match(bash, /show\|/);
+    assert.match((await cli(['completion', 'zsh'])).stdout, /bashcompinit/);
+    assert.equal((await cli(['completion', 'fish'])).code, 1);
+  });
+
+  it('eval hands its arguments to the eval package untouched', async () => {
+    const r = await cli(['eval', '--concurrency=2', 'dataset'], { LANGFUSE_BASE_URL: '', PATH: process.env.PATH ?? '' });
+    assert.equal(r.code, 1);
   });
 
   it('export writes the session file, named from the key by default', async () => {

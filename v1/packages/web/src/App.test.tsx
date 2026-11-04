@@ -54,7 +54,7 @@ const stubViewport = (desktop: boolean, wide = false) =>
 let routes: Record<string, unknown>;
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const hit = routes[`${init?.method ?? 'GET'} /${url}`];
-  return new Response(JSON.stringify(hit ?? { error: 'not found' }), { status: hit ? 200 : 404 });
+  return new Response(JSON.stringify(hit ?? { title: 'Not Found', detail: 'not found' }), { status: hit ? 200 : 404, headers: { 'content-type': hit ? 'application/json' : 'application/problem+json' } });
 });
 
 beforeEach(() => {

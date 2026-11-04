@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { sendProblem } from './problem.ts';
 import { forward } from './apps.ts';
 import { readBody } from './server.ts';
 
@@ -21,8 +22,6 @@ export function credentialBroker(opts: { ttlMs?: number; now?: () => number } = 
   const services = new Map<string, { url: string; auth: Record<string, string> }>();
   const issued = new Map<string, { key: string; exp: number }>();
 
-  const send = (res: ServerResponse, status: number, error: string) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ error }));
-
   return {
     /** `auth` is the header set sent upstream; a string is a bearer token. */
     register: (name: string, url: string, auth: string | Record<string, string>) => void services.set(name, { url: url.replace(/\/$/, ''), auth: typeof auth === 'string' ? { authorization: `Bearer ${auth}` } : auth }),
@@ -39,11 +38,11 @@ export function credentialBroker(opts: { ttlMs?: number; now?: () => number } = 
       if (!match) return false;
       const presented = sessionToken(req);
       const grant = presented ? issued.get(presented) : undefined;
-      if (!grant || grant.exp <= now()) return send(res, 401, 'unauthorized'), true;
+      if (!grant || grant.exp <= now()) return sendProblem(res, 401, 'unauthorized'), true;
       const service = services.get(match[1]);
-      if (!service) return send(res, 404, 'no such service'), true;
+      if (!service) return sendProblem(res, 404, 'no such service'), true;
       const body = await readBody(req).catch(() => undefined);
-      if (!body) return send(res, 413, 'body too large'), true;
+      if (!body) return sendProblem(res, 413, 'body too large'), true;
       await forward(req, res, new URL(`${service.url}${match[2] ?? ''}${match[3] ?? ''}`), service.auth, body);
       return true;
     },

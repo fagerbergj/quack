@@ -21,18 +21,19 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
       throw new ApiError(`cannot reach ${root}: ${e.cause instanceof Error ? e.cause.message : e.message}`, 0);
     });
     const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiError(data?.error ?? `HTTP ${res.status}`, res.status);
+    if (!res.ok) throw new ApiError(data?.detail ?? data?.error ?? `HTTP ${res.status}`, res.status);
     return data;
   }
 
   // Resolves with the first frame `want` returns a value for; a close or error before that rejects.
-  function socket<T>(key: string, onOpen: ((ws: WebSocket) => void) | undefined, want: (frame: Json) => T | undefined): Promise<T> {
+  // `ms` 0 waits without a deadline, for a stream that ends when the run does.
+  function socket<T>(key: string, onOpen: ((ws: WebSocket) => void) | undefined, want: (frame: Json) => T | undefined, ms = socketMs): Promise<T> {
     const url = new URL(`${root}/${path(key)}/ws`);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url);
       const fail = (m: string) => { clearTimeout(timer); ws.close(); reject(new ApiError(m, 0)); };
-      const timer = setTimeout(() => fail(`cannot reach ${url.origin}: no answer in ${socketMs / 1000}s`), socketMs);
+      const timer = ms ? setTimeout(() => fail(`cannot reach ${url.origin}: no answer in ${ms / 1000}s`), ms) : undefined;
       ws.onopen = () => onOpen?.(ws);
       ws.onerror = () => fail(`cannot reach ${url.origin}`);
       ws.onclose = () => fail('connection closed before the server answered');
@@ -72,6 +73,13 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     resume: (key: string) => call(`${path(key)}/resume`, 'POST'),
     rename: (key: string, title: string) => call(path(key), 'PATCH', { title }),
     archive: (key: string) => call(path(key), 'PATCH', { archived: true }),
+    unarchive: (key: string) => call(path(key), 'PATCH', { archived: false }),
+    /** The distributor creates the session on its first invocation. With `wait` the answer is the run's outcome; a long run holds the request open. */
+    invoke: (key: string, input: string, o: { agent?: string; wait?: boolean } = {}): Promise<{ status: string; answer?: string; reason?: string; detail?: string }> =>
+      call(`${path(key)}/invocations${o.agent ? `?agent=${encodeURIComponent(o.agent)}` : ''}`, 'POST', { input, requestId: `cli:${Date.now()}`, wait: o.wait }),
+    /** Calls `onFrame` for every view frame and resolves when the run is over (at once if none is running). */
+    follow: (key: string, onFrame: (items: any[] | undefined) => void) =>
+      socket<true>(key, undefined, (f) => (f.type !== 'view' ? undefined : (onFrame(f.items), f.live?.run === undefined ? true : undefined)), 0),
     remove: (key: string) => call(`${path(key)}/delete`, 'POST', {}),
     /** Returns once the server accepts the message; the run is not streamed. */
     send: (key: string, input: string) => socket(key, (ws) => ws.send(JSON.stringify({ type: 'input', input })), (f) => (f.type === 'accepted' ? f : undefined)),

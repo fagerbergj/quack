@@ -6,6 +6,7 @@ import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { authorized } from '@quack/index';
 import { serviceHttp } from '@quack/sdk';
+import { sendProblem } from './problem.ts';
 import { AgentError, type HostDriver, type SessionInfo } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
@@ -217,7 +218,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
   // a stopped session has none to show here (its store is not read) until it wakes. shortcut: the session index replaces this.
   async function peekApprovals(key: string, search: string, res: ServerResponse) {
-    if ((await driver.agentOf(key)) === undefined) return send(res, 404, { error: 'no such session' });
+    if ((await driver.agentOf(key)) === undefined) return sendProblem(res, 404, 'no such session');
     if (!driver.running().includes(key)) return send(res, 200, { approvals: [] });
     const upstream = await fetch(`${await driver.ensure(key)}/approvals${search}`);
     res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
@@ -227,7 +228,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   // One self-contained file: the session's metadata beside its transcript and sealed artifacts, as a download.
   async function exportSession(info: SessionInfo, url: string, res: ServerResponse) {
     const upstream = await fetch(`${url}/export`);
-    if (!upstream.ok) return send(res, 502, { error: 'session export failed' });
+    if (!upstream.ok) return sendProblem(res, 502, 'session export failed');
     const { running: _running, ...session } = info;
     const name = `quack-${info.key.replace(/[^A-Za-z0-9._-]+/g, '-')}.json`;
     res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': `attachment; filename="${name}"` });
@@ -259,7 +260,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
 
   async function exportRoute(key: string, agent: string | undefined, res: ServerResponse) {
     const info = (await driver.sessions()).find((x) => x.key === key);
-    if (!info) return send(res, 404, { error: 'no such session' });
+    if (!info) return sendProblem(res, 404, 'no such session');
     await withSession(key, agent, 'GET /export', async (url) => void (await exportSession(info, url, res)));
   }
 
@@ -277,11 +278,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (!name || (req.method === 'GET' ? match[2]?.startsWith('/') : match[2] !== '/promote')) return false;
     if (req.method === 'GET') {
       const found = await driver.agent(name, match[3] ? Number(match[3]) : undefined);
-      return send(res, found ? 200 : 404, found ?? { error: 'no such agent version' }), true;
+      return (found ? send(res, 200, found) : sendProblem(res, 404, 'no such agent version')), true;
     }
-    if (!req.headers['content-type']?.startsWith('application/json')) return send(res, 415, { error: 'send JSON' }), true;
+    if (!req.headers['content-type']?.startsWith('application/json')) return sendProblem(res, 415, 'send JSON'), true;
     const { version } = ((await json(req).catch(() => null)) ?? {}) as { version?: unknown };
-    if (typeof version !== 'number') return send(res, 400, { error: 'version must be a number' }), true;
+    if (typeof version !== 'number') return sendProblem(res, 400, 'version must be a number'), true;
     const status = await driver.promote(name, version);
     console.log(`agent ${name} version ${version} promoted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
     send(res, 200, { name, version, status });
@@ -305,8 +306,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const why = driver.running().includes(key) || holds.get(key) || stopping.has(key) ? 'is running'
       : (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
         : (await opts.retire!.waiting(key)) ? 'is waiting on a person' : undefined;
-    if (why) return send(res, 409, { error: `session ${why}` });
-    if (!(await driver.remove(key))) return send(res, 404, { error: 'no such session' });
+    if (why) return sendProblem(res, 409, `session ${why}`);
+    if (!(await driver.remove(key))) return sendProblem(res, 404, 'no such session');
     await opts.retire!.forget(key);
     active.delete(key);
     notes.delete(key);
@@ -317,8 +318,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const match = req.method === 'DELETE' && opts.retire?.token ? /^\/sessions\/([^/?]+)$/.exec(req.url ?? '') : null;
     if (!match) return false;
     const key = safeDecode(match[1]);
-    if (!authorized(req, opts.retire!.token!)) send(res, 401, { error: 'unauthorized' });
-    else if (!key || !KEY.test(key)) send(res, 400, { error: 'invalid session key' });
+    if (!authorized(req, opts.retire!.token!)) sendProblem(res, 401, 'unauthorized');
+    else if (!key || !KEY.test(key)) sendProblem(res, 400, 'invalid session key');
     else await retire(key, res);
     return true;
   }
@@ -336,11 +337,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   // Archiving hides a session from the lists, so one mid-run or waiting on a person is refused.
   async function patch(key: string, req: IncomingMessage, res: ServerResponse) {
     const change = parsePatch(await json(req).catch(() => null));
-    if (typeof change === 'string') return send(res, 400, { error: change });
+    if (typeof change === 'string') return sendProblem(res, 400, change);
     const { title, archived } = change;
-    if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return send(res, 409, { error: "Can't archive a session that is running or waiting on you." });
+    if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return sendProblem(res, 409, "Can't archive a session that is running or waiting on you.");
     const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
-    if (done.includes(false)) return send(res, 404, { error: 'no such session' });
+    if (done.includes(false)) return sendProblem(res, 404, 'no such session');
     send(res, 200, { key });
   }
 
@@ -350,8 +351,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const match = opts.retire && /^\/sessions\/([^/?]+)(\/delete)?$/.exec(req.url ?? '');
     if (!match || req.method !== (match[2] ? 'POST' : 'PATCH')) return false;
     const key = safeDecode(match[1]);
-    if (!key || !KEY.test(key)) send(res, 400, { error: 'invalid session key' });
-    else if (!req.headers['content-type']?.startsWith('application/json')) send(res, 415, { error: 'send JSON' });
+    if (!key || !KEY.test(key)) sendProblem(res, 400, 'invalid session key');
+    else if (!req.headers['content-type']?.startsWith('application/json')) sendProblem(res, 415, 'send JSON');
     else if (match[2]) {
       console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
       await retire(key, res);
@@ -378,9 +379,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       if (await listing(req, res) || await removal(req, res)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
-      if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
+      if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return sendProblem(res, 404, 'not found');
       const target = sessionPath(req.url);
-      if (!target) return send(res, 400, { error: 'invalid session key' });
+      if (!target) return sendProblem(res, 400, 'invalid session key');
       const { key, path, search, agent } = target;
       if (req.method === 'GET' && path === '/approvals') return await peekApprovals(key, search, res);
       if (req.method === 'GET' && path === '/export') return await exportRoute(key, agent, res);
@@ -389,7 +390,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
         await forward(url + path + search, req.method ?? 'GET', body, res, req.headers['x-authentik-username']?.toString());
       });
     } catch (err) {
-      send(res, errorStatus(err), { error: err instanceof Error ? err.message : String(err) });
+      sendProblem(res, errorStatus(err), err instanceof Error ? err.message : String(err));
     }
   });
   server.on('upgrade', async (req, socket, head) => {
