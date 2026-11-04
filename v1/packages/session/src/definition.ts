@@ -176,6 +176,14 @@ function withoutRemoved(raw: Record<string, unknown>): Record<string, unknown> {
   return gone.length ? { ...raw, extensions: Object.fromEntries(Object.entries(raw.extensions).filter(([name]) => !gone.includes(name))) } : raw;
 }
 
+function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
+  if (!isObject(extensions)) return ['extensions must be an object of name to config'];
+  const problems = Object.entries(extensions).flatMap(([name, config]) => catalog[name]
+    ? (catalog[name].validate?.(config, deployment) ?? [])
+    : [`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`]);
+  return [...problems, ...resolveExtensions(Object.keys(extensions), catalog).problems];
+}
+
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
 export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
@@ -190,14 +198,7 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
   problems.push(...retentionProblems(raw.retention), ...ceilingProblems(raw.turnCeiling));
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
-  if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
-  else {
-    for (const [name, config] of Object.entries(raw.extensions)) {
-      if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
-      else problems.push(...(catalog[name].validate?.(config, deployment) ?? []));
-    }
-    problems.push(...resolveExtensions(Object.keys(raw.extensions), catalog).problems);
-  }
+  problems.push(...extensionProblems(raw.extensions, deployment, catalog));
   if (problems.length) throw new Error(`invalid agent definition:\n- ${problems.join('\n- ')}`);
   return { ...raw, model } as AgentDefinition;
 }
