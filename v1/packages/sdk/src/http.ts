@@ -71,6 +71,9 @@ export function inProcessFetch(dispatch: (req: IncomingMessage, res: ServerRespo
       });
       Object.defineProperty(res, 'headersSent', { get: () => head !== undefined });
       res.once('error', reject);
+      // Aborting must end the call as it would over a socket: stop() paths abort held requests and await them.
+      if (request.signal.aborted) return reject(request.signal.reason);
+      request.signal.addEventListener('abort', () => void res.destroy(request.signal.reason), { once: true });
       try {
         void Promise.resolve(dispatch(req as unknown as IncomingMessage, res as unknown as ServerResponse)).catch(reject);
       } catch (err) {

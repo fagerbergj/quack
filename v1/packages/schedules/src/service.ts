@@ -112,11 +112,10 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
   }
 
   // Policy for D24: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.
-  async function sweepRetention(dryRun: boolean) {
+  async function sweepRetention() {
     const { sessions } = (await (await doFetch(`${config.distributorUrl}/sessions`)).json()) as { sessions: Array<{ key: string; running: boolean; lastActivity: string; retention?: { idleDays: number } }> };
     // home:main is the standing Home conversation and must outlive any idle stretch.
     const due = sessions.filter((s) => s.key !== 'home:main' && s.retention && !s.running && +now() - Date.parse(s.lastActivity) > s.retention.idleDays * DAY_MS).map((s) => s.key);
-    if (dryRun) return { dryRun, due };
     const deleted: string[] = [];
     const refused: Array<{ key: string; status: number }> = [];
     for (const key of due) {
@@ -124,17 +123,16 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
       if (r.ok) deleted.push(key);
       else refused.push({ key, status: r.status });
     }
-    return { dryRun, due, deleted, refused };
+    return { due, deleted, refused };
   }
 
-  const dryRunOf = (req: IncomingMessage) => new URL(req.url ?? '', 'http://x').searchParams.get('dryRun') === '1';
   let lastSweep = 0;
   async function tick() {
     await syncAgents();
     if (config.retentionSweep && +now() - lastSweep >= DAY_MS) {
       // Recorded only on success: a deploy restarts us with a still-booting distributor, and the next tick should retry.
       const at = +now();
-      await sweepRetention(false).then(() => (lastSweep = at), (err) => console.error(`schedules: retention: ${err}`));
+      await sweepRetention().then(() => (lastSweep = at), (err) => console.error(`schedules: retention: ${err}`));
     }
     const at = now();
     for (const row of rows()) {
@@ -180,7 +178,6 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
         const { status, body: out } = register(await body(req));
         return send(res, status, out);
       }
-      if (req.method === 'POST' && path === '/retention/sweep') return send(res, 200, await sweepRetention(dryRunOf(req)));
       const one = /^\/(.+)$/.exec(path);
       if (req.method === 'DELETE' && one) return removeApi(decodeURIComponent(one[1]), res);
       send(res, 404, { error: 'not found' });

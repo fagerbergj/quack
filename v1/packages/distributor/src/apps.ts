@@ -42,6 +42,8 @@ export async function mountApps(deployment: DeploymentFile, manifests: Extension
   for (const [name, entry] of Object.entries(deployment.extensions ?? {})) {
     const manifest = manifests.find((m) => m.name === name);
     if (!manifest?.app) throw new Error(`extensions.${name}: no extension named ${name} mounts an app`);
+    const missing = (manifest.peers ?? []).filter((p) => !(p in (deployment.extensions ?? {})));
+    if (missing.length) throw new Error(`extensions.${name}: needs ${missing.join(', ')} listed too, which it calls`);
     const app = await manifest.app({ settings: entry.settings, dbPath: extensionDbPath(deployment, name, env), distributorUrl: o.distributorUrl, fetch, peerFetch, deployment, env });
     apps[name] = Object.assign(app, { pages: manifest.pages });
   }

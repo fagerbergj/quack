@@ -48,6 +48,8 @@ export type ExtensionManifest = {
   app?: (ctx: AppContext) => App | Promise<App>;
   /** The routes of the app a credential-free request reaches; every other route needs a launch credential. */
   pages?: PageRoute[];
+  /** Other apps this app calls through `peerFetch`; mounting refuses a deployment that lists it without them. */
+  peers?: string[];
   /** Extensions this one cannot work without; an agent selecting it gets them too, loaded first. */
   requires?: string[];
   /** Extensions it uses when the agent also enables them (judge: results are checked); loaded before it, never added. */

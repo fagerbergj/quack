@@ -19,6 +19,7 @@ export const manifest: ExtensionManifest = {
   optional: ['judge'],
   settings: settingsProblems,
   app: sleeperApp,
+  peers: ['schedules'],
   pages: [{ method: 'GET', path: '/' }, { method: 'GET', path: '/schedule' }, { method: 'POST', path: /^\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/ }],
   evalAdapters: [waiversEvalAdapter],
   actions: [runJob],

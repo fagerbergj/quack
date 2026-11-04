@@ -98,6 +98,9 @@ test('only extensions the deployment lists are mounted, and a listed name nothin
   const apps = await mountApps(file, manifests, { distributorUrl: 'http://d', distributor: () => {}, env: { QUACK_DATA_DIR: '/data' } });
   assert.deepEqual([Object.keys(apps), built, apps.a.pages], [['a'], ['a:/data/a.db'], [{ method: 'GET', path: '/' }]]);
   await assert.rejects(mountApps({ extensions: { c: {} } }, manifests, { distributorUrl: 'http://d', distributor: () => {}, env: { QUACK_DATA_DIR: '/data' } }), /extensions\.c: no extension named c mounts an app/);
+  const needy: ExtensionManifest = { name: 'n', peers: ['a'], app: () => ({ ...demo }) };
+  await assert.rejects(mountApps({ extensions: { n: {} } }, [...manifests, needy], { distributorUrl: 'http://d', distributor: () => {}, env: { QUACK_DATA_DIR: '/data' } }), /extensions\.n: needs a listed too/);
+  assert.deepEqual(Object.keys(await mountApps({ extensions: { n: {}, a: {} } }, [...manifests, needy], { distributorUrl: 'http://d', distributor: () => {}, env: { QUACK_DATA_DIR: '/data' } })), ['n', 'a']);
 });
 
 test('an app reaches the distributor and another app in process, with no socket or credential', async () => {

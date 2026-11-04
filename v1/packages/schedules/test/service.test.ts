@@ -251,7 +251,7 @@ test('the API rejects bad definitions and an oversized body', async () => {
   assert.deepEqual([big.status, big.headers.get('content-type')], [413, 'application/problem+json']);
 });
 
-test('the retention sweep deletes only sessions idle past their agent retention, and a dry run deletes nothing', async () => {
+test('the retention sweep deletes only sessions idle past their agent retention', async () => {
   const sessions = [
     { key: 'old', running: false, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
     { key: 'recent', running: false, lastActivity: '2026-01-20T00:00:00Z', retention: { idleDays: 14 } },
@@ -268,12 +268,7 @@ test('the retention sweep deletes only sessions idle past their agent retention,
   }) as unknown as typeof fetch;
   clock = new Date('2026-01-25T00:00:00Z');
   const svc = createSchedulesService({ distributorUrl: 'http://d', dbPath: ':memory:', distributorToken: 'admin', retentionSweep: true, now: () => clock, fetch: fetchStub });
-  const server = serveApp(svc).listen(0);
-  open.push({ stop: () => (server.close(), svc.stop()) });
-  await new Promise((r) => server.once('listening', r));
-  const sweep = (query = '') => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/retention/sweep${query}`, { method: 'POST' }).then((r) => r.json());
-  assert.deepEqual(await sweep('?dryRun=1'), { dryRun: true, due: ['old'] });
-  assert.deepEqual(deletes, []);
+  open.push(svc);
   await svc.tick();
   assert.deepEqual(deletes, ['old']);
   await svc.tick();
