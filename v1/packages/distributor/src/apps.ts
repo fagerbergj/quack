@@ -1,27 +1,5 @@
-import { request, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extensionDbPath, inProcessFetch, sendProblem, type App, type DeploymentFile, type ExtensionManifest } from '@quack/sdk';
-
-/** Sends the request to `target` with credentials (`auth` headers) the caller never sees; method, content type and body pass through, and so do the status and body back. */
-export function forward(req: IncomingMessage, res: ServerResponse, target: URL, auth: Record<string, string>, body: Buffer): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const fail = (err: Error) => {
-      // After headers a JSON error would corrupt the partial body, so cut the connection instead.
-      if (res.headersSent) res.destroy();
-      else sendProblem(res, 502, err.message);
-      resolve();
-    };
-    const headers: Record<string, string> = { ...auth };
-    if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
-    const up = request(target, { method: req.method, headers }, (r) => {
-      res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
-      r.pipe(res).on('finish', resolve);
-      r.on('error', fail);
-    });
-    up.on('error', fail);
-    res.on('close', () => up.destroy());
-    up.end(body);
-  });
-}
 
 const sendFailure = (res: ServerResponse, err: unknown) => (res.headersSent ? res.destroy() : sendProblem(res, 500, err instanceof Error ? err.message : String(err)));
 

@@ -2,7 +2,7 @@ import { providerEnv, type DeploymentConfig } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 
 type Proxy = { broker: CredentialBroker; distributorUrl: string; token: string };
-const route = (p: Proxy, name: string) => `${p.distributorUrl}/svc/${name}`;
+const route = (p: Proxy, name: string) => `${p.distributorUrl}/proxy/${name}`;
 
 /** Services that take an API key: the session gets the broker route and its launch token in the slots its client reads; the real key is added server-side. */
 export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy): Record<string, string> {

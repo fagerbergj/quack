@@ -110,7 +110,7 @@ test('the container gets no secrets: keyed services are proxied, the distributor
   assert.ok(env.includes('QUACK_INDEX_URL=http://quack-v1:8080') && env.some((e) => /^QUACK_INDEX_TOKEN=[0-9a-f]{64}$/.test(e)));
   assert.ok(!text.includes('QUACK_GH_SERVICE'), 'an inherited service pair is no longer registered');
   assert.ok(env.includes('PATH=/usr/bin'));
-  assert.ok(env.includes('QUACK_EXA_URL=http://quack-v1:8080/svc/QUACK_EXA') && env.includes('LANGFUSE_BASE_URL=http://quack-v1:8080/svc/LANGFUSE'));
+  assert.ok(env.includes('QUACK_EXA_URL=http://quack-v1:8080/proxy/QUACK_EXA') && env.includes('LANGFUSE_BASE_URL=http://quack-v1:8080/proxy/LANGFUSE'));
   assert.ok(broker.has('QUACK_EXA') && broker.has('LANGFUSE') && !broker.has('QUACK_INDEX'));
 });
 
@@ -140,14 +140,14 @@ test('every provider is routed through the broker, keyed or not, and only keyed 
   assert.ok(!env.join('\n').includes('hosted-secret'));
   assert.ok(env.some((e) => /^QUACK_HOSTED_API_KEY=[0-9a-f]{64}$/.test(e)));
   const written = JSON.parse(await readFile(join(dataDir, sessionDirName('a'), 'deployment.json'), 'utf8'));
-  assert.equal(written.providers.hosted.baseUrl, 'http://quack-v1:8080/svc/PROVIDER_hosted');
-  assert.equal(written.providers.local.baseUrl, 'http://quack-v1:8080/svc/PROVIDER_local');
+  assert.equal(written.providers.hosted.baseUrl, 'http://quack-v1:8080/proxy/PROVIDER_hosted');
+  assert.equal(written.providers.local.baseUrl, 'http://quack-v1:8080/proxy/PROVIDER_local');
   assert.ok(env.some((e) => /^QUACK_LOCAL_API_KEY=[0-9a-f]{64}$/.test(e)), 'a keyless provider still gets the token, which the session sends as its key');
 });
 
 test('provider ids that sanitize alike get separate routes', () => {
   const { config } = proxyProviders({ providers: { 'a.b': { baseUrl: 'http://one' }, a_b: { baseUrl: 'http://two' } } }, {}, { broker: credentialBroker(), distributorUrl: 'http://d', token: 't' });
-  assert.deepEqual(Object.values(config.providers).map((p) => p.baseUrl), ['http://d/svc/PROVIDER_a_b', 'http://d/svc/PROVIDER_a_b_2']);
+  assert.deepEqual(Object.values(config.providers).map((p) => p.baseUrl), ['http://d/proxy/PROVIDER_a_b', 'http://d/proxy/PROVIDER_a_b_2']);
 });
 
 test('an operator can pass a named secret through', () => {
@@ -176,22 +176,37 @@ test('the broker forwards with the real token for a live session token and refus
     res.end('{"ok":true}');
   });
   const broker = credentialBroker();
-  broker.register('QUACK_SLEEPER', upstream, 'long-lived');
+  broker.register('PROVIDER_x', upstream, 'long-lived');
   const front = await listen((req, res) => void broker.route(req, res).then((handled) => handled || res.writeHead(404).end()));
   const token = broker.mint('a');
-  assert.equal((await fetch(`${front}/svc/QUACK_SLEEPER/predict?x=1`, { headers: { authorization: `Bearer ${token}` } })).status, 200);
+  assert.equal((await fetch(`${front}/proxy/PROVIDER_x/predict?x=1`, { headers: { authorization: `Bearer ${token}` } })).status, 200);
   assert.equal(seen, 'GET /predict?x=1 Bearer long-lived undefined');
-  assert.equal((await fetch(`${front}/svc/QUACK_SLEEPER/predict`, { headers: { authorization: 'Bearer long-lived' } })).status, 401);
+  assert.equal((await fetch(`${front}/proxy/PROVIDER_x/predict`, { headers: { authorization: 'Bearer long-lived' } })).status, 401);
   broker.register('QUACK_EXA', upstream, { 'x-api-key': 'real-exa' });
-  assert.equal((await fetch(`${front}/svc/QUACK_EXA/search`, { method: 'POST', headers: { 'x-api-key': token, 'content-type': 'application/json' }, body: '{}' })).status, 200);
+  assert.equal((await fetch(`${front}/proxy/QUACK_EXA/search`, { method: 'POST', headers: { 'x-api-key': token, 'content-type': 'application/json' }, body: '{}' })).status, 200);
   assert.equal(seen, 'POST /search undefined real-exa');
   broker.register('LANGFUSE', upstream, { authorization: 'Basic real' });
   const basic = Buffer.from(`session:${token}`).toString('base64');
-  await fetch(`${front}/svc/LANGFUSE/api/x`, { method: 'POST', headers: { authorization: `Basic ${basic}` }, body: '{}' });
+  await fetch(`${front}/proxy/LANGFUSE/api/x`, { method: 'POST', headers: { authorization: `Basic ${basic}` }, body: '{}' });
   assert.equal(seen, 'POST /api/x Basic real undefined');
-  assert.equal((await fetch(`${front}/svc/NOPE/x`, { headers: { authorization: `Bearer ${token}` } })).status, 404);
+  assert.equal((await fetch(`${front}/proxy/NOPE/x`, { headers: { authorization: `Bearer ${token}` } })).status, 404);
   broker.revoke(token);
-  assert.equal((await fetch(`${front}/svc/QUACK_SLEEPER/predict`, { headers: { authorization: `Bearer ${token}` } })).status, 401, 'revoked');
+  assert.equal((await fetch(`${front}/proxy/PROVIDER_x/predict`, { headers: { authorization: `Bearer ${token}` } })).status, 401, 'revoked');
+});
+
+test('a request body over 1 MiB reaches the upstream intact, and the upstream\'s own status passes back', async () => {
+  const received: Buffer[] = [];
+  const upstream = await listen(async (req, res) => {
+    for await (const c of req) received.push(c);
+    res.writeHead(413, { 'content-type': 'text/plain' }).end('upstream limit');
+  });
+  const broker = credentialBroker();
+  broker.register('PROVIDER_big', upstream, 'real');
+  const front = await listen((req, res) => void broker.route(req, res).then((handled) => handled || res.writeHead(404).end()));
+  const body = Buffer.alloc(3 << 20, 'abc');
+  const res = await fetch(`${front}/proxy/PROVIDER_big/v1/chat`, { method: 'POST', headers: { authorization: `Bearer ${broker.mint('a')}`, 'content-type': 'application/octet-stream' }, body });
+  assert.deepEqual([res.status, await res.text()], [413, 'upstream limit']);
+  assert.ok(Buffer.concat(received).equals(body));
 });
 
 test('a stopped session loses its token', async () => {
@@ -202,7 +217,7 @@ test('a stopped session loses its token', async () => {
   await driver.ensure('a');
   const front = await listen((req, res) => void broker.route(req, res).then(() => res.writableEnded || res.end()));
   broker.register('QUACK_X', front, 't');
-  const status = async () => (await fetch(`${front}/svc/QUACK_X/`, { headers: { authorization: `Bearer ${minted[0]}` } })).status;
+  const status = async () => (await fetch(`${front}/proxy/QUACK_X/`, { headers: { authorization: `Bearer ${minted[0]}` } })).status;
   assert.notEqual(await status(), 401);
   await driver.stop('a');
   assert.equal(await status(), 401);
@@ -264,7 +279,7 @@ test('a model response streams through the broker as it is produced', async () =
   const broker = credentialBroker();
   broker.register('PROVIDER_local', upstream, {});
   const front = await listen((req, res) => void broker.route(req, res));
-  const res = await fetch(`${front}/svc/PROVIDER_local/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${broker.mint('a')}` }, body: '{}' });
+  const res = await fetch(`${front}/proxy/PROVIDER_local/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${broker.mint('a')}` }, body: '{}' });
   const reader = res.body!.getReader();
   assert.match(new TextDecoder().decode((await reader.read()).value), /one/, 'the first chunk arrives before the upstream finishes');
   release();
