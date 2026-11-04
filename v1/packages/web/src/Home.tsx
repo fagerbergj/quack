@@ -23,9 +23,19 @@ function Ask({ failed }: { failed: boolean }) {
     return () => removeEventListener(FOCUS_ASK, focus);
   }, []);
   const [error, setError] = useState('');
+  // A ref, not state: a second submit can land before a re-render, and two first sends would each create a run.
+  const sending = useRef(false);
   const send = async (e: SubmitEvent) => {
     e.preventDefault();
-    if (!input.trim() && !attach.images.length) return;
+    if (sending.current || (!input.trim() && !attach.images.length)) return;
+    sending.current = true;
+    try {
+      await start();
+    } finally {
+      sending.current = false;
+    }
+  };
+  const start = async () => {
     let text = input;
     try {
       if (!(await listSessions()).some((x) => x.key === HOME_KEY)) {

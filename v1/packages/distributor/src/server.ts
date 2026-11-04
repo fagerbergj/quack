@@ -217,6 +217,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
   // a stopped session has none to show here (its store is not read) until it wakes. shortcut: the session index replaces this.
   async function peekApprovals(key: string, search: string, res: ServerResponse) {
+    if ((await driver.agentOf(key)) === undefined) return send(res, 404, { error: 'no such session' });
     if (!driver.running().includes(key)) return send(res, 200, { approvals: [] });
     const upstream = await fetch(`${await driver.ensure(key)}/approvals${search}`);
     res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });

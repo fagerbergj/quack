@@ -119,7 +119,7 @@ test('a malformed session key is a client error', async () => {
 test('an unknown or deleted key answers 404 on every route and starts nothing; an invocation still creates it', async () => {
   const { driver, base, invoke, dataDir } = await startDistributor(60_000);
   const key = encodeURIComponent('research:ghost');
-  const routes: Array<[string, string]> = [['GET', 'messages'], ['HEAD', 'artifacts'], ['GET', 'ping'], ['POST', 'questions/q1'], ['POST', 'approvals/a1'], ['POST', 'abort'], ['POST', 'resume']];
+  const routes: Array<[string, string]> = [['GET', 'messages'], ['HEAD', 'artifacts'], ['GET', 'ping'], ['GET', 'approvals'], ['POST', 'questions/q1'], ['POST', 'approvals/a1'], ['POST', 'abort'], ['POST', 'resume']];
   for (const [method, path] of routes) assert.equal((await fetch(`${base}/sessions/${key}/${path}`, { method, ...(method === 'POST' && { body: '{}' }) })).status, 404, `${method} ${path}`);
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${key}/ws`);
   await new Promise((r) => { ws.onerror = ws.onclose = r; });

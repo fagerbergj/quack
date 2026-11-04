@@ -269,6 +269,25 @@ test('the first-ever Home message creates home:main by invocation before any soc
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
 });
 
+test('a double click on the first-ever Home send creates the session once', async () => {
+  routes['POST /sessions/home%3Amain/invocations?agent=quack'] = { status: 'accepted' };
+  render(<App />);
+  await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'hello');
+  const send = screen.getByRole('button', { name: 'Send' });
+  await act(async () => { send.click(); send.click(); });
+  await waitFor(() => expect(FakeSocket.all).toHaveLength(1));
+  expect(fetchMock.mock.calls.filter(([u, i]) => i?.method === 'POST' && u.includes('home%3Amain/invocations'))).toHaveLength(1);
+});
+
+test('a first send the distributor refuses shows the error and keeps the text', async () => {
+  render(<App />);
+  await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'hello');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(screen.getByRole('textbox', { name: 'What do you need?' })).toHaveValue('hello');
+  expect(FakeSocket.all).toEqual([]);
+});
+
 test('two Home sends go to the same home:main session, queued as follow-ups', async () => {
   await startFromHome('first');
   FakeSocket.all[0].open();
@@ -1737,6 +1756,15 @@ describe('images', () => {
     expect(ws.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: '', images: [{ data: 'QUJD', mimeType: 'image/jpeg' }] }]);
     accept(ws);
     await waitFor(() => expect(screen.queryByRole('img', { name: 'Attached image 1' })).toBeNull());
+  });
+
+  test('an image-only first send on an empty Home says to write a message and starts nothing', async () => {
+    render(<App />);
+    await userEvent.upload(await screen.findByTestId('attach-input'), photo);
+    await screen.findByRole('img', { name: 'Attached image 1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Write a message to start the conversation.');
+    expect(FakeSocket.all).toEqual([]);
   });
 
   test('a photo attached on Home seeds the home:main session and clears once accepted', async () => {
