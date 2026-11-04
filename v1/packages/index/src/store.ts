@@ -14,8 +14,7 @@ export type Backend = {
 
 export type IndexStore = ReturnType<typeof createStore>;
 
-/** Facts keep epoch ms; the wire speaks RFC 3339. */
-/** The first usable epoch-ms candidate, so a fact missing a field cannot 503 a whole list. */
+/** Facts keep epoch ms and the wire speaks RFC 3339; the first usable candidate wins, so a fact missing a field cannot 503 a whole list. */
 const iso = (...candidates: unknown[]) => new Date((candidates.find((c) => typeof c === 'number' && Math.abs(c) <= 8.64e15) as number | undefined) ?? 0).toISOString();
 const newestFirst = (a: { at: number; session: string; id: string }, b: typeof a) => b.at - a.at || a.session.localeCompare(b.session) || a.id.localeCompare(b.id);
 const field = (f: FactRow | undefined, key: string) => (f?.data as Record<string, unknown> | undefined)?.[key];

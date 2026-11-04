@@ -47,7 +47,7 @@ const READS: Record<string, [field: string, rows: (store: IndexStore, q: URLSear
   '/index/artifacts': ['artifacts', (s) => s.artifacts()],
   '/index/approvals': ['approvals', (s, q) => s.approvals(q.get('state') ?? undefined)],
   '/index/questions': ['questions', (s, q) => s.questions(q.get('state') ?? undefined)],
-  '/index/failures': ['failures', (s, q) => s.failures(q.get('state') || undefined)],
+  '/index/failures': ['failures', (s, q) => s.failures(q.get('state') || undefined)], // `||`: an empty state means the default `failed` view
 };
 
 const MAX_PAGE = 1000;

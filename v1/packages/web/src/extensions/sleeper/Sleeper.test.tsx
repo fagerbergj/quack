@@ -236,7 +236,8 @@ test('the week strip lists the runs coming this week, grouped by time, and when 
   expect(within(strip).getByText('Waivers process')).toBeInTheDocument();
   expect(within(strip).getByText('Trade finder')).toBeInTheDocument();
   expect(within(strip).queryByText(/Trends/)).toBeNull();
-  expect(within(strip).getByText(/Lineup lock/)).toBeInTheDocument();
+  // The lock comes from the lineup's artifact, which lands after the schedule.
+  expect(await within(strip).findByText(/Lineup lock/)).toBeInTheDocument();
   expect(within(strip).getByRole('img', { name: 'Today' }).tagName.toLowerCase()).toBe('svg');
 });
 
@@ -244,7 +245,7 @@ test('the week is a timeline: the duck faces right, runs sit at their time, the 
   live = 8;
   page(ALL.filter((r) => !r.key.endsWith(':9:lineup')));
   const strip = await screen.findByRole('region', { name: 'This week' });
-  await within(strip).findByText('Recap and retro');
+  await within(strip).findByText(/Lineup lock/);
   expect(within(strip).getByRole('img', { name: 'Today' })).toHaveStyle({ transform: 'scaleX(-1)' });
   expect(strip.querySelector('[data-marker="lock"]')).not.toBeNull();
   const dots = [...strip.querySelectorAll<HTMLElement>('[data-marker="run"]')];
