@@ -112,6 +112,7 @@ test('a json-schema spec reads its own guide, submits and passes', async () => {
   assert.match(guide, /^# JSON Schema contract guide/);
   const [v] = await versions(s);
   assert.equal((v.verdict as { passed: boolean }).passed, true);
+  assert.equal(v.outcome, 'v1 json-schema');
   assert.equal((JSON.parse(v.content) as ContractSpec).kind, 'json-schema');
   await s.close();
 });

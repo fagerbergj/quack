@@ -102,7 +102,7 @@ export function settingsSpec(): ContractSpec {
     choices: [
       { id: 'closed', pointer: '/additionalProperties', decision: 'The file is closed: unknown keys are rejected.', why: [
         { source: 'guide', text: 'Config files fail loudly on a typo.', ref: 'json-schema#extensibility' },
-        { source: 'code', text: 'The service reads these keys only.', ref: 'packages/sleeper/src/service.ts:85' },
+        { source: 'code', text: 'The service takes the league from its own config, not from a request.', ref: 'packages/sleeper/src/service.ts:82' },
       ] },
     ],
   };

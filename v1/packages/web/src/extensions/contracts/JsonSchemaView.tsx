@@ -11,7 +11,7 @@ function CardView({ spec, doc }: { spec: ContractSpec; doc: Json }) {
   const rows = fields(doc, doc, '');
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
-      <Header spec={spec} count={count(rows.length)} full={false} file={file(doc)} />
+      <Header spec={spec} count={count(rows.filter((f) => f.depth === 0).length)} full={false} file={file(doc)} />
       <Purpose spec={spec} />
       <ul aria-label="Fields" className="m-0 flex list-none flex-col gap-1.5 p-0">
         {rows.filter((f) => f.depth === 0).map((f) => <li key={f.ptr} className="flex items-center gap-2.5 text-[13px]"><code className="min-w-0 flex-1 truncate font-mono">{f.name}</code><span className="font-mono text-xs text-success">{f.type}</span>{f.required && <span className="text-[11px] tracking-wide text-danger">REQUIRED</span>}</li>)}

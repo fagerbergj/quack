@@ -69,6 +69,13 @@ test('diff treats additions and widening as safe', async () => {
   assert.deepEqual((await schemaBreaks({ type: 'number' }, { type: 'integer' })).map((b) => b.id), ['type-narrowed']);
 });
 
+test('diff reports a bound that appears or tightens, and a loosened one is safe', async () => {
+  const was = { type: 'string', minLength: 2, maxLength: 10 };
+  const found = await schemaBreaks(was, { type: 'string', minLength: 3, maxLength: 5, pattern: '^a' });
+  assert.deepEqual(found.map((b) => `${b.id} ${b.path}`).sort(), ['constraint-tightened /maxLength', 'constraint-tightened /minLength', 'constraint-tightened /pattern']);
+  assert.deepEqual(await schemaBreaks(was, { type: 'string', minLength: 1, maxLength: 20 }), []);
+});
+
 test('a json-schema spec passes the structure check, and an unknown kind does not', () => {
   assert.deepEqual(validateSpec(JSON.stringify(settingsSpec())), []);
   assert.match(validateSpec(JSON.stringify({ ...settingsSpec(), kind: 'grpc' })).join(), /kind must be/);

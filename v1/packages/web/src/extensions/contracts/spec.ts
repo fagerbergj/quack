@@ -52,7 +52,8 @@ export function resolve(doc: Json, schema: Json | undefined, at: string, seen: s
 
 export type Field = { name: string; type: string; required: boolean; desc?: string; depth: number; ptr: string; where?: string; facts: Array<[string, string]> };
 
-const typeOf = (s: Json) => (s.format as string | undefined) ?? (Array.isArray(s.type) ? s.type.join(' | ') : (s.type as string | undefined) ?? 'any');
+const enumType = (s: Json) => (Array.isArray(s.enum) ? [...new Set(s.enum.map((v: unknown) => (v === null ? 'null' : typeof v)))].join(' | ') : undefined);
+const typeOf = (s: Json) => (s.format as string | undefined) ?? (Array.isArray(s.type) ? s.type.join(' | ') : (s.type as string | undefined) ?? enumType(s) ?? 'any');
 const show = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 
 function facts(s: Json): Field['facts'] {

@@ -197,9 +197,9 @@ const settings = JSON.stringify(settingsSpec);
 test('a json-schema card lists only the top-level fields', () => {
   render(<>{contracts.card!(sealed(settings))}</>);
   expect(screen.getByRole('heading', { name: 'Sleeper settings file' })).toBeInTheDocument();
-  expect(screen.getByText('4 fields · version 1')).toBeInTheDocument();
+  expect(screen.getByText('3 fields · version 1')).toBeInTheDocument();
   const list = within(screen.getByRole('list', { name: 'Fields' }));
-  expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['leagueIdstringREQUIRED', 'modeany', 'notifyobject']);
+  expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['leagueIdstringREQUIRED', 'modestring', 'notifyobject']);
   expect(screen.queryByText('notifyTime')).toBeNull();
   expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull();
   expect(screen.getByRole('button', { name: 'JSON Schema file' })).toBeInTheDocument();

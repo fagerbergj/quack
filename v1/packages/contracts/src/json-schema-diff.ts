@@ -23,6 +23,17 @@ function typeBreaks(a: Schema, b: Schema, at: string): Break[] {
   return out;
 }
 
+const LOWER = ['minimum', 'exclusiveMinimum', 'minLength', 'minItems', 'minProperties'];
+const UPPER = ['maximum', 'exclusiveMaximum', 'maxLength', 'maxItems', 'maxProperties'];
+
+// A bound that appears or moves inward rejects documents the old one accepted; a changed pattern cannot be compared, so it counts.
+function constraintBreaks(a: Schema, b: Schema, at: string): Break[] {
+  const tighter = (k: string, lower: boolean) => typeof b[k] === 'number' && (typeof a[k] !== 'number' || (lower ? b[k] > a[k] : b[k] < a[k]));
+  const out = [...LOWER.filter((k) => tighter(k, true)), ...UPPER.filter((k) => tighter(k, false))].map((k) => brk('constraint-tightened', `${k} ${typeof a[k] === 'number' ? `moves from ${a[k]} to` : 'is now'} ${b[k]}, so documents the old bound accepted can be invalid`, `${at}/${k}`));
+  if (typeof b.pattern === 'string' && b.pattern !== a.pattern) out.push(brk('constraint-tightened', `pattern ${a.pattern === undefined ? 'is now' : 'changed to'} ${b.pattern}, so documents that matched before may not`, `${at}/pattern`));
+  return out;
+}
+
 function objectBreaks(a: Schema, b: Schema, at: string): Break[] {
   const out: Break[] = [];
   for (const n of Object.keys(props(a))) if (!Object.hasOwn(props(b), n)) out.push(brk('property-removed', `property "${n}" is removed, so readers that use it lose it (writers that send it are rejected if unknown properties are closed)`, `${at}/properties/${esc(n)}`));
@@ -37,6 +48,6 @@ export async function schemaBreaks(prev: unknown, next: unknown): Promise<Break[
   const after = new Map(subschemas(next).map(([s, at]) => [at, s]));
   return [...subschemas(prev)].flatMap(([a, at]) => {
     const b = after.get(at);
-    return b ? [...typeBreaks(a, b, at), ...objectBreaks(a, b, at)] : [];
+    return b ? [...typeBreaks(a, b, at), ...constraintBreaks(a, b, at), ...objectBreaks(a, b, at)] : [];
   });
 }

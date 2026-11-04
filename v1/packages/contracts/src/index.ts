@@ -18,7 +18,7 @@ export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, t
 export { manifest } from './manifest.ts';
 
 // The version is data on the artifact: the summary is cut at 80 characters, which a long title would take it with.
-const specOutcome = (content: string) => { const s = parseSpec(content); return typeof s === 'string' ? undefined : `v${s.version}`; };
+const specOutcome = (content: string) => { const s = parseSpec(content); return typeof s === 'string' ? undefined : s.kind === 'rest' ? `v${s.version}` : `v${s.version} ${s.kind}`; };
 
 export const specKind: ArtifactKind = { kind: CONTRACT_KIND, path: CONTRACT_PATH, validate: validateSpec, summarize: summarizeSpec, outcome: specOutcome };
 
