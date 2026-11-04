@@ -15,7 +15,8 @@ export type Backend = {
 export type IndexStore = ReturnType<typeof createStore>;
 
 /** Facts keep epoch ms; the wire speaks RFC 3339. */
-const iso = (ms: number) => new Date(ms).toISOString();
+/** The first usable epoch-ms candidate, so a fact missing a field cannot 503 a whole list. */
+const iso = (...candidates: unknown[]) => new Date((candidates.find((c) => typeof c === 'number' && Math.abs(c) <= 8.64e15) as number | undefined) ?? 0).toISOString();
 const newestFirst = (a: { at: number; session: string; id: string }, b: typeof a) => b.at - a.at || a.session.localeCompare(b.session) || a.id.localeCompare(b.id);
 const field = (f: FactRow | undefined, key: string) => (f?.data as Record<string, unknown> | undefined)?.[key];
 
@@ -63,7 +64,7 @@ export function createStore(backend: Backend) {
       return (await facts(['question'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
         session: f.session, id: f.id.slice('question:'.length), question: field(f, 'question'), options: field(f, 'options'), evidence: field(f, 'evidence'),
         header: field(f, 'header') ?? null, title: field(f, 'title') ?? null, detail: field(f, 'detail') ?? null, optionDescriptions: field(f, 'optionDescriptions') ?? {}, suggested: field(f, 'suggested') ?? null, freeText: field(f, 'freeText') ?? false,
-        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: iso(field(f, 'askedAt') as number),
+        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: iso(field(f, 'askedAt'), f.at),
       }));
     },
     async failures(state = 'failed') {

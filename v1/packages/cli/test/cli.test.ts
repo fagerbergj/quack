@@ -31,6 +31,7 @@ let calls: Array<{ method: string; path: string; body: unknown; auth?: string }>
 let frames: unknown[];
 let indexOff = false;
 let streaming = false;
+let paged = false;
 
 const readBody = async (req: IncomingMessage) => { let s = ''; for await (const c of req) s += c; return s ? JSON.parse(s) : undefined; };
 
@@ -44,6 +45,7 @@ before(async () => {
       return reply(body.wait ? 200 : 202, body.input === 'fail' ? { status: 'unanswered', reason: 'model_fault' } : body.wait ? { status: 'done', answer: 'final answer' } : { status: 'running' });
     }
     const idx = /^\/index\/(\w+)/.exec(path);
+    if (idx && paged) return reply(200, { [idx[1]!]: (index[idx[1]!] as unknown[]).slice(...(path.includes('pageToken=P2') ? [1] : [0, 1])), ...(!path.includes('pageToken=') && { nextPageToken: 'P2' }) });
     if (path === '/sessions') return reply(200, { sessions });
     if (path === '/agents') return reply(200, { agents: [{ name: 'chat', version: 3 }] });
     if (idx) return indexOff ? reply(404, { error: 'not found' }) : reply(200, { [idx[1]!]: index[idx[1]!] });
@@ -103,6 +105,20 @@ describe('quack', () => {
     assert.deepEqual(await keys('failed'), ['ui:c']);
     assert.deepEqual(await keys('done'), []);
     assert.equal((await cli(['sessions', '--state', 'nope'])).code, 1);
+  });
+
+  it('follows nextPageToken so the list is whole', async () => {
+    const all = index.approvals;
+    index.approvals = [{ session: 'ui:b', id: 'ap1', tool: 'bash', at: 'a' }, { session: 'ui:b', id: 'ap2', tool: 'bash', at: 'b' }];
+    paged = true;
+    try {
+      const out = JSON.parse((await cli(['approvals', '--json'])).stdout) as { approvals: Array<{ id: string }> };
+      assert.deepEqual(out.approvals.map((a) => a.id), ['ap1', 'ap2']);
+      assert.ok(calls.some((c) => c.path === '/index/approvals?state=pending&pageToken=P2'));
+    } finally {
+      paged = false;
+      index.approvals = all;
+    }
   });
 
   it('says so when the index is off', async () => {

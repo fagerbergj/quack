@@ -1074,6 +1074,18 @@ test('a session whose run failed is under Needs you with its step and the error 
   expect(within(needs).getByText('Run failed at decide · Validation failed for tool "decide":')).toBeInTheDocument();
 });
 
+test('the failure list follows nextPageToken, so a second-page failure still needs you', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' }), sess('gh:4', { title: 'Waiver bot' })] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: iso(1) }], nextPageToken: 'MQ' };
+  routes['GET /index/failures?pageToken=MQ'] = { failures: [{ session: 'gh:4', ...failure, at: iso(1) }] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  render(<App />);
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(await within(needs).findByText('Waiver bot')).toBeInTheDocument();
+  expect(within(needs).getByText('Trade finder')).toBeInTheDocument();
+});
+
 test('Home pond goes still when a session has failed', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
   routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: iso(1) }] };

@@ -426,3 +426,10 @@ test('list routes page with an opaque token, clamp pageSize and refuse a forged 
   assert.deepEqual([clamped.approvals.length, typeof clamped.nextPageToken], [1000, 'string'], 'a larger size is clamped, not refused');
   assert.equal((await fetch(`${base}/index/approvals?pageToken=${Buffer.from('-1').toString('base64url')}`)).status, 400);
 });
+
+test('a fact missing its timestamp field still lists, falling back to the row time', async () => {
+  const { store } = await freshSqlite();
+  await store.upsert('a', [{ id: 'question:1', kind: 'question', rev: 1, at: 5, data: { state: 'pending' } }, { id: 'failure:s', kind: 'failure', rev: 1, at: 5, data: { state: 'failed' } }]);
+  assert.equal((await store.questions())[0]!.at, new Date(5).toISOString());
+  assert.equal((await store.failures())[0]!.at, new Date(5).toISOString());
+});
