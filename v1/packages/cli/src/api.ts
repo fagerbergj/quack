@@ -53,7 +53,13 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
   // The index answers 404 when it is off; say so instead of "not found".
   async function index(name: string, query = ''): Promise<Json[]> {
     try {
-      return (await call(`index/${name}${query}`))[name] ?? [];
+      const rows: Json[] = [];
+      for (let token = ''; ;) {
+        const page = await call(`index/${name}${query}${token && `${query ? '&' : '?'}pageToken=${token}`}`);
+        rows.push(...(page[name] ?? []));
+        if (!page.nextPageToken) return rows;
+        token = page.nextPageToken;
+      }
     } catch (e) {
       throw e instanceof ApiError && e.status === 404 ? new ApiError('the session index is off on this distributor', 1) : e;
     }

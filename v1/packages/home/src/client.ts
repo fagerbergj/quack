@@ -15,8 +15,15 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
   const post = (target: string, body?: unknown) => call<unknown>(target, { method: 'POST', ...(body !== undefined && { body: JSON.stringify(body) }) });
   // The index answers 404 when it is off; the lists then say nothing about who needs you.
   const indexed = async (rest: string, field: string): Promise<Array<{ session: string }>> => {
-    const res = await doFetch(`${url}/index/${rest}`).catch(() => undefined);
-    return res?.ok ? ((await res.json()) as Record<string, Array<{ session: string }>>)[field] ?? [] : [];
+    const rows: Array<{ session: string }> = [];
+    for (let token = ''; ;) {
+      const res = await doFetch(`${url}/index/${rest}${token && `${rest.includes('?') ? '&' : '?'}pageToken=${token}`}`).catch(() => undefined);
+      if (!res?.ok) return [];
+      const page = (await res.json()) as Record<string, Array<{ session: string }>> & { nextPageToken?: string };
+      rows.push(...(page[field] ?? []));
+      if (!page.nextPageToken) return rows;
+      token = page.nextPageToken;
+    }
   };
   return {
     sessions: async () => (await call<{ sessions: SessionRow[] }>(`${url}/sessions`)).sessions,

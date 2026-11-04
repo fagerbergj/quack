@@ -127,3 +127,16 @@ test('start refuses an unknown action or bad params without asking or starting a
 test('start lists each action with its summary and params for the model', () => {
   assert.match(tool('start').description, /- ping_thing: Pings a thing\. Params \{.*"thing"/);
 });
+
+test('standing follows nextPageToken until the index has no more', async () => {
+  const urls: string[] = [];
+  const doFetch = (async (u: string) => {
+    urls.push(u.replace(/^.*\/index\//, ''));
+    const field = u.includes('/failures') ? 'failures' : u.includes('/questions') ? 'questions' : 'approvals';
+    const more = field === 'failures' && !u.includes('pageToken');
+    return Response.json({ [field]: more ? [{ session: 'a' }] : field === 'failures' ? [{ session: 'b' }] : [], ...(more && { nextPageToken: 'T' }) });
+  }) as typeof fetch;
+  const { failed } = await distributor('http://x', doFetch).standing();
+  assert.deepEqual([...failed], ['a', 'b']);
+  assert.ok(urls.includes('failures?pageToken=T'));
+});

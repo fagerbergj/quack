@@ -48,8 +48,15 @@ export type IndexArtifact = { session: string; kind: string; version: number; ve
 
 // The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
 async function indexRead<T>(path: string, field: string): Promise<T[] | undefined> {
-  const res = await fetch(path).catch(() => undefined);
-  return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
+  const rows: T[] = [];
+  for (let token = ''; ;) {
+    const res = await fetch(`${path}${token && `${path.includes('?') ? '&' : '?'}pageToken=${token}`}`).catch(() => undefined);
+    if (!res?.ok) return undefined;
+    const page = (await res.json()) as Record<string, T[]> & { nextPageToken?: string };
+    rows.push(...(page[field] ?? []));
+    if (!page.nextPageToken) return rows;
+    token = page.nextPageToken;
+  }
 }
 /** A question an extension escalated to a person; `askedAt` is when it was asked. */
 export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number; header?: string | null; title?: string | null; detail?: string | null; optionDescriptions?: Record<string, string>; suggested?: number | null; freeText?: boolean };

@@ -42,29 +42,52 @@ const STATES: Record<string, string[]> = {
   '/index/failures': ['failed', 'cleared'],
 };
 
-const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<unknown>> = {
-  '/index/sessions': async (s) => ({ sessions: await s.sessions() }),
-  '/index/artifacts': async (s) => ({ artifacts: await s.artifacts() }),
-  '/index/approvals': async (s, q) => ({ approvals: await s.approvals(q.get('state') ?? undefined) }),
-  '/index/questions': async (s, q) => ({ questions: await s.questions(q.get('state') ?? undefined) }),
-  '/index/failures': async (s, q) => ({ failures: await s.failures(q.get('state') || undefined) }),
+const READS: Record<string, [field: string, rows: (store: IndexStore, q: URLSearchParams) => Promise<unknown[]>]> = {
+  '/index/sessions': ['sessions', (s) => s.sessions()],
+  '/index/artifacts': ['artifacts', (s) => s.artifacts()],
+  '/index/approvals': ['approvals', (s, q) => s.approvals(q.get('state') ?? undefined)],
+  '/index/questions': ['questions', (s, q) => s.questions(q.get('state') ?? undefined)],
+  '/index/failures': ['failures', (s, q) => s.failures(q.get('state') || undefined)],
 };
+
+const MAX_PAGE = 1000;
+
+// shortcut: the token is an offset into the freshly sorted list, so a fact landing between pages can shift a row; upgrade to keyset if lists outgrow one page in practice.
+function pageOf(q: URLSearchParams): { offset: number; size: number } | string {
+  const size = Number(q.get('pageSize') || 0);
+  if (!Number.isInteger(size) || size < 0) return 'pageSize must be a non-negative integer';
+  const token = q.get('pageToken');
+  const offset = token ? Number(Buffer.from(token, 'base64url').toString()) : 0;
+  if (!Number.isSafeInteger(offset) || offset < 0 || (token && Buffer.from(String(offset)).toString('base64url') !== token)) return 'pageToken is not one this index issued';
+  return { offset, size: Math.min(size || MAX_PAGE, MAX_PAGE) };
+}
+
+/** Answers a list route, or the problem to send: an unknown `state` or a bad page parameter. */
+async function listed(store: IndexStore, path: string, q: URLSearchParams): Promise<{ body: object } | { bad: string }> {
+  const state = q.get('state');
+  const states = STATES[path];
+  if (state && states && !states.includes(state)) return { bad: `state must be one of ${states.join(', ')}` };
+  const page = pageOf(q);
+  if (typeof page === 'string') return { bad: page };
+  const [field, rows] = READS[path]!;
+  const all = await rows(store, q);
+  const end = page.offset + page.size;
+  return { body: { [field]: all.slice(page.offset, end), ...(end < all.length && { nextPageToken: Buffer.from(String(end)).toString('base64url') }) } };
+}
 
 // Sessions publish with the service token; reads rely on the proxy for auth. A down database answers 503 and the session retries.
 export function indexRoutes(store: IndexStore, token: string, onFacts?: OnFacts) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
-    const read = req.method === 'GET' ? READS[url.pathname] : undefined;
+    const read = req.method === 'GET' && READS[url.pathname];
     const isPublish = req.method === 'POST' && url.pathname === '/index/facts';
     if (!read && !isPublish) return false;
-    const state = url.searchParams.get('state');
-    if (read && state && STATES[url.pathname] && !STATES[url.pathname]!.includes(state)) {
-      problem(res, 400, `state must be one of ${STATES[url.pathname]!.join(', ')}`);
-      return true;
-    }
     try {
-      if (read) send(res, 200, await read(store, url.searchParams));
-      else await publish(req, res, store, token, onFacts);
+      if (read) {
+        const out = await listed(store, url.pathname, url.searchParams);
+        if ('bad' in out) problem(res, 400, out.bad);
+        else send(res, 200, out.body);
+      } else await publish(req, res, store, token, onFacts);
     } catch (err) {
       const big = err instanceof Error && err.message === 'body too large';
       problem(res, big ? 413 : err instanceof SyntaxError ? 400 : 503, err instanceof Error ? err.message : String(err));

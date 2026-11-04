@@ -142,6 +142,10 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   assert.deepEqual(await bogus.json(), { type: 'about:blank', title: 'Bad Request', status: 400, detail: 'state must be one of pending, resolved', error: 'state must be one of pending, resolved' });
   for (const route of ['questions', 'failures']) assert.equal((await fetch(`${base}/index/${route}?state=bogus`)).status, 400);
   assert.equal((await fetch(`${base}/index/approvals?state=`)).status, 200, 'an empty state is no filter');
+  for (const q of ['pageToken=nope', 'pageToken=MQ-', 'pageSize=-1', 'pageSize=x']) {
+    const r = await fetch(`${base}/index/sessions?${q}`);
+    assert.deepEqual([q, r.status, r.headers.get('content-type')], [q, 400, 'application/problem+json']);
+  }
   assert.deepEqual((await get('/index/approvals?state=resolved')).approvals.map((a) => [a.decision, a.by]), [['approve', 'jason']]);
 
   const rows = async (s: IndexStore) => (await s.facts()).sort((a, b) => a.session.localeCompare(b.session) || a.id.localeCompare(b.id));
@@ -400,4 +404,25 @@ test('an old artifact (no stored outcome) still takes a link attached after its 
   const [next] = artifactFacts({ kinds: { 'demo.review': { versions: [{ ...sealed, links: [link] }] } } });
   await store.upsert('s', [next]);
   assert.deepEqual((await store.facts())[0].data.links, [link]);
+});
+
+test('list routes page with an opaque token, clamp pageSize and refuse a forged token', async () => {
+  const { store } = await freshSqlite();
+  const facts: Fact[] = [1, 2, 3, 4, 5].map((n) => ({ id: `approval:a${n}`, kind: 'approval', rev: 1, at: n, data: { tool: 't', state: 'pending', decision: null, by: null, args: null } }));
+  await store.upsert('chat:1', facts);
+  const server = createServer(async (req, res) => { if (!(await indexRoutes(store, TOKEN)(req, res))) res.writeHead(404).end(); });
+  const base = `http://127.0.0.1:${await listen(server)}`;
+  cleanups.push(() => new Promise((r) => server.close(r)));
+  const page = async (q: string) => (await (await fetch(`${base}/index/approvals?${q}`)).json()) as { approvals: Array<{ id: string }>; nextPageToken?: string };
+
+  const one = await page('pageSize=2');
+  const two = await page(`pageSize=2&pageToken=${one.nextPageToken}`);
+  const three = await page(`pageSize=2&pageToken=${two.nextPageToken}`);
+  assert.deepEqual([one, two, three].map((p) => p.approvals.map((a) => a.id)), [['a5', 'a4'], ['a3', 'a2'], ['a1']]);
+  assert.deepEqual([typeof one.nextPageToken, typeof two.nextPageToken, three.nextPageToken], ['string', 'string', undefined]);
+  assert.equal((await page('pageSize=0')).approvals.length, 5, '0 is the default size');
+  await store.upsert('chat:2', Array.from({ length: 1100 }, (_, n) => ({ id: `approval:b${n}`, kind: 'approval' as const, rev: 1, at: 10 + n, data: { tool: 't', state: 'pending', decision: null, by: null, args: null } })));
+  const clamped = await page('pageSize=999999');
+  assert.deepEqual([clamped.approvals.length, typeof clamped.nextPageToken], [1000, 'string'], 'a larger size is clamped, not refused');
+  assert.equal((await fetch(`${base}/index/approvals?pageToken=${Buffer.from('-1').toString('base64url')}`)).status, 400);
 });
