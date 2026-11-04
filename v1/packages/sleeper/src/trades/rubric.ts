@@ -67,11 +67,11 @@ export function tradeEvidence(f: TradeFacts) {
 // The audit's trade table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const tradeRubric: Rubric = {
   name: 'sleeper.trade',
-  version: 2,
+  version: 3,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
-      { id: 'verdict_one_of', label: "Verdict isn't accept, decline or counter", weight: 'gate', code: verdictOneOf },
+      { id: 'verdict_one_of', label: "Verdict isn't send, counter or decline", weight: 'gate', code: verdictOneOf },
       { id: 'give_get_from_my_side', label: "Give and get are from the wrong side", weight: 'gate', code: giveGetFromMySide },
     ] },
     { id: 'case_is_reasoned', checks: [

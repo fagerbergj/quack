@@ -198,17 +198,17 @@ test('the workflow seals a lineup card from the recorded week and the judge pass
   assert.equal(card.starters.length, 9);
   assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
   assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@3', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@4', [], true]);
   assert.deepEqual(verdict.notes, ['close-call news not checked: no news source']);
   assert.ok(!verdict.checks.some((c) => c.id === 'close_call_news'));
-  assert.ok(!judged.some((q) => /Questionable or limited-practice/.test(q)));
+  assert.ok(!judged.some((q) => /Questionable starter/.test(q)));
 });
 
 test('with a news source wired the close calls are scored for news', async () => {
   const { judged, verdict } = await runLineup(async () => [{ title: 'Practice report', url: 'https://www.nfl.com/n', date: hoursAgo(5) }]);
   assert.deepEqual(verdict.notes, []);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
-  assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)));
+  assert.ok(judged.some((q) => /Questionable starter/.test(q)));
 });
 
 test('a player started in two slots fails the card step and the one_player_per_slot gate', async () => {
@@ -351,9 +351,9 @@ test('a failing search leaves a close call with no news rather than failing the 
 test('with Exa news wired the card is judged on close_call_news', async () => {
   const exa = await fakeExa();
   const { verdict, judged } = await runLineup(exaNews({ apiKey: 'k', url: exa.url }));
-  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@3', []]);
+  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@4', []]);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
-  assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)));
+  assert.ok(judged.some((q) => /Questionable starter/.test(q)));
 });
 
 const item = { title: 'Practice report', url: 'https://www.nfl.com/n', date: hoursAgo(5) };
