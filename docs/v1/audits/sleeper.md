@@ -191,3 +191,49 @@ Predictions have no rubric; the scorer (S4, SL-6) compares them with what happen
 - Decide whether v1 wants playoff odds at all. If so, they are a code tool (a simulation, which the v0 reference itself says real products use) and the digest narrates the output. The closed-form text does not port.
 - Replay the ported rubrics before they gate anything (D45). The lineup and waiver weights are guesses until that run.
 - Waiver-scout and lineup-analyst are the first ports worth an A/B: they are the largest prompts and the only ones with a running weekly use. #1726 shows a trimmed prompt can hold quality, but only for trend-scout.
+
+## Port check, 2026-11-04
+
+- **Checked:** `origin/v1` after #2157: the eight `v1/agents/sleeper-*` bundles (all at version 2 before this check), `v1/packages/sleeper/src/*` (facts, workflow, rubric per job) and the chat prompt in `chat.ts`.
+- **Result:** the five contradictions are settled in the ports. Two small prompt-against-code mismatches remained and are fixed in this PR. The rubrics have not been replayed.
+
+### Contradictions and decisions
+
+| Item | State | Where |
+| --- | --- | --- |
+| 1. Projected win totals, Pythagorean and cutoff playoff line | Fixed. The digest prompt forbids any projection, total, win probability or odds and names the standings table as the only playoff line. The odds method was not ported. `no_projection_source` gates it in code. | `agents/sleeper-digest/prompt.md`; `report/rubric.ts:11,33,62`; `report/digest.ts:91` (`in_playoff_line`, `remainingWeeks`) |
+| 2. Three reach/steal definitions | Fixed. One rule, a 5-rank gap, declared on every card; verdict is `as_expected`, not `fair`; the history prompt says never to restate it. | `history/facts.ts:6,14,47-49`; `agents/sleeper-history/prompt.md` |
+| 3. Sleeper against the news | Fixed. Every prompt and the chat prompt say a newer credible report beats Sleeper's lagging designation and that the item names which was followed. The draft-era "Sleeper wins" text did not port. | trends, lineup, waivers, trade prompts; `chat.ts:13`; `trends/rubric.ts` `conflict_stated` |
+| 4. League format that does not exist | Fixed. No prompt hard-codes teams, slots, FAAB or playoff spots; the task states them from the league (`The league has N teams ...`), and FAAB wording is blocked in non-FAAB leagues. | `trades/workflow.ts:36`; `waivers/workflow.ts:32-44`; `waivers/rubric.ts:47-54` |
+| 5. Lineup prompt against SL-6 | Fixed. The prompt says no prediction exists to use; `sleeper_predict` is not called anywhere in v1. | `agents/sleeper-lineup/prompt.md`; `lineup/card.ts:42` |
+| Questionable and Doubtful rates in two tables | Not applicable. The rates appear once, in the lineup prompt. | `agents/sleeper-lineup/prompt.md` |
+| Digest scored as a 200-500 word chat digest | Fixed. The digest rubric scores a story in `summary` and one note per game; no length rule on prose. | `report/rubric.ts` `digestRubric` |
+| Close-loss buckets under 5 and under 10 | Fixed. One definition, under 10, declared on the card. | `history/facts.ts:8,16` |
+| Web search per player, reading every roster | Fixed. Code fetches rosters and searches news for close calls only (`MAX_SEARCHED` caps trends). | `waivers/facts.ts:154`, `lineup/facts.ts:130`, `trends/facts.ts:37` |
+| Draft agent, draft-strategy, season-notes | Not applicable. Dropped; no v1 bundle. | `v1/agents` |
+| Close-call gap: prompt says "within 3", code uses under 3 | Was present, fixed. A bench player exactly 3 points behind was a close call to the prompt and not to `closeCalls`, so no news was fetched for it. The prompt now says "less than 3". | `agents/sleeper-lineup/prompt.md` steps 2 and 5; `lineup/facts.ts:141` |
+| Lineup `close_call_news` question cites "limited-practice" | Was present, fixed. Facts hold only Sleeper's `injury_status`, so no row can be a limited-practice starter. The question now says "Questionable starter". | `lineup/rubric.ts` (rubric v4) |
+| Trade `verdict_one_of` label says "accept" | Was present, fixed. Verdicts are `send`, `counter`, `decline`. | `trades/rubric.ts` (rubric v3) |
+
+Prompts checked against their own rubric and facts, with no other mismatch: cutoffs (lineup 3, waivers 3 and bye lead 2 match `CLOSE_GAP` and `BYE_LEAD`), the digest's eight-close-game and three-week labels, the retro's dated-before-cutoff rule, scoring and waiver type (task text states them), and string caps (schema caps are at or above every length the prompts name).
+
+### What changed
+
+- `agents/sleeper-lineup`: version 3, two wording edits, lock regenerated.
+- `lineup/rubric.ts` v4 and `trades/rubric.ts` v3: one question and one label; lineup test regexes follow.
+
+### Rubric replay (D45)
+
+Not done. No commit, doc or run records a replay of any Sleeper rubric, and each rubric file still carries "unreplayed". It was not run here for three reasons:
+
+- The test fixtures in `v1/packages/sleeper/test/fixtures` are synthetic ("Pond League"). `v1/packages/web/src/extensions/sleeper/fixtures` holds a few real week-8 sealed cards with their old verdicts, but not the facts docs the evidence is rebuilt from. D45's "90% of real rounds" needs recorded prod sessions, which are not in the repo.
+- Only waivers has an eval adapter (`waivers/adapter.ts`). Other cards need `content` and `evidence` inline in the cases file.
+- `replay-judge.ts` needs a deployment file that holds provider config, which this check does not read.
+
+Command to run where the prod session directories and the deployment exist, while `vllm:num_requests_running` at `http://127.0.0.1:9993/metrics` is 2 or lower:
+
+```
+node packages/eval/src/replay-judge.ts --cases <sleeper-cases.json> --deployment <deployment.json> --judge <provider/model> --classifier <provider/model> --repeat 3 --concurrency 1
+```
+
+Each case is `{ "case", "kind": "sleeper.cards", "session": "<dir>" }` for waivers, and `content` plus `evidence` for the other jobs. Read the table for any check at its maximum on more than 90% of rounds, and for cells that differ between repeats (D45, #1956).

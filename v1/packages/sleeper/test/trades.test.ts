@@ -194,7 +194,7 @@ test('the trade workflow seals a card whose news the code searched for each trad
   const { sealed, verdict, judged } = await run(tradeWorkflow(deps(async (p) => (searched.push(p.name), [item]))), OFFER, tradeDecision);
   const c = JSON.parse(sealed.content) as TradeCard;
   assert.deepEqual([c.kind, c.partner.team, c.offers[0].verdict, c.offers[0].news.length, searched], ['trade', 'Pintail Pride', 'send', 2, ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@2', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@3', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'news_per_traded_player'));
   assert.ok(judged.some((q) => /one line item that decides/.test(q)));
 });
@@ -210,7 +210,7 @@ test('the finder workflow searches news only for the players the model picked an
   const { sealed, verdict } = await run(finderWorkflow(deps(async (p) => (searched.push(p.name), [item]))), FINDER, finderDecision);
   const c = JSON.parse(sealed.content) as FinderCard;
   assert.deepEqual([c.kind, c.suggestions.map((s) => s.get.name), searched], ['trade-finder', ['Tom Tail'], ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.trade@2', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.trade@3', [], true]);
 });
 
 test('the weekly finder run starts two hours after waivers process and stays useful a week; a league without a processing day has none', () => {
