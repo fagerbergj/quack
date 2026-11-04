@@ -114,10 +114,9 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   const code = codeResults(opts.rubric, sealed.content, ev);
   const checks = [...code, ...(await modelResults(api, opts, ev, memo, ctx, code, report))];
   const s = score(opts.rubric, checks);
-  const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-  const failedBefore = (doc?.kinds[sealed.kind]?.versions ?? []).filter((v) => v.verdict && !(v.verdict as { passed?: boolean }).passed).length;
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
-  const limit = failedBefore >= opts.maxRevisions;
+  // The same budget the submit tool enforces: failures in this run since its last pass, not the session's.
+  const limit = (await judgedInRun(api, sealed.kind, ctx)) >= opts.maxRevisions;
   const undecided = checks.filter((k) => k.undecided).map((k) => `${k.criterion}.${k.id}`);
   return { run: await runOf(api, ctx), passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
 }

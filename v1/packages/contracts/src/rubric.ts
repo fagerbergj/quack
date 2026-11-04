@@ -57,8 +57,8 @@ export function specEvidence() {
     const spec = parseSpec(sealed.content) as ContractSpec;
     const kind = kinds[spec.kind];
     const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-    // A revision of a failing attempt is a new sealed version but the same spec version; only cleared ones count.
-    const cleared = (doc?.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean; limitReached?: boolean } | null)?.passed || (v.verdict as { limitReached?: boolean } | null)?.limitReached);
+    // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
+    const cleared = (doc?.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
     const prev = cleared.length ? (parseSpec(cleared.at(-1)!.content) as ContractSpec) : undefined;
     const [findings, unresolved, breaking] = await Promise.all([
       kind.check(spec.document),
