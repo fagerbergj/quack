@@ -41,13 +41,13 @@ export function PrSection({ sessionKey, opening, meta, fallbackTitle }: { sessio
       <h2 id="rail-pr" className="m-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase">Pull request</h2>
       <div className="-mx-3 flex flex-col items-start gap-3 rounded-2xl bg-soft px-3 py-3.5">
         <PrChip sessionKey={sessionKey} />
-        <p className="m-0 text-[14.5px] leading-snug font-semibold [overflow-wrap:anywhere]">{`#${number} ${o?.title ?? fallbackTitle}`}</p>
+        <p className="m-0 text-[14.5px] leading-snug font-semibold [overflow-wrap:anywhere]">{`#${number} ${pr?.title ?? o?.title ?? fallbackTitle}`}</p>
         {(o?.headRef || o?.baseRef) && <code className="font-mono text-[12px] text-ink-2 [overflow-wrap:anywhere]">{[o.headRef, o.baseRef].filter(Boolean).join(' → ')}</code>}
         {(lines.length > 0 || pr?.files?.length) && (
           <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13px]">
             {lines.length > 0 && (
               <>
-                <dt className="text-muted">Checks</dt>
+                <dt className="text-muted">Checks at review</dt>
                 <dd className="m-0 flex flex-col gap-0.5">{lines.map((l) => <span key={l.text} className={l.tone}>{l.text}</span>)}</dd>
               </>
             )}

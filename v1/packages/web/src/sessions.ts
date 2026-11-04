@@ -45,7 +45,8 @@ export const failedLine = (f: Failure) => `Run failed at ${f.step} · ${f.error.
 /** The anchor an approval or question card carries in the ledger, which the context rail scrolls to. */
 export const needId = (id: string) => `need-${id}`;
 
-export const compact = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+// 2417000 reads as 2.4M, not 2417k; one decimal only below ten.
+export const compact = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 /** The short spend reading (dollars when the model is priced, else input plus output tokens) and its token breakdown for the tooltip; undefined when nothing was spent. */
 export function spendLabel(s: Spend | undefined): { text: string; title: string } | undefined {

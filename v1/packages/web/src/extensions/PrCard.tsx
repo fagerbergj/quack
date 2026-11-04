@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Markdown } from '../Markdown.tsx';
 
 export type PrMeta = {
-  id: string; headSha?: string;
+  id: string; headSha?: string; title?: string;
   files?: Array<{ path: string; additions: number; deletions: number }>;
   checks?: Array<{ name: string; status: string; conclusion: string | null }>;
   linked?: Array<{ number: number; title: string }>;
