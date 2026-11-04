@@ -1,3 +1,4 @@
+import { slotLimits } from '../src/limits.ts';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
@@ -284,4 +285,8 @@ test('an agent that selects no slots entry is gated when the deployment sets the
 
 test('the real clock\'s sleep rejects at once on an already-aborted signal', async () => {
   await assert.rejects(realClock.sleep(60_000, AbortSignal.abort(new Error('aborted'))), /aborted/);
+});
+
+test('slot limits come from the providers that name slots', () => {
+  assert.deepEqual(slotLimits({ providers: { local: { slots: 6 }, clef: {} } }), { local: 6 });
 });

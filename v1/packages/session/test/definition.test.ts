@@ -7,9 +7,10 @@ import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
+import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
+  defaultModel: 'local/qwen3.8-27b',
   providers: { local: { baseUrl: 'http://127.0.0.1:11436/v1', apiKeyEnv: 'QUACK_LOCAL_KEY', models: { 'qwen3.8-27b': { contextWindow: 262144, maxTokens: 16384, reasoning: true } } } },
 };
 const catalog: Catalog = { coding: () => [], github: (config) => [{ name: `github:${JSON.stringify(config)}` } as never] };
@@ -27,10 +28,10 @@ test('loads a valid deployment and definition into models and an agent spec', as
 
 test('reports every problem in a deployment at once', () => {
   assert.throws(
-    () => parseDeployment({ providers: { local: { baseUrl: 'ftp://x', models: { m: { contextWindow: 0 } } } } }),
-    (err: Error) => /baseUrl must be an http\(s\) URL/.test(err.message) && /models\.m needs positive integer/.test(err.message),
+    () => parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl: 'ftp://x', models: { m: { contextWindow: 0 } } } } }),
+    (err: Error) => /baseUrl must be an http\(s\) URL/.test(err.message) && /models\.m\.contextWindow must be a positive integer/.test(err.message),
   );
-  assert.throws(() => parseDeployment({}), /providers object/);
+  assert.throws(() => parseDeployment({}), (err: Error) => /providers must be an object/.test(err.message) && /defaultModel must be/.test(err.message));
 });
 
 test('reports every problem in a definition at once, naming the available extensions', () => {
@@ -95,11 +96,11 @@ test('a definition loads its prompt file, and a reopened session takes the new p
 });
 
 test('rejects an unknown deployment time zone', () => {
-  assert.throws(() => parseDeployment({ providers: {}, timeZone: 'Mars/Olympus' }), /timeZone must be an IANA zone/);
+  assert.throws(() => parseDeployment({ ...deployment, timeZone: 'Mars/Olympus' }), /timeZone must be an IANA zone/);
 });
 
 test('collects the problems each selected extension reports for its own config', () => {
-  const deployment = parseDeployment({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { omni: { contextWindow: 8192, maxTokens: 512 } } } } });
+  const deployment = parseDeployment({ defaultModel: 'local/omni', providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { omni: { contextWindow: 8192, maxTokens: 512 } } } } });
   const entry = Object.assign(() => [], { validate: (config: unknown, d: unknown) => [`bad ${JSON.stringify(config)} ${Object.keys((d as typeof deployment).providers)}`] });
   const agent = (extensions: object) => ({ name: 'v', version: 1, model: 'local/omni', extensions });
   assert.throws(() => parseDefinition(agent({ picky: { a: 1 } }), deployment, { picky: entry }), /bad {"a":1} local/);
@@ -121,7 +122,7 @@ async function sentBody(images: boolean): Promise<string> {
   try {
     const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
     process.env.QUACK_VISION_TEST_KEY = 'k';
-    const models = buildModels(parseDeployment({ providers: { local: { baseUrl, apiKeyEnv: 'QUACK_VISION_TEST_KEY', models: { omni: { contextWindow: 8192, maxTokens: 512, images } } } } }));
+    const models = buildModels(parseDeployment({ defaultModel: 'local/omni', providers: { local: { baseUrl, apiKeyEnv: 'QUACK_VISION_TEST_KEY', models: { omni: { contextWindow: 8192, maxTokens: 512, images } } } } }));
     const content = [{ type: 'text' as const, text: 'Page 1.' }, { type: 'image' as const, data: 'AAAA', mimeType: 'image/jpeg' }];
     await models.completeSimple(models.getModel('local', 'omni')!, { messages: [{ role: 'user', content, timestamp: 0 }] });
   } finally {
@@ -159,7 +160,7 @@ test('retention must be an idleDays count', () => {
 });
 
 test('model prices default to free, reach the built model, and must be non-negative numbers', () => {
-  const models = (price?: unknown) => parseDeployment({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 512, ...(price !== undefined && { price }) } } } } });
+  const models = (price?: unknown) => parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 512, ...(price !== undefined && { price }) } } } } });
   assert.deepEqual(buildModels(models()).getModel('local', 'm')?.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   assert.deepEqual(buildModels(models({ input: 0.5, output: 2 })).getModel('local', 'm')?.cost, { input: 0.5, output: 2, cacheRead: 0, cacheWrite: 0 });
   for (const bad of [{ input: -1 }, { input: '1' }, { tokens: 1 }, 3]) assert.throws(() => models(bad), /price must map/);
@@ -190,9 +191,38 @@ test('a missing requirement or a cycle fails the definition with a clear message
   assert.throws(() => parseDefinition({ ...base, extensions: { b: {} } }, d, deps), /extension dependency cycle: b -> c -> b/);
 });
 
-test('imageModel must name a configured model declared with images', () => {
-  const models = { omni: { contextWindow: 8192, maxTokens: 512, images: true }, plain: { contextWindow: 8192, maxTokens: 512 } };
-  const config = (imageModel: string) => ({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models } }, imageModel });
-  assert.equal(parseDeployment(config('local/omni')).imageModel, 'local/omni');
-  for (const bad of ['local/plain', 'local/nope', 'omni']) assert.throws(() => parseDeployment(config(bad)), /imageModel must be/);
+test('the root is closed: a removed or misspelled top-level key is rejected and named', () => {
+  for (const key of ['imageModel', 'defualtModel']) assert.throws(() => parseDeployment({ ...deployment, [key]: 'local/omni' }), new RegExp(`unknown top-level key ${key}`));
+  assert.throws(() => parseDeployment({ ...deployment, defaultModel: undefined }), /defaultModel must be "provider\/model"/);
+  assert.throws(() => parseDeployment({ ...deployment, providers: {} }), /at least one provider/);
+  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', slots: 0 } } }), /slots must be a positive integer/);
+  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
+});
+
+const listing = (data: unknown[], ok = true) => (async () => ({ ok, json: async () => ({ data }) })) as unknown as typeof fetch;
+const thin = { defaultModel: 'local/a', providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 } } } } };
+
+test('models merge: discovered ids plus hand-written ones, a hand-written field wins, a model without contextWindow is listed but not selectable', async () => {
+  const fetched = listing([{ id: 'a', meta: { n_ctx: 8192 }, architecture: { input_modalities: ['text', 'image'] } }, { id: 'ids-only' }]);
+  const resolved = await resolveDeployment(parseDeployment({ ...thin, providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 }, peer: { contextWindow: 1000, images: false } } } } }), fetched);
+  assert.deepEqual(resolved.providers.local.models, { a: { contextWindow: 4096, images: true }, 'ids-only': {}, peer: { contextWindow: 1000, images: false } });
+  const built = buildModels(resolved);
+  assert.deepEqual([built.getModel('local', 'a')?.input, built.getModel('local', 'peer')?.input, built.getModel('local', 'ids-only')], [['text', 'image'], ['text'], undefined]);
+  const d = { name: 'x', version: 1, extensions: {} };
+  assert.throws(() => parseDefinition({ ...d, model: 'local/ids-only' }, resolved, {}), /ids-only has no contextWindow/);
+  assert.equal(parseDefinition(d, resolved, {}).model, 'local/a');
+});
+
+test('an endpoint that is missing or down leaves the hand-written models as the whole list', async () => {
+  const down = (async () => { throw new Error('refused'); }) as unknown as typeof fetch;
+  const warn = mock.method(console, 'error', () => {});
+  for (const fetched of [down, listing([], false)]) assert.deepEqual((await resolveDeployment(parseDeployment(thin), fetched)).providers.local.models, { a: { contextWindow: 4096 } });
+  warn.mock.restore();
+});
+
+test('defaultModel must resolve to a selectable model', async () => {
+  const bad = (defaultModel: string) => resolveDeployment(parseDeployment({ ...thin, defaultModel }), listing([{ id: 'ids-only' }]));
+  await assert.rejects(bad('local/ids-only'), /defaultModel: .*no contextWindow/);
+  await assert.rejects(bad('local/nope'), /defaultModel: model local\/nope is not configured/);
+  await assert.rejects(bad('nope/a'), /not configured/);
 });

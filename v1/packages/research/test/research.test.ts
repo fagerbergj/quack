@@ -115,7 +115,7 @@ async function run(config: Parameters<typeof researchSessionExtensions>[0], step
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(steps(seeing(seen)));
-  const models = buildModels(parseDeployment({ providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
+  const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   models.setProvider(judgeFaux().provider);
   const m = faux.getModel();

@@ -49,7 +49,7 @@ test('every loaded manifest\'s actions reach the home extension, and a name two 
 });
 
 test('the workflows entry refuses a vision model not declared with images: true', () => {
-  const deployment = (images?: boolean) => ({ providers: { local: { baseUrl: 'http://x/v1', models: { omni: { contextWindow: 8192, maxTokens: 512, ...(images && { images }) } } } } });
+  const deployment = (images?: boolean) => ({ defaultModel: 'local/omni', providers: { local: { baseUrl: 'http://x/v1', models: { omni: { contextWindow: 8192, maxTokens: 512, ...(images && { images }) } } } } });
   const config = (modelId: string) => ({ visionModel: { provider: 'local', modelId } });
   const validate = catalog.workflows.validate!;
   assert.deepEqual(validate(config('omni'), deployment(true)), []);

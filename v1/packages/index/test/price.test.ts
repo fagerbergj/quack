@@ -29,7 +29,7 @@ after(async () => {
 
 const configFor = (price?: object) => {
   const { port } = server.address() as { port: number };
-  return parseDeployment({ providers: { local: { baseUrl: `http://127.0.0.1:${port}/v1`, models: { m: { contextWindow: 8192, maxTokens: 512, ...(price && { price }) } } } } });
+  return parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl: `http://127.0.0.1:${port}/v1`, models: { m: { contextWindow: 8192, maxTokens: 512, ...(price && { price }) } } } } });
 };
 const agent = { model: { provider: 'local', modelId: 'm' }, extensions: [] };
 

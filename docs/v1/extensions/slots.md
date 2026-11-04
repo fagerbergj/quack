@@ -28,7 +28,7 @@ Residency (never admit a second model while the first holds a single-resident ho
 
 | Variable | Half | Meaning |
 | --- | --- | --- |
-| `QUACK_SLOTS_LIMITS` | service | JSON of endpoint (provider id) to slots, for example `{"llm-swap":6}`. An endpoint not listed is not gated. |
+| `QUACK_CONFIG` | service | The deployment file; each provider's `slots` is how many runs it admits at once, for example `"local": {"slots": 6}`. A provider without `slots` is not gated. |
 | `QUACK_SLOTS_TOKEN` | both | Shared bearer token (A12 until workload tokens land). |
 | `QUACK_SLOTS_DB` | service | SQLite file, default `/data/slots.db`. |
 | `PORT` | service | Default 8092. |

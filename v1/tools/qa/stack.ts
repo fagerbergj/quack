@@ -59,6 +59,7 @@ function stubServer(body: unknown, port: number): Promise<Server> {
 function deployment(modelUrl: string) {
   const limits = { contextWindow: 262144, maxTokens: 16384 };
   return {
+    defaultModel: 'local/qwen3.8-27b',
     providers: {
       local: { baseUrl: modelUrl, models: { 'qwen3.8-27b': { ...limits, images: true }, [FAKE_MODEL]: limits } },
       clef: { baseUrl: modelUrl, api: 'systemone', models: { clef: { contextWindow: 8192, maxTokens: 1024 } } },

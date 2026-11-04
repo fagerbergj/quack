@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { extensionList, loadManifests } from '@quack/runtime/catalog';
-import { buildModels, parseDeployment } from '@quack/session';
+import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
 import { adaptersOf } from './adapters.ts';
 import { replayJudge, table, type Arm } from './judge-replay.ts';
 
@@ -34,10 +34,10 @@ const repeat = Number(values.repeat);
 const concurrency = Number(values.concurrency);
 if (!Number.isInteger(repeat) || repeat < 1 || !Number.isInteger(concurrency) || concurrency < 1) throw new Error('--repeat and --concurrency must be positive integers');
 
-const deployment = parseDeployment(JSON.parse(readFileSync(values.deployment, 'utf8')));
+const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(values.deployment, 'utf8'))));
 const ref = (s: string) => ({ provider: s.slice(0, s.indexOf('/')), modelId: s.slice(s.indexOf('/') + 1) });
 const classifierRef = values.classifier ? ref(values.classifier) : undefined;
-const classifier = classifierRef && { ...classifierRef, maxInputTokens: deployment.providers[classifierRef.provider]?.models[classifierRef.modelId]?.contextWindow ?? 8192 };
+const classifier = classifierRef && { ...classifierRef, maxInputTokens: deployment.providers[classifierRef.provider]?.models?.[classifierRef.modelId]?.contextWindow ?? 8192 };
 const arms: Arm[] = [];
 for (const spec of values.arm ?? ['current=.']) {
   const [label, at] = spec.split('=');

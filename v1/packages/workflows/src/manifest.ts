@@ -10,7 +10,7 @@ export function visionProblems(config: unknown, deployment: DeploymentView): str
   const ref = isObject(config) && isObject(config.visionModel) ? config.visionModel : undefined;
   if (!ref) return [];
   const { provider, modelId } = ref as { provider?: string; modelId?: string };
-  const limits = typeof provider === 'string' && typeof modelId === 'string' ? deployment.providers[provider]?.models[modelId] : undefined;
+  const limits = typeof provider === 'string' && typeof modelId === 'string' ? deployment.providers[provider]?.models?.[modelId] : undefined;
   return limits?.images ? [] : [`workflows.visionModel ${String(provider)}/${String(modelId)} must be configured in this deployment with images: true`];
 }
 
