@@ -25,8 +25,9 @@ export function serviceEntry(file: DeploymentFile, name: string): ServiceEntry {
 
 /** The bearer token a service entry names, read from the environment. */
 export function serviceToken(entry: ServiceEntry, name: string, env: NodeJS.ProcessEnv = process.env): string {
-  const token = entry.tokenEnv && env[entry.tokenEnv];
-  if (!token) throw new Error(`services.${name}.tokenEnv must name a set environment variable`);
+  if (!entry.tokenEnv) throw new Error(`services.${name}.tokenEnv is required: ${name} authenticates its callers`);
+  const token = env[entry.tokenEnv];
+  if (!token) throw new Error(`services.${name}.tokenEnv ${entry.tokenEnv} is not set`);
   return token;
 }
 

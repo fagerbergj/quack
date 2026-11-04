@@ -14,8 +14,8 @@ test('a service reads its entry and token from the deployment file QUACK_CONFIG 
   const read = readDeploymentFile(env);
   assert.equal(serviceEntry(read, 'a').url, 'http://a');
   assert.equal(serviceToken(serviceEntry(read, 'a'), 'a', env), 'tok');
-  assert.throws(() => serviceToken(serviceEntry(read, 'a'), 'a', {}), /services\.a\.tokenEnv must name a set environment variable/);
-  assert.throws(() => serviceToken(serviceEntry(read, 'b'), 'b', env), /services\.b\.tokenEnv/);
+  assert.throws(() => serviceToken(serviceEntry(read, 'a'), 'a', {}), /services\.a\.tokenEnv A_T is not set/);
+  assert.throws(() => serviceToken(serviceEntry(read, 'b'), 'b', env), /services\.b\.tokenEnv is required/);
   assert.throws(() => serviceEntry(read, 'c'), /services\.c is missing/);
   assert.throws(() => readDeploymentFile({}), /QUACK_CONFIG is required/);
 });

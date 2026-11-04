@@ -16,7 +16,7 @@ const { owner, league } = checkedSettings<SleeperSettings>('sleeper', entry.sett
 const scheduler = serviceEntry(file, 'schedules');
 const schedules = { url: scheduler.url, token: serviceToken(scheduler, 'schedules') };
 const service = createSleeperService({ serviceToken: serviceToken(entry, 'sleeper'), dbPath: serviceDbPath(file, 'sleeper'), client, distributorUrl: process.env.QUACK_DISTRIBUTOR_URL, owner, league, schedules });
-service.listen(Number(process.env.PORT ?? 8092));
+service.listen(Number(process.env.PORT || 8092));
 void removeLegacyUntilDone(schedules, league);
 // A week's lineup runs depend on its kickoffs, which Sleeper publishes near the week, so re-register every few hours (idempotent).
 if (owner) {

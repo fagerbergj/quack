@@ -119,10 +119,10 @@ test('checking out the same head again returns the stored result with no fetch',
 test('the askpass helper answers git with a fresh token from the service', async () => {
   const serviceUrl = (await fakeService('x')).url;
   const askpass = fileURLToPath(new URL('../src/askpass.mjs', import.meta.url));
-  const env = { ...process.env, QUACK_GH_SERVICE_URL: serviceUrl, QUACK_GH_SERVICE_TOKEN: 'svc', QUACK_GH_REMOTE: 'https://github.com/acme/widgets.git' };
+  const env = { ...process.env, QUACK_GITHUB_URL: serviceUrl, QUACK_GITHUB_TOKEN: 'svc', QUACK_GH_REMOTE: 'https://github.com/acme/widgets.git' };
   // Async: the fake service runs in this process, so a blocking spawn would deadlock against it.
   const run = async (prompt: string, extra = {}) => (await promisify(execFile)(askpass, [prompt], { env: { ...env, ...extra }, encoding: 'utf8' })).stdout.trim();
   assert.equal(await run("Username for 'https://github.com': "), 'x-access-token');
   assert.equal(await run("Password for 'https://x-access-token@github.com': "), 'ghs_from_service');
-  await assert.rejects(run('Password: ', { QUACK_GH_SERVICE_TOKEN: 'wrong' }));
+  await assert.rejects(run('Password: ', { QUACK_GITHUB_TOKEN: 'wrong' }));
 });

@@ -19,6 +19,6 @@ const service = createSchedulesService({
   distributorToken: process.env.QUACK_ADMIN_TOKEN,
   retentionSweep: settings?.retentionSweep === true,
 });
-service.listen(Number(process.env.PORT ?? 8091));
+service.listen(Number(process.env.PORT || 8091));
 service.start();
 for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => (service.stop(), process.exit(0)));
