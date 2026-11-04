@@ -13,7 +13,7 @@ import { fields, parseSpec, toYaml, type ContractSpec } from './spec.ts';
 
 const raw = (v: number) => JSON.stringify(v === 1 ? v1 : v2);
 const sealed = (content: string, over: Partial<SealedArtifact> = {}): SealedArtifact => ({ kind: 'contract.spec', version: 1, hash: 'h', content, sealedAt: 1, verdict: null, ...over });
-const show = (v: number) => render(<>{contracts.card!(sealed(raw(v), { version: v }))}</>);
+const show = (v: number) => render(<>{contracts.full!(sealed(raw(v), { version: v }))}</>);
 
 test('version 1 shows the route, its fields with type and required, and an example', () => {
   show(1);
@@ -78,7 +78,7 @@ test('version 2 lists what changed, why, and the caller it breaks', async () => 
 test('several routes list under their tag and switch the detail', async () => {
   const spec = JSON.parse(raw(1)) as ContractSpec & { document: { paths: Record<string, unknown> } };
   spec.document.paths['/leagues/{league}/jobs/{job}'] = { post: { tags: ['Jobs'], summary: 'Starts one job.', parameters: [{ name: 'job', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: 'Accepted' } } } };
-  render(<>{contracts.card!(sealed(JSON.stringify(spec)))}</>);
+  render(<>{contracts.full!(sealed(JSON.stringify(spec)))}</>);
   const nav = screen.getByRole('navigation', { name: 'Routes' });
   await userEvent.click(within(nav).getByRole('button', { name: /jobs/ }));
   expect(screen.getByText('Starts one job.')).toBeInTheDocument();
@@ -156,10 +156,37 @@ test('a $ref that points back to itself, or round a loop, ends in a named refere
 test('a spec without a usable document is not drawn, and one that throws while drawing falls back to its saved text', () => {
   const bad = (document: unknown) => JSON.stringify({ ...v1, document });
   for (const d of [null, 'x', {}, { paths: null }]) expect(parseSpec(bad(d))).toBeUndefined();
-  const broken = bad({ paths: { '/x': { get: { parameters: 5 } } } });
+  const broken = JSON.stringify({ ...v1, intent: { ...v1.intent, purpose: 5 } });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   render(<>{artifactCard(sealed(broken))}</>);
   expect(screen.getByRole('alert')).toHaveTextContent("This couldn't be drawn");
-  expect(screen.getByRole('alert')).toHaveTextContent('parameters5');
+  expect(screen.getByRole('alert')).toHaveTextContent('purpose5');
   vi.restoreAllMocks();
+});
+
+test('the ledger card is compact: routes and a decisions summary, no detail or decisions list', () => {
+  render(<>{contracts.card!(sealed(raw(1)))}</>);
+  expect(screen.getByRole('heading', { name: 'Sleeper schedule endpoint' })).toBeInTheDocument();
+  expect(screen.getByText('1 route · version 1')).toBeInTheDocument();
+  expect(within(screen.getByRole('list', { name: 'Routes' })).getByText('/apps/sleeper/schedule')).toBeInTheDocument();
+  expect(screen.getByText(/^\d+ decisions · \d+ answered by you$/)).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'What it does' })).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull();
+  expect(screen.queryByText('Responses')).toBeNull();
+  expect(screen.getByRole('button', { name: 'OpenAPI file' })).toBeInTheDocument();
+});
+
+test('the full view keeps the operation detail and the decisions', () => {
+  show(1);
+  expect(screen.getByText('Responses')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(parseSpec(raw(1))!.choices.length);
+});
+
+test('backticks in decisions and why notes render as code', async () => {
+  const spec = JSON.parse(raw(1)) as ContractSpec;
+  spec.choices[0]!.decision = 'Errors are `{ "error": string }`';
+  render(<>{contracts.full!(sealed(JSON.stringify(spec)))}</>);
+  const list = screen.getByRole('region', { name: 'Decisions' });
+  expect(within(list).getByText('{ "error": string }').tagName).toBe('CODE');
+  expect(list).not.toHaveTextContent('`');
 });

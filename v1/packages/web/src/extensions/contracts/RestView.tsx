@@ -13,8 +13,14 @@ const SOURCE: Record<Choice['why'][number]['source'], { label: string; cls: stri
 // An answer's `ref` is the question as the user saw it and its `text` their answer.
 const gist = (w: Choice['why'][number]) => (w.source === 'answer' ? `You answered “${w.ref}”: ${w.text}` : w.text);
 const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
+const dt = 'w-20 flex-none whitespace-nowrap';
 const card = 'rounded-[18px] border border-line bg-surface';
 const pill = 'inline-flex min-h-11 flex-none cursor-pointer items-center rounded-full border border-line-strong bg-transparent px-4 text-[13.5px] text-ink-2 hover:text-ink';
+
+// Decision and why text is Markdown-flavoured prose; only `code` spans are rendered, inline.
+function Inline({ text }: { text: string }) {
+  return <>{text.split(/`([^`]+)`/).map((t, i) => (i % 2 ? <code key={i} className="rounded bg-soft px-1 font-mono text-[0.92em]">{t}</code> : t))}</>;
+}
 
 function Method({ m }: { m: string }) {
   return <span className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${METHOD[m] ?? 'bg-warning-bg text-warning'}`}>{m}</span>;
@@ -25,7 +31,7 @@ function WhyPanel({ choice, onClose }: { choice: Choice; onClose: () => void }) 
   return (
     <section role="region" aria-label={`Why: ${choice.decision}`} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }} className="sticky bottom-0 z-10 flex flex-col gap-3 rounded-[22px] border border-line-strong bg-surface p-4 shadow-lift @3xl:top-0 @3xl:bottom-auto">
       <div className="flex items-center gap-2">
-        <h3 className="m-0 min-w-0 flex-1 text-[17px] [overflow-wrap:anywhere]">{choice.decision}</h3>
+        <h3 className="m-0 min-w-0 flex-1 text-[17px] [overflow-wrap:anywhere]"><Inline text={choice.decision} /></h3>
         <button type="button" aria-label="Close" autoFocus onClick={onClose} className="-mr-2 grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-muted hover:text-ink">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
@@ -37,11 +43,11 @@ function WhyPanel({ choice, onClose }: { choice: Choice; onClose: () => void }) 
             {w.source === 'answer' ? (
               <span className="flex min-w-0 flex-1 flex-col gap-1 [overflow-wrap:anywhere]">
                 <span className="text-muted">Answered “{w.ref}”</span>
-                <strong className="font-semibold">{w.text}</strong>
+                <strong className="font-semibold"><Inline text={w.text} /></strong>
               </span>
             ) : (
               <span className="flex min-w-0 flex-1 flex-col gap-1 [overflow-wrap:anywhere]">
-                {w.text}
+                <Inline text={w.text} />
                 <code className="font-mono text-xs text-muted">{w.ref}</code>
               </span>
             )}
@@ -66,7 +72,7 @@ function Changes({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => vo
               <span aria-hidden="true" className={`w-3.5 flex-none font-semibold ${c.was ? 'text-warning' : 'text-success'}`}>{c.was ? '~' : '+'}</span>
               <span className="sr-only">{c.was ? 'Changed' : 'Added'}</span>
               <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-sm [overflow-wrap:anywhere]">
-                {c.now}
+                <Inline text={c.now} />
                 {c.was && <span className="text-[12.5px] text-muted">Was {c.was.charAt(0).toLowerCase() + c.was.slice(1)}</span>}
                 <span className="text-[12.5px] text-muted">{c.why}</span>
               </span>
@@ -144,8 +150,8 @@ function Meta({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }) 
   const choice = ctx.whyAt(`${o.ptr}/security`);
   return (
     <dl className="m-0 flex flex-col gap-2 text-[13.5px]">
-      {auth && <div className="flex items-center gap-3"><dt className={`w-16 ${label}`}>Auth</dt><dd className="m-0 min-w-0 flex-1 [overflow-wrap:anywhere]">{auth}</dd>{choice && <WhyChip choice={choice} onWhy={ctx.onWhy} />}</div>}
-      {spec.intent.consumers.length > 0 && <div className="flex items-center gap-3"><dt className={`w-16 ${label}`}>Used by</dt><dd className="m-0">{spec.intent.consumers.join(', ')}</dd></div>}
+      {auth && <div className="flex items-center gap-3"><dt className={`${dt} ${label}`}>Auth</dt><dd className="m-0 min-w-0 flex-1 [overflow-wrap:anywhere]">{auth}</dd>{choice && <WhyChip choice={choice} onWhy={ctx.onWhy} />}</div>}
+      {spec.intent.consumers.length > 0 && <div className="flex items-center gap-3"><dt className={`${dt} ${label}`}>Used by</dt><dd className="m-0">{spec.intent.consumers.join(', ')}</dd></div>}
     </dl>
   );
 }
@@ -179,7 +185,7 @@ function Routes({ ops, sel, onPick }: { ops: Operation[]; sel: number; onPick: (
           <span className={`px-3 pt-2 ${label}`}>{t}</span>
           {ops.map((o, i) => tagOf(o) === t && (
             <button key={o.ptr} type="button" aria-current={i === sel ? 'true' : undefined} onClick={() => onPick(i)} className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-3 text-left text-[13px] text-ink-2 aria-[current=true]:bg-soft aria-[current=true]:text-ink">
-              <Method m={o.method} /><span className="min-w-0 flex-1 font-mono [overflow-wrap:anywhere]">{o.path}</span>
+              <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span>
             </button>
           ))}
         </div>
@@ -196,7 +202,7 @@ function Decisions({ spec, onWhy }: { spec: ContractSpec; onWhy: (c: Choice) => 
       <ul className="m-0 list-none p-0">
         {spec.choices.map((c) => (
           <li key={c.id} className="flex items-center gap-3 border-t border-line pl-4">
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-2.5 text-sm [overflow-wrap:anywhere]">{c.decision}<span className="line-clamp-2 text-[12.5px] text-muted">{c.why[0] && gist(c.why[0])}</span></span>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-2.5 text-sm [overflow-wrap:anywhere]"><Inline text={c.decision} /><span className="line-clamp-2 text-[12.5px] text-muted">{c.why[0] && <Inline text={gist(c.why[0])} />}</span></span>
             <button type="button" aria-label={`Why: ${c.decision}`} onClick={() => onWhy(c)} className="min-h-11 flex-none cursor-pointer border-0 bg-transparent px-4 text-[13px] text-link">Why ›</button>
           </li>
         ))}
@@ -220,37 +226,66 @@ function FullViewLink({ version }: { version: number }) {
   return key ? <a href={`#/s/${key}/spec?v=${version}`} className={`${pill} no-underline`}>Open full view</a> : null;
 }
 
+const decisionCount = (spec: ContractSpec) => `${spec.choices.length} ${spec.choices.length === 1 ? 'decision' : 'decisions'} · ${spec.choices.filter((c) => c.why.some((w) => w.source === 'answer')).length} answered by you`;
+
+function Header({ spec, count, full, doc }: { spec: ContractSpec; count: number; full: boolean; doc: Json }) {
+  return (
+    <header className="flex flex-wrap items-center gap-3">
+      <div className="flex min-w-0 flex-1 basis-48 flex-col">
+        <h2 className="m-0 text-xl [overflow-wrap:anywhere]">{spec.title}</h2>
+        <span className="text-xs text-muted">{count} {count === 1 ? 'route' : 'routes'} · version {spec.version}</span>
+      </div>
+      {!full && <FullViewLink version={spec.version} />}
+      <button type="button" onClick={() => download(doc)} className={pill}>OpenAPI file</button>
+    </header>
+  );
+}
+
+function Purpose({ spec }: { spec: ContractSpec }) {
+  return (
+    <section aria-label="What it does" className={`${card} flex flex-col gap-1.5 px-4 py-3.5`}>
+      <h3 className={`m-0 font-sans ${label}`}>What it does</h3>
+      <div className="text-[14.5px] leading-relaxed"><Markdown text={spec.intent.purpose} /></div>
+    </section>
+  );
+}
+
+// The ledger card: what the spec is and its routes; detail and decisions live on the full page.
+function CardView({ spec, ops, doc }: { spec: ContractSpec; ops: Operation[]; doc: Json }) {
+  return (
+    <div className="@container flex min-w-0 flex-col gap-4">
+      <Header spec={spec} count={ops.length} full={false} doc={doc} />
+      <Purpose spec={spec} />
+      <ul aria-label="Routes" className="m-0 flex list-none flex-col gap-1.5 p-0">
+        {ops.map((o) => <li key={o.ptr} className="flex items-center gap-2.5 text-[13px]"><Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span></li>)}
+      </ul>
+      <p className="m-0 text-[13px] text-muted">{decisionCount(spec)}</p>
+    </div>
+  );
+}
+
 export function RestView({ spec, full = false }: { spec: ContractSpec; full?: boolean }) {
   const [sel, setSel] = useState(0);
   const [why, setWhy] = useState<Choice>();
   const doc = spec.document as Json;
   const ops = operations(doc);
+  if (!full) return <CardView spec={spec} ops={ops} doc={doc} />;
   const ctx: Ctx = { doc, whyAt: (p) => spec.choices.find((c) => c.pointer === p), onWhy: setWhy };
   const o = ops[sel];
   const many = ops.length > 1;
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
-      <header className="flex items-center gap-3">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <h2 className="m-0 text-xl [overflow-wrap:anywhere]">{spec.title}</h2>
-          <span className="text-xs text-muted">{ops.length} {ops.length === 1 ? 'route' : 'routes'} · version {spec.version}</span>
-        </div>
-        {!full && <FullViewLink version={spec.version} />}
-        <button type="button" onClick={() => download(doc)} className={pill}>OpenAPI file</button>
-      </header>
+      <Header spec={spec} count={ops.length} full doc={doc} />
       <Changes spec={spec} onWhy={setWhy} />
       <Compatibility spec={spec} />
-      <section aria-label="What it does" className={`${card} flex flex-col gap-1.5 px-4 py-3.5`}>
-        <h3 className={`m-0 font-sans ${label}`}>What it does</h3>
-        <div className="text-[14.5px] leading-relaxed"><Markdown text={spec.intent.purpose} /></div>
-      </section>
-      <div className={`grid grid-cols-1 items-start gap-4 ${many ? '@3xl:grid-cols-[220px_minmax(0,1fr)_300px]' : '@3xl:grid-cols-[minmax(0,1fr)_300px]'}`}>
+      <Purpose spec={spec} />
+      <div className={`grid grid-cols-1 items-start gap-4 ${many ? '@[1100px]:grid-cols-[280px_minmax(0,1fr)_360px]' : '@[1100px]:grid-cols-[minmax(0,1fr)_360px]'}`}>
         {many && <Routes ops={ops} sel={sel} onPick={setSel} />}
+        {o && <Detail o={o} spec={spec} ctx={ctx} />}
         <div className="flex min-w-0 flex-col gap-4">
-          {o && <Detail o={o} spec={spec} ctx={ctx} />}
+          {why && <WhyPanel choice={why} onClose={() => setWhy(undefined)} />}
           <Decisions spec={spec} onWhy={setWhy} />
         </div>
-        {why && <WhyPanel choice={why} onClose={() => setWhy(undefined)} />}
       </div>
     </div>
   );
