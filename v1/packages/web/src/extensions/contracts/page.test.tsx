@@ -11,6 +11,12 @@ const row = (id: string, over: Partial<Row> = {}): Row => ({ key: `contracts:${i
 
 afterEach(() => vi.unstubAllGlobals());
 
+test('a json-schema contract is listed as JSON Schema, with its version', () => {
+  const rows = [row('j', { artifacts: [art('contract.spec', 2, { verdict: { passed: true }, summary: 'Settings, version 2', outcome: 'v2 json-schema' })] })];
+  render(<Contracts rows={rows} />);
+  expect(screen.getByRole('listitem')).toHaveTextContent('JSON Schema · v2');
+});
+
 test('each contract reads as drafting, awaiting approval, approved or changes requested', () => {
   const rows = [
     row('a', { active: true }),

@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import type { SealedArtifact } from '../../api.ts';
 import { BLUE, plain, type Extension } from '../../extension.ts';
 import { Contracts } from './Contracts.tsx';
+import { JsonSchemaView } from './JsonSchemaView.tsx';
 import { RestView } from './RestView.tsx';
 import { parseSpec } from './spec.ts';
 import { contractOf } from './status.ts';
@@ -13,7 +14,7 @@ const NAMES: Record<string, string> = { 'contract.approved': 'Approval', 'contra
 
 const view = (a: SealedArtifact, full: boolean) => {
   const spec = a.kind === KIND ? parseSpec(a.content) : undefined;
-  return spec && createElement(RestView, { key: a.version, spec, full });
+  return spec && createElement(spec.kind === 'rest' ? RestView : JsonSchemaView, { key: a.version, spec, full });
 };
 
 export const contracts: Extension = {

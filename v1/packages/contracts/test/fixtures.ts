@@ -75,3 +75,35 @@ export function scheduleSpecV2(refs: Refs, callers: string[]): ContractSpec {
 }
 
 export const SLEEPER_PAGE = 'Sleeper page: packages/web/src/extensions/sleeper/api.ts:10 (upcoming)';
+
+export function settingsSchema() {
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    title: 'Sleeper settings',
+    type: 'object',
+    description: 'Per-league settings the Sleeper extension reads at startup.',
+    additionalProperties: false,
+    required: ['leagueId'],
+    properties: {
+      leagueId: { type: 'string', description: 'Sleeper league id, opaque.' },
+      mode: { enum: ['LINEUP', 'WAIVERS'], description: 'Which job runs by default.' },
+      notifyTime: { type: 'string', format: 'date-time', description: 'When the weekly digest goes out, RFC 3339.' },
+    },
+  };
+}
+
+export function settingsSpec(): ContractSpec {
+  return {
+    kind: 'json-schema',
+    title: 'Sleeper settings file',
+    version: 1,
+    intent: { purpose: 'The shape of the Sleeper settings file.', nonGoals: ['Secrets'], audience: 'internal', consumers: ['Sleeper extension'], guarantees: ['A typo in a key fails loudly'] },
+    document: settingsSchema(),
+    choices: [
+      { id: 'closed', pointer: '/additionalProperties', decision: 'The file is closed: unknown keys are rejected.', why: [
+        { source: 'guide', text: 'Config files fail loudly on a typo.', ref: 'json-schema#extensibility' },
+        { source: 'code', text: 'The service takes the league from its own config, not from a request.', ref: 'packages/sleeper/src/service.ts:82' },
+      ] },
+    ],
+  };
+}

@@ -8,15 +8,17 @@ import { contractTools } from './tools.ts';
 export { APPROVED_KIND, CHANGES_KIND, proposeContractTool, routesOf } from './approval.ts';
 export { defineContract } from './action.ts';
 export { askQuestionTool, YOU_DECIDE } from './ask.ts';
-export { kinds, restKind, type ContractKind } from './kinds.ts';
+export { jsonSchemaKind, kinds, restKind, type ContractKind } from './kinds.ts';
 export { breakingChanges, type Break } from './oasdiff.ts';
 export { lintOpenApi, type Finding } from './rest-rules.ts';
+export { lintJsonSchema } from './json-schema-rules.ts';
+export { schemaBreaks } from './json-schema-diff.ts';
 export { contractRubric, guideAnchors, specEvidence } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { manifest } from './manifest.ts';
 
 // The version is data on the artifact: the summary is cut at 80 characters, which a long title would take it with.
-const specOutcome = (content: string) => { const s = parseSpec(content); return typeof s === 'string' ? undefined : `v${s.version}`; };
+const specOutcome = (content: string) => { const s = parseSpec(content); return typeof s === 'string' ? undefined : s.kind === 'rest' ? `v${s.version}` : `v${s.version} ${s.kind}`; };
 
 export const specKind: ArtifactKind = { kind: CONTRACT_KIND, path: CONTRACT_PATH, validate: validateSpec, summarize: summarizeSpec, outcome: specOutcome };
 
