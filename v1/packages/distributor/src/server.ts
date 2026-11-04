@@ -217,6 +217,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
   // a stopped session has none to show here (its store is not read) until it wakes. shortcut: the session index replaces this.
   async function peekApprovals(key: string, search: string, res: ServerResponse) {
+    if ((await driver.agentOf(key)) === undefined) return send(res, 404, { error: 'no such session' });
     if (!driver.running().includes(key)) return send(res, 200, { approvals: [] });
     const upstream = await fetch(`${await driver.ensure(key)}/approvals${search}`);
     res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
@@ -233,6 +234,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     res.end(JSON.stringify({ session, ...(await upstream.json() as object) }, null, 2));
   }
 
+  // Only a submission starts a session; any other request for an unknown or deleted key is a 404 that creates nothing.
+  async function mustExist(key: string, what: string) {
+    if (what !== 'POST /invocations' && (await driver.agentOf(key)) === undefined) throw new AgentError(404, 'no such session');
+  }
+
   // A request in flight keeps its session from idling out, however long it waits on the run.
   async function withSession(key: string, agent: string | undefined, what: string, use: (url: string) => Promise<void>) {
     lastUse.set(key, now());
@@ -240,6 +246,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     try {
       await stopping.get(key);
       await removing.get(key);
+      await mustExist(key, what);
       await switchRole(key, agent, what);
       const url = await driver.ensure(key, agent);
       arm(key, undefined);
@@ -250,7 +257,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     }
   }
 
-  // Looked up before ensure(), which would start a session for an unknown key.
   async function exportRoute(key: string, agent: string | undefined, res: ServerResponse) {
     const info = (await driver.sessions()).find((x) => x.key === key);
     if (!info) return send(res, 404, { error: 'no such session' });
@@ -394,6 +400,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     try {
       await stopping.get(target.key);
       await removing.get(target.key);
+      await mustExist(target.key, 'GET /ws');
       const url = await driver.ensure(target.key, target.agent);
       arm(target.key, undefined);
       await proxyUpgrade(url, req, '/ws', socket, head);

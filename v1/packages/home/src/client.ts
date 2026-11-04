@@ -3,7 +3,7 @@ export type Standing = { needsYou: Set<string>; failed: Set<string> };
 
 export type Distributor = ReturnType<typeof distributor>;
 
-/** The distributor's HTTP, for the home tools. Callers check a key against `sessions()` first: the distributor starts a session for any key it is asked about. */
+/** The distributor's HTTP, for the home tools. Callers check a key against `sessions()` first: reads of a key it does not know answer 404. */
 export function distributor(url: string, doFetch: typeof fetch = fetch) {
   const path = (key: string, rest: string) => `${url}/sessions/${encodeURIComponent(key)}${rest}`;
   async function call<T>(target: string, init?: RequestInit): Promise<T> {

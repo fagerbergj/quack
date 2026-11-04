@@ -21,7 +21,7 @@ function table(rows: Array<Array<string | number | undefined>>, head: string[]):
 
 const when = (ms: number) => new Date(ms).toISOString();
 
-// A key the distributor does not list is not found; asking it for one would start a session.
+// A key the distributor does not list is not found; a read of one answers 404, so check first for a clear message.
 async function known(c: Client, key: string): Promise<any> {
   const s = (await c.sessions()).find((x) => x.key === key);
   if (!s) throw new ApiError(`no such session: ${key}`, 404);

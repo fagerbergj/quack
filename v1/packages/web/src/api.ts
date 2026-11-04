@@ -86,6 +86,10 @@ export async function startContract(description: string): Promise<string> {
   return key;
 }
 
+// The distributor refuses a socket for a key it does not know, so a conversation's first message goes through invocations, which create it.
+export const startSession = async (key: string, agent: string, input: string) =>
+  void (await json(await fetch(`${base(key)}/invocations?agent=${encodeURIComponent(agent)}`, { method: 'POST', body: JSON.stringify({ input, requestId: `ui-start:${Date.now()}` }) })));
+
 export function socketUrl(key: string, agent?: string) {
   const url = new URL(`${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`, location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';

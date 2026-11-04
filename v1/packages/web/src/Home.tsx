@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
+import { listSessions, startSession } from './api.ts';
 import { AttachButton, Pending, useAttachments } from './Attach.tsx';
 import { look } from './kinds.ts';
 import { Pond } from './Pond.tsx';
@@ -21,10 +22,33 @@ function Ask({ failed }: { failed: boolean }) {
     addEventListener(FOCUS_ASK, focus);
     return () => removeEventListener(FOCUS_ASK, focus);
   }, []);
-  const send = (e: SubmitEvent) => {
+  const [error, setError] = useState('');
+  // A ref, not state: a second submit can land before a re-render, and two first sends would each create a run.
+  const sending = useRef(false);
+  const send = async (e: SubmitEvent) => {
     e.preventDefault();
-    if (!input.trim() && !attach.images.length) return;
-    pendingInput.set(HOME_KEY, { text: input, images: attach.images });
+    if (sending.current || (!input.trim() && !attach.images.length)) return;
+    sending.current = true;
+    try {
+      await start();
+    } finally {
+      sending.current = false;
+    }
+  };
+  const start = async () => {
+    let text = input;
+    try {
+      if (!(await listSessions()).some((x) => x.key === HOME_KEY)) {
+        // The distributor refuses a socket for an unknown key, so the first message creates the session; its images follow over the socket.
+        if (!input.trim()) return setError('Write a message to start the conversation.');
+        await startSession(HOME_KEY, HOME_AGENT, input);
+        text = '';
+      }
+    } catch (err) {
+      return setError(err instanceof Error ? err.message : String(err));
+    }
+    setError('');
+    if (text || attach.images.length) pendingInput.set(HOME_KEY, { text, images: attach.images });
     location.hash = `#/s/${encodeURIComponent(HOME_KEY)}?agent=${HOME_AGENT}`;
   };
   return (
@@ -43,6 +67,7 @@ function Ask({ failed }: { failed: boolean }) {
           className="resize-none bg-transparent text-[15.5px] leading-relaxed outline-none placeholder:text-muted"
         />
         <Pending attach={attach} />
+        {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
         <div className="flex items-center justify-between">
         <AttachButton attach={attach} />
         <button type="submit" disabled={!input.trim() && !attach.images.length} aria-label="Send" className="grid size-11 cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">

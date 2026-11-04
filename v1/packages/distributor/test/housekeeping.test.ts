@@ -17,6 +17,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
   for (const key of ['idle', 'busy', 'asking']) {
     await mkdir(join(dataDir, sessionDirName(key)), { recursive: true });
     await writeFile(join(dataDir, sessionDirName(key), 'session-key'), key);
+    await writeFile(join(dataDir, sessionDirName(key), 'agent'), '');
   }
   const upstream = createServer((req, res) => res.end(JSON.stringify(req.url === '/export' ? { transcript: [], artifacts: [] } : { status: 'HealthyBusy' }))).listen(0);
   cleanups.push(() => upstream.close());
