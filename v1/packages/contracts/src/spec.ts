@@ -8,11 +8,11 @@ export type Intent = { purpose: string; nonGoals: string[]; audience: string; co
 
 /** The sealed `contract.spec` artifact: one JSON file per spec version. */
 export type ContractSpec = {
-  kind: 'rest';
+  kind: 'rest' | 'json-schema';
   title: string;
   version: number;
   intent: Intent;
-  /** The kind's standard document; an OpenAPI 3.1 object for rest. */
+  /** The kind's standard document; an OpenAPI 3.1 object for rest, a JSON Schema 2020-12 schema for json-schema. */
   document: unknown;
   choices: Choice[];
   /** From version 2 on. */
@@ -69,11 +69,11 @@ export function validateSpec(content: string): string[] {
   const s = parseSpec(content);
   if (typeof s === 'string') return [s];
   const out: string[] = [];
-  if (s.kind !== 'rest') out.push('kind must be "rest"');
+  if (s.kind !== 'rest' && s.kind !== 'json-schema') out.push('kind must be "rest" or "json-schema"');
   if (!text(s.title)) out.push('title must be a non-empty string');
   if (!Number.isInteger(s.version) || s.version < 1) out.push('version must be a positive integer');
   out.push(...intentProblems(s.intent));
-  if (!isObj(s.document)) out.push('document must be the OpenAPI object');
+  if (!isObj(s.document)) out.push('document must be the OpenAPI object or JSON Schema');
   if (!Array.isArray(s.choices) || !s.choices.length) out.push('choices must list every decision the spec rests on');
   else out.push(...s.choices.flatMap(choiceProblems));
   if (s.version > 1) out.push(...laterVersionProblems(s as unknown as Record<string, unknown>));

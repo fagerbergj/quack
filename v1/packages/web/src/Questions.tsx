@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { answerQuestion, type Answer, type Question } from './api.ts';
 import { Markdown } from './Markdown.tsx';
-import { age } from './sessions.ts';
+import { age, needId } from './sessions.ts';
 
 const YOU_DECIDE = 'You decide';
 
@@ -71,7 +71,7 @@ export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: 
   const rich = !!(d.header || d.title || d.detail || d.suggested != null || d.freeText || Object.keys(d.optionDescriptions ?? {}).length);
   if (answered === d.askedAt) return null; // a re-ask has a newer askedAt
   return (
-    <section aria-label="Question" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm/60 p-3.5">
+    <section id={needId(d.id)} aria-label="Question" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm/60 p-3.5">
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-bold tracking-[.06em] text-warning">NEEDS YOU</span>
         {d.header && <span className="rounded-full bg-soft px-2 py-0.5 text-[11px] font-semibold tracking-[.06em] text-ink-2 uppercase">{d.header}</span>}

@@ -7,7 +7,7 @@ const params = obj({ description: str({ minLength: 1, description: 'What the con
 /** Starts the contracts agent on a description in a session of its own. */
 export const defineContract: Action<typeof params> = {
   name: 'define_contract',
-  summary: 'Define a contract (a REST endpoint) from a description: quack asks the open questions, then writes a versioned spec',
+  summary: 'Define a contract (a REST endpoint, or a JSON Schema for a config file or document) from a description: quack asks the open questions, then writes a versioned spec',
   params,
   async start({ description }, ctx) {
     const id = randomUUID();

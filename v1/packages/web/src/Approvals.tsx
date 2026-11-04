@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { age } from './sessions.ts';
+import { age, needId } from './sessions.ts';
 import { decideApproval, listApprovals, type Approval } from './api.ts';
 import { Args } from './JsonView.tsx';
 import { describe } from './Needs.tsx';
@@ -7,12 +7,12 @@ import { describe } from './Needs.tsx';
 const clip = (s = '', n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
 
 // `refresh` changes whenever the session saw tool activity, which is when an approval can appear.
-export function Approvals({ sessionKey, refresh, onCount }: { sessionKey: string; refresh: number; onCount?: (n: number) => void }) {
+export function Approvals({ sessionKey, refresh, onItems }: { sessionKey: string; refresh: number; onItems?: (a: Approval[]) => void }) {
   const [items, setItems] = useState<Approval[]>([]);
   const [error, setError] = useState('');
   const load = () => listApprovals(sessionKey).then(setItems, (e: Error) => setError(e.message));
   useEffect(() => void load(), [sessionKey, refresh]);
-  useEffect(() => onCount?.(items.length), [items.length]);
+  useEffect(() => onItems?.(items), [items]);
   const decide = (id: string, decision: 'approve' | 'reject') =>
     decideApproval(sessionKey, id, decision).then(load, (e: Error) => setError(e.message));
   if (!items.length && !error) return null;
@@ -20,7 +20,7 @@ export function Approvals({ sessionKey, refresh, onCount }: { sessionKey: string
     <div className="flex flex-col gap-3">
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       {items.map((a) => (
-        <section key={a.id} aria-label="Approval" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm p-3.5">
+        <section key={a.id} id={needId(a.id)} aria-label="Approval" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm p-3.5">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold tracking-[.06em] text-warning">NEEDS YOU</span>
             <span className="ml-auto text-[12px] text-muted">{age(new Date(a.requestedAt).toISOString(), Date.now())}</span>

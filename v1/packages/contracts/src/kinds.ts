@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import Parsers from '@stoplight/spectral-parsers';
+import { schemaBreaks } from './json-schema-diff.ts';
+import { lintJsonSchema } from './json-schema-rules.ts';
 import { breakingChanges, type Break } from './oasdiff.ts';
 import { lintOpenApi, type Finding } from './rest-rules.ts';
 import type { ContractSpec } from './spec.ts';
@@ -28,4 +30,13 @@ export const restKind: ContractKind = {
   renderHints: { layout: 'rest', export: { format: 'openapi', filename: 'openapi.yaml' } },
 };
 
-export const kinds: Record<string, ContractKind> = { rest: restKind };
+export const jsonSchemaKind: ContractKind = {
+  name: 'json-schema',
+  skill: readFileSync(new URL('../skills/json-schema.md', import.meta.url), 'utf8'),
+  extract: (source) => Parsers.Yaml.parse(source).data,
+  check: lintJsonSchema,
+  diff: schemaBreaks,
+  renderHints: { layout: 'json-schema', export: { format: 'json-schema', filename: 'schema.json' } },
+};
+
+export const kinds: Record<string, ContractKind> = { rest: restKind, 'json-schema': jsonSchemaKind };
