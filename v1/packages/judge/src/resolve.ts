@@ -39,7 +39,6 @@ async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined,
   return { met: d.choice === 'yes', resolver: d.resolver, note: d.choice === 'yes' ? undefined : d.reason };
 }
 
-// One decision-model request per unit; confident answers stand, the rest escalate one check at a time (D16).
 /** The decision model's probabilities for one unit, asked once and memoized, so a later read is free. */
 export async function probabilitiesOf(api: ToolExecutionApi, ref: ClassifierRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | null> {
   const key = `${memo}:${unit.id}:classifier`;
@@ -47,6 +46,7 @@ export async function probabilitiesOf(api: ToolExecutionApi, ref: ClassifierRef 
   return stored !== undefined ? stored : api.memo(key, (ref ? await classify(api, ref, unit, checks, ctx) : undefined) ?? null, ctx);
 }
 
+// One decision-model request per unit; confident answers stand, the rest escalate one check at a time (D16).
 export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | undefined, judgeModel: ModelRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, Answer>> {
   const probabilities = await probabilitiesOf(api, ref, memo, unit, checks, ctx);
   const act = ref?.act ?? 0.8;
