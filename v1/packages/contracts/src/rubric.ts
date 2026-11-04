@@ -21,11 +21,14 @@ function pointerResolves(doc: unknown, pointer: string): boolean {
   return true;
 }
 
-async function codeRefResolves(api: ToolExecutionApi, ref: string, ctx: Context): Promise<boolean> {
+// Why a code ref fails, or undefined when it resolves; refs are read relative to the session workspace, so say where.
+async function codeRefProblem(api: ToolExecutionApi, ref: string, ctx: Context): Promise<string | undefined> {
   const m = /^(.+?):(\d+)$/.exec(ref);
-  if (!m || !api.env) return false;
+  if (!m || !api.env) return 'is not path:line';
   const read = await api.env.readTextFile(m[1], ctx);
-  return read.ok && Number(m[2]) >= 1 && Number(m[2]) <= read.value.split('\n').length;
+  if (!read.ok) return `names no file in the workspace (paths are read from the workspace, e.g. repo/${m[1]})`;
+  const lines = read.value.split('\n').length;
+  return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
 
 async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchors: Set<string>, ctx: Context): Promise<string[]> {
@@ -37,8 +40,8 @@ async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchor
     for (const w of c.why) {
       const ref = w.ref.replace(/^rest#|^#/, '');
       // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
-      const ok = w.source === 'answer' ? ref === 'request' || answered.has(w.ref) : w.source === 'guide' ? anchors.has(ref) : await codeRefResolves(api, w.ref, ctx);
-      if (!ok) out.push(`${c.id}: ${w.source} ref "${w.ref}" does not resolve`);
+      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(api, w.ref, ctx);
+      if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
   }
   return out;
