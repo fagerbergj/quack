@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
-import { appsProxy, parseApps } from '../src/apps.ts';
+import { appsFrom, appsProxy } from '../src/apps.ts';
 
 const closers: Array<() => void> = [];
 after(() => closers.forEach((c) => c()));
@@ -88,8 +88,17 @@ test('an unreachable service is a 502 problem+json', async () => {
   assert.deepEqual([body.title, body.status, body.error === body.detail && body.detail.length > 0], ['Bad Gateway', 502, true]);
 });
 
-test('QUACK_APPS is optional and refuses an entry whose token env is unset', () => {
-  assert.deepEqual(parseApps(undefined), {});
-  assert.deepEqual(parseApps('{"a":{"url":"http://a","tokenEnv":"T"}}', { T: 'x' }), { a: { url: 'http://a', tokenEnv: 'T' } });
-  assert.throws(() => parseApps('{"a":{"url":"http://a","tokenEnv":"T"}}', {}), /QUACK_APPS.a/);
+test('services are optional, a token is optional, and an entry whose token env is unset is refused', () => {
+  assert.deepEqual(appsFrom(undefined), {});
+  assert.deepEqual(appsFrom({ a: { url: 'http://a', tokenEnv: 'T' }, b: { url: 'http://b' } }, { T: 'x' }), { a: { url: 'http://a', tokenEnv: 'T' }, b: { url: 'http://b' } });
+  assert.throws(() => appsFrom({ a: { url: 'http://a', tokenEnv: 'T' } }, {}), /services\.a\.tokenEnv T is not set/);
+});
+
+test('a service without a tokenEnv is called without authorization', async () => {
+  const seen: Array<string | undefined> = [];
+  const upstream = await start((req, res) => (seen.push(req.headers.authorization), res.writeHead(200).end('{}')));
+  const proxy = appsProxy({ open: { url: upstream } }, {});
+  const app = await start(async (req, res) => { if (!(await proxy(req, res))) res.writeHead(404).end('other'); });
+  await fetch(`${app}/apps/open/x`, { headers: { authorization: 'Bearer from-browser' } });
+  assert.deepEqual(seen, [undefined]);
 });

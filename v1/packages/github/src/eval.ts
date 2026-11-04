@@ -29,7 +29,7 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
   }).listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { env: { QUACK_GH_SERVICE_URL: url, QUACK_GH_SERVICE_TOKEN: token }, captured, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { env: { QUACK_GITHUB_URL: url, QUACK_GITHUB_TOKEN: token }, captured, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 // shortcut: no judge evidence, since reviewEvidence reads a live checkout a recording does not keep (judge replay takes inline evidence); add one with a pinned diff.

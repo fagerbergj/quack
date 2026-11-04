@@ -15,6 +15,7 @@
     "@quack/judge": "*",
     "@quack/remarkable": "*",
     "@quack/research": "*",
+    "@quack/schedules": "*",
     "@quack/sdk": "*",
     "@quack/slots": "*",
     "@quack/session": "*",
@@ -33,6 +34,7 @@
       "@quack/workflows",
       "@quack/sleeper",
       "@quack/remarkable",
+      "@quack/schedules",
       "@quack/slots",
       "@quack/traces"
     ]

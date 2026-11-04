@@ -169,7 +169,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
 
 test('openStore defaults to the sqlite file in the data dir', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-index-open-'));
-  const { store, close } = openStore({ QUACK_DATA_DIR: dir });
+  const { store, close } = openStore({ dataDir: dir });
   try {
     await store.ensure();
     assert.ok(existsSync(join(dir, 'index.sqlite')));

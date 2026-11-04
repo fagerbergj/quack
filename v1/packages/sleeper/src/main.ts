@@ -1,3 +1,4 @@
+import { checkedSettings, readDeploymentFile, serviceDbPath, serviceEntry, serviceToken } from '@quack/sdk';
 import { createSleeperClient } from './client.ts';
 import { registerLineupSchedules } from './lineup/jobs.ts';
 import { registerReportSchedules } from './report/jobs.ts';
@@ -6,22 +7,20 @@ import { registerFinderSchedules } from './trades/jobs.ts';
 import { registerWaiversSchedules } from './waivers/jobs.ts';
 import { registerTrendsSchedules } from './trends/jobs.ts';
 import { createSleeperService } from './service.ts';
-
-function env(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
+import { settingsProblems, type SleeperSettings } from './settings.ts';
 
 const client = createSleeperClient();
-const owner = process.env.QUACK_SLEEPER_OWNER;
-const service = createSleeperService({ serviceToken: env('QUACK_SLEEPER_TOKEN'), dbPath: env('QUACK_SLEEPER_DB', '/data/sleeper.db'), client, distributorUrl: process.env.QUACK_DISTRIBUTOR_URL, owner, league: process.env.QUACK_SLEEPER_LEAGUE, schedules: { url: env('QUACK_SCHEDULES_URL'), token: env('QUACK_SCHEDULES_TOKEN') } });
-service.listen(Number(env('PORT', '8092')));
-void removeLegacyUntilDone({ url: env('QUACK_SCHEDULES_URL'), token: env('QUACK_SCHEDULES_TOKEN') }, env('QUACK_SLEEPER_LEAGUE'));
+const file = readDeploymentFile();
+const entry = serviceEntry(file, 'sleeper');
+const { owner, league } = checkedSettings<SleeperSettings>('sleeper', entry.settings, settingsProblems);
+const scheduler = serviceEntry(file, 'schedules');
+const schedules = { url: scheduler.url, token: serviceToken(scheduler, 'schedules') };
+const service = createSleeperService({ serviceToken: serviceToken(entry, 'sleeper'), dbPath: serviceDbPath(file, 'sleeper'), client, distributorUrl: process.env.QUACK_DISTRIBUTOR_URL, owner, league, schedules });
+service.listen(Number(process.env.PORT || 8092));
+void removeLegacyUntilDone(schedules, league);
 // A week's lineup runs depend on its kickoffs, which Sleeper publishes near the week, so re-register every few hours (idempotent).
 if (owner) {
-  const schedules = { url: env('QUACK_SCHEDULES_URL'), token: env('QUACK_SCHEDULES_TOKEN') };
-  const register = (fn: typeof registerLineupSchedules) => () => fn(schedules, client, env('QUACK_SLEEPER_LEAGUE'), owner).catch((err) => console.error(`${err.message}; will retry`));
+  const register = (fn: typeof registerLineupSchedules) => () => fn(schedules, client, league, owner).catch((err) => console.error(`${err.message}; will retry`));
   for (const job of [register(registerLineupSchedules), register(registerWaiversSchedules), register(registerFinderSchedules), register(registerTrendsSchedules), register(registerReportSchedules)]) {
     void job();
     setInterval(job, 6 * 60 * 60_000).unref();

@@ -4,6 +4,7 @@ import { createModels, createProvider, envApiKeyAuth, type MutableModels } from 
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { Extension } from '@earendil-works/pi-durable';
+import type { ServiceEntry, StoreEntry } from '@quack/sdk';
 import type { ExecPolicy } from './exec.ts';
 import type { AgentSpec } from './runtime.ts';
 
@@ -15,7 +16,7 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Named services; the shape of each one's `settings` is the service's own. */ services?: Record<string, ServiceEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
 /** Per agent (D48): its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
@@ -82,7 +83,31 @@ function validZone(z: unknown): boolean {
   }
 }
 
-const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec'];
+function storeProblems(stores: unknown): string[] {
+  if (stores === undefined) return [];
+  if (!isObject(stores)) return ['stores must be an object'];
+  return Object.entries(stores).flatMap(([name, s]) => {
+    if (!isObject(s) || (s.kind !== 'sqlite' && s.kind !== 'postgres')) return [`stores.${name}.kind must be sqlite or postgres`];
+    const extra = Object.keys(s).filter((k) => k !== 'kind' && !(s.kind === 'postgres' && k === 'urlEnv')).map((k) => `stores.${name}.${k} is not a ${s.kind} store key`);
+    return s.kind === 'postgres' && typeof s.urlEnv !== 'string' ? [...extra, `stores.${name}.urlEnv must name the variable holding the postgres URL`] : extra;
+  });
+}
+
+function serviceProblems(services: unknown, stores: unknown): string[] {
+  if (services === undefined) return [];
+  if (!isObject(services)) return ['services must be an object'];
+  return Object.entries(services).flatMap(([name, s]) => {
+    if (!isObject(s)) return [`services.${name} must be an object`];
+    const problems = Object.keys(s).filter((k) => !['url', 'tokenEnv', 'store', 'settings'].includes(k)).map((k) => `services.${name}.${k} is not a service key`);
+    if (typeof s.url !== 'string' || !/^https?:\/\//.test(s.url)) problems.push(`services.${name}.url must be an http(s) URL`);
+    if (s.tokenEnv !== undefined && typeof s.tokenEnv !== 'string') problems.push(`services.${name}.tokenEnv must be a string`);
+    if (s.store !== undefined && !(typeof s.store === 'string' && isObject(stores) && Object.hasOwn(stores, s.store))) problems.push(`services.${name}.store ${String(s.store)} is not in stores`);
+    if (s.settings !== undefined && !isObject(s.settings)) problems.push(`services.${name}.settings must be an object`);
+    return problems;
+  });
+}
+
+const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'services'];
 
 function rootProblems(raw: Record<string, unknown>): string[] {
   const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => `unknown top-level key ${k}`);
@@ -90,6 +115,7 @@ function rootProblems(raw: Record<string, unknown>): string[] {
   else problems.push(...Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p)));
   if (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be "provider/model"');
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
+  problems.push(...storeProblems(raw.stores), ...serviceProblems(raw.services, raw.stores));
   if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
   return problems;
 }
