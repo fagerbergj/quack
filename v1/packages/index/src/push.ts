@@ -21,7 +21,8 @@ export type PushOptions = {
 
 // A fact older than this is a rebuild or a long outage catching up, not something new to wake a phone for.
 const RECENT_MS = 6 * 3600_000;
-const { send: reply, json: readJson } = serviceHttp({ maxBody: 16 * 1024 });
+const { send: reply, problem, json: readJson } = serviceHttp({ maxBody: 16 * 1024 });
+const ROUTES = new Set(['GET /push/key', 'POST /push/subscribe', 'POST /push/unsubscribe', 'POST /push/test']);
 
 function vapidKeys(dataDir: string, env: NonNullable<PushOptions['env']>) {
   if (env.QUACK_VAPID_PUBLIC_KEY && env.QUACK_VAPID_PRIVATE_KEY) return { publicKey: env.QUACK_VAPID_PUBLIC_KEY, privateKey: env.QUACK_VAPID_PRIVATE_KEY };
@@ -107,16 +108,17 @@ export function openPush(opts: PushOptions) {
     if (req.method === 'GET' && path === '/push/key') return reply(res, 200, { publicKey: keys.publicKey });
     const body = (await readJson(req)) as { subscription?: unknown; endpoint?: unknown };
     if (path === '/push/subscribe') {
-      if (!isSubscription(body.subscription)) return reply(res, 400, { error: 'subscription must have an https endpoint and keys' });
+      if (!isSubscription(body.subscription)) return problem(res, 400, 'subscription must have an https endpoint and keys');
       db.prepare('insert into subscriptions (endpoint, data) values (?, ?) on conflict (endpoint) do update set data = excluded.data').run(body.subscription.endpoint, JSON.stringify(body.subscription));
       return reply(res, 200, { ok: true });
     }
-    if (path === '/push/unsubscribe' && typeof body.endpoint === 'string') {
+    if (typeof body.endpoint !== 'string') return problem(res, 400, 'endpoint must be a string');
+    if (path === '/push/unsubscribe') {
       forget(body.endpoint);
       return reply(res, 200, { ok: true });
     }
-    const sub = path === '/push/test' ? subscriptions().find((s) => s.endpoint === body.endpoint) : undefined;
-    if (!sub) return reply(res, 404, { error: 'this device is not subscribed' });
+    const sub = subscriptions().find((s) => s.endpoint === body.endpoint);
+    if (!sub) return problem(res, 404, 'this device is not subscribed');
     await deliver(sub, { title: 'Notifications are on', body: 'You will hear from quack when something needs you.', url: '' });
     reply(res, 200, { ok: true });
   }
@@ -124,11 +126,13 @@ export function openPush(opts: PushOptions) {
   // Like the index reads, relies on the proxy for auth.
   const routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = new URL(req.url ?? '', 'http://distributor').pathname;
-    if (!path.startsWith('/push/') || !['GET', 'POST'].includes(req.method ?? '')) return false;
+    if (!path.startsWith('/push/')) return false;
+    if (!ROUTES.has(`${req.method} ${path}`)) return problem(res, 404, 'not found'), true;
     try {
       await handle(req, res, path);
     } catch (err) {
-      reply(res, err instanceof SyntaxError ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      problem(res, message === 'body too large' ? 413 : err instanceof SyntaxError ? 400 : 500, message);
     }
     return true;
   };

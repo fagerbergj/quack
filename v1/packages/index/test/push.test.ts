@@ -158,3 +158,16 @@ test('the index calls onFacts with each accepted publish', async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(seen, ['s1:1']);
 });
+
+test('errors are problem+json: an unknown push route is 404, a missing endpoint 400, an oversized body 413', async () => {
+  const { post, url } = await setup();
+  const unknown = await post('/push/nope', {});
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.headers.get('content-type'), 'application/problem+json');
+  assert.equal((await unknown.json()).detail, 'not found');
+  assert.equal((await fetch(`${url}/push/subscribe`)).status, 404, 'a GET on a POST route is not a route');
+  assert.equal((await post('/push/unsubscribe', {})).status, 400);
+  assert.equal((await post('/push/test', { endpoint: 7 })).status, 400);
+  assert.equal((await post('/push/test', { endpoint: sub(9).endpoint })).status, 404);
+  assert.equal((await post('/push/subscribe', { subscription: 'x'.repeat(32 * 1024) })).status, 413);
+});
