@@ -1875,18 +1875,22 @@ describe('the session page as a ledger', () => {
     expect(within(latest).getByText('Fail · 50%')).toBeInTheDocument();
   });
 
-  test('while the judge runs, its criteria show with each result as it lands', async () => {
+  test('while the judge runs, a bar and a count show progress, problems appear as they land, and the rest is folded', async () => {
     const ws = await openSession();
     const checking = (checks: object[]) => view({ entries: entries.slice(0, 2), run: true, tools: [{ callId: 'b', name: 'submit_review', status: 'running', details: { rubric: 'r', checks } }] });
     const base = { criterion: 'c', weight: 2 };
     ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines' }, { ...base, id: 'tone', label: 'Polite tone' }]));
-    const list = await screen.findByRole('list', { name: 'Double-check progress' });
+    expect(await screen.findByLabelText('Double-checking · 0 of 2 · nothing found yet')).toBeInTheDocument();
+    expect(screen.queryByText('Fail')).toBeNull();
+    expect(screen.getByText('Show all 2 checks')).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Double-check progress' });
     expect(within(list).getAllByText('Checking')).toHaveLength(2);
-    expect(screen.getByLabelText('Double-checking · 0 of 2 checked')).toBeInTheDocument();
     ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines', met: 0 }, { ...base, id: 'tone', label: 'Polite tone' }]));
-    expect(within(list).getByText('Fail')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Double-checking · 1 of 2 · 1 problem')).toBeInTheDocument();
+    // The failed check is listed outside the fold, with its pill.
+    expect(screen.getAllByText('Cites lines')[0]!.closest('details')).toBeNull();
+    expect(screen.getAllByText('Fail').length).toBeGreaterThan(0);
     expect(within(list).getAllByText('Checking')).toHaveLength(1);
-    expect(screen.getByLabelText('Double-checking · 1 of 2 checked')).toBeInTheDocument();
     expect(screen.queryByText('Waiting for the double-check')).toBeNull();
   });
 });
