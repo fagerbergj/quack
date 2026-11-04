@@ -230,6 +230,31 @@ test('propose_contract refuses when no spec has passed', async () => {
   let seen = '';
   const s = await open([call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('ok'))]);
   await s.submit('Define it', 'r-1', true);
-  assert.match(seen, /No sealed spec version has passed/);
+  assert.match(seen, /newest sealed spec version has not passed/);
+  await s.close();
+});
+
+const retitled = () => ({ ...scheduleSpecV1(refs), title: 'Sleeper schedule, retitled' });
+
+test('a change request after a passing version gets a fresh check budget in the same run', async () => {
+  let seen = '';
+  const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), write(retitled), call('submit_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Revised.'))], 0);
+  const { run } = await defineV1(s);
+  await resolveApproval(s.root, (await pendingProposal(s)).id, { decision: 'reject', reason: 'Retitle it', by: 'jf' }, ctx);
+  await run;
+  assert.doesNotMatch(seen, /the most it gets/);
+  const [, v2] = await versions(s);
+  assert.ok(v2.verdict, 'the revision is checked');
+  await s.close();
+});
+
+test('propose_contract refuses while the newest version has not passed, rather than proposing an older one', async () => {
+  let seen = '';
+  const s = await open([...v1Script.slice(0, -1), write(retitled), call('submit_contract', {}), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('ok'))]);
+  const { run } = await defineV1(s);
+  await run;
+  assert.equal(((await versions(s))[1].verdict as { passed: boolean }).passed, false);
+  assert.match(seen, /newest sealed spec version has not passed/);
+  assert.equal((await pendingApprovals(s.root, ctx)).length, 0);
   await s.close();
 });

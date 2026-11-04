@@ -13,7 +13,7 @@ export type JudgeOptions = {
   rubric: Rubric;
   /** Builds the focused evidence units for a sealed version (the domain's job, e.g. diff excerpts per finding). */
   evidence: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Evidence>;
-  /** Revise-and-recheck rounds before a failing version may go out with its failures marked (J1). A run judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. */
+  /** Revise-and-recheck rounds before a failing version may go out with its failures marked (J1). A round judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. A pass ends a round. */
   maxRevisions: number;
   /** Text when this run has nothing to submit (a checkout found no work); the submit is then refused and ends the run. */
   refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
@@ -97,11 +97,13 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
 // The run's first input id: stable through the run, where its task id changes between tool rounds.
 const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
 
-/** Versions this run has already judged, passing or failing: the count the revision limit bounds. */
+/** Versions this run has judged since its last pass, passing or failing: the count the revision limit bounds. */
 async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<number> {
   const run = await runOf(api, ctx);
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-  return (doc?.kinds[kind]?.versions ?? []).filter((v) => (v.verdict as { run?: string } | null)?.run === run).length;
+  const mine = (doc?.kinds[kind]?.versions ?? []).filter((v) => (v.verdict as { run?: string } | null)?.run === run);
+  // A person's change request after a pass, in the same run, gets a fresh budget.
+  return mine.length - 1 - mine.findLastIndex((v) => (v.verdict as { passed?: boolean }).passed);
 }
 
 const terminal = (text: string) => ({ output: [{ type: 'text' as const, text }], isError: true, control: { terminate: true } });

@@ -46,7 +46,9 @@ type Versions = Record<string, { versions: SealedArtifact[] }>;
 async function evidence(api: ToolExecutionApi, ctx: Context) {
   const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
   const specs = (all[CONTRACT_KIND]?.versions ?? []).map((v) => ({ v, spec: parseSpec(v.content) }));
-  const latest = specs.filter((s) => (s.v.verdict as { passed?: boolean } | null)?.passed).at(-1)?.spec;
+  // Only the newest version is proposed; an older pass would put up a spec the agent has since changed.
+  const newest = specs.at(-1);
+  const latest = (newest?.v.verdict as { passed?: boolean } | null)?.passed ? newest!.spec : undefined;
   if (!latest || typeof latest === 'string') return undefined;
   const approved = all[APPROVED_KIND]?.versions.at(-1);
   const was = approved && (JSON.parse(approved.content) as { version: number }).version;
@@ -71,7 +73,7 @@ export const proposeContractTool: ToolRegistration = defineTool({
   async execute(_args, api, ctx) {
     await reconcile(api, ctx);
     const found = await evidence(api, ctx);
-    if (!found) return reply('No sealed spec version has passed its checks; write artifacts/spec.json and call submit_contract first.', true);
+    if (!found) return reply('The newest sealed spec version has not passed its checks; write artifacts/spec.json and call submit_contract first.', true);
     const { spec, findings, breaks, approvedVersion } = found;
     if (approvedVersion === spec.version) return reply(`Version ${spec.version} is already approved; write version ${spec.version + 1} to change it.`, true);
     const summary = `Approve ${routesOf(spec.document) || spec.title} v${spec.version}`;
