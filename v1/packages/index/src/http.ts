@@ -9,7 +9,7 @@ export type OnFacts = (session: string, facts: Fact[]) => Promise<void>;
 const KINDS = new Set(['session', 'artifact', 'approval', 'question', 'failure', 'cost', 'status']);
 const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
-const { send, json: readJson, authorized: bearerOk } = serviceHttp();
+const { send, problem, json: readJson, authorized: bearerOk } = serviceHttp();
 
 const isFact = (f: unknown): f is Fact => {
   const x = f as Record<string, unknown> | null;
@@ -27,14 +27,20 @@ function parseFacts(body: unknown): { session: string; facts: Fact[] } | string 
 export const authorized = (req: IncomingMessage, token: string) => bearerOk(req, token);
 
 async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: string, onFacts?: OnFacts) {
-  if (!authorized(req, token)) return send(res, 401, { error: 'unauthorized' });
+  if (!authorized(req, token)) return problem(res, 401, 'unauthorized');
   const parsed = parseFacts(await readJson(req));
-  if (typeof parsed === 'string') return send(res, 400, { error: parsed });
+  if (typeof parsed === 'string') return problem(res, 400, parsed);
   await store.upsert(parsed.session, parsed.facts);
   // Sending to a push service must not slow or fail the publish.
   void onFacts?.(parsed.session, parsed.facts).catch((err) => console.error('index: on facts', err));
   send(res, 200, { accepted: parsed.facts.length });
 }
+
+const STATES: Record<string, string[]> = {
+  '/index/approvals': ['pending', 'resolved'],
+  '/index/questions': ['pending', 'answered', 'closed'],
+  '/index/failures': ['failed', 'cleared'],
+};
 
 const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<unknown>> = {
   '/index/sessions': async (s) => ({ sessions: await s.sessions() }),
@@ -51,12 +57,17 @@ export function indexRoutes(store: IndexStore, token: string, onFacts?: OnFacts)
     const read = req.method === 'GET' ? READS[url.pathname] : undefined;
     const isPublish = req.method === 'POST' && url.pathname === '/index/facts';
     if (!read && !isPublish) return false;
+    const state = url.searchParams.get('state');
+    if (read && state && STATES[url.pathname] && !STATES[url.pathname]!.includes(state)) {
+      problem(res, 400, `state must be one of ${STATES[url.pathname]!.join(', ')}`);
+      return true;
+    }
     try {
       if (read) send(res, 200, await read(store, url.searchParams));
       else await publish(req, res, store, token, onFacts);
     } catch (err) {
-      const bad = err instanceof SyntaxError || (err instanceof Error && err.message === 'body too large');
-      send(res, bad ? 400 : 503, { error: err instanceof Error ? err.message : String(err) });
+      const big = err instanceof Error && err.message === 'body too large';
+      problem(res, big ? 413 : err instanceof SyntaxError ? 400 : 503, err instanceof Error ? err.message : String(err));
     }
     return true;
   };

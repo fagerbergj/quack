@@ -25,7 +25,7 @@ function Item({ a, noun, title, active, now, onOpen }: { a: IndexArtifact; noun:
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-baseline gap-2">
             <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">{title}</span>
-            <time className="flex-none text-[13px] tabular-nums text-muted">{age(new Date(a.sealedAt).toISOString(), now)}</time>
+            <time className="flex-none text-[13px] tabular-nums text-muted">{age(a.sealedAt, now)}</time>
           </span>
           <span className="truncate text-[13px] text-muted">{[noun, a.summary].filter(Boolean).join(' · ')}</span>
         </span>
@@ -37,7 +37,7 @@ function Item({ a, noun, title, active, now, onOpen }: { a: IndexArtifact; noun:
 // One row per session and kind, showing its newest version.
 function newest(all: IndexArtifact[]): IndexArtifact[] {
   const groups = Map.groupBy(all, (x) => `${x.session}\n${x.kind}`);
-  return [...groups.values()].map((g) => g.reduce((m, x) => (x.version > m.version ? x : m))).sort((x, y) => y.sealedAt - x.sealedAt);
+  return [...groups.values()].map((g) => g.reduce((m, x) => (x.version > m.version ? x : m))).sort((x, y) => Date.parse(y.sealedAt) - Date.parse(x.sealedAt));
 }
 
 export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: number }) {

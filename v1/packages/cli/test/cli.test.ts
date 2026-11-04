@@ -19,10 +19,10 @@ const sealed = [
   { kind: 'plan', version: 2, content: 'new plan', verdict: { passed: true }, summary: 's2' },
 ];
 const index: Record<string, unknown> = {
-  approvals: [{ session: 'ui:b', id: 'ap1', tool: 'bash', at: 0 }],
+  approvals: [{ session: 'ui:b', id: 'ap1', tool: 'bash', at: '1970-01-01T00:00:00.000Z' }],
   questions: [],
-  failures: [{ session: 'ui:c', at: 0, step: 's', error: 'e' }],
-  artifacts: [{ session: 'ui:a', kind: 'plan', version: 2, verdict: null, sealedAt: 0 }],
+  failures: [{ session: 'ui:c', at: '1970-01-01T00:00:00.000Z', step: 's', error: 'e' }],
+  artifacts: [{ session: 'ui:a', kind: 'plan', version: 2, verdict: null, sealedAt: '1970-01-01T00:00:00.000Z' }],
 };
 
 let server: Server;

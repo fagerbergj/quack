@@ -147,8 +147,9 @@ test('review rows show their repo only when the list holds reviews from two repo
   expect(await screen.findByRole('link', { name: /b\/two #2 Second/ })).toBeInTheDocument();
 });
 
+const iso = (ms: number) => new Date(ms).toISOString();
 const indexed = (session: string, kind: string, passed: boolean | null, version = 1, sealedAt = 1, extra: { outcome?: string; posted?: boolean } = {}) =>
-  ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt, outcome: extra.outcome, links: extra.posted ? [{ label: 'Posted', url: `https://github.com/${session}/review-${version}` }] : [] });
+  ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt: iso(sealedAt), outcome: extra.outcome, links: extra.posted ? [{ label: 'Posted', url: `https://github.com/${session}/review-${version}` }] : [] });
 
 test('each kind of session shows its own title and state, and search finds it by kind', async () => {
   routes['GET /sessions'] = { sessions: [
@@ -841,7 +842,7 @@ test('#/new lands on Home with the box focused, on phone and desktop alike', asy
   }
 });
 
-const pendingIndex = { approvals: [{ session: 'gh:3', id: 'a/1', tool: 'github_post_review', state: 'pending', decision: null, by: null, at: 1 }] };
+const pendingIndex = { approvals: [{ session: 'gh:3', id: 'a/1', tool: 'github_post_review', state: 'pending', decision: null, by: null, at: iso(1) }] };
 const goTo = (hash: string) => {
   location.hash = hash;
   act(() => void dispatchEvent(new HashChangeEvent('hashchange')));
@@ -881,7 +882,7 @@ test('Home posts approve to the owning session, and reject with its reason', asy
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
 });
 
-const pendingDecision = { questions: [{ session: 'gh:3', id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: 1 }] };
+const pendingDecision = { questions: [{ session: 'gh:3', id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: iso(1) }] };
 
 test('Home shows a workflow question with its options, and an option answers it', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Campaign Notes' })] };
@@ -1000,7 +1001,7 @@ test('a re-asked question with a newer askedAt shows again after the first was a
   location.hash = '#/';
   render(<App />);
   const first = await screen.findByRole('button', { name: 'meeting' });
-  routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, at: 2 })) };
+  routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, at: iso(2) })) };
   await userEvent.click(first);
   expect(await screen.findByRole('region', { name: 'Question' })).toBeInTheDocument();
 });
@@ -1065,7 +1066,7 @@ test('a failed run that cannot resume shows why, and Copy error copies the whole
 
 test('a session whose run failed is under Needs you with its step and the error first line', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
-  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: iso(1) }] };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -1075,7 +1076,7 @@ test('a session whose run failed is under Needs you with its step and the error 
 
 test('Home pond goes still when a session has failed', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
-  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: iso(1) }] };
   stubViewport(false);
   location.hash = '#/';
   render(<App />);
@@ -1108,8 +1109,8 @@ test('with the index off, Home falls back to the running sessions own approvals,
 test('Artifacts lists sealed versions from the index and opens one in the Work drawer', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Old work' })] };
   routes['GET /index/artifacts'] = { artifacts: [
-    { session: 'gh:3', kind: 'github.review', version: 2, hash: 'h', verdict: { passed: true }, sealedAt: 2 },
-    { session: 'gh:3', kind: 'github.review', version: 1, hash: 'g', verdict: null, sealedAt: 1 },
+    { session: 'gh:3', kind: 'github.review', version: 2, hash: 'h', verdict: { passed: true }, sealedAt: iso(2) },
+    { session: 'gh:3', kind: 'github.review', version: 1, hash: 'g', verdict: null, sealedAt: iso(1) },
   ] };
   routes['GET /sessions/gh%3A3/artifacts'] = { artifacts: [
     { kind: 'github.review', version: 1, hash: 'g', content: 'first draft', sealedAt: 1, verdict: null },
@@ -1131,9 +1132,9 @@ test('Artifacts lists sealed versions from the index and opens one in the Work d
 test('Artifacts rows say what each is and what it concluded, and chips filter by kind', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:o/r#7', { title: 'feat: Declare requires' }), sess('ui:r1', { agent: 'researcher', title: 'Why is it slow?', running: true, active: true })] };
   routes['GET /index/artifacts'] = { artifacts: [
-    { session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', verdict: { passed: true }, summary: 'Approve · 1 nit', sealedAt: 2 },
-    { session: 'ui:r1', kind: 'research.report', version: 1, hash: 'g', verdict: { passed: false }, summary: 'Cold caches dominate', sealedAt: 1 },
-    { session: 'ui:old', kind: 'research.report', version: 1, hash: 'o', verdict: null, sealedAt: 1 },
+    { session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', verdict: { passed: true }, summary: 'Approve · 1 nit', sealedAt: iso(2) },
+    { session: 'ui:r1', kind: 'research.report', version: 1, hash: 'g', verdict: { passed: false }, summary: 'Cold caches dominate', sealedAt: iso(1) },
+    { session: 'ui:old', kind: 'research.report', version: 1, hash: 'o', verdict: null, sealedAt: iso(1) },
   ] };
   location.hash = '#/artifacts';
   render(<App />);
@@ -1567,7 +1568,7 @@ const phoneAt = (hash: string) => {
 
 test('Home shows what needs you and what is running, each linking to its session', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Needs a look' }), sess('gh:2', { title: 'Busy one', running: true, active: true }), sess('gh:3', { title: 'Old work' })] };
-  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'push', state: 'pending', decision: null, by: null, at: 1 }] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'push', state: 'pending', decision: null, by: null, at: iso(1) }] };
   phoneAt('#/');
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
@@ -1591,7 +1592,7 @@ test('an approval with a summary reads in plain words and keeps the raw call beh
 
 test('a failed session that is not running is on Home with Run again; a running one is not', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' }), sess('gh:4', { title: 'Retrying', running: true, active: true })] };
-  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }, { session: 'gh:4', ...failure, at: 1 }] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: iso(1) }, { session: 'gh:4', ...failure, at: iso(1) }] };
   routes['POST /sessions/gh%3A3/resume'] = { resumed: true };
   phoneAt('#/');
   render(<App />);
@@ -1850,7 +1851,7 @@ test('on desktop, #/sessions shows the list as the page, not Home, and the sideb
 test('a Home approval card says what it will do, from the args the index carries', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Fix the typo' })] };
   const args = { summary: 'Push 1 commit(s) to fix-typo of o/r#1: docs: fix typo', commits: 'abc1234 docs: fix typo' };
-  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'deliver', args, state: 'pending', decision: null, by: null, at: 1 }] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'gh:1', id: 'a', tool: 'deliver', args, state: 'pending', decision: null, by: null, at: iso(1) }] };
   phoneAt('#/');
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
@@ -1953,7 +1954,7 @@ test('a running session waiting for a model slot says so on its row, instead of 
 
 test('a contract session is named by its latest spec in the list, not by the text that started it', async () => {
   routes['GET /sessions'] = { sessions: [sess('contracts:c1', { title: 'The quack v1 distributor HTTP API (contract distributor.http in…' })] };
-  routes['GET /index/artifacts'] = { artifacts: [{ session: 'contracts:c1', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Distributor HTTP API, version 1', outcome: 'v1' }] };
+  routes['GET /index/artifacts'] = { artifacts: [{ session: 'contracts:c1', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: iso(1), summary: 'Distributor HTTP API, version 1', outcome: 'v1' }] };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -2079,8 +2080,8 @@ describe('the session context rail', () => {
 });
 
 test('a contract session reads its spec name on Home and in its header, and Changes requested on its row', async () => {
-  const spec = { session: 'contracts:c2', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Roster API, version 1', outcome: 'v1' };
-  const changes = { session: 'contracts:c2', kind: 'contract.changes', version: 1, hash: 'c', verdict: null, sealedAt: 2, summary: 'Use cursor paging', outcome: 'v1' };
+  const spec = { session: 'contracts:c2', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: iso(1), summary: 'Roster API, version 1', outcome: 'v1' };
+  const changes = { session: 'contracts:c2', kind: 'contract.changes', version: 1, hash: 'c', verdict: null, sealedAt: iso(2), summary: 'Use cursor paging', outcome: 'v1' };
   routes['GET /sessions'] = { sessions: [sess('contracts:c2', { title: 'A long working title from the description' })] };
   routes['GET /index/artifacts'] = { artifacts: [spec, changes] };
   stubViewport(false);

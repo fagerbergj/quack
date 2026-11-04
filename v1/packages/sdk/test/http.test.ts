@@ -40,3 +40,15 @@ test('submitToSession encodes the key and agent and sends only the given fields'
   assert.deepEqual(seen, [{ url: 'http://d/sessions/a%20b%3A1%2F2/invocations?agent=x%20y', body: { input: 'hi', requestId: 'r', whenBusy: 'followUp' } }]);
   assert.equal(invocationRequest('http://d', { key: 'k', agent: 'a', input: 'i', requestId: 'r', wait: true }).body, '{"input":"i","requestId":"r","wait":true}');
 });
+
+test('problem answers RFC 9457 JSON that still carries error', async () => {
+  const server = createServer((_req, res) => serviceHttp().problem(res, 413, 'body too large'));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    assert.equal(res.headers.get('content-type'), 'application/problem+json');
+    assert.deepEqual(await res.json(), { type: 'about:blank', title: 'Payload Too Large', status: 413, detail: 'body too large', error: 'body too large' });
+  } finally {
+    server.close();
+  }
+});
