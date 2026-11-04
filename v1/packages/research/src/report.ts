@@ -70,7 +70,9 @@ export function excerpt(text: string, claim: string, max = STOP_CHARS): string {
   const keep: typeof scored = [];
   let size = 0;
   for (const p of scored) if (p.n && size + p.t.length <= max) (keep.push(p), (size += p.t.length));
-  return keep.sort((a, b) => a.i - b.i).map((p) => p.t).join('\n…\n');
+  // No shared wording: the page's opening is still better evidence than nothing.
+  const kept = keep.length ? keep.sort((a, b) => a.i - b.i).map((p) => p.t).join('\n…\n') : text.slice(0, max);
+  return kept;
 }
 
 type Entry = { kind: string; model?: Array<{ content?: unknown }> };

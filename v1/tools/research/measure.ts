@@ -17,7 +17,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function whenIdle(metricsUrl: string): Promise<void> {
   for (;;) {
     const text = await (await fetch(metricsUrl)).text();
-    const running = Number(/^vllm:num_requests_running\{[^}]*\}\s+(\S+)/m.exec(text)?.[1] ?? Infinity);
+    const m = /^vllm:num_requests_running\{[^}]*\}\s+(\S+)/m.exec(text);
+    if (!m) throw new Error(`no vllm:num_requests_running in ${metricsUrl}; is this a vLLM metrics endpoint?`);
+    const running = Number(m[1]);
     if (running <= BUSY_MAX) return;
     await sleep(POLL_MS);
   }

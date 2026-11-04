@@ -104,6 +104,8 @@ Whole-report block rate (a gate failed or score under 0.8): with all five scored
 
 **Gate and decision.** The gate was a false-block rate above 10% or a large swing. `answers_every_ask` misses it narrowly: both false blocks are `good-unsettled-cost` (the report names the missing price under Assumptions; the judge accepted it once in three). `summary_follows_findings` fails clearly: it flagged three of the five good reports in some run (5 of 15 runs) and its runs disagreed on 6 of 20 cases. Both ship at weight 0, so they run and appear in the verdict but add no score and no feedback (`feedback` skips weight 0). An undecided weight-0 check still asks for a retry, like any model check. The three other checks ship at the audit weights. Prompts and questions were not tuned to the set.
 
+Production judges with the same local model that was measured, so these rates apply as deployed.
+
 **What it does not show.**
 - 15 good runs over 5 reports is a small base: 0 of 15 puts the true false-block rate somewhere under about 20%, not at 0.
 - The flaws are single and blatant, in two-sentence-per-claim pages. Real sources are longer and noisier, and the 4,000-character window can miss the passage that settles a claim. A subtle unsupported claim (a number that is close) is untested.

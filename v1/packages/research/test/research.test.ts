@@ -102,7 +102,11 @@ const seeing = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>
 // The judge model answers each model check from its question: pitfalls (contradiction, conflict) no, the rest yes.
 function judgeFaux() {
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
-  const answer = (c: { messages: unknown[] }) => fauxAssistantMessage(JSON.stringify({ choice: /contradict|conflict/.test(JSON.stringify(c.messages)) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+  const answer = (c: { messages: unknown[] }) => {
+    const t = JSON.stringify(c.messages);
+    const pitfall = t.includes('contradict it?') || t.includes('conflict with another passage');
+    return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+  };
   faux.setResponses(Array.from({ length: 200 }, () => answer));
   return faux;
 }
@@ -401,4 +405,5 @@ test('excerpt keeps the pieces that share the claim\'s figures and words, in pag
   const out = excerpt(page, 'Council approved a 4.2 million harbour budget');
   assert.ok(out.length <= 4000 && out.includes('approved a budget of 4.2 million'));
   assert.equal(excerpt('short page', 'anything'), 'short page');
+  assert.equal(excerpt('zebra '.repeat(1000), 'quartz mining'), 'zebra '.repeat(1000).slice(0, 4000), 'no shared wording gives the opening');
 });
