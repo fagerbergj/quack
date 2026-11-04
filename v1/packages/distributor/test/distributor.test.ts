@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
-import { cp, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -116,9 +116,23 @@ test('a malformed session key is a client error', async () => {
   assert.equal((await fetch(`${base}/sessions/%ZZ/invocations`, { method: 'POST', body: '{}' })).status, 400);
 });
 
+test('an unknown or deleted key answers 404 on every route and starts nothing; an invocation still creates it', async () => {
+  const { driver, base, invoke, dataDir } = await startDistributor(60_000);
+  const key = encodeURIComponent('research:ghost');
+  const routes: Array<[string, string]> = [['GET', 'messages'], ['HEAD', 'artifacts'], ['GET', 'ping'], ['POST', 'questions/q1'], ['POST', 'approvals/a1'], ['POST', 'abort'], ['POST', 'resume']];
+  for (const [method, path] of routes) assert.equal((await fetch(`${base}/sessions/${key}/${path}`, { method, ...(method === 'POST' && { body: '{}' }) })).status, 404, `${method} ${path}`);
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${key}/ws`);
+  await new Promise((r) => { ws.onerror = ws.onclose = r; });
+  assert.deepEqual(driver.running(), []);
+  assert.deepEqual(await readdir(dataDir), []);
+  assert.equal((await invoke('research:ghost', { input: 'hi', wait: true })).status, 200);
+  assert.equal((await fetch(`${base}/sessions/${key}/ping`)).status, 200);
+});
+
 test('proxies the live stream and keeps a watched session from idling out', async () => {
-  const { driver, base } = await startDistributor(200);
+  const { driver, base, invoke } = await startDistributor(200);
   const key = 'github:fagerbergj/quack#1827';
+  await invoke(key, { input: 'start', wait: true });
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
   assert.equal((await nextFrame(ws, () => true)).type, 'view');
 
@@ -368,7 +382,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
   const running = new Set<string>();
   const log: string[] = [];
   const driver = {
-    agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, pid: () => undefined,
+    agents: async () => [], agentOf: async () => '', rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, pid: () => undefined,
     sessions: async () => [...running].map((key) => ({ key, agent: '', running: true, createdAt: '', lastActivity: '' })),
     ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
     stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
@@ -728,7 +742,7 @@ test('the identity header reaches the session; without it none is sent', async (
   const session = createHttpServer((req, res) => { seen.push(req.headers['x-authentik-username'] as string | undefined); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); }).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => '', rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/k1`;

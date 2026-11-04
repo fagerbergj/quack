@@ -236,7 +236,10 @@ test('selecting a session opens it in the main pane and marks its row', async ()
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
 });
 
+const homeExists = () => (routes['GET /sessions'] = { sessions: [sess('home:main')] });
+
 async function startFromHome(text: string) {
+  homeExists();
   render(<App />);
   await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), text);
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -253,6 +256,17 @@ test('starting a session opens a home: key for quack and sends the untouched fir
   accept(sock);
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
   expect(sock.sent).toEqual([{ type: 'input', requestId: expect.any(String), input: 'review it', whenBusy: 'followUp' }]);
+});
+
+test('the first-ever Home message creates home:main by invocation before any socket opens', async () => {
+  routes['POST /sessions/home%3Amain/invocations?agent=quack'] = { status: 'accepted' };
+  render(<App />);
+  await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'hello');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/home%3Amain\/ws\?agent=quack$/));
+  const post = fetchMock.mock.calls.find(([u, i]) => i?.method === 'POST' && u.includes('home%3Amain/invocations'));
+  expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ input: 'hello' });
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
 });
 
 test('two Home sends go to the same home:main session, queued as follow-ups', async () => {
@@ -1566,6 +1580,7 @@ test('a failed session that is not running is on Home with Run again; a running 
 
 test('the Home box opens a home: session for the quack agent and seeds its first message', async () => {
   phoneAt('#/');
+  homeExists();
   render(<App />);
   const send = screen.getByRole('button', { name: 'Send' });
   expect(send).toBeDisabled();
@@ -1725,6 +1740,7 @@ describe('images', () => {
   });
 
   test('a photo attached on Home seeds the home:main session and clears once accepted', async () => {
+    homeExists();
     render(<App />);
     await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'what is this?');
     await userEvent.upload(screen.getByTestId('attach-input'), photo);
