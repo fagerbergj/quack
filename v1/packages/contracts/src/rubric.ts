@@ -36,7 +36,8 @@ async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchor
   const answered = new Set(Object.values(questions).filter((q) => q.answer).map((q) => q.question));
   const out: string[] = [];
   for (const c of spec.choices) {
-    if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer "${c.pointer}" is not in the document`);
+    // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
+    if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
       const ref = w.ref.replace(/^rest#|^#/, '');
       // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
