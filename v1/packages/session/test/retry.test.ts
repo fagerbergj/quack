@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, retryDelayMs, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { failedRows, Failures } from '@quack/sdk';
 import { createSessionServer, MODEL_RETRY, openSession } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-retry-'));
@@ -85,5 +87,42 @@ test('a session in retry backoff reports its wake time, so the distributor can s
   const ping = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ping`).then((r) => r.json());
   assert.deepEqual(ping, { status: 'Healthy', pid: process.pid, waitingOnHuman: false, wake: { at: standing.wakeAt } });
   await new Promise((r) => server.close(r));
+  await session.close();
+});
+
+const abort = () => fail('Provider finish_reason: abort');
+type Opened = Awaited<ReturnType<typeof open>>;
+const failures = async (s: Opened['session']) => failedRows(await s.harness.snapshot(Failures, s.root.id, BACKGROUND_CONTEXT));
+const settle = async (check: () => Promise<boolean>) => { for (let i = 0; i < 150 && !(await check()); i++) await new Promise((r) => setTimeout(r, 20)); };
+const answered = async (s: Opened['session']) => (await s.messages(5)).some((m) => m.text === 'Paris');
+
+test('a provider abort is retried once and the run completes without a failure', async () => {
+  const { session, faux } = await open('abort-once', [abort(), fauxAssistantMessage('Paris')]);
+  await session.submit('Capital of France?', 'q');
+  await settle(() => answered(session));
+  assert.equal(faux.state.callCount, 2);
+  assert.deepEqual(await failures(session), []);
+  await session.close();
+});
+
+test('a second abort records a failure that resume accepts, and the rerun clears it', async () => {
+  const { session, faux } = await open('abort-twice', [abort(), abort(), fauxAssistantMessage('Paris')]);
+  await session.submit('Capital of France?', 'q');
+  await settle(async () => (await failures(session)).length > 0);
+  assert.match((await failures(session))[0].error, /abort/);
+  assert.equal(faux.state.callCount, 2);
+  assert.equal((await session.resume())?.status, 'placed');
+  await settle(() => answered(session));
+  assert.deepEqual(await failures(session), []);
+  assert.equal(faux.state.callCount, 3);
+  await session.close();
+});
+
+test('a non-abort model error records a failure at once without a rerun', async () => {
+  const { session, faux } = await open('bad-request-failure', [fail('400 invalid request'), fauxAssistantMessage('never')]);
+  await session.submit('hi', 'q', true);
+  await settle(async () => (await failures(session)).length > 0);
+  assert.equal(faux.state.callCount, 1);
+  assert.match((await failures(session))[0].error, /400/);
   await session.close();
 });
