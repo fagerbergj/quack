@@ -1,10 +1,11 @@
 // D53: run the v1 reviewer on PRs v0 already reviewed, each at the head v0 first reviewed, posting nothing.
 // Usage: node tools/bench/run.ts <out-dir> <deployment.json> <agent.json> <owner/repo> <pr>...
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { childPort } from '@quack/session';
 import { stubService } from './stub-service.ts';
 
 const [outDir, deployment, agent, repo, ...prs] = process.argv.slice(2);
@@ -18,12 +19,14 @@ function v0First(n: string) {
   return { state: first.state as string, commit: first.commit_id as string, at: first.submitted_at as string, body: first.body as string };
 }
 
-async function ping(url: string, deadline: number) {
-  while (Date.now() < deadline) {
-    if (await fetch(`${url}/ping`).then(() => true, () => false)) return;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error('runtime did not start');
+// A runtime's graceful close waits for its in-flight run, so SIGKILL follows; a survivor would answer the next run's requestId from its old session.
+async function stop(child: ChildProcess) {
+  // A child that already exited (a crash) has emitted its exit event; waiting on it then would never return.
+  const exited = new Promise<void>((r) => (child.exitCode !== null || child.signalCode !== null ? r() : child.once('exit', () => r())));
+  child.kill('SIGTERM');
+  const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+  await exited;
+  clearTimeout(timer);
 }
 
 // Polls with the same request id instead of one long wait: dedupe returns the run's status, and fetch drops a request
@@ -47,24 +50,25 @@ const service = stubService(pins, posted).listen(0);
 await new Promise((r) => service.once('listening', r));
 const serviceUrl = `http://127.0.0.1:${(service.address() as AddressInfo).port}`;
 
-for (const [i, n] of prs.entries()) {
+for (const n of prs) {
   const dir = resolve(outDir, `pr-${n}`);
   mkdirSync(join(dir, 'session'), { recursive: true });
-  const port = 18100 + i;
-  const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), PORT: String(port), QUACK_GH_SERVICE_URL: serviceUrl, QUACK_GH_SERVICE_TOKEN: 'bench' };
-  const child = spawn(process.execPath, [main], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), PORT: '0', QUACK_GH_SERVICE_URL: serviceUrl, QUACK_GH_SERVICE_TOKEN: 'bench' };
+  const child = spawn(process.execPath, [main], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const log: string[] = [];
-  child.stdout.on('data', (d) => log.push(String(d)));
-  child.stderr.on('data', (d) => log.push(String(d)));
+  child.stdout?.on('data', (d) => log.push(String(d)));
+  child.stderr?.on('data', (d) => log.push(String(d)));
   const started = Date.now();
   let result: unknown;
   try {
-    await ping(`http://127.0.0.1:${port}`, Date.now() + 30_000);
-    result = await untilSettled(`http://127.0.0.1:${port}`, n, started + 30 * 60_000);
+    // The runtime clones the repository before it listens, so the port wait shares the run's deadline (as eval's replay does).
+    const deadline = started + 30 * 60_000;
+    const port = await childPort(child, 'runtime', deadline - Date.now());
+    result = await untilSettled(`http://127.0.0.1:${port}`, n, deadline);
   } catch (err) {
     result = { status: 'error', error: String(err) };
   } finally {
-    child.kill('SIGTERM');
+    await stop(child);
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ pr: Number(n), seconds, result, v0: v0[n] }, null, 2));
