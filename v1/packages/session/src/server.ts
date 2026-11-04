@@ -106,7 +106,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
     return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
-  ['GET', /^\/messages(\?.*)?$/, async (s, req) => [200, { messages: await s.messages(Math.min(50, Number(new URL(req.url ?? '', 'http://x').searchParams.get('limit')) || 10)) }]],
+  ['GET', /^\/messages$/, async (s, req) => [200, { messages: await s.messages(Math.min(50, Number(new URL(req.url ?? '', 'http://x').searchParams.get('limit')) || 10)) }]],
   ['GET', /^\/meta$/, async (s) => [200, { meta: await s.meta() }]],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],
@@ -122,8 +122,10 @@ const ROUTES: Array<[string, RegExp, Route]> = [
 export function createSessionServer(session: Session) {
   const server = createServer(async (req, res) => {
     try {
+      // Routes match the path; a query only matters to a route that reads it.
+      const path = new URL(req.url ?? '', 'http://x').pathname;
       for (const [method, pattern, route] of ROUTES) {
-        const match = req.method === method ? pattern.exec(req.url ?? '') : null;
+        const match = req.method === method ? pattern.exec(path) : null;
         if (match) return send(res, ...(await route(session, req, match)));
       }
       send(res, 404, { error: 'not found' });

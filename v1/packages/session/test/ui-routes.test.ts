@@ -101,3 +101,15 @@ test('GET /export returns the transcript with tool calls and results, and the se
   assert.deepEqual(body.artifacts, []);
   await h.stop();
 });
+
+test('a query string does not change which route answers', async () => {
+  const { base, stop } = await serve(defineExtension({ name: 'none' }));
+  try {
+    for (const path of ['/approvals?state=pending', '/failures?x=1', '/meta?x=1', '/ping?x=1', '/messages?limit=2']) {
+      assert.equal((await fetch(base + path)).status, 200, path);
+    }
+    assert.equal((await fetch(`${base}/nope?x=1`)).status, 404);
+  } finally {
+    await stop();
+  }
+});
