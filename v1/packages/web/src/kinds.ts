@@ -58,8 +58,9 @@ export const searchText = (r: Row): string[] => {
 export type SessionTitle = { repo?: string; number?: string; text: string; full: string; icon: string; kind: string };
 
 // The one place a session is named: list rows, the session header, Inbox and Artifacts all read this.
-export function sessionTitle(s: SessionSummary & { multiRepo?: boolean }): SessionTitle {
-  const l = look({ multiRepo: false, ...s, approvals: [], questions: [], failures: [], artifacts: [] });
+// A full row names the session from its artifacts too (a contract by its spec); a bare summary falls back to its title.
+export function sessionTitle(s: SessionSummary & Partial<Pick<Row, 'multiRepo' | 'artifacts'>>): SessionTitle {
+  const l = look({ multiRepo: false, approvals: [], questions: [], failures: [], artifacts: [], ...s });
   return { repo: l.repo, number: l.num, text: l.title, full: l.full, icon: l.icon, kind: l.label };
 }
 

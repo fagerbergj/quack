@@ -81,7 +81,7 @@ export async function decideApproval(key: string, id: string, decision: 'approve
 export async function startContract(description: string): Promise<string> {
   const id = crypto.randomUUID();
   const key = `contracts:${id}`;
-  const title = description.replace(/\s+/g, ' ').trim().slice(0, 80);
+  const title = draftTitle(description);
   await json(await fetch(`${base(key)}/invocations?agent=contracts`, { method: 'POST', body: JSON.stringify({ requestId: `ui-contract:${id}`, title, input: description }) }));
   return key;
 }
@@ -97,3 +97,9 @@ let version: Promise<Version | null> | undefined;
 // One request per page load; a failure resolves to null so the UI shows nothing.
 export const getVersion = () => (version ??= fetch('version').then((r) => json<Version>(r)).catch(() => null));
 export const forgetVersion = () => { version = undefined; };
+
+// A working title from the description's first clause, cut at a word; the spec's own title takes over once it exists.
+export function draftTitle(description: string): string {
+  const first = description.replace(/\s+/g, ' ').trim().split(/(?<=[^\s]):\s|\.\s|\s\(/)[0]!;
+  return first.length <= 60 ? first : `${first.slice(0, 60).replace(/\s+\S*$/, '')}…`;
+}

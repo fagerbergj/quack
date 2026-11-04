@@ -8,7 +8,7 @@ export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string; view: '' | 'archived' };
 
 // The display title as one string, e.g. "#1927 Add retries"; the full key stays in the row's tooltip.
-export function titleOf(s: SessionSummary & { multiRepo?: boolean }): string {
+export function titleOf(s: Parameters<typeof sessionTitle>[0]): string {
   const t = sessionTitle(s);
   return [t.repo, t.number, t.text].filter(Boolean).join(' ');
 }

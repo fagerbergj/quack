@@ -6,7 +6,7 @@ import { Approvals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
 import { artifactName, useArtifacts } from './Artifacts.tsx';
-import { CheckProgress, checkedCount, liveChecks } from './CheckResult.tsx';
+import { CheckProgress, liveChecks, progressLabel } from './CheckResult.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { Work } from './Work.tsx';
 import { ContextRail, useDetails } from './Rail.tsx';
@@ -304,7 +304,7 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
   if (!checks) return <Working label={stepLabel(view)} />;
   return (
     <>
-      <Working label={`Double-checking · ${checkedCount(checks)} of ${checks.length} checked`} />
+      <Working label={progressLabel(checks)} />
       <CheckProgress checks={checks} />
     </>
   );

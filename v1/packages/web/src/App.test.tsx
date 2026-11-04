@@ -1875,18 +1875,21 @@ describe('the session page as a ledger', () => {
     expect(within(latest).getByText('Fail · 50%')).toBeInTheDocument();
   });
 
-  test('while the judge runs, its criteria show with each result as it lands', async () => {
+  test('while the judge runs, only running checks are listed and each one folds into Done as it finishes', async () => {
     const ws = await openSession();
     const checking = (checks: object[]) => view({ entries: entries.slice(0, 2), run: true, tools: [{ callId: 'b', name: 'submit_review', status: 'running', details: { rubric: 'r', checks } }] });
     const base = { criterion: 'c', weight: 2 };
-    ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines' }, { ...base, id: 'tone', label: 'Polite tone' }]));
-    const list = await screen.findByRole('list', { name: 'Double-check progress' });
-    expect(within(list).getAllByText('Checking')).toHaveLength(2);
-    expect(screen.getByLabelText('Double-checking · 0 of 2 checked')).toBeInTheDocument();
-    ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines', met: 0 }, { ...base, id: 'tone', label: 'Polite tone' }]));
-    expect(within(list).getByText('Fail')).toBeInTheDocument();
-    expect(within(list).getAllByText('Checking')).toHaveLength(1);
-    expect(screen.getByLabelText('Double-checking · 1 of 2 checked')).toBeInTheDocument();
+    ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines' }, { ...base, id: 'tone', label: 'Polite tone' }, { ...base, id: 'scope', label: 'Stays in scope' }]));
+    expect(await screen.findByLabelText('Double-checking · 0 of 3 · nothing found yet')).toBeInTheDocument();
+    const running = screen.getByRole('list', { name: 'Checks running' });
+    expect(within(running).getAllByText('Checking')).toHaveLength(3);
+    expect(screen.queryByText(/^Done ·/)).toBeNull();
+    ws.frame(checking([{ ...base, id: 'cites', label: 'Cites lines', met: 0 }, { ...base, id: 'tone', label: 'Polite tone', met: 1 }, { ...base, id: 'scope', label: 'Stays in scope' }]));
+    expect(await screen.findByLabelText('Double-checking · 2 of 3 · 1 problem')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Checks running' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Stays in scopeChecking']);
+    const done = screen.getByText('Done · 1 problem · 1 nothing found');
+    expect(done.closest('details')).not.toHaveAttribute('open');
+    expect(within(screen.getByRole('list', { name: 'Checks done' })).getByText('Fail')).toBeInTheDocument();
     expect(screen.queryByText('Waiting for the double-check')).toBeNull();
   });
 });
@@ -1898,6 +1901,16 @@ test('a running session waiting for a model slot says so on its row, instead of 
   render(<App />);
   expect(await screen.findByRole('link', { name: /Queued one/ })).toHaveTextContent('Waiting for a model slot (2 ahead)');
   expect(screen.getByRole('link', { name: /Working one/ })).not.toHaveTextContent('Waiting for a model slot');
+});
+
+test('a contract session is named by its latest spec in the list, not by the text that started it', async () => {
+  routes['GET /sessions'] = { sessions: [sess('contracts:c1', { title: 'The quack v1 distributor HTTP API (contract distributor.http in…' })] };
+  routes['GET /index/artifacts'] = { artifacts: [{ session: 'contracts:c1', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Distributor HTTP API, version 1', outcome: 'v1' }] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /Distributor HTTP API/ })).toHaveAttribute('href', '#/s/contracts%3Ac1');
+  expect(screen.queryByText(/contract distributor\.http in/)).toBeNull();
 });
 
 test('the session menu names what it opens: Open review, not Work', async () => {
@@ -2015,4 +2028,21 @@ describe('the session context rail', () => {
     expect(within(rail).queryByRole('region', { name: 'Pull request' })).toBeNull();
     expect(within(rail).getByText('Nothing is waiting on you.')).toBeInTheDocument();
   });
+});
+
+test('a contract session reads its spec name on Home and in its header, and Changes requested on its row', async () => {
+  const spec = { session: 'contracts:c2', kind: 'contract.spec', version: 1, hash: 'h', verdict: { passed: true }, sealedAt: 1, summary: 'Roster API, version 1', outcome: 'v1' };
+  const changes = { session: 'contracts:c2', kind: 'contract.changes', version: 1, hash: 'c', verdict: null, sealedAt: 2, summary: 'Use cursor paging', outcome: 'v1' };
+  routes['GET /sessions'] = { sessions: [sess('contracts:c2', { title: 'A long working title from the description' })] };
+  routes['GET /index/artifacts'] = { artifacts: [spec, changes] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  const { unmount } = render(<App />);
+  const row = await screen.findByRole('link', { name: /Roster API/ });
+  expect(row).toHaveTextContent('Changes requested');
+  expect(row).not.toHaveTextContent('Spec ready');
+  unmount();
+  location.hash = '#/s/contracts%3Ac2';
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: /Roster API/ })).toBeInTheDocument();
 });
