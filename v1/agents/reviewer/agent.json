@@ -1,6 +1,6 @@
 {
   "name": "reviewer",
-  "version": 7,
+  "version": 8,
   "status": "promoted",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -11,7 +11,8 @@
       "classifier": {
         "provider": "clef",
         "modelId": "clef",
-        "maxInputTokens": 8192
+        "maxInputTokens": 8192,
+        "concurrency": 4
       }
     }
   },

@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, GenerationTask, hook, LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
-import { answerUnit, type ClassifierRef, type ModelRef } from './resolve.ts';
+import { answerUnit, probabilitiesOf, type ClassifierRef, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type Check, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
@@ -77,6 +77,11 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
   // A model check is final once every unit it applies to is judged; one with no unit is final at once.
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(results, left)]));
   await publish();
+  // Every unit's decision-model request goes out first, `concurrency` at a time; escalations below stay one at a time.
+  const queue = opts.classifier ? [...byUnit.values()] : [];
+  await Promise.all(Array.from({ length: Math.min(opts.classifier?.concurrency ?? 1, queue.length) }, async () => {
+    for (let next = queue.shift(); next; next = queue.shift()) await probabilitiesOf(api, opts.classifier, memo, next.unit, next.checks, ctx);
+  }));
   for (const { unit, checks } of byUnit.values()) {
     const answers = await answerUnit(api, opts.classifier, opts.judgeModel, memo, unit, checks, ctx);
     for (const [key, a] of Object.entries(answers)) {

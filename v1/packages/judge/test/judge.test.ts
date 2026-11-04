@@ -22,12 +22,16 @@ after(async () => {
 
 // A stand-in for Clef speaking its real wire format; probability decides per question and unit.
 const clefCalls: Array<{ unit: string; questions: string[] }> = [];
-async function fakeClef(probability: (question: string, unit: string) => number) {
+const clefLoad = { now: 0, peak: 0 };
+async function fakeClef(probability: (question: string, unit: string) => number, holdMs = 0) {
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     const { state, questions } = JSON.parse(body);
     clefCalls.push({ unit: state.unit, questions: Object.keys(questions) });
+    clefLoad.peak = Math.max(clefLoad.peak, ++clefLoad.now);
+    await new Promise((r) => setTimeout(r, holdMs));
+    clefLoad.now--;
     const answers = Object.fromEntries(Object.keys(questions).map((q) => [q, { type: 'noul', noul: probability(q, state.unit) }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 0 } }));
   }).listen(0);
@@ -60,7 +64,7 @@ const rubric: Rubric = {
   ],
 };
 
-async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[]) {
+async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[], concurrency?: number) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-judge-'));
   dirs.push(dir);
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
@@ -72,7 +76,7 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
     models.setProvider(createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clefModel] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
   }
   const m = faux.getModel();
-  const classifier = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
+  const classifier = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens, concurrency } : undefined;
   const extensions = [CodingTools, artifactsExtension([review]), judge({ kind: review, rubric, evidence: evidence as never, maxRevisions: 2, classifier, toolName: 'submit_review' })];
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review the PR.', 'review-1', true);
@@ -124,6 +128,21 @@ test('a unit over the decision model cap skips it and every check escalates', as
   assert.equal(clefCalls.length, 0);
   assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
   assert.equal(versions[0].passed, true);
+});
+
+test('with concurrency set, units are classified at once and the verdict matches one at a time', async () => {
+  const content = '## Takeaway\nFix them.\n## Verdict\nrequest_changes\n## Findings\n- blocking: src/a.ts:1 off by one\n- nit: src/b.ts:2 rename\n- nit: src/c.ts:3 typo\n';
+  const once = async (concurrency?: number) => {
+    Object.assign(clefLoad, { now: 0, peak: 0 });
+    const baseUrl = await fakeClef((q) => (q.endsWith('preference_only') ? 0.05 : 0.95), 30);
+    const { versions } = await run(baseUrl, 8192, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), fauxAssistantMessage('Done.')], concurrency);
+    return { peak: clefLoad.peak, verdict: versions[0] };
+  };
+  const serial = await once();
+  const parallel = await once(4);
+  assert.equal(serial.peak, 1);
+  assert.equal(parallel.peak, 4, 'the review unit and the three findings go out together');
+  assert.deepEqual(parallel.verdict, serial.verdict);
 });
 
 const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });
