@@ -18,8 +18,9 @@ const card = 'rounded-[18px] border border-line bg-surface';
 const pill = 'inline-flex min-h-11 flex-none cursor-pointer items-center rounded-full border border-line-strong bg-transparent px-4 text-[13.5px] text-ink-2 hover:text-ink';
 
 // Decision and why text is Markdown-flavoured prose; only `code` spans are rendered, inline.
+// One span, so a flex parent keeps the sentence and its code on one line instead of stacking each piece.
 function Inline({ text }: { text: string }) {
-  return <>{text.split(/`([^`]+)`/).map((t, i) => (i % 2 ? <code key={i} className="rounded bg-soft px-1 font-mono text-[0.92em]">{t}</code> : t))}</>;
+  return <span>{text.split(/`([^`]+)`/).map((t, i) => (i % 2 ? <code key={i} className="rounded bg-soft px-1 font-mono text-[0.92em]">{t}</code> : t))}</span>;
 }
 
 function Method({ m }: { m: string }) {
