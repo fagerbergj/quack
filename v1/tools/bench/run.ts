@@ -21,7 +21,8 @@ function v0First(n: string) {
 
 // A runtime's graceful close waits for its in-flight run, so SIGKILL follows; a survivor would answer the next run's requestId from its old session.
 async function stop(child: ChildProcess) {
-  const exited = new Promise((r) => child.once('exit', r));
+  // A child that already exited (a crash) has emitted its exit event; waiting on it then would never return.
+  const exited = new Promise<void>((r) => (child.exitCode !== null || child.signalCode !== null ? r() : child.once('exit', () => r())));
   child.kill('SIGTERM');
   const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
   await exited;
@@ -60,8 +61,10 @@ for (const n of prs) {
   const started = Date.now();
   let result: unknown;
   try {
-    const port = await childPort(child, 'runtime', 30_000);
-    result = await untilSettled(`http://127.0.0.1:${port}`, n, started + 30 * 60_000);
+    // The runtime clones the repository before it listens, so the port wait shares the run's deadline (as eval's replay does).
+    const deadline = started + 30 * 60_000;
+    const port = await childPort(child, 'runtime', deadline - Date.now());
+    result = await untilSettled(`http://127.0.0.1:${port}`, n, deadline);
   } catch (err) {
     result = { status: 'error', error: String(err) };
   } finally {
