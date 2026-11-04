@@ -42,10 +42,18 @@ export const git = (api: ToolExecutionApi, args: string[], config: SessionConfig
 
 export const remoteFor = (config: SessionConfig, owner: string, repo: string) => `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
 
-export async function fetchRecord(config: SessionConfig, owner: string, repo: string, number: number): Promise<PullRequestRecord> {
+/** undefined when the number is not a pull request (a 404), as an issue number is. */
+export async function findRecord(config: SessionConfig, owner: string, repo: string, number: number): Promise<PullRequestRecord | undefined> {
   const res = await fetch(`${config.serviceUrl}/pulls/${owner}/${repo}/${number}`, { headers: { authorization: `Bearer ${config.serviceToken}` } });
+  if (res.status === 404) return undefined;
   if (!res.ok) throw new Error(`cannot read ${owner}/${repo}#${number}: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<PullRequestRecord>;
+}
+
+export async function fetchRecord(config: SessionConfig, owner: string, repo: string, number: number): Promise<PullRequestRecord> {
+  const pr = await findRecord(config, owner, repo, number);
+  if (!pr) throw new Error(`cannot read ${owner}/${repo}#${number}: 404 no such pull request`);
+  return pr;
 }
 
 const alreadyPosted = (doc: { posted?: number[]; reviewed?: Record<string, string> } | undefined, sha: string) => !!doc?.posted?.some((v) => doc.reviewed?.[String(v)] === sha);
