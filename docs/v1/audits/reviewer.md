@@ -57,8 +57,8 @@ Prompt (733 to 850 words, +16%), three commits:
 
 | Change | Commit | Why |
 | --- | --- | --- |
-| Step 4 no longer calls `post_review`; a passing `submit_review` posts the review and returns the link | #2039 | The reviewer posts automatically when the gate passes; the separate tool was dropped. |
-| Step 1 passes the head sha and says `checkout_pr` always checks out the live head, and to stop if it is already reviewed. Step 4 says to re-check out when the PR moved | #2047 | From the commit title: review the live head, and end when it is already reviewed. |
+| Step 4 no longer calls `post_review`; a passing `submit_review` posts the review and returns the link, and says to re-check out when the PR moved | #2039 | The reviewer posts automatically when the gate passes; the separate tool was dropped. |
+| Step 1 passes the head sha and says `checkout_pr` always checks out the live head, and to stop if it is already reviewed | #2047 | From the commit title: review the live head, and end when it is already reviewed. |
 | New "Answering a mention" section (about 75 words) and `reply_mention` | #2051 | `@quack` comments get an answer in their own thread. The same PR made `path:line` findings post as inline comments, which needed no prompt text because the finding format is unchanged. |
 
 Nothing else moved: the check order, the verification paragraph, the format and the style rules are word-for-word the v1 text. The lsp cut (#2086) and the removal of `maxTurns` (#1884) touched `agent.json` and packages, not the prompt; the prompt never mentioned either.
