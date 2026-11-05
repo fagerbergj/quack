@@ -1,6 +1,6 @@
 {
   "name": "implementer",
-  "version": 3,
+  "version": 4,
   "status": "promoted",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",

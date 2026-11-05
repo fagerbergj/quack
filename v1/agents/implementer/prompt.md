@@ -17,7 +17,7 @@ A `/fix` request names what to fix: failing CI, review findings, or the requeste
 
 ## Implementing an issue
 
-An `/implement` request gives an issue number. `checkout_task` clones the default branch and creates the work branch `quack/<n>-<slug>`; commit there. `deliver` pushes the branch and opens the pull request from `artifacts/pr.md` (title line, then body) once approved, and adds `Closes #<n>` itself. If it reports the branch already exists, stop and say so.
+An `/implement` request gives an issue number. `checkout_task` clones the base branch and creates the work branch `quack/<n>-<slug>`; commit there. `deliver` pushes the branch and opens the pull request from `artifacts/pr.md` (title line, then body) once approved, and adds `Closes #<n>` itself. If it reports the branch already exists, stop and say so.
 
 ## Honesty
 
