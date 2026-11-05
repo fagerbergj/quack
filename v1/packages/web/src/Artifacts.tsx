@@ -4,13 +4,7 @@ import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { listArtifacts, type SealedArtifact } from './api.ts';
 import { CheckResult } from './CheckResult.tsx';
-
-// A pass is a tick with a tooltip, a fail an x; no verdict yet shows nothing.
-export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
-  if (!verdict) return null;
-  const [glyph, tone] = verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
-  return <span role={verdict.passed ? 'img' : undefined} aria-label={verdict.passed ? 'Double-checked' : undefined} aria-hidden={verdict.passed ? undefined : true} title={verdict.passed ? 'Double-checked' : undefined} className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
-}
+import { StatusIcon } from './StatusIcon.tsx';
 
 // An extension may draw its artifact as a card; undefined leaves the plain line. A card that throws falls back to the saved text.
 export function artifactCard(a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) {
@@ -55,14 +49,14 @@ export function LedgerItem({ a, round, latest, running, meta, onOpen }: { a: Sea
   return (
     <div data-ledger id={ledgerId(a)} className="flex flex-col gap-1 text-[13px] text-muted">
       <div className="flex items-center gap-2">
-        {!named?.previous && <StatusIcon verdict={a.verdict} />}
+        {!named?.previous && !(card && named?.titled && a.verdict?.passed) && <StatusIcon verdict={a.verdict} />}
         <span className="min-w-0 truncate">{lineOf(a, named)}</span>
         {label && <span className="flex-none text-[12px]">{label}</span>}
         <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
         {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
       </div>
       {card}
-      {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} />}
+      {a.verdict && !a.verdict.passed && <CheckResult verdict={a.verdict} open />}
   </div>
   );
 }

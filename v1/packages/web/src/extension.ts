@@ -31,7 +31,7 @@ export type Extension = {
   /** Session-key prefix and the label the "started by" filter shows for it. */
   start?: { prefix: string; label: string };
   /** What one of this extension's artifacts is called on the transcript line ("Review"), with a posted state when `posted`; undefined when it is not its artifact. */
-  artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean } | undefined;
+  artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean; /** Its card draws a passed check beside its own title, so the line carries none. */ titled?: boolean } | undefined;
   /** A sealed artifact drawn as a card instead of a line; undefined when it is not this extension's or cannot be read as one. */
   card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
   /** The artifact drawn as its own page (opened from a link on its card); undefined when it is not this extension's. */

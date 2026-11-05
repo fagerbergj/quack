@@ -3,7 +3,7 @@ import type { SealedArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
-import { NewsList, Verdict, slot, weekday, when, type News } from './parts.tsx';
+import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { sessionsOf, useResults, wanted, weekResult, type Result } from './week.ts';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
@@ -55,6 +55,7 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <p className="m-0 text-sm font-semibold">Start / sit</p>
+          <TitleTick artifact={artifact} />
           <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="ml-auto inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1">Ask about this</a>
         </div>
         <Verdict artifact={artifact} />
@@ -170,7 +171,7 @@ function ResultCard({ r, compact }: { r: Result; compact?: boolean }) {
     <article id={`sleeper-${r.job}`} aria-label={title} className="scroll-mt-4 rounded-[22px] border border-line bg-surface shadow-card">
       <div className="flex items-center gap-3 px-4 pt-3">
         <div className="min-w-0 flex-1">
-          <h2 className="m-0 text-[15px] font-semibold">{title}</h2>
+          <h2 className="m-0 flex items-center gap-2 text-[15px] font-semibold">{title}<TitleTick artifact={r.artifact} /></h2>
           <p className="m-0 text-[12px] text-muted">{compact ? whatIs(r) : brief(r).sub}</p>
         </div>
         <button type="button" aria-expanded={open} aria-label={`${open ? 'Close' : 'Open'} ${title}`} onClick={() => setOpen(!open)} className={btn}>{open ? 'Close' : 'Open ›'}</button>

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SealedArtifact } from '../api.ts';
 import { Markdown } from '../Markdown.tsx';
-import { Verdict } from './sleeper/parts.tsx';
+import { TitleTick, Verdict } from './sleeper/parts.tsx';
 import { parseReview, type Finding, type Review } from './review.ts';
 
 const VERDICT: Record<string, { label: string; tone: string; band: string }> = {
@@ -82,8 +82,8 @@ function Carried({ from }: { from: NonNullable<SealedArtifact['carriedFrom']> })
 function Footer({ a, md }: { a: SealedArtifact; md: string }) {
   return (
     <div className="border-t border-line px-3.5">
-      {/* No verdict yet (the judge is still running) and nothing carried: no empty row. */}
-      {(a.verdict || a.carriedFrom) && (
+      {/* A pass is the tick on the title; with no failure and nothing carried there is no row. */}
+      {(a.verdict?.passed === false || a.carriedFrom) && (
         <div className="flex min-h-11 items-center gap-2 border-b border-line text-[12.5px]">
           <Verdict artifact={a} />
           {a.carriedFrom && <Carried from={a.carriedFrom} />}
@@ -106,7 +106,7 @@ function Body({ r, a, outdated }: { r: Review; a: SealedArtifact; outdated: bool
       <div className={`flex items-center gap-3 border-b border-line px-3.5 py-3.5 ${v.band}`}>
         <Seal className={v.tone} />
         <span className="flex min-w-0 flex-col gap-0.5">
-          <span className={`font-display text-[18px] font-semibold ${v.tone}`}>{v.label}</span>
+          <span className="flex items-center gap-2"><span className={`font-display text-[18px] font-semibold ${v.tone}`}>{v.label}</span><TitleTick artifact={a} /></span>
           <span className="text-[12.5px] text-ink-2">
             {line.length ? line.join(' · ') : 'No findings'}
             {posted && <>{' · '}<a href={posted.url} target="_blank" rel="noopener noreferrer" className="-my-3 inline-flex min-h-11 items-center">Posted to GitHub ↗</a></>}

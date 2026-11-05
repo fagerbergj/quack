@@ -271,10 +271,11 @@ test('a past week rows say what each result is, not just the week again', async 
   expect((await card('Week 7 retro')).getByText('Your lineup calls, looked back on')).toBeInTheDocument();
 });
 
-test('every result has one status line, with minor notes behind it when there are any', async () => {
+test('every passed result is a tick on its title, with no status line or minor notes', async () => {
   page();
   await screen.findByRole('article', { name: 'Waivers' });
-  expect(screen.getAllByText('Double-checked').length).toBeGreaterThan(2);
+  expect(screen.getAllByRole('img', { name: 'Double-checked' }).length).toBeGreaterThan(2);
+  expect(screen.queryByText('Double-checked')).toBeNull();
   expect(document.body).not.toHaveTextContent(/\d+ minor notes?/);
 });
 
