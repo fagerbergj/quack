@@ -1,7 +1,4 @@
-/**
- * The public surface of delegation: the `subagent` tool every session has, and the limits that bound it.
- * The tool's result reaches the model as text: the child's final answer.
- */
+/** The `subagent` tool every session has and the limits that bound it. Its result reaches the model as text: the child's final answer. */
 
 /** The deployment file's `subagents` key. Limits are per session; each takes the default shown when absent. */
 export type SubagentsConfig = {
