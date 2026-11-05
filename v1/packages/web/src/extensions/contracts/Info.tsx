@@ -82,7 +82,7 @@ export function Info({ choices, label }: { choices: Choice[]; label?: string }) 
     <>
       <button
         ref={btn} type="button" aria-label={name} aria-expanded={!!open} aria-controls={open ? id : undefined}
-        onClick={() => setOpen(open === 'pinned' ? undefined : 'pinned')}
+        onClick={() => ((pressed.current = false), setOpen(open === 'pinned' ? undefined : 'pinned'))}
         // Keyboard focus shows the reasons the way hover does; a press focuses too, and its click decides instead.
         onPointerDown={() => void (pressed.current = true)}
         onFocus={() => (pressed.current ? (pressed.current = false) : !open && setOpen('hover'))}
