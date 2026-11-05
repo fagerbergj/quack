@@ -83,6 +83,10 @@ function declsOf(s: ts.Statement): Array<Omit<Decl, 'uses' | 'exported'> & { nod
   if (ts.isVariableStatement(s)) {
     return s.declarationList.declarations.map((d) => ({ name: d.name.getText(), kind: 'const' as const, doc: docOf(d), ...(d.type ? body(d.type, `/${d.name.getText()}`) : { rows: [] }), node: d }));
   }
+  if (ts.isEnumDeclaration(s)) {
+    const rows = s.members.map((m) => row(m.name.getText(), m.initializer ? flat(m.initializer) : '', false, 0, `/${s.name.text}/${m.name.getText()}`, docOf(m) ?? inlineDoc(m)));
+    return [{ name: s.name.text, kind: 'enum', doc: docOf(s), rows, node: s }];
+  }
   const name = (s as unknown as ts.NamedDeclaration).name?.getText();
   return name ? [{ name, kind: 'other', doc: docOf(s), rows: [], text: flat(s), node: s }] : [];
 }

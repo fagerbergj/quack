@@ -9,7 +9,7 @@ const clip = (s: string) => (s.length > MAX_CHARS ? `${s.slice(0, MAX_CHARS - 1)
 export type Box = { decl: Decl; x: number; y: number; w: number; h: number; lines: Array<[string, string]> };
 export type Diagram = { width: number; height: number; boxes: Box[]; edges: Array<{ from: string; to: string; d: string }> };
 
-const DRAWN = new Set<Decl['kind']>(['type', 'interface', 'other']);
+const DRAWN = new Set<Decl['kind']>(['type', 'interface', 'enum', 'other']);
 
 // A box lists the top-level fields (a union's variants as `| …`), or the aliased type when there are none.
 function lines(d: Decl): Array<[string, string]> {

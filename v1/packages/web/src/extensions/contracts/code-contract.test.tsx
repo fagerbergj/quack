@@ -98,3 +98,21 @@ test('a TypeScript contract opens as a diagram and a card per declaration, with 
   expect(store).toHaveFocus();
   expect(within(manifest).getByText(/Used by/)).toHaveTextContent('Used by Running, start');
 });
+
+test('an enum lists its members with their values', () => {
+  const [e] = declarations("/** Levels. */\nexport declare enum Level { /** Quiet. */ Info = 'info', Error = 'error' }").decls;
+  expect(e).toMatchObject({ name: 'Level', kind: 'enum', doc: 'Levels.' });
+  expect(e!.rows.map((r) => [r.name, r.type, r.desc])).toEqual([['Info', "'info'", 'Quiet.'], ['Error', "'error'", undefined]]);
+});
+
+test('tabbing to an info button shows its reasons, and tabbing away hides them', async () => {
+  const { Info } = await import('./Info.tsx');
+  const c = { id: 'a', pointer: '/x', decision: 'X is a string.', why: [{ source: 'guide' as const, text: 'Plain.', ref: 'g' }] };
+  render(<><Info choices={[c]} /><button type="button">next</button></>);
+  await userEvent.tab();
+  expect(screen.getByRole('dialog', { name: 'Why: X is a string.' })).toHaveTextContent('Plain.');
+  await userEvent.tab();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Why: X is a string.' }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
