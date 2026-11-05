@@ -37,17 +37,19 @@ function parse(s: Sess, all: SealedArtifact[]): Result | undefined {
   }
 }
 
-/** Each session's newest sealed result, read again when one starts or finishes or `refresh` changes. */
+/** Each session's newest sealed result, read again when one starts or finishes or `refresh` changes; each card shows as its own read lands. */
 export function useResults(sessions: Sess[], refresh: number) {
   const [results, setResults] = useState<Record<string, Result>>({});
   const [error, setError] = useState('');
   const stamp = sessions.map((s) => `${s.key}|${s.running}`).join(',');
   useEffect(() => {
     let live = true;
-    Promise.all(sessions.map((s) => listArtifacts(s.key).then((a) => parse(s, a)))).then(
-      (all) => live && (setResults(Object.fromEntries(all.flatMap((r) => (r ? [[r.key, r]] : [])))), setError('')),
-      (e: Error) => live && setError(e.message),
-    );
+    // A stopped session boots to answer, so one slow read must not hold back the rest; earlier results stay up meanwhile.
+    const one = (s: Sess) => listArtifacts(s.key).then((a) => {
+      const r = parse(s, a);
+      if (live && r) setResults((prev) => ({ ...prev, [r.key]: r }));
+    });
+    Promise.all(sessions.map(one)).then(() => live && setError(''), (e: Error) => live && setError(e.message));
     return () => void (live = false);
   }, [stamp, refresh]);
   return { results, error };

@@ -19,16 +19,18 @@ export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: 
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  // Which decision is in flight: a stopped session boots before it records one, so the card says so at once.
+  const [busy, setBusy] = useState<'approve' | 'reject'>();
   const decide = (decision: 'approve' | 'reject') => {
     if (busy) return;
-    setBusy(true);
-    void decideApproval(sessionKey, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
+    setBusy(decision);
+    setError('');
+    void decideApproval(sessionKey, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(undefined));
   };
   const what = describe(a.args);
   const href = `#/s/${encodeURIComponent(sessionKey)}`;
   return (
-    <section id={needId(a.id)} aria-label="Approval" className={`${card} border-warning/40 bg-warm`}>
+    <section id={needId(a.id)} aria-label="Approval" aria-busy={!!busy} className={`${card} border-warning/40 bg-warm`}>
       <div className="flex items-start gap-3">
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           {what ? <span className="text-[14.5px] font-semibold [overflow-wrap:anywhere]">{what}</span> : <a href={href} className="text-[14.5px] font-semibold text-ink no-underline [overflow-wrap:anywhere]">{`${title} wants to continue`}</a>}
@@ -51,13 +53,13 @@ export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: 
       <span className="flex gap-2">
         {rejecting ? (
           <>
-            <button type="button" aria-label={`Confirm reject ${title}`} disabled={busy} onClick={() => decide('reject')} className={prim}>Confirm reject</button>
-            <button type="button" onClick={() => setRejecting(false)} className={`${btn} border border-line bg-surface font-medium text-ink-2`}>Cancel</button>
+            <button type="button" aria-label={`Confirm reject ${title}`} disabled={!!busy} onClick={() => decide('reject')} className={prim}>{busy === 'reject' ? 'Rejecting…' : 'Confirm reject'}</button>
+            <button type="button" disabled={!!busy} onClick={() => setRejecting(false)} className={`${btn} border border-line bg-surface font-medium text-ink-2 disabled:opacity-50`}>Cancel</button>
           </>
         ) : (
           <>
-            <button type="button" aria-label={`Approve ${title}`} disabled={busy} onClick={() => decide('approve')} className={prim}>Approve</button>
-            <button type="button" aria-label={`Reject ${title}`} onClick={() => setRejecting(true)} className={`${btn} border border-line bg-surface font-medium text-ink-2 hover:text-danger`}>Reject</button>
+            <button type="button" aria-label={`Approve ${title}`} disabled={!!busy} onClick={() => decide('approve')} className={prim}>{busy === 'approve' ? 'Approving…' : 'Approve'}</button>
+            <button type="button" aria-label={`Reject ${title}`} disabled={!!busy} onClick={() => setRejecting(true)} className={`${btn} border border-line bg-surface font-medium text-ink-2 hover:text-danger disabled:opacity-50`}>Reject</button>
           </>
         )}
       </span>

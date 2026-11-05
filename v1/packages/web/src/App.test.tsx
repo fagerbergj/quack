@@ -1233,6 +1233,10 @@ test('a double-click on Approve posts once', async () => {
   fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
   await userEvent.dblClick(approve);
   expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1);
+  // The card answers the click at once: the pressed button says what is happening and the other cannot start a second decision.
+  expect(approve).toHaveTextContent('Approving…');
+  expect(screen.getByRole('button', { name: 'Reject gh:3' })).toBeDisabled();
+  expect(approve.closest('section')).toHaveAttribute('aria-busy', 'true');
 });
 
 const KEY = 'sleeper:L1:8:lineup';
