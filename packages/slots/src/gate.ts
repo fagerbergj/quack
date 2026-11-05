@@ -46,14 +46,14 @@ export type GateOptions = {
 };
 
 type Lease = { idx: number; endpoint: string; since: number; busy: boolean; stopBeat: () => void };
+/** One begun model call; `end` takes it back so the call frees its own slot, whatever order calls finish in. */
+export type SlotCall = { lease?: Lease };
 
 /** A run's holds on one endpoint's slots: one lease per model call in flight, and idle ones kept between generations. */
 export class SlotGate {
   readonly #o: Required<Omit<GateOptions, 'clock'>> & { clock: Clock };
   #leases: Lease[] = [];
-  // One entry per begun call; undefined when the call went ungated.
-  #taken: Array<Lease | undefined> = [];
-  #inflight = 0;
+  #calls = new Set<SlotCall>();
   #cancelTimer = () => {};
   #downUntil = 0;
   #warned = false;
@@ -66,30 +66,32 @@ export class SlotGate {
   #holder = (l: Lease) => (l.idx ? `${this.#o.holder}#${l.idx}` : this.#o.holder);
 
   /** Holds a slot on `endpoint` before a model request, one per call in flight; resolves when granted, or at once if the service is down (fail-open). */
-  async begin(endpoint: string, signal?: AbortSignal): Promise<void> {
-    this.#inflight += 1;
+  async begin(endpoint: string, signal?: AbortSignal): Promise<SlotCall> {
+    const call: SlotCall = {};
+    this.#calls.add(call);
     this.#cancelTimer();
     try {
-      this.#taken.push(this.#o.clock.now() < this.#downUntil ? undefined : await this.#lease(endpoint, signal));
+      if (this.#o.clock.now() >= this.#downUntil) call.lease = await this.#lease(endpoint, signal);
     } catch (err) {
-      this.#inflight -= 1;
+      this.#calls.delete(call);
       this.#o.setNote(null);
       throw err;
     }
     this.#arm(this.#o.capMs);
+    return call;
   }
 
-  /** A model response ended; with none in flight the idle grace starts. */
-  end(): void {
-    this.#inflight = Math.max(0, this.#inflight - 1);
-    const lease = this.#taken.pop();
-    if (lease) lease.busy = false;
-    if (this.#inflight === 0 && this.#leases.length) this.#arm(this.#o.graceMs);
+  /** A model response ended; with none in flight the idle grace starts. Without `call`, the newest open one ends. */
+  end(call?: SlotCall): void {
+    const done = call ?? [...this.#calls].at(-1);
+    if (!done || !this.#calls.delete(done)) return;
+    if (done.lease) done.lease.busy = false;
+    if (this.#calls.size === 0 && this.#leases.length) this.#arm(this.#o.graceMs);
   }
 
   /** The run waits on something other than its own next model call (a person, a child run), or ended: it gives the slots back. */
   idle(): Promise<void> {
-    return this.#inflight === 0 ? this.release() : Promise.resolve();
+    return this.#calls.size === 0 ? this.release() : Promise.resolve();
   }
 
   async release(): Promise<void> {
@@ -130,7 +132,7 @@ export class SlotGate {
 
   #arm(ms: number) {
     this.#cancelTimer();
-    this.#cancelTimer = this.#o.clock.setTimer(() => { this.#inflight = 0; this.#taken = []; void this.release(); }, ms);
+    this.#cancelTimer = this.#o.clock.setTimer(() => { this.#calls.clear(); void this.release(); }, ms);
   }
 
   #beat(lease: Lease) {

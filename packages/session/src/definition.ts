@@ -80,7 +80,7 @@ function subagentProblems(s: unknown): string[] {
   return ok ? [] : [`subagents must map ${known.join(', ')} to positive integers`];
 }
 
-const ceilingProblems =(c: unknown) => (c === undefined || positive(c) ? [] : ['turnCeiling must be a positive integer']);
+const ceilingProblems = (c: unknown) => (c === undefined || positive(c) ? [] : ['turnCeiling must be a positive integer']);
 
 function validZone(z: unknown): boolean {
   try {

@@ -9,7 +9,7 @@ import { afterEach, test } from 'node:test';
 import { observeGeneration, serveApp, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
-import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
+import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotCall, type SlotClient } from '../src/index.ts';
 
 const TTL = 30_000;
 const GRACE = 60_000;
@@ -266,14 +266,33 @@ test('a run held past the cap requeues behind waiters at its next generation', a
 test('parallel calls in one session take one slot each and queue past the limit', async () => {
   fresh(2);
   const g = gate('s');
-  const calls = [begin(g), begin(g), begin(g)];
+  const tokens: SlotCall[] = [];
+  const calls = [0, 1, 2].map(() => { const state = { granted: false }; void g.begin('swap').then((t) => (tokens.push(t), (state.granted = true))); return state; });
   await clock.settle();
   assert.deepEqual(calls.map((c) => c.granted), [true, true, false]);
   assert.deepEqual(heldBy().sort(), ['s', 's#1']);
   assert.equal(notes.s, 'Waiting for a model slot (0 ahead)');
-  g.end();
+  g.end(tokens[0]);
   await clock.advance(1000);
   assert.equal(calls[2].granted, true, 'the call that ended hands its slot to the queued one without waiting for the idle grace');
+});
+
+test('calls finishing out of order free their own slot, not the newest one', async () => {
+  table = new SlotTable({ dbPath: ':memory:', limits: { x: 2, y: 1 }, ttlMs: TTL, now: clock.now });
+  open.push(table);
+  const g = gate('s');
+  const x1 = await g.begin('x');
+  const y1 = await g.begin('y');
+  g.end(x1);
+  const x2 = await g.begin('x');
+  const held = () => table.snapshot().map((e) => [e.endpoint, e.held.length]);
+  assert.deepEqual(held(), [['x', 1], ['y', 1]], 'the y call is still generating, so its slot stays held');
+  const rival = { granted: false };
+  void gate('o').begin('y').then(() => (rival.granted = true));
+  await clock.advance(2000);
+  assert.equal(rival.granted, false, 'a slots: 1 provider never runs two calls');
+  g.end(y1);
+  g.end(x2);
 });
 
 test('a call reuses the idle slot of the one before it, and all slots go back after the grace', async () => {
