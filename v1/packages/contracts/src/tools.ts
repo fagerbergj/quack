@@ -8,13 +8,14 @@ const kind = oneOf(Object.keys(kinds), { default: 'rest', description: 'The cont
 
 const extractTool = defineTool({
   name: 'extract_contract',
-  description: 'Read an existing contract file (an OpenAPI document for rest, a .schema.json for json-schema; JSON or YAML) and return its document as JSON, to base a spec on.',
+  description: 'Read an existing contract file (an OpenAPI document for rest, a .schema.json for json-schema; JSON or YAML; a .d.ts file for typescript, returned as text) and return its document, to base a spec on.',
   parameters: obj({ path: str({ minLength: 1 }), kind: opt(kind) }, { open: true }),
   replay: 'safe',
   async execute({ path, kind: k }, api, ctx) {
     const read = await api.env?.readTextFile(path, ctx);
     if (!read?.ok) return { output: [{ type: 'text', text: `${path}: cannot be read` }], isError: true };
-    return { output: [{ type: 'text', text: JSON.stringify(kinds[k ?? 'rest'].extract(read.value), null, 2) }] };
+    const doc = kinds[k ?? 'rest'].extract(read.value);
+    return { output: [{ type: 'text', text: typeof doc === 'string' ? doc : JSON.stringify(doc, null, 2) }] };
   },
 });
 

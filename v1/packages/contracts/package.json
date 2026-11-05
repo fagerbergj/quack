@@ -13,7 +13,8 @@
     "@stoplight/spectral-functions": "1.11.0",
     "@stoplight/spectral-parsers": "1.0.5",
     "@stoplight/spectral-rulesets": "1.23.0",
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
     "@quack/session": "*"

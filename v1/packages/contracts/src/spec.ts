@@ -6,13 +6,15 @@ export type Change = { choice: string; was: string; now: string; why: string };
 export type Compatibility = { breaking: Array<{ what: string; callers: string[] }>; safe: string[] };
 export type Intent = { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
 
+export const SPEC_KINDS = ['rest', 'json-schema', 'typescript'] as const;
+
 /** The sealed `contract.spec` artifact: one JSON file per spec version. */
 export type ContractSpec = {
-  kind: 'rest' | 'json-schema';
+  kind: (typeof SPEC_KINDS)[number];
   title: string;
   version: number;
   intent: Intent;
-  /** The kind's standard document; an OpenAPI 3.1 object for rest, a JSON Schema 2020-12 schema for json-schema. */
+  /** The kind's standard document; an OpenAPI 3.1 object for rest, a JSON Schema 2020-12 schema for json-schema, the .d.ts source text for typescript. */
   document: unknown;
   choices: Choice[];
   /** From version 2 on. */
@@ -69,11 +71,11 @@ export function validateSpec(content: string): string[] {
   const s = parseSpec(content);
   if (typeof s === 'string') return [s];
   const out: string[] = [];
-  if (s.kind !== 'rest' && s.kind !== 'json-schema') out.push('kind must be "rest" or "json-schema"');
+  if (!SPEC_KINDS.includes(s.kind)) out.push(`kind must be one of ${SPEC_KINDS.map((k) => `"${k}"`).join(', ')}`);
   if (!text(s.title)) out.push('title must be a non-empty string');
   if (!Number.isInteger(s.version) || s.version < 1) out.push('version must be a positive integer');
   out.push(...intentProblems(s.intent));
-  if (!isObj(s.document)) out.push('document must be the OpenAPI object or JSON Schema');
+  if (s.kind === 'typescript' ? !text(s.document) : !isObj(s.document)) out.push('document must be the OpenAPI object, the JSON Schema, or for typescript the .d.ts source text');
   if (!Array.isArray(s.choices) || !s.choices.length) out.push('choices must list every decision the spec rests on');
   else out.push(...s.choices.flatMap(choiceProblems));
   if (s.version > 1) out.push(...laterVersionProblems(s as unknown as Record<string, unknown>));

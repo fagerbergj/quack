@@ -12,6 +12,8 @@ export const guideAnchors = (skill: string) => new Set([...skill.matchAll(/^###\
 // A JSON pointer resolves when every segment names a key or index on the way down.
 function pointerResolves(doc: unknown, pointer: string): boolean {
   if (pointer === '') return true;
+  // A TypeScript document is source text; its pointer is "/" plus the name of an export.
+  if (typeof doc === 'string') return /^\/[A-Za-z_$][\w$]*$/.test(pointer) && new RegExp(`^export (declare )?(type|interface|function|const|var|class|enum|namespace) ${pointer.slice(1).replace(/\$/g, '\\$')}\\b`, 'm').test(doc);
   let at: unknown = doc;
   for (const raw of pointer.split('/').slice(1)) {
     const key = raw.replaceAll('~1', '/').replaceAll('~0', '~');
@@ -39,7 +41,7 @@ async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchor
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
-      const ref = w.ref.replace(/^(rest|json-schema)#|^#/, '');
+      const ref = w.ref.replace(/^(rest|json-schema|typescript)#|^#/, '');
       // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
       const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(api, w.ref, ctx);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);

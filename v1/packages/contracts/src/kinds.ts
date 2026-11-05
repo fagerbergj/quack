@@ -5,6 +5,8 @@ import { lintJsonSchema } from './json-schema-rules.ts';
 import { breakingChanges, type Break } from './oasdiff.ts';
 import { lintOpenApi, type Finding } from './rest-rules.ts';
 import type { ContractSpec } from './spec.ts';
+import { typeScriptBreaks } from './typescript-diff.ts';
+import { lintTypeScript } from './typescript-rules.ts';
 
 /** A contract kind: how to read a contract in from code, check it, hint a renderer, and the guide its checks are judged against. */
 export type ContractKind = {
@@ -39,4 +41,14 @@ export const jsonSchemaKind: ContractKind = {
   renderHints: { layout: 'json-schema', export: { format: 'json-schema', filename: 'schema.json' } },
 };
 
-export const kinds: Record<string, ContractKind> = { rest: restKind, 'json-schema': jsonSchemaKind };
+export const typescriptKind: ContractKind = {
+  name: 'typescript',
+  skill: readFileSync(new URL('../skills/typescript.md', import.meta.url), 'utf8'),
+  // Only a .d.ts is read; a .ts file with initializers would fail its own check.
+  extract: (source) => source,
+  check: lintTypeScript,
+  diff: typeScriptBreaks,
+  renderHints: { layout: 'typescript', export: { format: 'typescript', filename: 'contract.d.ts' } },
+};
+
+export const kinds: Record<string, ContractKind> = { rest: restKind, 'json-schema': jsonSchemaKind, typescript: typescriptKind };
