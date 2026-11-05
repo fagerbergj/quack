@@ -33,23 +33,23 @@ test('version 1 shows the route, its fields with type and required, and an examp
   expect(screen.queryByRole('region', { name: 'Compatibility' })).toBeNull();
 });
 
-test('a why chip opens the reasons for its own choice, by source', async () => {
+test('an info button opens the reasons for its own choice, by source, and Escape closes it', async () => {
   show(1);
   const ok = screen.getByText('Schedules service unreachable').closest('div.rounded-xl') as HTMLElement;
   await userEvent.click(within(ok).getByRole('button', { name: 'Why: 503 when schedules is down' }));
-  const panel = screen.getByRole('region', { name: 'Why: 503 when schedules is down' });
+  const panel = screen.getByRole('dialog', { name: 'Why: 503 when schedules is down' });
   const items = within(panel).getAllByRole('listitem').map((li) => li.textContent);
   expect(items).toEqual([
     'YouAnswered “What should the page get when the schedules service is down?”An error the page can show',
     'GuideA dependency outage is 503 with a retry hint, not an empty successREST guide, errors',
     'ExistingThe app proxy already returns 502 when Sleeper itself is downv1/packages/distributor/src/proxy.ts:88',
   ]);
-  await userEvent.click(within(panel).getByRole('button', { name: 'Close' }));
-  expect(screen.queryByRole('region', { name: /^Why:/ })).toBeNull();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).toBeNull();
 
   const week = screen.getByText('week').closest('li') as HTMLElement;
   await userEvent.click(within(week).getByRole('button', { name: 'Why: Live week from Sleeper itself' }));
-  expect(screen.getByRole('region', { name: 'Why: Live week from Sleeper itself' })).toHaveTextContent('Yes, always');
+  expect(screen.getByRole('dialog', { name: 'Why: Live week from Sleeper itself' })).toHaveTextContent('Yes, always');
 });
 
 test('every choice can be opened, and the ones on a field sit on that field', async () => {
@@ -73,7 +73,7 @@ test('version 2 lists what changed, why, and the caller it breaks', async () => 
   expect(within(compat).getByText('Sleeper page')).toBeInTheDocument();
   expect(within(compat).getByText('Still read-only')).toBeInTheDocument();
   await userEvent.click(within(rows[2]!).getByRole('button', { name: 'Why: Done runs link to their result' }));
-  expect(screen.getByRole('region', { name: 'Why: Done runs link to their result' })).toHaveTextContent('v1/packages/web/src/extensions/sleeper/Sleeper.tsx:212');
+  expect(screen.getByRole('dialog', { name: 'Why: Done runs link to their result' })).toHaveTextContent('v1/packages/web/src/extensions/sleeper/Sleeper.tsx:212');
 });
 
 test('several routes list under their tag and switch the detail', async () => {
@@ -89,7 +89,7 @@ test('several routes list under their tag and switch the detail', async () => {
 test('only a readable contract.spec draws as a card', () => {
   expect(contracts.card!(sealed('not json'))).toBeUndefined();
   expect(contracts.card!(sealed(raw(1), { kind: 'github.review' }))).toBeUndefined();
-  expect(contracts.artifact!(sealed(raw(1)), false)).toEqual({ name: 'Spec' });
+  expect(contracts.artifact!(sealed(raw(1)), false)).toEqual({ name: 'Spec', titled: true });
 });
 
 test('the schema walk follows $ref and the YAML export is plain', () => {
@@ -98,11 +98,10 @@ test('the schema walk follows $ref and the YAML export is plain', () => {
   expect(toYaml({ a: 1, 'b/c': [{ d: 'x: y' }, []], e: {} })).toBe('a: 1\n"b/c":\n  -\n    d: "x: y"\n  - []\ne: {}');
 });
 
-test('an answer shows the question as asked and the user\'s answer, in the panel and the decision line', async () => {
+test('an answer shows the question as asked and the user\'s answer', async () => {
   show(1);
-  expect(screen.getByText('You answered “Should this ever start a job?”: No, it only reads')).toBeInTheDocument();
   await userEvent.click(screen.getAllByRole('button', { name: 'Why: GET with no body' })[0]!);
-  const panel = screen.getByRole('region', { name: 'Why: GET with no body' });
+  const panel = screen.getByRole('dialog', { name: 'Why: GET with no body' });
   expect(within(panel).getByText('Answered “Should this ever start a job?”')).toBeInTheDocument();
   expect(within(panel).getByText('No, it only reads')).toBeInTheDocument();
 });
@@ -177,19 +176,36 @@ test('the ledger card is compact: routes and a decisions summary, no detail or d
   expect(screen.getByRole('button', { name: 'OpenAPI file' })).toBeInTheDocument();
 });
 
-test('the full view keeps the operation detail and the decisions', () => {
+test('the full view keeps the operation detail, with no decisions list beside it', () => {
   show(1);
   expect(screen.getByText('Responses')).toBeInTheDocument();
-  expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(parseSpec(raw(1))!.choices.length);
+  expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull();
+});
+
+test('a decision on a part the page does not draw sits on the title', async () => {
+  const spec = JSON.parse(raw(1)) as ContractSpec;
+  spec.choices[0]!.pointer = '/components/schemas/Nowhere';
+  render(<>{contracts.full!(sealed(JSON.stringify(spec)))}</>);
+  const title = screen.getByRole('heading', { name: /Sleeper schedule endpoint/ });
+  await userEvent.click(within(title).getByRole('button', { name: `Why: ${spec.choices[0]!.decision}` }));
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+
+test('a passed double-check is a green tick beside the title, on the card and the page', () => {
+  const ok = { passed: true, gatesFailed: [], score: 1, checks: [] };
+  render(<>{contracts.card!(sealed(raw(1), { verdict: ok }))}{contracts.full!(sealed(settings, { verdict: ok }))}{contracts.full!(sealed(raw(2), { verdict: { ...ok, passed: false } }))}</>);
+  expect(screen.getAllByRole('img', { name: 'Double-checked' })).toHaveLength(2);
+  expect(within(screen.getByRole('heading', { name: /Sleeper settings file/ })).getByRole('img', { name: 'Double-checked' })).toBeInTheDocument();
 });
 
 test('backticks in decisions and why notes render as code', async () => {
   const spec = JSON.parse(raw(1)) as ContractSpec;
   spec.choices[0]!.decision = 'Errors are `{ "error": string }`';
   render(<>{contracts.full!(sealed(JSON.stringify(spec)))}</>);
-  const list = screen.getByRole('region', { name: 'Decisions' });
-  expect(within(list).getByText('{ "error": string }').tagName).toBe('CODE');
-  expect(list).not.toHaveTextContent('`');
+  await userEvent.click(screen.getAllByRole('button', { name: `Why: ${spec.choices[0]!.decision}` })[0]!);
+  const panel = screen.getByRole('dialog');
+  expect(within(panel).getByText('{ "error": string }').tagName).toBe('CODE');
+  expect(panel).not.toHaveTextContent('`');
 });
 
 const settings = JSON.stringify(settingsSpec);
@@ -205,7 +221,7 @@ test('a json-schema card lists only the top-level fields', () => {
   expect(screen.getByRole('button', { name: 'JSON Schema file' })).toBeInTheDocument();
 });
 
-test('the json-schema full view shows each field with type, required, enum and example, and a why chip opens its choice', async () => {
+test('the json-schema full view shows each field with type, required, enum and example, and its info buttons open their choices', async () => {
   render(<>{contracts.full!(sealed(settings))}</>);
   const tree = within(screen.getByRole('region', { name: 'Fields' }));
   const id = tree.getByText('leagueId').closest('li') as HTMLElement;
@@ -215,18 +231,23 @@ test('the json-schema full view shows each field with type, required, enum and e
   expect(tree.getByText('mode').closest('li')).toHaveTextContent('one ofLINEUP · WAIVERS');
   expect(tree.getByText('notifyTime').closest('li')).toHaveTextContent('date-time');
   await userEvent.click(within(tree.getByText('mode').closest('li') as HTMLElement).getByRole('button', { name: 'Why: Mode is a closed set of two jobs.' }));
-  expect(screen.getByRole('region', { name: 'Why: Mode is a closed set of two jobs.' })).toBeInTheDocument();
-  expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(2);
+  expect(screen.getByRole('dialog', { name: 'Why: Mode is a closed set of two jobs.' })).toBeInTheDocument();
+  // `/additionalProperties` is no field row, so it sits on the title.
+  const title = screen.getByRole('heading', { name: /Sleeper settings file/ });
+  expect(within(title).getByRole('button', { name: 'Why: The file is closed: unknown keys are rejected.' })).toBeInTheDocument();
 });
 
 const dts = '/** Core provides it. */\nexport interface Manifest {\n  name: string;\n}\n';
 const tsSpec = JSON.stringify({ ...settingsSpec, kind: 'typescript', title: 'SDK surface', document: dts, choices: [{ id: 'm', pointer: '/Manifest', decision: 'Manifest is an interface.', why: [{ source: 'guide', text: 'Shape only.', ref: 'typescript#types' }] }] });
 
-test('a typescript contract shows its source in a code block beside its decisions', () => {
+test('a typescript contract shows its source until its declarations load, its decision on the title meanwhile, then on its card', async () => {
   render(<>{contracts.full!(sealed(tsSpec))}</>);
   expect(screen.getByText('1 export · version 1')).toBeInTheDocument();
-  const block = within(screen.getByRole('region', { name: 'Declarations' })).getByText(/export interface Manifest/);
-  expect(block.tagName).toBe('PRE');
-  expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(1);
+  expect(within(screen.getByRole('region', { name: 'Declarations' })).getByText(/export interface Manifest/).tagName).toBe('PRE');
+  const why = { name: 'Why: Manifest is an interface.' };
+  expect(within(screen.getByRole('heading', { name: /SDK surface/ })).getByRole('button', why)).toBeInTheDocument();
+  const card = await screen.findByRole('article', { name: 'Manifest' });
+  expect(within(card).getByRole('button', why)).toBeInTheDocument();
+  expect(within(screen.getByRole('heading', { name: /SDK surface/ })).queryByRole('button', why)).toBeNull();
   expect(screen.getByRole('button', { name: 'contract.d.ts' })).toBeInTheDocument();
 });

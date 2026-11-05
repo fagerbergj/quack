@@ -52,6 +52,20 @@ export function resolve(doc: Json, schema: Json | undefined, at: string, seen: s
 
 export type Field = { name: string; type: string; required: boolean; desc?: string; depth: number; ptr: string; where?: string; facts: Array<[string, string]> };
 
+/** One declaration of a code contract, whatever language it was parsed from, as its box and card show it: fields, parameters or variants as rows, else its type as text. */
+export type Decl = {
+  name: string;
+  kind: 'type' | 'interface' | 'function' | 'const' | 'other';
+  exported: boolean;
+  generics?: string;
+  doc?: string;
+  rows: Field[];
+  // The type when there are no rows to list, or what an intersection or interface adds beside its own fields.
+  text?: string;
+  uses: string[];
+};
+export type Model = { imports: Array<{ from: string; names: string[] }>; decls: Decl[] };
+
 const enumType = (s: Json) => (Array.isArray(s.enum) ? [...new Set(s.enum.map((v: unknown) => (v === null ? 'null' : typeof v)))].join(' | ') : undefined);
 const typeOf = (s: Json) => (s.format as string | undefined) ?? (Array.isArray(s.type) ? s.type.join(' | ') : (s.type as string | undefined) ?? enumType(s) ?? 'any');
 const show = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
@@ -90,6 +104,28 @@ export function fields(doc: Json, schema: Json | undefined, at: string, depth = 
     const f: Field = { name, type: typeOf(c.r.schema), required: required.has(name), desc: c.r.schema.description, depth, ptr: own, facts: facts(c.r.schema) };
     return [f, ...fields(doc, c.r.schema, own, depth + 1, c.seen)];
   });
+}
+
+const JSON_SCHEMA = 'content/application~1json/schema';
+
+/** Every pointer the REST page draws an element for (operation, auth, parameter, response, schema field), so a decision anywhere else goes to the title. */
+export function restPointers(doc: Json, ops: Operation[]): Set<string> {
+  const out = new Set<string>();
+  const schema = (raw: Json | undefined, at: string) => {
+    const r = resolve(doc, raw, at);
+    if (r) for (const f of fields(doc, r.schema, r.ptr)) out.add(f.ptr);
+  };
+  for (const o of ops) {
+    out.add(o.ptr);
+    if (Object.keys((o.op.security?.[0] ?? {}) as Json).length) out.add(`${o.ptr}/security`);
+    ((o.op.parameters ?? []) as Json[]).forEach((_, i) => out.add(`${o.ptr}/parameters/${i}`));
+    schema((o.op.requestBody?.content?.['application/json'] as Json | undefined)?.schema, `${o.ptr}/requestBody/${JSON_SCHEMA}`);
+    for (const [code, res] of Object.entries((o.op.responses ?? {}) as Json)) {
+      out.add(`${o.ptr}/responses/${code}`);
+      schema((res.content?.['application/json'] as Json | undefined)?.schema, `${o.ptr}/responses/${code}/${JSON_SCHEMA}`);
+    }
+  }
+  return out;
 }
 
 // Plain YAML for the downloadable standard document; strings and odd keys are JSON-quoted, which YAML accepts.

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StatusIcon } from '../../Artifacts.tsx';
+import { StatusIcon } from '../../StatusIcon.tsx';
 import { FailedCheck, failedChecks } from '../../CheckList.tsx';
 import type { SealedArtifact } from '../../api.ts';
 import { Markdown } from '../../Markdown.tsx';
