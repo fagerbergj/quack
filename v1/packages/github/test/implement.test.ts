@@ -32,6 +32,10 @@ test('a trusted /implement on an issue starts the implementer with the issue fac
   assert.match(implement(' /implement ')!.input, /Instruction: \(none; implement the issue as written\)/);
 });
 
+test('/implement tells the implementer to start with checkout_task', () => {
+  assert.match(implement('/implement')!.input, /Start with checkout_task: .*open review feedback/);
+});
+
 test('/implement from an untrusted author, on a pull request, or glued to other text starts nothing', () => {
   assert.equal(implement('/implement', 'CONTRIBUTOR'), undefined);
   assert.equal(implement('/implement', 'MEMBER', true), undefined);

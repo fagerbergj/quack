@@ -6,6 +6,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
+import { unknownToolExtension } from './unknown-tool.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
 import { CANNOT_SEE_IMAGES } from './images.ts';
 import { resumeModelFault, watchModelFaults } from './model-fault.ts';
@@ -67,6 +68,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   registry.install(loopGuardExtension());
   // The sink needs the harness, which opens after the registry; hooks only call it once a run is going.
   let open: Harness | undefined;
+  registry.install(unknownToolExtension(async (id) => (await (await open!.conversation(id, ctx))!.agent(ctx)).tools.map((t) => t.name)));
   registry.install(runCeilingExtension(opts.agent.turnCeiling ?? TURN_CEILING, {
     async record(id, run, error) {
       const conversation = await open!.conversation(id, ctx);
