@@ -1,6 +1,6 @@
 import { defineExtension, GenerationTask, hook, type ConversationId } from '@earendil-works/pi-durable';
 
-/** Three cut-off replies in a row mean the model cannot fit an action under its output cap; more nudges will not help. */
+/** Continuations a run gets in a row; a cut-off after that many means the model cannot fit an action under its cap. */
 export const CUT_OFF_LIMIT = 3;
 
 /** Continues a run whose reply hit the output-token cap, which pi-durable otherwise takes as the run's final answer. */
