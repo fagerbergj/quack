@@ -46,7 +46,7 @@ export const historyRubric: Rubric = {
     { id: 'faithful_to_tools', checks: [{ id: 'figures_from_tools', label: "Numbers differ from the league data", weight: 'gate', code: figuresFromTools }] },
     { id: 'net_position_is_reasoned', checks: [
       { id: 'luck_process_split', label: "Mixes luck up with decisions", weight: 3, scope: 'card', question: 'Does it separate lineup execution and the draft, which the manager controls, from schedule luck (points against) and player-outcome luck?' },
-      { id: 'aggregated_not_scolded', label: "Criticizes without the season's figures behind it", weight: 3, scope: 'row', question: 'Does each criticism name the player, pick or weeks it is about and the number from this season\'s figures behind it: a lineup criticism the weeks and points it cites, a draft criticism the pick and its drafted-as and finished ranks?' },
+      { id: 'aggregated_not_scolded', label: "Criticizes without the season's figures behind it", weight: 3, scope: 'row', question: 'Does every criticism of the manager in this note cite a number from this season\'s figures that backs it? A note with no criticism meets this.' },
       { id: 'decision_time_grading', label: "Judges a call by how the game ended", weight: 2, scope: 'row', question: 'Is a pre-kickoff call judged on what was knowable then, not on how the game turned out?' },
     ] },
     { id: 'pitfalls', checks: [
