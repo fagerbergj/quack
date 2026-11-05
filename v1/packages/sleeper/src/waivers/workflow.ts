@@ -3,6 +3,7 @@ import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, type JsonObject } from '@earendil-works/pi-durable';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
+import { newsLink } from '../lineup/news.ts';
 import { cardsKind } from '../lineup/card.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import type { LineupInput } from '../lineup/facts.ts';
@@ -26,7 +27,7 @@ const decisionSchema = obj({
 }, { open: true });
 
 const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.ppg === undefined ? '' : `, season ${p.ppg}/g`}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
-const links = (f: WaiverFacts, id: string) => (f.news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');
+const links = (f: WaiverFacts, id: string) => (f.news[id] ?? []).map((n) => ` ${newsLink(n)}`).join('');
 
 function factsPrompt(f: WaiverFacts): string {
   const faab = f.waiverType === 'faab';

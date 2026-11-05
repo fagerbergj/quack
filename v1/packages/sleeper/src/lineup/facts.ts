@@ -5,7 +5,8 @@ import { bestLineup, fits, lineupSlots, numberSlots } from './slots.ts';
 export type Game = { opponent: string; home: boolean; kickoff: string | null; locked: boolean; status: string | null };
 export type PlayerFact = { id: string; name: string; pos: string; team: string | null; inj: string | null; proj: number; game: Game | null };
 /** `date` is the report's own publication time (ISO), never the fetch time. */
-export type NewsItem = { title: string; url: string; date: string };
+/** `excerpt` is the highlight that names the player, kept when the title does not, so a reader sees why the report is his. */
+export type NewsItem = { title: string; url: string; date: string; excerpt?: string };
 
 /** What the lineup job computed in code and the model reasons over; the rubric's gates check the card against it. */
 export type Facts = {

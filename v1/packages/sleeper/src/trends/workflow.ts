@@ -2,6 +2,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import { arr, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
+import { newsLink } from '../lineup/news.ts';
 import type { Json } from '../client.ts';
 import { cardsKind } from '../lineup/card.ts';
 import type { LineupInput } from '../lineup/facts.ts';
@@ -37,7 +38,7 @@ export function factsPrompt(f: TrendsFacts): string {
   const ids = Object.keys(f.players);
   // Two players can share name, position and team; an index keeps each lookup line unique.
   const who = (id: string) => (ids.filter((o) => base(o) === base(id)).length > 1 ? `${base(id)} #${ids.filter((o) => base(o) === base(id)).indexOf(id) + 1}` : base(id));
-  const links = (id: string) => (f.news[id] ?? []).map((n) => `\n    - [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');
+  const links = (id: string) => (f.news[id] ?? []).map((n) => `\n    - ${newsLink(n)}`).join('');
   const changes = f.changes.map((c) => `- ${who(c.playerId)}: ${c.field} ${c.from ?? 'none'} -> ${c.to ?? 'none'}${links(c.playerId)}`);
   const rising = f.trending.map((t) => `- ${who(t.playerId)}: ${t.adds} adds in 24 hours, held by no team here`);
   return [

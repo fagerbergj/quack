@@ -26,8 +26,25 @@ export function credible(url: string): boolean {
 
 type Hit = { title?: string; url: string; publishedDate?: string; highlights?: Array<string | { text?: string }> };
 
+const EXCERPT_CHARS = 280;
+const mentions = (text: string | undefined, name: string) => (text ?? '').toLowerCase().includes(name.toLowerCase());
+// Exa highlights run to several paragraphs, so the excerpt is a window on the name, not the highlight's start.
+const around = (text: string, name: string) => {
+  const flat = text.replace(/\s+/g, ' ');
+  const start = Math.max(0, flat.toLowerCase().indexOf(name.toLowerCase()) - EXCERPT_CHARS / 2);
+  return flat.slice(start, start + EXCERPT_CHARS).trim();
+};
+const highlights = (h: Hit) => (h.highlights ?? []).map((x) => (typeof x === 'string' ? x : (x.text ?? '')));
+
 /** Exa matches by topic, so an item about a teammate or a team report can come back; keep one only if it names the player in full. */
-const names = (h: Hit, name: string) => `${h.title ?? ''} ${(h.highlights ?? []).map((x) => (typeof x === 'string' ? x : (x.text ?? ''))).join(' ')}`.toLowerCase().includes(name.toLowerCase());
+function item(h: Hit, name: string): NewsItem | undefined {
+  if (mentions(h.title, name)) return { title: h.title!, url: h.url, date: h.publishedDate ?? '' };
+  const text = highlights(h).find((t) => mentions(t, name));
+  return text === undefined ? undefined : { title: h.title || h.url, url: h.url, date: h.publishedDate ?? '', excerpt: around(text, name) };
+}
+
+/** One news item as a prompt line: the link, its date, and the excerpt that names the player when the title does not. */
+export const newsLink = (n: NewsItem) => `[${n.title}](${n.url}), ${n.date.slice(0, 16)}${n.excerpt ? `: "${n.excerpt}"` : ''}`;
 
 /** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup. */
 export function exaNews(config: { apiKey: string; url?: string }) {
@@ -44,8 +61,8 @@ export function exaNews(config: { apiKey: string; url?: string }) {
       const hits = ((await res.json()) as { results?: Hit[] }).results ?? [];
       // Exa's date filter is advisory, so the window and the allowlist are enforced here too.
       return hits
-        .filter((h) => credible(h.url) && names(h, p.name))
-        .map((h) => ({ title: h.title || h.url, url: h.url, date: h.publishedDate ?? '' }))
+        .filter((h) => credible(h.url))
+        .flatMap((h) => item(h, p.name) ?? [])
         .filter((n) => Date.parse(n.date) >= since && Date.parse(n.date) <= at)
         .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
         .slice(0, PER_PLAYER);
