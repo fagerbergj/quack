@@ -9,7 +9,8 @@ export type ClassifierRef = { provider: string; modelId: string; maxInputTokens:
 
 export type Answer = { met: boolean | null; resolver: string; note?: string };
 
-const BYTES_PER_TOKEN = 4;
+// Clef's tokenizer counted 9.6-10.6k tokens on code units the 4-byte rule put under 8,192 (spike #2190); code packs ~3 bytes a token.
+const BYTES_PER_TOKEN = 3;
 
 async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | undefined> {
   const questions: Record<string, ClassifierQuestion> = Object.fromEntries(
