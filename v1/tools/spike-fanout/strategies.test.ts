@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chunkers, fold, unitsOf, type Aggregate } from './strategies.ts';
+import { chunkers, fold, selectors, unitsOf, type Aggregate } from './strategies.ts';
 
 const diff = 'diff --git a/a.ts b/a.ts\nnew file mode 100644\n--- /dev/null\n+++ b/a.ts\n@@ -0,0 +1 @@\n+x\ndiff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1 @@\n-y\n+z\n@@ -9 +9 @@\n-p\n+q\n';
 
@@ -39,4 +39,11 @@ test('a model split drops items whose span is not in the input, and a determinis
   const auto = unitsOf({ split: { name: 'sentences', from: 'text', expect: { max: 1 }, fallback: model } }, inputs);
   assert.equal(auto.splitter, 'sentences -> llm');
   assert.equal(auto.reason, 'more than 1 items');
+});
+
+test('jsonItems filters rows by field and picks fields; the json selector reads named fields of another input', () => {
+  const card = JSON.stringify({ league: { type: 'faab' }, rows: [{ id: 1, news: [], why: 'a' }, { id: 2, news: [{ t: 'x' }], why: 'b' }] });
+  const got = chunkers.jsonItems({ c: card }, { from: 'c', path: 'rows', where: [{ path: 'news', op: 'truthy' }], pick: ['id', 'why'] });
+  assert.deepEqual(got.map((c) => c.text), ['{"id":2,"why":"b"}']);
+  assert.equal(selectors.json({ c: card }, got[0], { from: 'c', pick: ['league.type'] }, { related: 0 }), '{"league.type":"faab"}');
 });

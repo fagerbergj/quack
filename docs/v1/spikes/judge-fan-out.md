@@ -4,6 +4,8 @@ Question: does judging chunks of an artifact (fan-out) and combining the chunk a
 
 Short answer: it is much more decidable and faster for the checks whose input splits into items (promises, contract guarantees and parts, summary sentences, fact pairs), and it is not a free win for `answers_every_ask`, where the per-ask question was worse than the whole question on the labelled set. Deterministic splitters are enough for structured input (diff, OpenAPI, JSON Schema, Markdown sections, bullets) and fail on free-form prose (requests, PR descriptions), where a model splitter with span verification found every labelled item.
 
+Round 2 (below) reran the candidates on 76 recorded versions, 62 of them rejected, added Sleeper and every prod research report, and timed both paths from the sessions' durable logs. It changes two calls: `sibling_parts` is dropped outright, and `promises_handled` is kept only with linked-issue text and the model splitter. Fan-out is about 14 times faster than today's review pass and about 7 times for contracts, but today's pass also runs checks the fan-out does not, so read those ratios as an upper bound.
+
 All code is under `v1/tools/spike-fanout/`; nothing in `packages/` or any production rubric changed.
 
 ## What was built
@@ -188,7 +190,7 @@ checks.sibling_parts = { scope: 'newFiles', question: bool('Does the sibling fil
 
 Notes. The trigger the owner described (a new file whose directory holds a same-suffix sibling) fired on 2 of 14 reviews, 2 of the 8 reviews that add any file. `require: true` means a review with no such pair has no unit and the check scores null, which is the right answer. With two units there is no rate: Clef was undecided on one and on the other said no gap while the 27B recorded one (#2182: the review "never compares the new issueBase setting to its sibling"). The 27B recorded a sibling gap on 5 of the 14 reviews, though only 2 add a file with a same-suffix sibling: its question is broader than this trigger.
 
-Call: **needs a different question.** The chunking works and is nearly free in code; the pair question ("lacks a part") is an open-ended difference and Clef did not decide it. Do not weight it until there are 20 or more triggers.
+Call: **drop** (round 2 strengthened this; see "Changes to the keep or drop calls"). The chunking works and is nearly free in code; the pair question ("lacks a part") is an open-ended difference and Clef did not decide it. Do not weight it until there are 20 or more triggers.
 
 ### 6. Review coverage (measurement only)
 
@@ -364,6 +366,155 @@ What it shows.
 - **The sweep is not worth its cost on these inputs.** Sweeping the text no span covers added 1 to 2 ask chunks on the real requests and 9 and 6 promise chunks on two reviews, none of the 15 promise chunks carrying a labelled promise, for no gain in recall (the model split was already at 100% on the promises and 92% on asks). It would matter if the model splitter dropped items, so keep it as an option for artifacts where a missed item is costly, and expect to pay 2 to 3 times the Clef calls.
 - **Verdicts barely changed.** The folded outcome was the same under every splitter on the five reviews; on the two real requests it was undecided under most variants and false (an ask unanswered) under one, the fallback on the tautological-test request. The splitter changes what is judged, and on these artifacts nothing was wrong enough for it to change the answer. That is a limit of the data, not a point for the deterministic splitter.
 
+## Round 2: rejected artifacts, Sleeper, research and timing
+
+Round 1 measured the candidates on mostly approved artifacts. Round 2 reruns them on the versions the judge rejected, adds Sleeper and every prod research report, and times both paths. It used 498 more Clef requests by my count (the cap was 500), one at a time; the 27B was never called and no session was started.
+
+### Data
+
+Every judged version in the sessions of interest was read from prod with `artifacts <key>` (read-only): 722 `github.review` versions (200 rejected), 49 `contract.spec` (25 rejected), 43 `sleeper.cards` (21 rejected), 17 `research.report` (11 rejected). The budget covered 76 of them, in the owner's order: first rejected versions where a covered check was flagged, then Sleeper and research passes, then reviews.
+
+| kind | versions run | of which rejected | left out |
+| --- | --- | --- | --- |
+| `github.review` | 27 (+10 for the sibling control) | 27 | 173 other rejected versions, all passing ones |
+| `contract.spec` | 6 | 6 | 19 other rejected (gate-only failures, or the same spec revised), 24 passing |
+| `sleeper.cards` | 19 | 16 | 5 rejected; `sleeper.trade` (its cards hold no suggestions, so no row exists to judge) |
+| `research.report` | 14 | 8 | 3 rejected (earlier versions of reports already run) |
+
+Agreement is only computed where the recorded verdict used the rubric version the declarations were written from (reviewer@4, contract@1, research@3 and the current Sleeper rubrics); 40 of the 76 versions were recorded under an older rubric, where the question text differs, so they appear in the adjudications and the timing but not in the counts. `sleeper.waivers@1` to `@3` even made `bye_coverage` a positive check.
+
+### Agreement with the recorded verdicts
+
+"Flagged" uses the check's own polarity (a positive check is flagged below 1, a pitfall above 0). "Only recorded" is a flag the fan-out did not raise; "undecided" counts versions where the fold could not decide and would escalate.
+
+| kind | check | recorded verdicts | n | both flag | only recorded | only fan-out | neither | fan-out undecided |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| contract.spec | adds_unasked | rejected | 6 | 0 | 3 | 2 | 1 | 3 |
+| contract.spec | follows_guide | rejected | 6 | 0 | 2 | 0 | 4 | 2 |
+| contract.spec | meets_intent | rejected | 6 | 1 | 3 | 1 | 1 | 4 |
+| github.review | promises_handled | rejected | 13 | 0 | 2 | 0 | 11 | 3 |
+| github.review | sibling_parts | rejected | 12 | 10 | 2 | 0 | 0 | 3 |
+| research.report | answers_every_ask | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| research.report | answers_every_ask | rejected | 2 | 0 | 0 | 0 | 2 | 1 |
+| research.report | no_self_contradiction | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| research.report | no_self_contradiction | rejected | 5 | 0 | 2 | 0 | 3 | 1 |
+| research.report | summary_follows_findings | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| research.report | summary_follows_findings | rejected | 5 | 0 | 2 | 0 | 3 | 3 |
+| sleeper.cards digest | game_flow_from_score | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards digest | luck_without_margin | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards digest | story_in_summary | passed | 1 | 0 | 0 | 0 | 1 | 1 |
+| sleeper.cards history | aggregated_not_scolded | passed | 1 | 0 | 1 | 0 | 0 | 1 |
+| sleeper.cards history | aggregated_not_scolded | rejected | 3 | 3 | 0 | 0 | 0 | 3 |
+| sleeper.cards history | decision_time_grading | passed | 1 | 0 | 0 | 0 | 1 | 1 |
+| sleeper.cards history | decision_time_grading | rejected | 3 | 0 | 0 | 0 | 3 | 3 |
+| sleeper.cards history | efficiency_as_record | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards history | efficiency_as_record | rejected | 3 | 0 | 0 | 0 | 3 | 0 |
+| sleeper.cards history | luck_process_split | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards history | luck_process_split | rejected | 3 | 0 | 0 | 0 | 3 | 0 |
+| sleeper.cards history | single_week_as_pattern | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards history | single_week_as_pattern | rejected | 3 | 0 | 0 | 0 | 3 | 0 |
+| sleeper.cards lineup | close_call_news | rejected | 1 | 1 | 0 | 0 | 0 | 0 |
+| sleeper.cards lineup | designation_weighted | rejected | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards lineup | matchup_overrides_talent | rejected | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards lineup | picks_an_action | rejected | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards lineup | weather_mentioned_unmoved | rejected | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards retro | hindsight_called_process | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards retro | lessons_actionable | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards retro | summary_names_swing | passed | 1 | 0 | 0 | 0 | 1 | 0 |
+| sleeper.cards trends | aggregator_only | rejected | 2 | 1 | 0 | 1 | 0 | 0 |
+| sleeper.cards trends | conflict_stated | rejected | 2 | 2 | 0 | 0 | 0 | 0 |
+| sleeper.cards trends | original_source_named | rejected | 2 | 2 | 0 | 0 | 0 | 0 |
+| sleeper.cards waivers | bye_coverage | rejected | 2 | 0 | 2 | 0 | 0 | 2 |
+| sleeper.cards waivers | close_call_news | rejected | 2 | 0 | 2 | 0 | 0 | 2 |
+| sleeper.cards waivers | crowd_metric_as_value | rejected | 2 | 0 | 2 | 0 | 0 | 0 |
+| sleeper.cards waivers | ordered_fallback_flagged | rejected | 2 | 0 | 0 | 1 | 1 | 1 |
+| sleeper.cards waivers | ranked_on_usage | rejected | 2 | 2 | 0 | 0 | 0 | 2 |
+| sleeper.cards waivers | sized_to_waiver_type | rejected | 2 | 0 | 0 | 0 | 2 | 1 |
+
+What the rows say, with the adjudications below behind them.
+
+- The fan-out raised the same flag as the recorded verdict on the structured Sleeper rows (history, trends, lineup close calls, waivers `ranked_on_usage`) and on 10 of 12 triggered `sibling_parts` pairs (see below for why that second figure means little).
+- Where only the recorded verdict flagged (23 check-versions in the table), the adjudications below split three ways: the fan-out was blind to something I can name (an input it was not given, a splitter that skipped the sentence, my 8-item caps), undecided (so the 27B would have decided), or the recorded flag was the wrong one.
+- The review rows are biased by selection: I chose rejected versions on purpose, so "neither" is rare.
+
+### Adjudications
+
+I read the artifact behind every disagreement on current-rubric and older versions alike. Neither side is ground truth; "fan-out right" means my reading of the artifact agrees with it.
+
+**Contracts (6 rejected specs)**
+- `608df011` v11 and v12, `meets_intent`: recorded flagged because the document's `$ref` to `#/$defs/service` does not resolve, so "it cannot enforce any guarantee". Every guarantee has a mechanism in the text (fan-out p 0.79 to 0.97), and the broken `$ref` is already a failed code gate (`document_clean`). **Fan-out right on the question asked**; the 27B counted the same defect twice.
+- `d87192eb` v2, `meets_intent`: recorded flagged that PATCH is missing on both paths although a choice says all seven methods are declared. The document does lack PATCH. **Recorded right.** The fan-out cannot see it: the check is per guarantee, and the contradiction is between a choice and the document. A per-choice question with the choice's `pointer` resolving to its document part would catch it; that needs a JSON-pointer selector the library lacks.
+- `608df011` v11 and `0e13c5c3` v2, `follows_guide`: recorded names a choice that departs from the guide without a reason (`exec-policy-open`; `resume-409`). Neither is among the first 8 choices my declaration read (the specs have 24 and 18). **Fan-out blind by my cap, not wrong.** The cap hid items in 3 of 6 rejected specs and should come out.
+- `5be69037` v4, `adds_unasked`: recorded flagged (no note) the five-method surface. v9, also five methods, passed. **Recorded inconsistent**; the fan-out (all five asked for, p 0.89 to 0.97) is consistent; I did not establish what the owner wanted.
+- `d87192eb` v2 and `0e13c5c3` v2, `adds_unasked`: recorded flagged with no note; the fan-out saw only 8 operations of up to 14. **Undetermined.**
+- `608df011` v11 and v12 `adds_unasked`, only fan-out flagged: Clef was unsure (0.49 to 0.53 for `exec` and `timeZone`); the recorded note maps every field to the intent. **Recorded right; the fold was undecided, so it would have escalated, not blocked.**
+
+**Reviews (27 rejected versions, `promises_handled` recorded-flagged on 7 of them)**
+- #1919 v1 (a linked issue's "Done when" asks for Playwright screenshots) and #1881 v2 (a linked issue asks for jitter): **recorded right.** My PR data held no linked-issue bodies, so the fan-out never saw the promises. An input gap, not a question gap: the issue bodies must be supplied.
+- #1894 v5 (description says starting a session sends the typed text; the diff only seeds the composer): **recorded right.** The deterministic splitter did not select that sentence. The model splitter's job.
+- #1879 v5 (description claims work already merged elsewhere): recorded plausibly right; the fan-out was undecided on all five chunks (missing 0.40 to 0.48) and would have escalated.
+- #2006 v4 and #1864 v4: the recorded flag came from a check whose resolver was `none` (no resolver decided), counted as unmet. **Fan-out right** (the chunks are delivered or not promises, decided).
+- #2061 v4 (an LSP bullet already satisfied by the base commit): inconclusive; the review itself calls it satisfied vacuously.
+- #1881 v4, only the fan-out flagged: recorded passed it (Clef resolved it). The deterministic splitter had picked bug-narrative sentences ("Nothing starts a run for them, so the caller hangs") that are not promises, and Clef was undecided on them. **Recorded right.**
+- So `promises_handled` raised none of the 4 recorded flags that were right (one of them undecided), and none of the misses was the question's fault: two were missing linked-issue text, one a sentence the splitter never offered, one undecided chunks.
+
+**Reviews, `sibling_parts` (rejected)**
+- Of the 99 rejected versions flagged on `promises_handled` or `sibling_parts`, 87 are flagged on `sibling_parts`, and only 22 of those add a new file with a same-suffix sibling. 78 of the 87 have `sibling_parts` as the only flagged one of the two, and 20 of those 78 have the trigger; for the other 58 the fan-out has no unit.
+- Where a trigger exists, Clef says "the sibling has a part the new file lacks" at p 0.77 to 0.92 on 4 of the 5 control passes too (reviews whose recorded verdict was not flagged), and adding the review's lines to the chunk changed nothing (#1884 v1 and v2: 0.907 and 0.907). Two of the ten pairs exceeded Clef's real input limit. The question is nearly always yes, so it carries no information.
+- The recorded flags in the untriggered versions: #2185 v1's note says the new kind "carries all the same fields... no missing structural parts" and flags it anyway (**recorded wrong**); #1940, #1943 and #1944 are flagged because the review "never enumerates" what the siblings carry while saying the new code is a faithful port (**false blocks of the kind the owner wants gone**); #2006 v4, #1864 v4 and #1894 v5 have no new instance at all.
+
+**Research (the ten from 2026-11-05 plus earlier; 11 rejected)**
+- Four of the 11 rejected versions (`ui:4962efd3` v1 and v2, `ui:92b69070` v1, `ui:9d5db599` v1) had a model check flagged; the other 7 failed the code gates (`quotes_exist`, `findings_cited`), which the fan-out does not touch. `ui:92b69070` and `ui:9d5db599` were flagged on `supported_by_source` and `contradicted_by_source`, which cannot run here (below).
+- `ui:4962efd3` v1 and v2, `summary_follows_findings`: v1's Summary says every vendor publishes self-reported scores while a finding says LangMem publishes none; v2 says reproductions are "10 to 60 points" lower while the largest gap in the findings is about 36. **Recorded right on both.** The fan-out answered 0.55 and 0.59: undecided, so the 27B decides, which is the right outcome for a subtle overreach.
+- `answers_every_ask` on those two: the request has no ask the deterministic splitter finds (0 chunks), so the fan-out had nothing to judge. Six of the 17 prod requests behave this way; the declared fallback (`fewer than 1 items`) would fire for each. The model splits for them are not simulated, so this candidate is unmeasured on real requests.
+- `no_self_contradiction` on `4962efd3` v1 and v2: recorded flagged with no note; the three pairs the extractor surfaced were decided "no conflict" (p 0.02 to 0.11). I could not find the contradiction the 27B saw in a 13 KB report with dozens of figures; the pair cap (3) may hide it. **Undetermined.**
+- `supported_by_source` and `contradicted_by_source` (today's kept checks) through the library, on the 20 labelled cases: one chunk per finding with the cited source's best-matching sentences as context. `supported_by_source` catches 3 of 4 seeded-bad and false-blocks 0 of 5 good; `contradicted_by_source` catches 3 of 3 and false-blocks 0 of 5; the fold decides 18 and 17 of 20 cases. On the prod versions these two cannot run: the source texts live in each session's fetch log, not in the artifact, so I did not run them there.
+
+**Sleeper (19 versions of 6 kinds; the library covers the per-row and per-card model checks)**
+- `trends`: `conflict_stated` and `original_source_named` agree on both rejected versions; `aggregator_only` agrees on one and differs on the other: the fan-out flagged items whose only source is Sleeper's own add counts (p 0.78 to 0.80) that the 27B accepted. **Undetermined.**
+- `history` (`aggregated_not_scolded`): all three rejected versions flagged by both; the fan-out was undecided on every one (the season rows are large), so it flags but would escalate. On the passing v2 the 27B flagged single-season criticisms as not a pattern (its note says so); the fan-out answered yes at 0.80 to 0.93. **Undetermined.**
+- `waivers` (current rubric, two rejected versions): `crowd_metric_as_value` recorded-flagged, fan-out not (p 0.05 to 0.19). The flagged claim says the Bears DEF is "at just 21.1% owned, safe at priority 8": ownership as availability, which the rubric's own `ranked_on_usage` allows as scarcity. **Fan-out right**, and the same on waivers v1 and v3 from the older rubrics ("16.3% owned, Taylor is the safest TE still available"). `close_call_news`: the card attaches a Rams press-conference item to Blake Corum and admits it does not name him; the 27B flagged it, Clef said 0.68 to 0.93 yes. **Recorded right, fan-out undecided.** `bye_coverage`: recorded flagged one claim without a note; Clef leaned no (0.13 to 0.32). **Undetermined.**
+- `lineup` v2 (@4): `close_call_news` both flag. On the older v2: `matchup_overrides_talent` recorded-flagged one of two swapped rows (Williams 9.77 starts over Concepcion 10.22 at FLEX, the reverse at WR2); Clef said 0.05 and 0.04 to both. **Undetermined**: the FLEX swap does bench the higher projection, and the card's reason decides whether it was matchup alone.
+- `retro`: v1 `summary_names_swing`, recorded: the summary names 17.7 as the biggest swing when the data's largest is 23; the fan-out saw only the summary text (0.97) and cannot check the number. **Recorded right.** It needs the card's `swings` as context, which the declaration did not include.
+- Sleeper checks that are **not pure declarations in this library**: the units of `differs`, `close`, `known`, `consolidation`, `suggested`, `conflict`, `sourced` and `preview` are computed from the job's facts (the baseline lineup, `closeCalls(f)`, designations against news), not from the card; the facts are not in the artifact (they are in the workflow task's result on prod). Two library strategies would close that: a `join` selector (a row's facts looked up by a key into a second input) and a `where` that can compare against a joined value. `where` on fields the card carries, `pick` and a `json` selector were added and cover `picks_an_action`, `designation_weighted`, `close_call_news` (approximated by "has news"), `matchup_overrides_talent` (approximated by "action is not keep"), the history, trends, digest and waivers row checks and every card-level summary check. `names_baseline_it_beats`, the trade checks and the lineup `differs` scope were not expressible and were not run.
+
+### Timing
+
+Today's path, measured from each session's durable log (`session.sqlite` in `quack-v1`, read-only): the tool task of the submit call (`submit_review`, `submit_contract`, `submit_report`) is the judge pass, matched to its judged version by order (714 review passes, 49 contract, 5 research). Fan-out: the summed Clef latency of the requests (concurrency 1, which is the honest figure) plus the splitter and fold time measured in code; every fan-out pass here is the candidates only, while today's pass runs every model check of the rubric, so the ratio overstates the gain. For Sleeper the judge is a step inside one workflow task per run (`quack.workflow.sleeper.*`), so the table shows the whole run, which includes the agent's own generation; the judge's share cannot be separated from the log.
+
+| kind | versions run | Clef calls per artifact (median / max) | fan-out pass, concurrency 1 (median / max, s) | of which code (splitter + fold, ms) | today: judge-pass tasks (n) | today: all passes (median / max, s) | today: passes over 3 s (median / max, s) | ratio of medians (today over 3 s / fan-out) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| github.review | 37 | 5 / 8 | 15.0 / 47.5 | 3 / 21 | 1381 | 77.3 / 1153.3 | 207.5 / 1153.3 | 14x |
+| research.report | 14 | 6 / 11 | 3.6 / 17.3 | 4 / 29 | 18 | 0.4 / 1682.0 | 527.3 / 1682.0 | 148x |
+| contract.spec | 6 | 18 / 22 | 17.3 / 23.5 | 3 / 4 | 65 | 96.9 / 491.0 | 124.0 / 491.0 | 7x |
+| sleeper.cards | 19 | 6 / 17 | 3.9 / 14.9 | 0 / 1 | 38 | 185.2 / 2324.3 | 189.2 / 2324.3 | 49x |
+
+
+Today's pass, from the log (paired passes):
+
+| kind | passes | median pass | recorded 27B escalations per pass (median) | seconds per escalation (median) | queue-inflated (over 60 s per escalation) |
+| --- | --- | --- | --- | --- | --- |
+| `github.review` | 714 | 207 s | 9 | 24 | 28 of 712 (4%) |
+| `contract.spec` | 49 | 124 s | 3 | 41 | 13 of 49 (27%) |
+| `research.report` | 5 | 527 s | 19 | 25 | 0 of 5 |
+
+- The assumed 25 s per serial escalation is what reviews and research actually take (24 s and 25 s). Contracts take 41 s per escalation, and 13 of 49 contract passes are longer than 60 s per escalation, which I read as slot queueing or a long document; I cannot tell from the log which.
+- Slot waits are not recorded as such. The inflation test is passes whose time per escalation exceeds 60 s, plus the observation (from the live session list while I was fetching) that several researcher sessions sat at "waiting for a model slot".
+- Fan-out per artifact: reviews 5 requests and 15 s median (47 s max, a promises chunk of 2,500 tokens takes about 2.3 s on Clef), contracts 18 requests and 17 s, research reports 6 requests and 3.6 s, Sleeper cards 6 requests and 3.9 s. The code (splitters, retrieval, folds) costs 0 to 30 ms. Clef latency scales with input: 0.2 s for a 150-token pair, 1.2 s for 1,400 tokens, 2.3 s for 2,200.
+- **Concurrency.** I sent the 17 requests of one contract spec (`5be69037` v4) uncached, one at a time and four at a time: 19.7 s wall one at a time (18.3 s summed Clef latency, so the ssh pipe adds about 7%), 18.9 s with four in flight (median latency per request 4.7 s against 1.2 s). Clef serves one request at a time, so parallelism buys nothing; the numbers above are the serial ones.
+- A real limit turned up. Clef rejected 4 requests (9,628 to 10,585 tokens by its tokenizer) that the judge's 4-bytes-per-token rule had estimated under 8,192; all were a new test file plus its sibling. The 4-byte rule is too optimistic on code, so the judge would send such a request and get an error instead of escalating on the cap.
+
+### Changes to the keep or drop calls
+
+- **`sibling_parts`: drop as a Clef fan-out, and do not keep it as a 27B check either** without a structural trigger. 58 of 78 sibling-only failures have no new same-suffix file at all, Clef answers yes to the pair regardless of the review, and the recorded flags I read include a note that contradicts its own flag and "never enumerates" false blocks.
+- **`promises_handled`: keep, with two conditions.** Supply linked issue bodies as a promise source, and use the model splitter on free-form descriptions. Without both it raised none of the flags that were right; the 27B's own record includes two flags from a `none` resolver that the fan-out correctly did not raise.
+- **`answers_every_ask`: still needs a different question, and the splitter fallback is not optional**: 6 of 17 prod requests have no ask for the deterministic splitter.
+- **`summary_follows_findings`: keep, as a decider that escalates**: it never decided a subtle overreach the wrong way (0.55 and 0.59), and it decides the blatant ones the whole-report question misses.
+- **`no_self_contradiction`: keep, undetermined on real reports** (the pair cap is a guess; two recorded flags could not be reproduced).
+- **Contracts: keep `meets_intent` and `adds_unasked`, take the 8-item caps out, add a per-choice "does the document implement this choice" check using the choice's pointer, and let `follows_guide` run on all choices.** The fan-out was right on 2 of the 4 disagreements I could settle and blind on 3 because of the caps.
+- **Sleeper: keep as per-row fan-out**: it already is one in the extension; the gain is Clef first on each row (2 to 4 s a card against 3 minutes for a run). The library covers the per-row and per-card checks that depend only on the card; the fact-derived scopes need `join` and a cross-input `where`.
+- Neither side is the baseline: the cases where the 27B's flag was wrong (`crowd_metric_as_value`, the double-counted `$ref`, the `none`-resolver flags, #2185's self-contradicting note) are about as common in what I read as the cases where the fan-out was blind (caps, missing issue text, unselected sentences).
+
 ## Recommendation: judge evidence API
 
 Today a scope is a list of units the extension builds in code, and a check names a scope and asks its question once per unit; the verdict's per-check score is the share of units that held. Replace the hard-coded `Evidence` builder with declarations over strategies registered with the judge.
@@ -381,11 +532,17 @@ type Scope = {
 type CheckDecl = { scope: string; question: Question; aggregate: { name: string } & Options; flagWhen: boolean };
 ```
 
+Sleeper adds two selectors to the declaration set: `join` (look up a row's facts by key in a second stored input) and a `where` that can compare a field with a joined value. Without them the fact-derived scopes (`differs`, `close`, `known`, `consolidation`, `conflict`) cannot be declared. The facts must be stored with the card, or the extension must hand them over as an input.
+
 The extension provides `inputs` (named texts: report, request, diff, review, guarantees...), names the splitters for its kinds, and may register splitters the library lacks. The judge owns the library of strategies in this spike, the three-valued fold (so a check is decided as soon as the unknown chunks cannot change it, and only then escalates), per-version memoization of model splits, span verification, the `expect` shape check with fallback, and the verdict field recording which splitter ran and why a fallback fired.
 
 One change to the verdict follows. A fold of `all` over N chunks replaces the share-of-units average for these checks, so a check's `met` becomes a decided boolean with the failing chunks as its notes; `share` and `atLeast` keep the fractional form where a check wants one. The library is generic enough that research and review share strategies: `sentences`, `listItems`, `related` (overlap) and the `all` fold run on research asks, summary sentences, PR promises and contract guarantees without a line of kind-specific code. Two checks on one artifact need different strategies in every kind measured: a research report uses `sentences`/`all` for its asks and `digestPairs`/`any` for contradictions; a review uses `sentences`/`all` over description promises and `diffFiles`/`coverageUnion` over changed files.
 
 ## What the spike does not show
+
+- **Round 2 limits.** 76 of the 831 judged versions on prod (722 reviews, 49 contracts, 43 Sleeper cards, 17 research reports). Reviews: 27 of 200 rejected versions, chosen because `promises_handled` or a triggered `sibling_parts` was flagged; the other 173 were not run. Sleeper facts are not in the card, so rows were judged on the card alone. The model splitter for the six real requests with no ask is not simulated. The recorded verdicts were made under different rubric versions; only current-rubric versions are in the agreement counts.
+- **Timing.** Today's pass is paired to its version by order and matched on count (11 sessions unpaired); slot waits are not logged, so "queue-inflated" is a threshold on seconds per escalation, not a measurement. The fan-out time is Clef-side latency plus code; the ssh pipe adds about 7%. Sleeper's judge pass is not separable from the workflow run.
+- **My adjudications are one reader's.** Where I wrote "recorded right" or "fan-out right" I read the artifact and the notes; several rows are "undetermined" because the 27B left no note.
 
 - **No defect-catching claim for reviews or contracts.** Every recorded review approved and every recorded contract spec passed, and the 27B's recorded answers say "nothing missing" for `promises_handled` on all 14. Agreement there means no false block, not a catch. The only labelled catch/false-block data is the 20 research cases (4 seeded-bad for asks, 2 for summary and for contradiction, 5 good).
 - **The 27B is not measured.** Its recorded verdicts are a reference, not truth, and the model splitter is simulated by hand-written splits.
@@ -396,4 +553,4 @@ One change to the verdict follows. A fold of `all` over N chunks replaces the sh
 
 ## Rerunning
 
-`fetch.ts`, `fetch-diffs.ts` and `fetch-contracts.ts` pull the data read-only into `tools/spike-fanout/data/` (not committed: it holds prod research conversations); `run.ts research|baseline|review|contracts|splitters|prod-stats` asks Clef and writes `out/*.json` (also not committed, with a request cache that makes reruns free); `tables.ts` renders the tables above. `DRY=1` chunks without calling Clef.
+`fetch.ts`, `fetch-diffs.ts`, `fetch-contracts.ts`, `fetch-all.ts` (every version of every judged artifact) and `fetch-prs.ts` pull the data read-only into `tools/spike-fanout/data/` (not committed: it holds prod research conversations); `run.ts research|baseline|review|contracts|splitters|prod-stats` asks Clef and writes `out/*.json` (also not committed, with a request cache that makes reruns free); `tables.ts` renders the round 1 tables above. Round 2: `select.ts` picks versions, `round2.ts estimate|run` runs the candidates and compares them with each recorded verdict, `disagree.ts` lists the differences to adjudicate, `times.ts` and `inflation.ts` read today's pass times from the session logs (`extract-times.js` runs inside `quack-v1`, read-only), `parallel.ts` measures concurrency, and `tables2.ts` renders the round 2 tables. `DRY=1` chunks without calling Clef.

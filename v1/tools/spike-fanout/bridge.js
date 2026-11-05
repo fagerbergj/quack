@@ -8,7 +8,11 @@ process.stdin.on('data', (d) => {
   while ((i = buf.indexOf('\n')) >= 0) {
     const line = buf.slice(0, i);
     buf = buf.slice(i + 1);
-    if (line.trim()) chain = chain.then(() => one(JSON.parse(line)));
+    if (!line.trim()) continue;
+    const m = JSON.parse(line);
+    // A message flagged par runs at once, for the concurrency measurement; the rest queue.
+    if (m.par) one(m);
+    else chain = chain.then(() => one(m));
   }
 });
 async function one({ id, body }) {

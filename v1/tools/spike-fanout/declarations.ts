@@ -1,5 +1,5 @@
 // The six candidates as data: each scope names a chunker and context selectors, each check a question and an aggregator. No candidate has code of its own.
-import type { Check, Declaration } from './strategies.ts';
+import type { Check, Declaration, Where } from './strategies.ts';
 
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
 const CITE = '\\s*\\[s\\d+\\]';
@@ -49,6 +49,14 @@ export const review: Declaration = {
       piece: 'newFile',
       context: { sibling: { name: 'related', chunker: { name: 'jsonItems', from: 'repoFiles' }, match: 'sibling', top: 1, require: true, maxChars: 12000 } },
     },
+    newFilesReviewed: {
+      split: { name: 'diffFiles', from: 'diff', filter: 'added' },
+      piece: 'newFile',
+      context: {
+        sibling: { name: 'related', chunker: { name: 'jsonItems', from: 'repoFiles' }, match: 'sibling', top: 1, require: true, maxChars: 12000 },
+        reviewLines: { name: 'related', chunker: { name: 'listItems', from: 'review', sections: ['Findings', 'Verified', 'Notes'] }, match: 'cites', top: 6, maxChars: 4000 },
+      },
+    },
     files: {
       split: { name: 'diffFiles', from: 'diffW' },
       piece: 'diff',
@@ -75,6 +83,13 @@ export const review: Declaration = {
     sibling_parts: {
       scope: 'newFiles',
       question: { type: 'bool', instructions: 'Does the sibling file have a part (handler, export, field, section or test) that the new file lacks, apart from what belongs only to the new file\'s own purpose?' },
+      aggregate: { name: 'any' },
+      flagWhen: true,
+    },
+    sibling_unreported: {
+      scope: 'newFilesReviewed',
+      records: 'sibling_parts',
+      question: { type: 'bool', instructions: "Does the sibling file have a part (handler, export, field, section or test) that the new file lacks and that none of the review lines shown mention, apart from what belongs only to the new file's own purpose?" },
       aggregate: { name: 'any' },
       flagWhen: true,
     },
@@ -147,5 +162,89 @@ export const splitters: Declaration = {
   checks: {
     ...withChecks('answers_every_ask', ['asksDet', 'asksAuto', 'asksLlm', 'asksHybrid'], research.checks.answers_every_ask),
     ...withChecks('promises_handled', ['promisesDet', 'promisesAuto', 'promisesLlm', 'promisesHybrid'], review.checks.promises_handled),
+  },
+};
+
+// Sleeper cards: each rubric's own per-row and per-card model checks over the card JSON (`card`), one declaration per kind.
+// The units' facts (incumbent, baseline, table) are not stored with the card, so a row is judged on the card's own fields.
+const rows = (path: string, where?: Where[], context?: Record<string, { name: string } & Record<string, unknown>>) => ({ split: { name: 'jsonItems', from: 'card', path, where }, piece: 'row', context });
+const text = (path: string) => ({ split: { name: 'jsonItems', from: 'card', path }, piece: 'text' });
+const ask = (scope: string, instructions: string, aggregate: 'all' | 'any'): Check => ({ scope, question: { type: 'bool', instructions }, aggregate: { name: aggregate }, flagWhen: aggregate === 'any' });
+const has = (path: string): Where => ({ path, op: 'truthy' });
+
+export const sleeper: Record<string, Declaration> = {
+  'sleeper.lineup': {
+    scopes: { row: rows('starters'), designated: rows('starters', [has('player.inj')]), close: rows('starters', [has('news')]), changed: rows('starters', [{ path: 'action', op: 'ne', value: 'keep' }]), summary: text('summary') },
+    checks: {
+      picks_an_action: ask('row', 'Does the row start, sit or keep a player, rather than leave the slot open?', 'all'),
+      designation_weighted: ask('designated', 'Does the call treat an injury designation as a play rate, not as in or out?', 'all'),
+      close_call_news: ask('close', 'Does `why` reflect the attached `news`, naming the right player for each report?', 'all'),
+      matchup_overrides_talent: ask('changed', 'Does this change bench a clearly better healthy player for matchup alone?', 'any'),
+      weather_mentioned_unmoved: ask('summary', 'Does the summary mention weather for a call that weather did not move?', 'any'),
+    },
+  },
+  'sleeper.waivers': {
+    scopes: {
+      row: rows('candidates', undefined, { league: { name: 'json', from: 'card', pick: ['waiver_type', 'faab_left', 'my_priority'] } }),
+      close: rows('candidates', [has('news')]),
+      summary: text('summary'),
+    },
+    checks: {
+      sized_to_waiver_type: ask('row', "Is the claim sized in this league's own currency: a share of remaining FAAB in a FAAB league, or the queue position spent in a rolling or reverse-standings one?", 'all'),
+      ranked_on_usage: ask('row', 'Does the rank rest on role and usage, with trending and ownership counts framed as scarcity?', 'all'),
+      bye_coverage: ask('row', 'Does it miss a bye inside the lead time, or count a shared bye as one slot?', 'any'),
+      crowd_metric_as_value: ask('row', 'Is a trending or ownership number given as the reason the player is good?', 'any'),
+      close_call_news: ask('close', 'Does this claim reflect the attached `news`, naming the right player for each report?', 'all'),
+      ordered_fallback_flagged: ask('summary', 'Does it describe claims that share a drop as a mistake or a conflict?', 'any'),
+    },
+  },
+  'sleeper.history': {
+    scopes: { row: rows('seasons'), summary: text('summary') },
+    checks: {
+      aggregated_not_scolded: ask('row', "Is each criticism backed by a pattern across weeks, naming the player, pick or week and the number from this season's figures?", 'all'),
+      decision_time_grading: ask('row', 'Is a pre-kickoff call judged on what was knowable then, not on how the game turned out?', 'all'),
+      single_week_as_pattern: ask('row', 'Is one week, one bust or one trade offered as evidence of a bad manager?', 'any'),
+      luck_process_split: ask('summary', 'Does it separate lineup execution and the draft, which the manager controls, from schedule luck (points against) and player-outcome luck?', 'all'),
+      efficiency_as_record: ask('summary', 'Does it equate lineup efficiency with winning or losing?', 'any'),
+    },
+  },
+  'sleeper.trends': {
+    scopes: { row: rows('items') },
+    checks: {
+      conflict_stated: ask('row', 'If news and the injury tag disagree, does the item say so and name the rule it followed?', 'all'),
+      original_source_named: ask('row', 'Does `source` name the original source: a reporter, outlet, team or league, not an aggregator?', 'all'),
+      aggregator_only: ask('row', 'Is an aggregator the only source named for this item?', 'any'),
+    },
+  },
+  'sleeper.digest': {
+    scopes: { row: rows('games'), summary: text('summary') },
+    checks: {
+      game_flow_from_score: ask('row', 'Does it describe a comeback, collapse or other game flow that only the final score implies?', 'any'),
+      story_in_summary: ask('summary', "Does the summary name the week's real story (the margin that mattered, the high score, the blowout) rather than recite scores?", 'all'),
+      luck_without_margin: ask('summary', 'Does it call a result lucky without the point margin, or from fewer than about eight close games?', 'any'),
+    },
+  },
+  'sleeper.retro': {
+    scopes: { misses: rows('misses'), lessons: rows('lessons'), summary: text('summary') },
+    checks: {
+      hindsight_called_process: ask('misses', "Is a row with knowable false (variance, no signal before kickoff) blamed on the manager's process?", 'any'),
+      lessons_actionable: ask('lessons', 'Is the lesson something the manager can do next week?', 'all'),
+      summary_names_swing: ask('summary', 'Does the summary name the single biggest swing?', 'all'),
+    },
+  },
+};
+
+// Research's kept claim checks through the library: one chunk per finding, the cited source's best-matching sentences as context.
+export const claims: Declaration = {
+  scopes: {
+    claims: {
+      split: { name: 'listItems', from: 'report', sections: ['Findings'], strip: CITE },
+      piece: 'finding',
+      context: { source: { name: 'related', chunker: { name: 'sentences', from: 'source' }, match: 'overlap', top: 4, maxChars: 4000 } },
+    },
+  },
+  checks: {
+    supported_by_source: { scope: 'claims', question: { type: 'bool', instructions: `Does the fetched text of the source this finding cites state what the finding claims?${FAIR}` }, aggregate: { name: 'all' }, flagWhen: false },
+    contradicted_by_source: { scope: 'claims', question: { type: 'bool', instructions: `Does the fetched text of the source this finding cites contradict it?${FAIR}` }, aggregate: { name: 'any' }, flagWhen: true },
   },
 };

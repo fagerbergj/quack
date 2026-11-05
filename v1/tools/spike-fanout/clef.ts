@@ -39,18 +39,20 @@ export function stop() { child?.stdin.end(); child = undefined; }
 const wire = (q: Question) => (q.type === 'bool' ? { type: 'noul', instructions: q.instructions, criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } } : { type: 'choice', instructions: q.instructions, criteria: q.options });
 
 /** Asks the questions about one state in a single request, as the judge does per unit. Oversized states are not sent (the judge escalates them). */
-export async function ask(state: Record<string, string>, questions: Record<string, Question>): Promise<Reply> {
+export async function ask(state: Record<string, string>, questions: Record<string, Question>, opts: { par?: boolean; fresh?: boolean } = {}): Promise<Reply> {
   const body = { model: 'clef', state, questions: Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, wire(q)])) };
   const tokens = Math.ceil(JSON.stringify({ state, questions: body.questions }).length / BYTES_PER_TOKEN);
   if (tokens > MAX_INPUT_TOKENS) return { answers: {}, ms: 0, tokens, oversize: true, cached: false };
   const key = createHash('sha256').update(JSON.stringify(body)).digest('hex');
-  const hit = cache.get(key);
+  const hit = opts.fresh ? undefined : cache.get(key);
   if (hit) return { ...hit, cached: true };
   if (sent >= BUDGET) throw new Error(`Clef request budget ${BUDGET} reached`);
   if (!child) start();
   sent++;
   const id = `r${sent}`;
-  const r: any = await new Promise((res) => { waiting.set(id, res); child!.stdin.write(`${JSON.stringify({ id, body })}\n`); });
+  const r: any = await new Promise((res) => { waiting.set(id, res); child!.stdin.write(`${JSON.stringify({ id, body, par: opts.par })}\n`); });
+  // The real tokenizer is denser than the judge's 4-bytes-per-token estimate on code; a request it rejects as too large escalates, like an oversize one.
+  if (r.status === 500 && JSON.stringify(r.json).includes('too large')) { const big: Reply = { answers: {}, ms: r.ms, tokens: Number(/\((\d+) tokens\)/.exec(JSON.stringify(r.json))?.[1] ?? tokens), oversize: true, cached: false }; cache.set(key, big); appendFileSync(CACHE, `${JSON.stringify({ key, reply: big, raw: r.json })}\n`); return big; }
   if (r.status !== 200 || !r.json) throw new Error(`Clef ${r.status} ${r.error ?? JSON.stringify(r.json).slice(0, 300)}`);
   const answers: Record<string, Answer> = {};
   for (const [k, q] of Object.entries(questions)) {
@@ -58,6 +60,7 @@ export async function ask(state: Record<string, string>, questions: Record<strin
     answers[k] = q.type === 'bool' ? { p: a?.noul } : { probs: a?.probabilities };
   }
   const reply: Reply = { answers, ms: r.ms, tokens, oversize: false, cached: false };
+  if (opts.fresh) return reply;
   cache.set(key, reply);
   appendFileSync(CACHE, `${JSON.stringify({ key, reply, raw: r.json })}\n`);
   return reply;

@@ -31,6 +31,11 @@ const keep = (chunks: Chunk[], o: Opts): Chunk[] => {
   return o.max ? out.slice(0, o.max) : out;
 };
 
+/** Value at a dotted path (array indexes allowed). */
+const at = (v: any, path?: string): any => (path ? String(path).split('.').reduce((x: any, k) => x?.[k], v) : v);
+export type Where = { path: string; op: 'truthy' | 'falsy' | 'eq' | 'ne'; value?: unknown };
+const test = (v: any, w: Where) => (w.op === 'truthy' ? Array.isArray(v) ? v.length > 0 : !!v : w.op === 'falsy' ? (Array.isArray(v) ? v.length === 0 : !v) : w.op === 'eq' ? v === w.value : v !== w.value);
+
 /** Side channel for the splitter that just ran: spans the model made up, and chunks the sweep added. */
 const split = { rejected: 0, swept: 0 };
 
@@ -62,8 +67,9 @@ export const chunkers: Record<string, (inputs: Inputs, o: Opts) => Chunk[]> = {
   diffHunks: (i, o) => chunkers.diffFiles(i, o).flatMap((f) => f.text.split(/^(?=@@ )/m).slice(1).map((h, n) => ({ id: `${f.id}#${n + 1}`, key: f.key, text: `${f.key} ${h}` }))),
   /** Items of a JSON array or object at a dotted path. */
   jsonItems: (i, o) => {
-    const root = (o.path ? String(o.path).split('.') : []).reduce((v: any, k) => v?.[k], JSON.parse(from(i, o)));
-    return (Array.isArray(root) ? root.map((v, n) => [String(v?.path ?? n), v]) : Object.entries(root ?? {})).slice(0, o.max ?? 1e9).map(([k, v]: any) => ({ id: String(k), key: String(k), text: typeof v === 'string' ? v : (v?.text ?? JSON.stringify(v)), meta: typeof v === 'object' ? v : {} }));
+    const root = at(JSON.parse(from(i, o)), o.path);
+    const entries: Array<[string, any]> = typeof root === 'string' ? [['0', root]] : Array.isArray(root) ? root.map((v, n) => [String(v?.path ?? n), v]) : Object.entries(root ?? {});
+    return entries.filter(([, v]) => (o.where ?? []).every((w: Where) => test(at(v, w.path), w))).slice(0, o.max ?? 1e9).map(([k, v]) => ({ id: String(k), key: String(k), text: typeof v === 'string' ? v : (v?.text ?? JSON.stringify(o.pick ? Object.fromEntries(o.pick.map((p: string) => [p, at(v, p)])) : v)), meta: typeof v === 'object' ? v : {} }));
   },
   /** One chunk per OpenAPI operation. */
   openapiOperations: (i, o) => Object.entries<any>(JSON.parse(from(i, o)).paths ?? {}).flatMap(([p, ops]) => Object.entries<any>(ops).filter(([m]) => /^(get|put|post|delete|patch)$/.test(m)).map(([m, op]) => ({ id: `${m.toUpperCase()} ${p}`, text: `${m.toUpperCase()} ${p} ${JSON.stringify(op)}` }))).slice(0, o.max ?? 1e9),
@@ -163,6 +169,8 @@ export const selectors: Record<string, Selector> = {
   whole: (i, _c, o) => from(i, o).slice(0, o.maxChars ?? 1e9),
   /** Named sections of an input. */
   sections: (i, _c, o) => sectionText(from(i, o), o.names).slice(0, o.maxChars ?? 1e9),
+  /** Named fields of a JSON input. */
+  json: (i, _c, o) => JSON.stringify(Object.fromEntries((o.pick as string[]).map((p) => [p, at(JSON.parse(from(i, o)), p)]))),
   /** The items of an input, with a pattern stripped (a digest of claims without their citation marks). */
   items: (i, _c, o) => chunkers.listItems(i, o).map((c) => `- ${c.text}`).join('\n'),
   /** The chunks of another input that match this chunk (`match`), best `top`; `require` drops the chunk when none match. */
@@ -182,7 +190,7 @@ export type Splitting = { units: Unit[]; splitter: string; reason?: string; reje
 export type Question = { type: 'bool' | 'choice'; instructions: string; options?: Record<string, string> };
 export type Aggregate = { name: string; pass?: string[]; min?: number; k?: number; by?: string };
 /** `wire` is the id the question is sent under; variants sharing a question share it, so one Clef answer serves them. */
-export type Check = { wire?: string; scope: string; question: Question; aggregate: Aggregate; flagWhen: boolean };
+export type Check = { wire?: string; /** The recorded check this one answers, when its id differs. */ records?: string; scope: string; question: Question; aggregate: Aggregate; flagWhen: boolean };
 export type Declaration = { scopes: Record<string, Scope>; checks: Record<string, Check> };
 
 /** The chunks of a scope with their context, ready to send. */
