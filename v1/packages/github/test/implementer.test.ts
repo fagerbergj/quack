@@ -136,12 +136,21 @@ test('an approved deliver pushes the commits to the PR branch; the approver was 
   await session.close();
 });
 
-test("an approved deliver sets the PR's title and body to the pr.md the approver saw, keeping its closing line", async () => {
-  const { session, service } = await implement(({ repo, seen }) => [checkout(), async () => (await change(repo()), call('deliver')), record(seen, () => fauxAssistantMessage('Delivered.'))]);
+test("an approved deliver sets the PR's title and body to the pr.md the approver saw, keeping the issues the live body closed", async () => {
+  const { session, service } = await implement(({ repo, seen }) => [checkout(), async () => (await change(repo()), call('deliver')), record(seen, () => fauxAssistantMessage('Delivered.'))], { body: 'Refactors the loop. This fixes #3, and closes #4.' });
   const run = session.submit('Fix acme/widgets#7', 'fx-edit', true);
   await answer(session, 'approve');
   assert.equal((await run).status, 'done');
-  assert.deepEqual(service.edited, [{ path: '/pulls/acme/widgets/7', title: 'fix(app): bump a to 3', body: 'What: a is 3.\nWhy: the issue asked.\nVerified: node app.ts.\n\nFixes #3' }]);
+  assert.deepEqual(service.edited, [{ path: '/pulls/acme/widgets/7', title: 'fix(app): bump a to 3', body: 'What: a is 3.\nWhy: the issue asked.\nVerified: node app.ts.\n\nCloses #3\n\nCloses #4' }]);
+  await session.close();
+});
+
+test('a deliver whose pr.md already closes the issue adds no second closing line', async () => {
+  const { session, service } = await implement(({ repo, seen }) => [checkout(), async () => (await change(repo()), await writeFile(join(repo(), '..', 'artifacts', 'pr.md'), `${PR_MD}\nFixes #3.\n`), call('deliver')), record(seen, () => fauxAssistantMessage('Delivered.'))], { body: 'Fixes #3' });
+  const run = session.submit('Fix acme/widgets#7', 'fx-edit2', true);
+  await answer(session, 'approve');
+  assert.equal((await run).status, 'done');
+  assert.equal(service.edited[0].body, 'What: a is 3.\nWhy: the issue asked.\nVerified: node app.ts.\n\nFixes #3.');
   await session.close();
 });
 

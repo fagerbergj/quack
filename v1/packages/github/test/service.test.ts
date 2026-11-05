@@ -57,6 +57,8 @@ const github = await listen(
     if (url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
     if (url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
     if (url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/7' && req.method === 'PATCH') return reply(200, { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' });
+    if (url === '/repos/acme/widgets/pulls/404' && req.method === 'PATCH') return reply(404, { message: 'Not Found' });
     if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
     if (url === '/repos/acme/widgets/pulls/9') return reply(200, { number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z' });
     if (url === '/repos/acme/widgets/pulls/10') return reply(200, { number: 10, state: 'closed', merged: false, closed_at: '2026-11-02T00:00:00Z' });
@@ -358,6 +360,8 @@ test("a PR edit sets the title and body with the installation token, mentions st
   assert.equal(await edit({ title: 'fix: x', body: 'ping @quack-app\n\nFixes #3' }), 200);
   const sent = calls.findLast((c) => c.method === 'PATCH')!;
   assert.deepEqual([sent.path, sent.auth, sent.body], ['/repos/acme/widgets/pulls/7', 'token ghs_test', { title: 'fix: x', body: 'ping quack-app\n\nFixes #3' }]);
+  const gone = await fetch(`${service}/pulls/acme/widgets/404`, { method: 'PATCH', body: JSON.stringify({ title: 't', body: 'b' }), headers: { authorization: 'Bearer svc-secret' } });
+  assert.notEqual(gone.status, 200, 'a vanished pull request is not reported as edited');
 });
 
 test('owner and repo parse only from github.com URLs', () => {

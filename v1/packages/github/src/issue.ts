@@ -1,6 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { conventions, git, remoteFor, type SessionConfig } from './checkout.ts';
+import { closedIssues } from './webhook.ts';
 
 export type IssueRecord = { owner: string; repo: string; number: number; title: string; body: string; author: string | null; state: string; labels: string[]; baseRef: string };
 
@@ -64,10 +65,10 @@ export async function openPull(config: SessionConfig, w: IssueWork, title: strin
   return ((await res.json()) as { url: string }).url;
 }
 
-/** Sets an open pull request's title and body to the pr.md the approver saw; closing lines the live body had and pr.md lacks stay. */
+/** Sets an open pull request's title and body to the pr.md the approver saw; an issue the live body closed and pr.md does not stays closed by it. */
 export async function editPull(config: SessionConfig, pr: { owner: string; repo: string; number: number }, title: string, prMd: string, liveBody: string | undefined): Promise<void> {
   const text = bodyOf(prMd);
-  const kept = (liveBody?.match(/^(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #\d+$/gim) ?? []).filter((l) => !text.includes(l));
+  const kept = closedIssues(liveBody).filter((n) => !closedIssues(text).includes(n)).map((n) => `Closes #${n}`);
   const res = await fetch(`${config.serviceUrl}/pulls/${pr.owner}/${pr.repo}/${pr.number}`, {
     method: 'PATCH', headers: { authorization: `Bearer ${config.serviceToken}` },
     body: JSON.stringify({ title, body: [text, ...kept].join('\n\n') }),

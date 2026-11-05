@@ -5,7 +5,7 @@ import { reviewFeedback } from './feedback.ts';
 import { fixQueued, fixRefused, noticeFor, settled } from './notice.ts';
 import { prStateKey, pullStates, stateOf } from './pulls.ts';
 import { waitingQueue } from './queue.ts';
-import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
+import { closedIssues, stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
   webhookSecret: string;
@@ -214,7 +214,6 @@ async function postReply(req: IncomingMessage, res: ServerResponse, app: GithubA
 }
 
 // Issues a description says it closes ("closes #12", "fixes #3"): the promises a review checks.
-const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
 
 const MAX_CHECK_PAGES = 10;
 
@@ -234,7 +233,7 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
   const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
   if (!pr) return undefined;
   const checks = { check_runs: await checkRuns(app, owner, repo, pr.head.sha) };
-  const closes = [...new Set([...String(pr.body ?? '').matchAll(CLOSES)].map((m) => Number(m[1])))];
+  const closes = closedIssues(pr.body);
   const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
   return {
     owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
@@ -268,7 +267,9 @@ async function editPullRequest(req: IncomingMessage, res: ServerResponse, app: G
   if (typeof r.title !== 'string' || !r.title || typeof r.body !== 'string') return send(res, 400, { error: 'need a non-empty title and a body' });
   const slug = await app.slug();
   const { json } = await app.asInstallation(owner, repo, 'PATCH', `/repos/${owner}/${repo}/pulls/${number}`, { title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
-  send(res, 200, { url: json?.html_url });
+  // GitHub's 404 comes back as no body; a vanished pull request is not an edit.
+  if (!json?.html_url) return send(res, 404, { error: 'no such pull request' });
+  send(res, 200, { url: json.html_url });
 }
 
 // /issues|pulls/{owner}/{repo}/{n}: GET reads either, PATCH edits a pull request; false when the path or method is neither.
