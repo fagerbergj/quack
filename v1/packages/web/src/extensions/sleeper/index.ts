@@ -44,7 +44,7 @@ export const sleeper: Extension = {
   card: view,
   full: view,
   wholeUnits: ['card', 'facts'],
-  artifact: (a) => (a.kind === 'sleeper.cards' ? { name: cardName(a) } : undefined),
+  artifact: (a) => (a.kind === 'sleeper.cards' ? { name: cardName(a), titled: true } : undefined),
   session: {
     label: 'sleeper', noun: (r) => jobOf(r.key).job.noun, group: 'Sleeper', match: (r) => KEY.test(r.key), icon: 'M8 4h8v5a4 4 0 0 1-8 0ZM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M9 20h6', tint: 'bg-success-bg text-success',
     name: (r) => {

@@ -43,7 +43,7 @@ test('the review card shows the seal, counts, a posted link, findings with their
   expect(within(card).getByText('Suggestion').closest('summary')?.parentElement?.tagName).toBe('DETAILS');
   expect(within(card).getByText('Verified · 6')).toBeInTheDocument();
   expect(within(card).getByText('Notes · 3')).toBeInTheDocument();
-  expect(card).toHaveTextContent('Double-checked');
+  expect(within(card).getByRole('img', { name: 'Double-checked' }).parentElement).toHaveTextContent('Changes requested');
   // Verified, Notes and the full review start closed.
   expect(card.querySelectorAll('details[open]')).toHaveLength(0);
 });

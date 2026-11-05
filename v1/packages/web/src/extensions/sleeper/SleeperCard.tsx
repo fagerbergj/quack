@@ -2,7 +2,7 @@ import { useContext } from 'react';
 import type { SealedArtifact } from '../../api.ts';
 import { SessionKeyContext } from '../../extension.ts';
 import { Full, titleOf } from './cards.tsx';
-import { Verdict } from './parts.tsx';
+import { TitleTick, Verdict } from './parts.tsx';
 import { LineupCard, type Card } from './Sleeper.tsx';
 import type { Result } from './week.ts';
 
@@ -28,7 +28,7 @@ export function SleeperCard({ a, card }: { a: SealedArtifact; card: Record<strin
   return (
     <article aria-label={title} className="overflow-hidden rounded-[22px] border border-line bg-surface shadow-card">
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">
-        <h2 className="m-0 text-sm font-semibold">{title}</h2>
+        <h2 className="m-0 flex items-center gap-2 text-sm font-semibold">{title}<TitleTick artifact={a} /></h2>
         <Verdict artifact={a} />
       </div>
       <div className="min-w-0 px-4 pb-3 [overflow-wrap:anywhere]"><Full r={r} /></div>

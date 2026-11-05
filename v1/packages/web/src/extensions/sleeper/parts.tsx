@@ -12,27 +12,24 @@ export const weekday = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZo
 
 export const slot = (ms: number) => `${weekday(ms)} ${new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: 'numeric', minute: '2-digit' }).format(ms)}`;
 
-// One status line: a pass is "Double-checked" with any partial misses behind a tap; a fail names the checks that missed.
+// A failed check is a status line naming the checks that missed; a pass draws nothing here, its tick sits on the title (TitleTick).
 export function Verdict({ artifact }: { artifact: SealedArtifact }) {
   const v = artifact.verdict;
-  if (!v) return null;
-  const missed = failedChecks(v.checks);
-  if (!v.passed) {
-    return (
-      <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
-        <div className="flex items-center gap-2"><StatusIcon verdict={v} /><span className="font-medium text-ink-2">Didn't pass its checks</span></div>
-        {missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
-      </div>
-    );
-  }
-  const line = <><StatusIcon verdict={v} /><span className="font-medium text-success">Double-checked</span></>;
-  if (!missed.length) return <div className="flex min-h-6 items-center gap-2 text-[12px]">{line}</div>;
+  if (!v || v.passed) return null;
   return (
-    <details className="min-w-0 text-[12px]">
-      <summary className="flex min-h-11 cursor-pointer items-center gap-2 lg:min-h-6">{line}</summary>
-      <div className="flex flex-col gap-1.5">{missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="muted" />)}</div>
-    </details>
+    <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
+      <div className="flex items-center gap-2"><StatusIcon verdict={v} /><span className="font-medium text-ink-2">Didn't pass its checks</span></div>
+      {failedChecks(v.checks).map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
+    </div>
   );
+}
+
+/** A passed double-check as a green tick beside a card's title; checks it partly missed are named in its alt text. */
+export function TitleTick({ artifact }: { artifact: SealedArtifact }) {
+  const v = artifact.verdict;
+  if (!v?.passed) return null;
+  const missed = failedChecks(v.checks).map((c) => c.label);
+  return <StatusIcon verdict={v} label={missed.length ? `Double-checked; partly missed: ${missed.join('; ')}` : undefined} />;
 }
 
 const host = (url: string) => new URL(url, 'http://x').hostname.replace(/^www\./, '');

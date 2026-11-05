@@ -1305,12 +1305,11 @@ test('a passed pitfall is not shown as failed, a triggered pitfall and a missed 
   expect(card).toHaveTextContent('A close call does not cite the news');
 });
 
-test('a passed card shows no red boxes; partial misses sit behind its Double-checked line', async () => {
+test('a passed card shows no red boxes; partial misses are named in its title tick', async () => {
   const checks = [chk('news', 'A close call does not cite the news', 3, 0.6, ['RB2: Only half the report is cited.'])];
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 0.9, checks })]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  const note = within(card).getByText('Double-checked').closest('details')!;
-  expect(note).not.toHaveAttribute('open');
+  expect(within(card).getByRole('img', { name: 'Double-checked; partly missed: A close call does not cite the news' })).toBeInTheDocument();
   expect(card).not.toHaveTextContent("Didn't pass");
   expect(card.querySelector('.text-danger')).toBeNull();
 });
@@ -1506,8 +1505,9 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   ws.frame(view({}));
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
   const done = screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!;
-  expect(within(done).getByRole('region', { name: 'Review' })).toBeInTheDocument();
-  expect(done).toHaveTextContent('Double-checked');
+  // One tick, on the card's title; the line drops its own.
+  expect(within(within(done).getByRole('region', { name: 'Review' })).getAllByRole('img', { name: 'Double-checked' })).toHaveLength(1);
+  expect(within(done).getAllByRole('img', { name: 'Double-checked' })).toHaveLength(1);
   // The card carries the one Posted link; the pinned line drops its own.
   expect(within(screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
 });
