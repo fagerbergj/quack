@@ -89,6 +89,8 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
     if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/14') return reply(200, { number: 14, user: { login: 'Quack-App[bot]' } });
+    if (url === '/repos/acme/widgets/pulls/14/reviews') return calls.at(-1)!.body.event === 'COMMENT' ? reply(200, { id: 10, html_url: 'https://github.com/acme/widgets/pull/14#review-10' }) : reply(422, { message: 'Can not approve your own pull request' });
     const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
     if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
     if (url === '/graphql' && graphqlErrors) return reply(200, { errors: [{ message: 'Resource not accessible by integration' }] });
@@ -340,6 +342,14 @@ test('a sealed review is posted with the installation token, never handed to the
   assert.equal(posted.body.url, 'https://github.com/acme/widgets/pull/7#review-9');
   const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
   assert.deepEqual(sent.body, { event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', commit_id: 'abc123' });
+});
+
+test("an approve on the app's own pull request posts as a comment that leads with the verdict", async () => {
+  const res = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 14, commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' }), headers: { authorization: 'Bearer svc-secret' } });
+  assert.equal(res.status, 201);
+  const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
+  assert.equal(sent.body.event, 'COMMENT');
+  assert.match(sent.body.body, /^\*\*Verdict: approve\.\*\* .*\n\n## Verdict\napprove$/);
 });
 
 test('owner and repo parse only from github.com URLs', () => {
