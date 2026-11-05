@@ -15,6 +15,8 @@ export type ServiceConfig = {
   agent: string;
   /** The agent that backs `/fix`; without it `/fix` is ignored, so a deployment opts in. */
   implementerAgent?: string;
+  /** The branch `/implement` starts from; absent, the repository's default branch. */
+  issueBase?: string;
   /** Where PR states persist; without it they live in memory and are re-read after a restart. */
   statesFile?: string;
 };
@@ -204,11 +206,11 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
   };
 }
 
-// An issue the session may implement: its text, labels and the repository's default branch.
-async function issueRoute(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+// An issue the session may implement: its text, labels and the branch to cut from.
+async function issueRoute(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number, base?: string) {
   const issue = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${number}`)).json;
   if (!issue || issue.pull_request) return send(res, 404, { error: 'no such issue' });
-  const baseRef = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}`)).json?.default_branch;
+  const baseRef = base ?? (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}`)).json?.default_branch;
   send(res, 200, { owner, repo, number, title: issue.title, body: issue.body ?? '', author: issue.user?.login ?? null, state: issue.state, labels: (issue.labels ?? []).map((l: any) => (typeof l === 'string' ? l : l.name)), baseRef });
 }
 
@@ -261,7 +263,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
       const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
-      if (item) return await (item[1] === 'issues' ? issueRoute : pullRequest)(res, app, item[2], item[3], Number(item[4]));
+      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), config.issueBase) : pullRequest(res, app, item[2], item[3], Number(item[4])));
       send(res, 404, { error: 'not found' });
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');

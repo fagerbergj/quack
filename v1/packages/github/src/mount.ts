@@ -14,7 +14,7 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 
 /** The GitHub app; its webhook is /apps/github/webhook, which GitHub signs instead of presenting a credential. */
 export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext): App {
-  const implementerAgent = checkedSettings<GithubSettings>('github', settings, settingsProblems)?.implementerAgent;
+  const { implementerAgent, issueBase } = checkedSettings<GithubSettings>('github', settings, settingsProblems) ?? {};
   const agent = env.QUACK_GH_AGENT || 'reviewer';
   const dataDir = env.QUACK_DATA_DIR ?? '.';
   const app = githubApp({ appId: required(env, 'QUACK_GH_APP_ID'), privateKey: readFileSync(required(env, 'QUACK_GH_PRIVATE_KEY_FILE'), 'utf8') });
@@ -25,6 +25,7 @@ export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext
     label: env.QUACK_GH_LABEL || 'quack:review',
     agent,
     implementerAgent,
+    issueBase,
     statesFile: join(dataDir, 'github-pulls.json'),
   });
   let stopRedelivery = () => {};
