@@ -28,13 +28,19 @@ type Hit = { title?: string; url: string; publishedDate?: string; highlights?: A
 
 const EXCERPT_CHARS = 280;
 const mentions = (text: string | undefined, name: string) => (text ?? '').toLowerCase().includes(name.toLowerCase());
+// Exa highlights run to several paragraphs, so the excerpt is a window on the name, not the highlight's start.
+const around = (text: string, name: string) => {
+  const flat = text.replace(/\s+/g, ' ');
+  const start = Math.max(0, flat.toLowerCase().indexOf(name.toLowerCase()) - EXCERPT_CHARS / 2);
+  return flat.slice(start, start + EXCERPT_CHARS).trim();
+};
 const highlights = (h: Hit) => (h.highlights ?? []).map((x) => (typeof x === 'string' ? x : (x.text ?? '')));
 
 /** Exa matches by topic, so an item about a teammate or a team report can come back; keep one only if it names the player in full. */
 function item(h: Hit, name: string): NewsItem | undefined {
   if (mentions(h.title, name)) return { title: h.title!, url: h.url, date: h.publishedDate ?? '' };
-  const excerpt = highlights(h).find((t) => mentions(t, name));
-  return excerpt === undefined ? undefined : { title: h.title || h.url, url: h.url, date: h.publishedDate ?? '', excerpt: excerpt.trim().slice(0, EXCERPT_CHARS) };
+  const text = highlights(h).find((t) => mentions(t, name));
+  return text === undefined ? undefined : { title: h.title || h.url, url: h.url, date: h.publishedDate ?? '', excerpt: around(text, name) };
 }
 
 /** One news item as a prompt line: the link, its date, and the excerpt that names the player when the title does not. */

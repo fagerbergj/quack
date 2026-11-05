@@ -323,7 +323,7 @@ async function fakeExa() {
         { title: 'Rob Rowe practice report', url: 'https://www.nfl.com/news/fresh', publishedDate: hoursAgo(5) },
         { title: 'Injury report', url: 'https://www.nfl.com/news/other', publishedDate: hoursAgo(5), highlights: ['Dan Dash is a full participant.'] },
         { title: 'Team injury roundup', url: 'https://www.nfl.com/news/roundup', publishedDate: hoursAgo(5), highlights: ['Other players are listed.'] },
-        { title: 'Depth chart notes', url: 'https://www.nfl.com/news/depth', publishedDate: hoursAgo(6), highlights: [{ text: 'Rob Rowe takes first-team reps.' }] },
+        { title: 'Depth chart notes', url: 'https://www.nfl.com/news/depth', publishedDate: hoursAgo(6), highlights: [{ text: `# Depth chart notes\n\n${'Team news. '.repeat(40)}\n\nRob Rowe takes first-team reps.` }] },
         { title: 'Content farm', url: 'https://stannsw.org/news/fresh', publishedDate: hoursAgo(4) },
         { title: 'Lookalike host', url: 'https://notnfl.com/news/fresh', publishedDate: hoursAgo(4) },
         { title: 'Old news', url: 'https://www.espn.com/stale', publishedDate: hoursAgo(73) },
@@ -344,10 +344,12 @@ test('close-call players get dated news inside 72 hours, and nobody else is sear
   assert.equal(exa.seen.length, close.length);
   assert.ok(exa.seen.every((r) => r.key === 'k' && r.body.numResults === 3 && r.body.startPublishedDate === hoursAgo(72) && r.body.includeDomains.includes('nfl.com')));
   assert.match(exa.seen.map((r) => r.body.query).join('\n'), /Rob Rowe/);
-  // A title that names the player stands alone; otherwise the highlight that names him rides along, into the prompt too.
-  const depth = { title: 'Depth chart notes', url: 'https://www.nfl.com/news/depth', date: hoursAgo(6), excerpt: 'Rob Rowe takes first-team reps.' };
-  assert.deepEqual(f.news['102'], [{ title: 'Rob Rowe practice report', url: 'https://www.nfl.com/news/fresh', date: hoursAgo(5) }, depth]);
-  assert.equal(newsLink(depth), `[Depth chart notes](https://www.nfl.com/news/depth), ${hoursAgo(6).slice(0, 16)}: "Rob Rowe takes first-team reps."`);
+  // A title that names the player stands alone; otherwise a short window of the highlight that names him rides along, into the prompt too.
+  const [fresh, depth] = f.news['102'];
+  assert.deepEqual(fresh, { title: 'Rob Rowe practice report', url: 'https://www.nfl.com/news/fresh', date: hoursAgo(5) });
+  assert.deepEqual([depth.title, depth.url, depth.date], ['Depth chart notes', 'https://www.nfl.com/news/depth', hoursAgo(6)]);
+  assert.ok(depth.excerpt!.endsWith('Rob Rowe takes first-team reps.') && depth.excerpt!.length <= 280 && !/[\n#]/.test(depth.excerpt!), depth.excerpt);
+  assert.equal(newsLink(depth), `[Depth chart notes](https://www.nfl.com/news/depth), ${hoursAgo(6).slice(0, 16)}: "${depth.excerpt}"`);
 });
 
 test('a failing search leaves a close call with no news rather than failing the lineup', async () => {
