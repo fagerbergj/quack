@@ -6,6 +6,7 @@ import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
+import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
 import { CANNOT_SEE_IMAGES } from './images.ts';
@@ -66,6 +67,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
+  registry.install(cutOffExtension());
   // The sink needs the harness, which opens after the registry; hooks only call it once a run is going.
   let open: Harness | undefined;
   registry.install(unknownToolExtension(async (id) => (await (await open!.conversation(id, ctx))!.agent(ctx)).tools.map((t) => t.name)));
