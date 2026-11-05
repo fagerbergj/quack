@@ -84,7 +84,7 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
 const QUEUE_TTL_MS = 6 * 3600_000;
 
 /** A `/fix` waiting for its session to finish a run; the same submission the webhook would have sent. */
-type QueuedFix = { sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number };
+type QueuedFix = { sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number; /** The opening-card data computed for the first submission. */ meta?: object };
 type FixQueue = ReturnType<typeof waitingQueue<QueuedFix>>;
 
 const midRun = (reason: string) => reason.includes('mid-run');
@@ -106,8 +106,7 @@ async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response, 
 
 // One retry of a queued /fix: done once it started or can never start. A session still mid-run, or a distributor outage, waits for the next try.
 async function startQueuedFix(app: GithubApp, config: ServiceConfig, q: QueuedFix): Promise<boolean> {
-  const meta = await invocationMeta(app, q.owner, q.repo, q.number);
-  const payload = { key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(meta && { meta }) };
+  const payload = { key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(q.meta && { meta: q.meta }) };
   const upstream = await submitToSession(config.distributorUrl, payload, config.fetch);
   if (upstream.ok) return true;
   const reason = await problemOf(upstream);
@@ -150,7 +149,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
   const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload }, config.fetch);
-  const queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now() };
+  const queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta };
   if (await noticeRefusedFix(app, trigger, upstream, queue, queued)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
   if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {

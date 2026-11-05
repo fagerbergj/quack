@@ -14,7 +14,7 @@ const THREADS = `query($owner:String!,$repo:String!,$n:Int!){repository(owner:$o
 /** Each reviewer's latest review that still asks for something; an approval clears the reviewer's earlier request. */
 export function openReviews(reviews: any[], headSha: string): ReviewFeedback['reviews'] {
   const latest = new Map<string, any>();
-  for (const r of reviews) {
+  for (const r of [...reviews].sort((a, b) => String(a.submitted_at ?? '').localeCompare(String(b.submitted_at ?? '')))) {
     const counts = r.state === 'CHANGES_REQUESTED' || r.state === 'APPROVED' || (r.state === 'COMMENTED' && r.body?.trim());
     if (counts && r.user?.login) latest.set(r.user.login, r);
   }
@@ -26,15 +26,27 @@ export function openReviews(reviews: any[], headSha: string): ReviewFeedback['re
 async function openComments(app: GithubApp, owner: string, repo: string, number: number): Promise<ReviewFeedback['comments']> {
   const { json } = await app.asInstallation(owner, repo, 'POST', '/graphql', { query: THREADS, variables: { owner, repo, n: number } });
   const nodes = json?.data?.repository?.pullRequest?.reviewThreads?.nodes;
-  if (!nodes) throw new Error(json?.errors?.[0]?.message ?? 'no review threads returned');
+  if (json?.errors?.length || !nodes) throw new Error(json?.errors?.[0]?.message ?? 'no review threads returned');
   return nodes.filter((t: any) => !t.isResolved && t.comments.nodes[0])
     .map((t: any) => ({ author: t.comments.nodes[0].author?.login ?? 'unknown', path: t.path, line: t.line ?? t.originalLine ?? null, body: t.comments.nodes[0].body }));
 }
 
+const MAX_REVIEW_PAGES = 30;
+
+// Every page, since the list is oldest first and the newest review is the one that counts. shortcut: 3,000 reviews.
+async function allReviews(app: GithubApp, owner: string, repo: string, base: string): Promise<any[]> {
+  const all: any[] = [];
+  for (let page = 1; page <= MAX_REVIEW_PAGES; page++) {
+    const batch = (await app.asInstallation(owner, repo, 'GET', `${base}/reviews?per_page=100&page=${page}`)).json ?? [];
+    all.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return all;
+}
+
 export async function reviewFeedback(app: GithubApp, owner: string, repo: string, number: number, headSha: string): Promise<ReviewFeedback> {
   const base = `/repos/${owner}/${repo}/pulls/${number}`;
-  const reviews = (await app.asInstallation(owner, repo, 'GET', `${base}/reviews?per_page=100`)).json ?? [];
-  const found: ReviewFeedback = { reviews: openReviews(reviews, headSha), comments: [] };
+  const found: ReviewFeedback = { reviews: openReviews(await allReviews(app, owner, repo, base), headSha), comments: [] };
   try {
     found.comments = await openComments(app, owner, repo, number);
   } catch (err) {

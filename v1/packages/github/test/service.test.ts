@@ -22,17 +22,20 @@ async function listen(server: Server) {
 }
 
 // A fake GitHub API that verifies the app JWT the way GitHub does: RS256 over header.body, issuer = app id.
-const calls: Array<{ method: string; path: string; auth: string; body: any }> = [];
+const calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = [];
 const commented: string[] = [];
-const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123') => ({ id, user: { login }, state, body, commit_id });
+const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123') => ({ id, user: { login }, state, body, commit_id, submitted_at: new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString() });
+// Out of order on purpose: pat's approval is listed before the request it supersedes. 100 older filler reviews push the rest onto page 2.
 const reviews = [
+  ...Array.from({ length: 100 }, (_, i) => review(i - 200, `filler${i}`, 'COMMENTED')),
+  review(3, 'pat', 'APPROVED'),
   review(1, 'maria', 'CHANGES_REQUESTED', 'Handle the empty list.', 'old000'),
   review(2, 'pat', 'CHANGES_REQUESTED', 'Rename this.'),
-  review(3, 'pat', 'APPROVED'),
   review(4, 'lee', 'COMMENTED', 'Nit: spacing.'),
   review(5, 'sam', 'COMMENTED'),
   review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
 ];
+let graphqlErrors = false;
 const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
 const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 'Fixed already.')];
 const commentWaiters: Array<() => void> = [];
@@ -46,7 +49,7 @@ const github = await listen(
     let raw = '';
     for await (const c of req) raw += c;
     const auth = String(req.headers.authorization);
-    calls.push({ method: req.method!, path: req.url!, auth, body: raw ? JSON.parse(raw) : undefined });
+    calls.push({ method: req.method!, path: req.url!, auth, version: req.headers['x-github-api-version'] as string | undefined, body: raw ? JSON.parse(raw) : undefined });
     const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
     // GitHub's API is case-insensitive: a mixed-case owner reaches the same repository.
     const url = req.url!.replace(/^\/repos\/ACME\//, '/repos/acme/');
@@ -86,7 +89,9 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
     if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
-    if (url === '/repos/acme/widgets/pulls/7/reviews?per_page=100') return reply(200, reviews);
+    const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
+    if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
+    if (url === '/graphql' && graphqlErrors) return reply(200, { errors: [{ message: 'Resource not accessible by integration' }] });
     if (url === '/graphql') return reply(200, { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } });
     reply(404, {});
   }),
@@ -209,6 +214,10 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
     await sleep(60);
     assert.deepEqual(commented, [fixQueued]);
     assert.equal(invocations.length, 0);
+    const metaReads = () => calls.filter((c) => c.path === '/repos/acme/widgets/pulls/7/files?per_page=100').length;
+    const before = metaReads();
+    await sleep(60);
+    assert.equal(metaReads(), before, 'retries reuse the stored opening-card data');
     busy = false;
     while (!invocations.length) await sleep(10);
     await sleep(60);
@@ -352,6 +361,19 @@ test('a pull request record carries the open review feedback: latest human reque
   assert.deepEqual(pr.feedback.reviews.map((r: any) => [r.author, r.state, r.current]), [['maria', 'CHANGES_REQUESTED', false], ['lee', 'COMMENTED', true]]);
   assert.deepEqual(pr.feedback.comments, [{ author: 'maria', path: 'app.ts', line: 4, body: 'Off by one.' }]);
   assert.equal(pr.feedback.commentsError, undefined);
+  assert.equal(calls.findLast((c) => c.path === '/graphql')!.version, undefined, 'GraphQL gets no REST version header');
+  assert.equal(calls.findLast((c) => c.path.includes('/reviews?'))!.version, '2022-11-28');
+});
+
+test('GraphQL errors in a 200 answer are reported, not read as no threads', async () => {
+  graphqlErrors = true;
+  try {
+    const pr = await (await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } })).json();
+    assert.deepEqual(pr.feedback.comments, []);
+    assert.equal(pr.feedback.commentsError, 'Resource not accessible by integration');
+  } finally {
+    graphqlErrors = false;
+  }
 });
 
 test('a commit with more check runs than the service reads is refused, not reviewed against part of its CI', async () => {

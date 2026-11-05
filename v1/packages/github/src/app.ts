@@ -33,7 +33,8 @@ export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
   async function call(method: string, path: string, auth: string, body?: unknown) {
     const res = await fetchImpl(api + path, {
       method,
-      headers: { authorization: auth, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' },
+      // GraphQL has its own version scheme; the REST version header is not one it accepts.
+      headers: { authorization: auth, accept: 'application/vnd.github+json', ...(path === '/graphql' ? {} : { 'x-github-api-version': '2022-11-28' }), 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 404) return { status: 404, json: undefined, link: '' };
