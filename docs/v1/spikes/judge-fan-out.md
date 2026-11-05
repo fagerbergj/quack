@@ -393,3 +393,7 @@ One change to the verdict follows. A fold of `all` over N chunks replaces the sh
 - **Latency is Clef only,** from inside the container, one request at a time, while prod ran research sessions on the same host. Today's path timings assume 25 s per escalation, not a measured run.
 - **Not built:** Clef picking hunks from a menu of headers, per-version memoization, `dtsExports` and `relevanceWindow` on any input (they are in the library and not exercised), and the effect of fan-out on a cost budget with several checks sharing a scope.
 - **Token cap:** chunk estimates use the judge's 4-bytes-per-token rule, not Clef's tokenizer.
+
+## Rerunning
+
+`fetch.ts`, `fetch-diffs.ts` and `fetch-contracts.ts` pull the data read-only into `tools/spike-fanout/data/` (not committed: it holds prod research conversations); `run.ts research|baseline|review|contracts|splitters|prod-stats` asks Clef and writes `out/*.json` (also not committed, with a request cache that makes reruns free); `tables.ts` renders the tables above. `DRY=1` chunks without calling Clef.

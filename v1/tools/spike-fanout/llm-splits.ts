@@ -1,6 +1,5 @@
-// Simulated model splits. The 27B was not called (the spike may only use Clef), so these are hand-written stand-ins for its structured output:
-// each item carries the exact source span it came from, and the llm chunker drops any whose span is not in the input.
-// Gold lists (what a careful reader finds) are the same strings, so the simulated split is a ceiling, not a measurement of the 27B.
+// Simulated model splits: hand-written stand-ins for the 27B's structured output (the spike may only call Clef), each item with its exact source span.
+// The gold lists the report scores against are these same strings, so the simulated split is a ceiling, not a measurement of the 27B.
 
 export type Split = Array<{ item: string; span: string }>;
 const each = (spans: string[], say: (s: string) => string = (s) => s): Split => spans.map((span) => ({ item: say(span), span }));

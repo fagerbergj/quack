@@ -186,19 +186,24 @@ export type Check = { wire?: string; scope: string; question: Question; aggregat
 export type Declaration = { scopes: Record<string, Scope>; checks: Record<string, Check> };
 
 /** The chunks of a scope with their context, ready to send. */
+/** Why a deterministic split does not have the shape its input was expected to give, if it does not. */
+function shapeProblem(pieces: Chunk[], e: Split['expect']): string | undefined {
+  if (!e) return undefined;
+  if (e.min !== undefined && pieces.length < e.min) return `fewer than ${e.min} items`;
+  if (e.max !== undefined && pieces.length > e.max) return `more than ${e.max} items`;
+  if (e.maxChars !== undefined && pieces.some((c) => c.text.length > e.maxChars!)) return `an item over ${e.maxChars} characters`;
+  return undefined;
+}
+
 export function unitsOf(scope: Scope, inputs: Inputs): Splitting {
   split.rejected = split.swept = 0;
   let pieces = chunkers[scope.split.name](inputs, scope.split);
   let splitter = scope.split.name;
-  let reason: string | undefined;
-  const e = scope.split.expect;
-  if (e && scope.split.fallback) {
-    reason = (e.min !== undefined && pieces.length < e.min) ? `fewer than ${e.min} items` : (e.max !== undefined && pieces.length > e.max) ? `more than ${e.max} items` : (e.maxChars !== undefined && pieces.some((c) => c.text.length > e.maxChars!)) ? `an item over ${e.maxChars} characters` : undefined;
-    if (reason) {
-      split.rejected = split.swept = 0;
-      pieces = chunkers[scope.split.fallback.name](inputs, scope.split.fallback);
-      splitter = `${scope.split.name} -> ${scope.split.fallback.name}`;
-    }
+  const reason = scope.split.fallback ? shapeProblem(pieces, scope.split.expect) : undefined;
+  if (reason) {
+    split.rejected = split.swept = 0;
+    pieces = chunkers[scope.split.fallback!.name](inputs, scope.split.fallback!);
+    splitter = `${scope.split.name} -> ${scope.split.fallback!.name}`;
   }
   const units: Unit[] = [];
   for (const c of pieces) {
