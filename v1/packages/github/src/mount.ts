@@ -27,6 +27,7 @@ export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext
     implementerAgent,
     issueBase,
     statesFile: join(dataDir, 'github-pulls.json'),
+    queueFile: join(dataDir, 'github-fixes.json'),
   });
   let stopRedelivery = () => {};
   return {
@@ -36,7 +37,8 @@ export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext
       await assertPromoted(distributorUrl, agent, undefined, fetch);
       if (implementerAgent) await assertPromoted(distributorUrl, implementerAgent, undefined, fetch);
       stopRedelivery = startRedelivery(app, join(dataDir, 'github-redeliver.json'));
+      service.resume();
     },
-    stop: () => stopRedelivery(),
+    stop: () => { stopRedelivery(); service.stop(); },
   };
 }

@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { serveApp } from '@quack/sdk';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
-import { fixRefused, noticeFor } from '../src/notice.ts';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { fixQueued, fixRefused, noticeFor } from '../src/notice.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -93,6 +97,7 @@ const watchers: string[] = [];
 const watcherWaiters: Array<() => void> = [];
 const holds: Record<string, Promise<void>> = {};
 let busy = false;
+let busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
 const outcomes: Record<string, unknown> = {};
 const distributor = await listen(
   createServer(async (req, res) => {
@@ -106,7 +111,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
-    if (busy) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: 'session is mid-run as agent reviewer; implementer can start once it finishes' }));
+    if (busy) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: busyDetail }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
@@ -180,15 +185,85 @@ test('/fix runs the implementer in the PR session only where one is configured; 
   assert.equal(invocations.length, 1);
   assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
   assert.match(invocations[0].body.input, /Instruction: the cache test\nand the lint error/);
+});
 
-  // A refused /fix is answered on the PR with the distributor's reason, not left silent.
-  busy = true;
+const fixComment = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/fix the cache test', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
+const fixService = (extra: object = {}) => {
+  const svc = createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer', queuePollMs: 10, ...extra });
+  return listen(serveApp(svc)).then((url) => ({ svc, url }));
+};
+const postFix = (url: string, id: string) => {
+  const body = JSON.stringify(fixComment);
+  const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
+  return fetch(`${url}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': id } }).then((r) => r.status);
+};
+
+test('a /fix that finds the session mid-run is queued behind it, answered once, and started once the session is idle', async () => {
+  invocations.length = 0;
   commented.length = 0;
-  const refused = fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix2' } });
-  assert.equal((await refused).status, 200);
+  const { svc, url } = await fixService();
+  try {
+    busy = true;
+    assert.equal(await postFix(url, 'd-q1'), 200);
+    assert.equal(await postFix(url, 'd-q1'), 200, 'a redelivery');
+    await sleep(60);
+    assert.deepEqual(commented, [fixQueued]);
+    assert.equal(invocations.length, 0);
+    busy = false;
+    while (!invocations.length) await sleep(10);
+    await sleep(60);
+    assert.equal(invocations.length, 1, 'started once');
+    assert.equal(invocations[0].body.requestId, 'github-delivery:d-q1');
+    assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
+    assert.match(invocations[0].body.input, /Instruction: the cache test/);
+    assert.equal(invocations[0].body.meta.id, 'abc123');
+  } finally {
+    busy = false;
+    svc.stop();
+  }
+});
+
+test('a queued /fix survives a restart: a new service reading the same file starts it', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const queueFile = join(mkdtempSync(join(tmpdir(), 'fixq-')), 'github-fixes.json');
+  const first = await fixService({ queueFile });
+  busy = true;
+  assert.equal(await postFix(first.url, 'd-q2'), 200);
+  first.svc.stop();
   busy = false;
-  assert.equal(invocations.length, 1);
-  assert.deepEqual(commented, [fixRefused('session is mid-run as agent reviewer; implementer can start once it finishes')]);
+  await sleep(60);
+  assert.equal(invocations.length, 0, 'nothing retries without the timer');
+  const second = await fixService({ queueFile });
+  try {
+    second.svc.resume();
+    while (!invocations.length) await sleep(10);
+    await sleep(60);
+    assert.equal(invocations.length, 1);
+    assert.equal(invocations[0].body.requestId, 'github-delivery:d-q2');
+    assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')), {}, 'started work leaves the file');
+  } finally {
+    second.svc.stop();
+  }
+});
+
+test('a /fix refused for any reason other than a running session is answered, not queued', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const { svc, url } = await fixService();
+  try {
+    busy = true;
+    busyDetail = 'agent implementer is not registered';
+    assert.equal(await postFix(url, 'd-q3'), 200);
+    busy = false;
+    await sleep(60);
+    assert.equal(invocations.length, 0);
+    assert.deepEqual(commented, [fixRefused('agent implementer is not registered')]);
+  } finally {
+    busy = false;
+    busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
+    svc.stop();
+  }
 });
 
 test('/implement on an issue runs the implementer in the issue session; a refused start is answered on the issue', async () => {
