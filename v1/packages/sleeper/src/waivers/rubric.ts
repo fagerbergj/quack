@@ -78,7 +78,7 @@ export function waiversEvidence(f: WaiverFacts) {
 // The audit's waivers table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 4,
+  version: 5,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
@@ -89,13 +89,13 @@ export const waiversRubric: Rubric = {
     ] },
     { id: 'claims_are_reasoned', checks: [
       { id: 'sized_to_waiver_type', label: "Bid not sized to this league's waivers", weight: 4, scope: 'row', question: 'Is the claim sized in this league\'s own currency: a share of remaining FAAB in a FAAB league, or the queue position spent in a rolling or reverse-standings one?' },
-      { id: 'ranked_on_usage', label: "Ranks a claim without role or usage", weight: 3, scope: 'row', question: 'Does the rank rest on role and usage, with trending and ownership counts framed as scarcity?' },
+      { id: 'ranked_on_usage', label: "Ranks a claim without role or usage", weight: 3, scope: 'row', question: 'Does the rank rest on the player\'s role and usage, or for a team defense or kicker, its matchup?' },
       { id: 'competition_read', label: "Urgency ignores rival teams' needs", weight: 3, scope: 'card', question: 'Does the urgency or size of a claim name a competing team\'s need, priority or FAAB left from the table?' },
       { id: 'close_call_news', label: "A close call doesn't cite the news", weight: 3, scope: 'close', question: 'Does this close top claim or drop reflect the attached `news`, naming the right player for each report and the Sleeper `designations`?' },
     ] },
     { id: 'pitfalls', checks: [
       { id: 'bye_coverage', label: "Misses a bye week in the plan", weight: -2, scope: 'row', question: 'Does it miss a bye inside the lead time, or count a shared bye as one slot?' },
-      { id: 'crowd_metric_as_value', label: "Says a player is good because he trends", weight: -3, scope: 'row', question: 'Is a trending or ownership number given as the reason the player is good?' },
+      { id: 'crowd_metric_as_value', label: "Says a player is good because he trends", weight: -3, scope: 'row', question: 'Is a trending or ownership number given as evidence the player will score, rather than as how hard he is to land?' },
       { id: 'ordered_fallback_flagged', label: "Calls backup claims a conflict", weight: -4, scope: 'card', question: 'Does it describe claims that share a drop as a mistake or a conflict?' },
       { id: 'faab_language_on_rolling', label: "Talks about FAAB in a non-FAAB league", weight: -4, code: faabLanguageOnRolling },
     ] },
