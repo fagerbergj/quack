@@ -13,7 +13,7 @@ const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** A pick or rank quoted in a note right after a drafted player's name ("Flowers pick 54", "Kupp WR3→32") that is not his. */
 export function misquotedPicks(note: string, draft: SeasonFigures['draft']): string[] {
   const rows = draft ?? [];
-  const named = rows.map((p) => ({ p, re: new RegExp(`\\b(?:${escape(p.player.name)}${rows.filter((q) => lastName(q.player.name) === lastName(p.player.name)).length === 1 ? `|${escape(lastName(p.player.name))}` : ''})\\b`, 'g') }));
+  const named = rows.map((p) => ({ p, re: new RegExp(`\\b(?:${escape(p.player.name)}${rows.filter((q) => lastName(q.player.name) === lastName(p.player.name)).length === 1 ? `|${escape(lastName(p.player.name))}` : ''})\\b`, 'gi') }));
   return named.flatMap(({ p, re }) => [...note.matchAll(re)].flatMap((m) => {
     // The clause after the name, up to its close or the next drafted name, holds that player's figures.
     const at = m.index! + m[0].length;
@@ -21,7 +21,8 @@ export function misquotedPicks(note: string, draft: SeasonFigures['draft']): str
     const stops = [rest.search(CLAUSE_END), ...named.filter((o) => o.p !== p).map((o) => rest.search(new RegExp(o.re.source)))].filter((i) => i >= 0);
     const clause = rest.slice(0, Math.min(60, ...stops));
     const pick = clause.match(/\bpick\s+(\d+)/i);
-    const ranks = clause.match(/\b[A-Z]{0,3}(\d+)\s*→\s*[A-Z]{0,3}(\d+)/);
+    // A rank carries its position ("WR24→WR7", "WR3→12"); a bare arrow is a points or other total.
+    const ranks = clause.match(/\b[A-Z]{1,3}(\d+)\s*→\s*[A-Z]{0,3}(\d+)/);
     return [
       ...(pick && Number(pick[1]) !== p.pick ? [`${m[0]} pick ${pick[1]} (the draft has ${p.pick})`] : []),
       ...(ranks && (Number(ranks[1]) !== p.drafted_as || Number(ranks[2]) !== p.finished) ? [`${m[0]} ${ranks[1]}→${ranks[2]} (the draft has ${p.drafted_as}→${p.finished})`] : []),

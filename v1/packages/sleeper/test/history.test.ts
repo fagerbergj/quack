@@ -101,6 +101,8 @@ test('a pick or rank a note quotes for a drafted player must be his, by full nam
   assert.deepEqual(misquotedPicks('Flowers pick 54 WR24→WR7, then Kupp WR3→12.', draft), ['Flowers pick 54 (the draft has 57)', 'Kupp 3→12 (the draft has 3→32)']);
   // "Williams" names two players, so only a full name binds; a figure after the next drafted name is that player's.
   assert.deepEqual(misquotedPicks('Williams pick 99. Flowers then Kupp pick 6.', draft), []);
+  assert.deepEqual(misquotedPicks('Kupp 28→35 pts.', draft), []);
+  assert.deepEqual(misquotedPicks('steals: flowers pick 54 was a reach.', draft), ['flowers pick 54 (the draft has 57)']);
   const f = await factsOf();
   const c = buildHistoryCard(f, decision);
   const pick = f.seasons[1].draft![0];
