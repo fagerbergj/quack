@@ -2,7 +2,7 @@
 export type Source = { source: 'answer' | 'guide' | 'code'; text: string; ref: string };
 export type Choice = { id: string; pointer: string; decision: string; why: Source[] };
 export type ContractSpec = {
-  kind: 'rest' | 'json-schema';
+  kind: 'rest' | 'json-schema' | 'typescript';
   title: string;
   version: number;
   intent: { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
@@ -21,7 +21,7 @@ const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null;
 export function parseSpec(content: string): ContractSpec | undefined {
   try {
     const s = JSON.parse(content) as Partial<ContractSpec>;
-    const drawable = s.kind === 'json-schema' ? isObject(s.document) : s.kind === 'rest' && isObject(s.document) && isObject((s.document as Json).paths);
+    const drawable = s.kind === 'typescript' ? typeof s.document === 'string' : s.kind === 'json-schema' ? isObject(s.document) : s.kind === 'rest' && isObject(s.document) && isObject((s.document as Json).paths);
     return isObject(s) && drawable && Array.isArray(s.choices) && isObject(s.intent) ? (s as ContractSpec) : undefined;
   } catch {
     return undefined;

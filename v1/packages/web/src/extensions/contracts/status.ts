@@ -8,7 +8,7 @@ const SUFFIX = /, version \d+$/;
 const named = (row: Row, kind: string) => row.artifacts.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version);
 const outcomeOf = (a: IndexArtifact | undefined) => (a?.outcome ? Number.parseInt(a.outcome.slice(1), 10) : undefined);
 // A spec's outcome is "v2", or "v2 json-schema" for a kind other than REST.
-const KIND_NAMES: Record<string, string> = { 'json-schema': 'JSON Schema' };
+const KIND_NAMES: Record<string, string> = { 'json-schema': 'JSON Schema', typescript: 'TypeScript' };
 const kindOf = (a: IndexArtifact | undefined) => KIND_NAMES[a?.outcome?.split(' ')[1] ?? ''] ?? 'REST';
 
 // The newest spec that passed its checks names the contract (summary, cut at 80 characters) and gives its version (outcome).

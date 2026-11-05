@@ -218,3 +218,15 @@ test('the json-schema full view shows each field with type, required, enum and e
   expect(screen.getByRole('region', { name: 'Why: Mode is a closed set of two jobs.' })).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(2);
 });
+
+const dts = '/** Core provides it. */\nexport interface Manifest {\n  name: string;\n}\n';
+const tsSpec = JSON.stringify({ ...settingsSpec, kind: 'typescript', title: 'SDK surface', document: dts, choices: [{ id: 'm', pointer: '/Manifest', decision: 'Manifest is an interface.', why: [{ source: 'guide', text: 'Shape only.', ref: 'typescript#types' }] }] });
+
+test('a typescript contract shows its source in a code block beside its decisions', () => {
+  render(<>{contracts.full!(sealed(tsSpec))}</>);
+  expect(screen.getByText('1 export · version 1')).toBeInTheDocument();
+  const block = within(screen.getByRole('region', { name: 'Declarations' })).getByText(/export interface Manifest/);
+  expect(block.tagName).toBe('PRE');
+  expect(within(screen.getByRole('region', { name: 'Decisions' })).getAllByRole('listitem')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'contract.d.ts' })).toBeInTheDocument();
+});
