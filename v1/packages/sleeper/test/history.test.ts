@@ -135,7 +135,7 @@ test('the workflow seals a history card whose figures are the tools and the judg
   const { sealed, verdict, judged } = await run(decision);
   const c = JSON.parse(sealed.content) as HistoryCard;
   assert.deepEqual([c.kind, c.seasons.map((s) => s.season), c.seasons[1].draft!.length], ['history', ['2026', '2025'], 3]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@1', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@2', [], true]);
   assert.ok(judged.some((q) => /schedule luck/.test(q)));
 });
 
