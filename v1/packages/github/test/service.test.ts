@@ -20,6 +20,17 @@ async function listen(server: Server) {
 // A fake GitHub API that verifies the app JWT the way GitHub does: RS256 over header.body, issuer = app id.
 const calls: Array<{ method: string; path: string; auth: string; body: any }> = [];
 const commented: string[] = [];
+const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123') => ({ id, user: { login }, state, body, commit_id });
+const reviews = [
+  review(1, 'maria', 'CHANGES_REQUESTED', 'Handle the empty list.', 'old000'),
+  review(2, 'pat', 'CHANGES_REQUESTED', 'Rename this.'),
+  review(3, 'pat', 'APPROVED'),
+  review(4, 'lee', 'COMMENTED', 'Nit: spacing.'),
+  review(5, 'sam', 'COMMENTED'),
+  review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
+];
+const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
+const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 'Fixed already.')];
 const commentWaiters: Array<() => void> = [];
 function jwtValid(auth: string) {
   const [head, body, sig] = auth.replace(/^Bearer /, '').split('.');
@@ -71,6 +82,8 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
     if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
+    if (url === '/repos/acme/widgets/pulls/7/reviews?per_page=100') return reply(200, reviews);
+    if (url === '/graphql') return reply(200, { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } });
     reply(404, {});
   }),
 );
@@ -257,6 +270,13 @@ test('a pull request record carries every check run, past the first page', async
   assert.equal(pr.checks.length, 150);
   assert.deepEqual(pr.checks.filter((c: any) => c.conclusion === 'failure').map((c: any) => c.name), ['c2-49']);
   assert.deepEqual(pr.linkedIssues.map((i: any) => i.number), [3]);
+});
+
+test('a pull request record carries the open review feedback: latest human requests, unresolved threads only', async () => {
+  const pr = await (await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } })).json();
+  assert.deepEqual(pr.feedback.reviews.map((r: any) => [r.author, r.state, r.current]), [['maria', 'CHANGES_REQUESTED', false], ['lee', 'COMMENTED', true]]);
+  assert.deepEqual(pr.feedback.comments, [{ author: 'maria', path: 'app.ts', line: 4, body: 'Off by one.' }]);
+  assert.equal(pr.feedback.commentsError, undefined);
 });
 
 test('a commit with more check runs than the service reads is refused, not reviewed against part of its CI', async () => {

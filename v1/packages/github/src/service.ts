@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
+import { reviewFeedback } from './feedback.ts';
 import { fixRefused, noticeFor, settled } from './notice.ts';
 import { prStateKey, pullStates, stateOf } from './pulls.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
@@ -227,7 +228,7 @@ async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: G
 
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const facts = await prFacts(app, owner, repo, number);
-  send(res, facts ? 200 : 404, facts ?? { error: 'no such pull request' });
+  send(res, facts ? 200 : 404, facts ? { ...facts, feedback: await reviewFeedback(app, owner, repo, number, facts.headSha) } : { error: 'no such pull request' });
 }
 
 /** The opening card's data, sent beside the input and never in it. shortcut: the first 100 files; a longer diff shows its first page. */

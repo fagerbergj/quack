@@ -5,6 +5,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, type SealedArtifact } from '@quack/sdk';
+import type { ReviewFeedback } from './feedback.ts';
 
 export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?: string; /** Where repositories are cloned from; tests use a local directory. */ gitBaseUrl?: string };
 
@@ -19,6 +20,8 @@ export type PullRequestRecord = {
   headRepo?: string;
   checks: Array<{ name: string; status: string; conclusion: string | null }>;
   linkedIssues: Array<{ number: number; title: string; body: string }>;
+  /** Open reviews and unresolved comments; absent from older records and from the opening-card read. */
+  feedback?: ReviewFeedback;
 };
 
 /** reviewed: the head each version was first judged under, so a version never posts against a later checkout. posted: versions of the review already sent, so none goes out twice; postedThisCheckout: the one a run sent. */

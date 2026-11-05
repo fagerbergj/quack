@@ -1,11 +1,11 @@
 import type { Context } from '@earendil-works/chord/context';
 import { int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
-import { Artifacts, attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
+import { attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
 import { conventions, fetchRecord, findRecord, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
 import { sessionRuns, unbackedClaims } from './claims.ts';
 import { branchTaken, checkoutIssue, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
-import { parseReview } from './review.ts';
+import { renderFeedback } from './feedback.ts';
 
 const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
 const PR_BODY = 'artifacts/pr.md';
@@ -21,14 +21,6 @@ export const prBodyKind: ArtifactKind = {
 
 const reply = (text: string, isError = false) => ({ output: [{ type: 'text' as const, text }], isError });
 
-// The newest quack review in this session, so a /fix after a review sees what it asked for.
-async function lastReview(api: ToolExecutionApi, ctx: Context): Promise<string> {
-  const last = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds['github.review']?.versions.at(-1);
-  if (!last) return '';
-  const findings = parseReview(last.content).findings.map((f) => `- ${f.label}${f.path ? ` ${f.path}:${f.line}` : ''}: ${f.text}`);
-  return `Latest quack review (${last.outcome ?? 'no verdict'}):\n${findings.join('\n') || '(no findings)'}`;
-}
-
 const refusal = (pr: PullRequestRecord) => {
   if (pr.state !== 'open') return `the pull request is ${pr.state}; nothing to fix`;
   if (pr.headRepo && pr.headRepo.toLowerCase() !== `${pr.owner}/${pr.repo}`.toLowerCase()) return `the head branch lives in ${pr.headRepo}, a fork; the GitHub App cannot push there, so ask the author to apply the change`;
@@ -40,7 +32,7 @@ export function checkoutTaskTool(config: SessionConfig) {
   const dir = config.repoDir ?? 'repo';
   return defineTool({
     name: 'checkout_task',
-    description: `Check out the head branch of a pull request into ./${dir} and return its description, CI checks, the latest review's findings, linked issues and the repo's conventions. For an issue number, create the work branch quack/<n>-<slug> from the base branch (the repository's default unless the deployment sets one) and return the issue instead. Call it first.`,
+    description: `Check out the head branch of a pull request into ./${dir} and return its description, CI checks, the open review feedback (reviews asking for changes and unresolved inline comments, from anyone), linked issues and the repo's conventions. For an issue number, create the work branch quack/<n>-<slug> from the base branch (the repository's default unless the deployment sets one) and return the issue instead. Call it first.`,
     parameters: obj({ repository: str({ description: 'owner/repo' }), number: int({ minimum: 1 }) }, { open: true }),
     replay: 'safe',
     async execute(args, api, ctx) {
@@ -57,7 +49,7 @@ export function checkoutTaskTool(config: SessionConfig) {
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
         `Checked out branch ${pr.headRef} at ${pr.headSha} in ./${dir}; commit on it, then call deliver.`,
         ...prFacts(pr),
-        await lastReview(api, ctx),
+        renderFeedback(pr.feedback),
         await conventions(api, dir, ctx),
       ].filter(Boolean).join('\n\n');
       return reply(text);
