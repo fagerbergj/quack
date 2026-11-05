@@ -1,22 +1,48 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
 import type { HistoryCard } from './card.ts';
-import { verdictOf, type HistoryFacts } from './facts.ts';
+import { verdictOf, type HistoryFacts, type SeasonFigures } from './facts.ts';
 
 const parse = (artifact: string) => JSON.parse(artifact) as HistoryCard;
 const factsOf = (ev: Evidence) => ev.facts[0].state as unknown as HistoryFacts;
 const withoutNote = ({ note: _note, ...figures }: HistoryCard['seasons'][number]) => figures;
 
-// Every figure is compared with the one the tools produced, and each verdict is recomputed from its ranks under the single declared rule.
+const CLAUSE_END = /[;)]|\.(?:\s|$)/;
+const lastName = (name: string) => name.split(' ').at(-1)!;
+const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** A pick or rank quoted in a note right after a drafted player's name ("Flowers pick 54", "Kupp WR3→32") that is not his. */
+export function misquotedPicks(note: string, draft: SeasonFigures['draft']): string[] {
+  const rows = draft ?? [];
+  const named = rows.map((p) => ({ p, re: new RegExp(`\\b(?:${escape(p.player.name)}${rows.filter((q) => lastName(q.player.name) === lastName(p.player.name)).length === 1 ? `|${escape(lastName(p.player.name))}` : ''})\\b`, 'g') }));
+  return named.flatMap(({ p, re }) => [...note.matchAll(re)].flatMap((m) => {
+    // The clause after the name, up to its close or the next drafted name, holds that player's figures.
+    const at = m.index! + m[0].length;
+    const rest = note.slice(at, at + 60);
+    const stops = [rest.search(CLAUSE_END), ...named.filter((o) => o.p !== p).map((o) => rest.search(new RegExp(o.re.source)))].filter((i) => i >= 0);
+    const clause = rest.slice(0, Math.min(60, ...stops));
+    const pick = clause.match(/\bpick\s+(\d+)/i);
+    const ranks = clause.match(/\b[A-Z]{0,3}(\d+)\s*→\s*[A-Z]{0,3}(\d+)/);
+    return [
+      ...(pick && Number(pick[1]) !== p.pick ? [`${m[0]} pick ${pick[1]} (the draft has ${p.pick})`] : []),
+      ...(ranks && (Number(ranks[1]) !== p.drafted_as || Number(ranks[2]) !== p.finished) ? [`${m[0]} ${ranks[1]}→${ranks[2]} (the draft has ${p.drafted_as}→${p.finished})`] : []),
+    ];
+  }));
+}
+
+// Every figure is compared with the one the tools produced, a pick or rank a note quotes for a drafted player too,
+// and each verdict is recomputed from its ranks under the single declared rule.
 function figuresFromTools(artifact: string, ev: Evidence): CodeResult {
   const c = parse(artifact);
   const f = factsOf(ev);
+  const misquoted = new Map(c.seasons.map((x) => [x.season, x.note ? misquotedPicks(x.note, x.draft) : []]));
   const bad = f.seasons.filter((s) => {
     const got = c.seasons.find((x) => x.season === s.season);
-    return !got || JSON.stringify(withoutNote(got)) !== JSON.stringify(s) || (got.draft ?? []).some((p) => p.verdict !== verdictOf(p.drafted_as, p.finished));
+    return !got || JSON.stringify(withoutNote(got)) !== JSON.stringify(s) || (got.draft ?? []).some((p) => p.verdict !== verdictOf(p.drafted_as, p.finished)) || misquoted.get(s.season)!.length > 0;
   });
+  const quotes = [...misquoted].flatMap(([season, m]) => (m.length ? [`${season} note quotes ${m.join(', ')}`] : []));
   const wrongRule = JSON.stringify(c.definitions) !== JSON.stringify(f.definitions) || c.seasons.length !== f.seasons.length;
   const met = f.seasons.length ? (f.seasons.length - bad.length) / f.seasons.length : 1;
-  return { met: wrongRule ? Math.min(met, 0) : met, detail: bad.length || wrongRule ? `season ${bad.map((s) => s.season).join(', ') || '-'} differ from the tools${wrongRule ? '; the declared definitions or season list changed' : ''}` : undefined };
+  return { met: wrongRule ? Math.min(met, 0) : met, detail: bad.length || wrongRule ? [`season ${bad.map((s) => s.season).join(', ') || '-'} differ from the tools${wrongRule ? '; the declared definitions or season list changed' : ''}`, ...quotes].join('; ') : undefined };
 }
 
 const brief = (s: HistoryCard['seasons'][number]) => ({
@@ -40,7 +66,7 @@ export function historyEvidence(f: HistoryFacts) {
 // The audit's history table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const historyRubric: Rubric = {
   name: 'sleeper.history',
-  version: 2,
+  version: 3,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [{ id: 'figures_from_tools', label: "Numbers differ from the league data", weight: 'gate', code: figuresFromTools }] },
