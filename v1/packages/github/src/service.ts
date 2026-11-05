@@ -16,7 +16,7 @@ export type ServiceConfig = {
   /** The agent that backs `/fix`; without it `/fix` is ignored, so a deployment opts in. */
   implementerAgent?: string;
   /** The branch `/implement` starts from; absent, the repository's default branch. */
-  issueBase?: string;
+  issueBase?: Record<string, string>;
   /** Where PR states persist; without it they live in memory and are re-read after a restart. */
   statesFile?: string;
 };
@@ -263,7 +263,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
       const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
-      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), config.issueBase) : pullRequest(res, app, item[2], item[3], Number(item[4])));
+      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), config.issueBase?.[`${item[2]}/${item[3]}`]) : pullRequest(res, app, item[2], item[3], Number(item[4])));
       send(res, 404, { error: 'not found' });
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
