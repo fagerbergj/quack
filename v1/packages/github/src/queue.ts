@@ -3,10 +3,7 @@ import { dirname } from 'node:path';
 
 const POLL_MS = 15_000;
 
-/**
- * Work waiting for a busy session, one item per key (a newer item replaces the older), retried on a timer until `attempt` says it is done.
- * Kept in `file` so a restart resumes it; the item's requestId makes a retry after a crash between the start and the save a no-op downstream.
- */
+/** Work waiting for a busy session, one item per key, retried until `attempt` says it is done; `file` carries it across a restart. */
 export function waitingQueue<T>(file: string | undefined, attempt: (key: string, item: T) => Promise<boolean>, pollMs = POLL_MS) {
   let items: { [key: string]: T } = {};
   try {
