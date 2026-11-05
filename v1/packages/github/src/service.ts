@@ -262,6 +262,27 @@ async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: G
   send(res, 201, { number: json?.number, url: json?.html_url });
 }
 
+// Rewrites a pull request's title and body from the description its approver saw; the session never holds the token (D56).
+async function editPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
+  if (typeof r.title !== 'string' || !r.title || typeof r.body !== 'string') return send(res, 400, { error: 'need a non-empty title and a body' });
+  const slug = await app.slug();
+  const { json } = await app.asInstallation(owner, repo, 'PATCH', `/repos/${owner}/${repo}/pulls/${number}`, { title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
+  send(res, 200, { url: json?.html_url });
+}
+
+// /issues|pulls/{owner}/{repo}/{n}: GET reads either, PATCH edits a pull request; false when the path or method is neither.
+async function itemRoute(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, path: string): Promise<boolean> {
+  const item = /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
+  if (!item) return false;
+  const [, what, owner, repo, n] = item;
+  if (req.method === 'PATCH' && what === 'pulls') await editPullRequest(req, res, app, owner, repo, Number(n));
+  else if (req.method !== 'GET') return false;
+  else if (what === 'issues') await issueRoute(res, app, owner, repo, Number(n), baseFor(config.issueBase, owner, repo));
+  else await pullRequest(res, app, owner, repo, Number(n));
+  return true;
+}
+
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const facts = await prFacts(app, owner, repo, number);
   send(res, facts ? 200 : 404, facts ? { ...facts, feedback: await reviewFeedback(app, owner, repo, number, facts.headSha) } : { error: 'no such pull request' });
@@ -303,9 +324,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       if (get) return await get();
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
-      const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
-      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), baseFor(config.issueBase, item[2], item[3])) : pullRequest(res, app, item[2], item[3], Number(item[4])));
-      send(res, 404, { error: 'not found' });
+      if (!(await itemRoute(req, res, app, config, path))) send(res, 404, { error: 'not found' });
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
       send(res, err instanceof SyntaxError ? 400 : 502, { error: (err as Error).message });

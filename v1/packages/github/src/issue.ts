@@ -50,13 +50,27 @@ export async function branchTaken(api: ToolExecutionApi, config: SessionConfig, 
   return listed && listed !== sha ? `the branch ${w.branch} already exists on ${w.issue.owner}/${w.issue.repo} with other commits; nothing was pushed` : '';
 }
 
+// pr.md's first line is the title; the rest is the body.
+const bodyOf = (prMd: string) => prMd.trim().split('\n').slice(1).join('\n').trim();
+
 /** Opens the pull request through the service, which holds the token; the body closes the issue. */
 export async function openPull(config: SessionConfig, w: IssueWork, title: string, body: string): Promise<string> {
-  const text = `${body.trim().split('\n').slice(1).join('\n').trim()}\n\nCloses #${w.issue.number}`.trim();
+  const text = `${bodyOf(body)}\n\nCloses #${w.issue.number}`.trim();
   const res = await fetch(`${config.serviceUrl}/pulls`, {
     method: 'POST', headers: { authorization: `Bearer ${config.serviceToken}` },
     body: JSON.stringify({ owner: w.issue.owner, repo: w.issue.repo, head: w.branch, base: w.issue.baseRef, title, body: text }),
   });
   if (!res.ok) throw new Error(`cannot open the pull request: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return ((await res.json()) as { url: string }).url;
+}
+
+/** Sets an open pull request's title and body to the pr.md the approver saw; closing lines the live body had and pr.md lacks stay. */
+export async function editPull(config: SessionConfig, pr: { owner: string; repo: string; number: number }, title: string, prMd: string, liveBody: string | undefined): Promise<void> {
+  const text = bodyOf(prMd);
+  const kept = (liveBody?.match(/^(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #\d+$/gim) ?? []).filter((l) => !text.includes(l));
+  const res = await fetch(`${config.serviceUrl}/pulls/${pr.owner}/${pr.repo}/${pr.number}`, {
+    method: 'PATCH', headers: { authorization: `Bearer ${config.serviceToken}` },
+    body: JSON.stringify({ title, body: [text, ...kept].join('\n\n') }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
 }

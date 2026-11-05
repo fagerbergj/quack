@@ -34,7 +34,7 @@ async function implement(responses: (ctx: { repo: () => string; seen: string[]; 
   const extensions = [CodingTools, ...githubSessionExtensions({ role: 'implementer', serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   workspace = session.workspace;
-  return { session, head, bare, seen };
+  return { session, head, bare, seen, service };
 }
 
 const record = (seen: string[], next: () => ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), next());
@@ -133,6 +133,15 @@ test('an approved deliver pushes the commits to the PR branch; the approver was 
   const sealed = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['github.pr_body'].versions[0];
   assert.equal(sealed.summary, 'fix(app): bump a to 3');
   assert.deepEqual(sealed.links, [{ label: 'Pushed', url: 'https://github.com/acme/widgets/pull/7' }]);
+  await session.close();
+});
+
+test("an approved deliver sets the PR's title and body to the pr.md the approver saw, keeping its closing line", async () => {
+  const { session, service } = await implement(({ repo, seen }) => [checkout(), async () => (await change(repo()), call('deliver')), record(seen, () => fauxAssistantMessage('Delivered.'))]);
+  const run = session.submit('Fix acme/widgets#7', 'fx-edit', true);
+  await answer(session, 'approve');
+  assert.equal((await run).status, 'done');
+  assert.deepEqual(service.edited, [{ path: '/pulls/acme/widgets/7', title: 'fix(app): bump a to 3', body: 'What: a is 3.\nWhy: the issue asked.\nVerified: node app.ts.\n\nFixes #3' }]);
   await session.close();
 });
 

@@ -352,6 +352,14 @@ test("an approve on the app's own pull request posts as a comment that leads wit
   assert.match(sent.body.body, /^\*\*Verdict: approve\.\*\* .*\n\n## Verdict\napprove$/);
 });
 
+test("a PR edit sets the title and body with the installation token, mentions stripped", async () => {
+  const edit = (body: unknown) => fetch(`${service}/pulls/acme/widgets/7`, { method: 'PATCH', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then((r) => r.status);
+  assert.equal(await edit({ body: 'no title' }), 400);
+  assert.equal(await edit({ title: 'fix: x', body: 'ping @quack-app\n\nFixes #3' }), 200);
+  const sent = calls.findLast((c) => c.method === 'PATCH')!;
+  assert.deepEqual([sent.path, sent.auth, sent.body], ['/repos/acme/widgets/pulls/7', 'token ghs_test', { title: 'fix: x', body: 'ping quack-app\n\nFixes #3' }]);
+});
+
 test('owner and repo parse only from github.com URLs', () => {
   assert.deepEqual(ownerRepo('https://github.com/acme/widgets.git'), { owner: 'acme', repo: 'widgets' });
   assert.equal(ownerRepo('https://evil.com/acme/widgets'), undefined);
