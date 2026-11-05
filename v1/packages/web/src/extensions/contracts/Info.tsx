@@ -86,7 +86,7 @@ export function Info({ choices, label }: { choices: Choice[]; label?: string }) 
         // Keyboard focus shows the reasons the way hover does; a press focuses too, and its click decides instead.
         onPointerDown={() => void (pressed.current = true)}
         onFocus={() => (pressed.current ? (pressed.current = false) : !open && setOpen('hover'))}
-        onBlur={() => open === 'hover' && setOpen(undefined)}
+        onBlur={() => ((pressed.current = false), open === 'hover' && setOpen(undefined))}
         onMouseEnter={(e) => (hold(), e.nativeEvent instanceof MouseEvent && !open && setOpen('hover'))} onMouseLeave={leave}
         className="-my-2 inline-grid min-h-11 min-w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-muted hover:text-link aria-expanded:text-link"
       >

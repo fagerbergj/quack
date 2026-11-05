@@ -77,7 +77,8 @@ const isExported = (s: ts.Statement) => !!ts.getModifiers(s as ts.HasModifiers)?
 function enumRows(e: ts.EnumDeclaration): Field[] {
   let next = 0;
   return e.members.map((m) => {
-    const lit = m.initializer && ts.isNumericLiteral(m.initializer) ? Number(m.initializer.text) : undefined;
+    // From the text, so `-1` and `0x10` count as numbers; a string initializer is NaN and leaves the next member unnumbered.
+    const lit = m.initializer && !Number.isNaN(Number(flat(m.initializer))) ? Number(flat(m.initializer)) : undefined;
     const value = m.initializer ? flat(m.initializer) : String(next);
     next = (lit ?? (m.initializer ? NaN : next)) + 1;
     return row(m.name.getText(), value, false, 0, `/${e.name.text}/${m.name.getText()}`, docOf(m) ?? inlineDoc(m));

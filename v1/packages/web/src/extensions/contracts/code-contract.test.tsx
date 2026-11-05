@@ -106,6 +106,8 @@ test('an enum lists its members with their values, implicit ones numbered as the
   const [mode] = declarations('export enum Mode { Auto, Fast = 5, Faster, Named = "n" }').decls;
   expect(mode!.rows.map((r) => [r.name, r.type])).toEqual([['Auto', '0'], ['Fast', '5'], ['Faster', '6'], ['Named', '"n"']]);
   expect(classDiagram([mode!]).boxes[0]!.lines).toEqual([['Auto', ' = 0'], ['Fast', ' = 5'], ['Faster', ' = 6'], ['Named', ' = "n"']]);
+  const [neg] = declarations('export enum E { A = -1, B, C = 0x10, D }').decls;
+  expect(neg!.rows.map((r) => [r.name, r.type])).toEqual([['A', '-1'], ['B', '0'], ['C', '0x10'], ['D', '17']]);
 });
 
 test('tabbing to an info button shows its reasons, and tabbing away hides them', async () => {
