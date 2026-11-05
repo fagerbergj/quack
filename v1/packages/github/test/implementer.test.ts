@@ -74,6 +74,19 @@ test('checkout_task puts the PR head branch in ./repo, not detached, with the fa
   await session.close();
 });
 
+test('checkout_task shows open review feedback from anyone, bounded, and says what it cut', async () => {
+  const feedback = {
+    reviews: [{ author: 'maria', state: 'CHANGES_REQUESTED', commit: 'a'.repeat(40), current: false, body: 'Please handle the empty list.' }],
+    comments: [{ author: 'maria', path: 'app.ts', line: 3, body: 'This loop is off by one.' }, ...Array.from({ length: 10 }, (_, i) => ({ author: 'bot', path: `f${i}.ts`, line: i + 1, body: 'x'.repeat(1_400) }))],
+  };
+  const { session, seen } = await implement(({ seen }) => [checkout(), record(seen, () => fauxAssistantMessage('ok'))], { feedback });
+  await session.submit('Fix acme/widgets#7', 'fx-1', true);
+  assert.match(seen[0], /maria CHANGES_REQUESTED on aaaaaaa \(an older head\):\\nPlease handle the empty list\./);
+  assert.match(seen[0], /maria on app\.ts:3:\\nThis loop is off by one\./);
+  assert.match(seen[0], /\d+ more review items cut to fit the size budget/);
+  await session.close();
+});
+
 test('a PR whose head is in a fork is refused with a plain message and nothing is cloned', async () => {
   const { session, seen } = await implement(({ seen }) => [checkout(), record(seen, () => fauxAssistantMessage('ok'))], { headRepo: 'stranger/widgets' });
   await session.submit('Fix acme/widgets#7', 'fx-1', true);

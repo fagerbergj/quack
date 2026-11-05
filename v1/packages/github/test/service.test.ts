@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { serveApp } from '@quack/sdk';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
-import { fixRefused, noticeFor } from '../src/notice.ts';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { fixQueued, fixRefused, noticeFor } from '../src/notice.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -18,8 +22,22 @@ async function listen(server: Server) {
 }
 
 // A fake GitHub API that verifies the app JWT the way GitHub does: RS256 over header.body, issuer = app id.
-const calls: Array<{ method: string; path: string; auth: string; body: any }> = [];
+const calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = [];
 const commented: string[] = [];
+const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123') => ({ id, user: { login }, state, body, commit_id, submitted_at: new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString() });
+// Out of order on purpose: pat's approval is listed before the request it supersedes. 100 older filler reviews push the rest onto page 2.
+const reviews = [
+  ...Array.from({ length: 100 }, (_, i) => review(i - 200, `filler${i}`, 'COMMENTED')),
+  review(3, 'pat', 'APPROVED'),
+  review(1, 'maria', 'CHANGES_REQUESTED', 'Handle the empty list.', 'old000'),
+  review(2, 'pat', 'CHANGES_REQUESTED', 'Rename this.'),
+  review(4, 'lee', 'COMMENTED', 'Nit: spacing.'),
+  review(5, 'sam', 'COMMENTED'),
+  review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
+];
+let graphqlErrors = false;
+const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
+const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 'Fixed already.')];
 const commentWaiters: Array<() => void> = [];
 function jwtValid(auth: string) {
   const [head, body, sig] = auth.replace(/^Bearer /, '').split('.');
@@ -31,7 +49,7 @@ const github = await listen(
     let raw = '';
     for await (const c of req) raw += c;
     const auth = String(req.headers.authorization);
-    calls.push({ method: req.method!, path: req.url!, auth, body: raw ? JSON.parse(raw) : undefined });
+    calls.push({ method: req.method!, path: req.url!, auth, version: req.headers['x-github-api-version'] as string | undefined, body: raw ? JSON.parse(raw) : undefined });
     const reply = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
     // GitHub's API is case-insensitive: a mixed-case owner reaches the same repository.
     const url = req.url!.replace(/^\/repos\/ACME\//, '/repos/acme/');
@@ -71,6 +89,10 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
     if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
+    const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
+    if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
+    if (url === '/graphql' && graphqlErrors) return reply(200, { errors: [{ message: 'Resource not accessible by integration' }] });
+    if (url === '/graphql') return reply(200, { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } });
     reply(404, {});
   }),
 );
@@ -80,6 +102,7 @@ const watchers: string[] = [];
 const watcherWaiters: Array<() => void> = [];
 const holds: Record<string, Promise<void>> = {};
 let busy = false;
+let busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
 const outcomes: Record<string, unknown> = {};
 const distributor = await listen(
   createServer(async (req, res) => {
@@ -93,7 +116,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
-    if (busy) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: 'session is mid-run as agent reviewer; implementer can start once it finishes' }));
+    if (busy) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: busyDetail }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
@@ -167,15 +190,89 @@ test('/fix runs the implementer in the PR session only where one is configured; 
   assert.equal(invocations.length, 1);
   assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
   assert.match(invocations[0].body.input, /Instruction: the cache test\nand the lint error/);
+});
 
-  // A refused /fix is answered on the PR with the distributor's reason, not left silent.
-  busy = true;
+const fixComment = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/fix the cache test', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
+const fixService = (extra: object = {}) => {
+  const svc = createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer', queuePollMs: 10, ...extra });
+  return listen(serveApp(svc)).then((url) => ({ svc, url }));
+};
+const postFix = (url: string, id: string) => {
+  const body = JSON.stringify(fixComment);
+  const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
+  return fetch(`${url}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': id } }).then((r) => r.status);
+};
+
+test('a /fix that finds the session mid-run is queued behind it, answered once, and started once the session is idle', async () => {
+  invocations.length = 0;
   commented.length = 0;
-  const refused = fetch(`${withFix}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': 'd-fix2' } });
-  assert.equal((await refused).status, 200);
+  const { svc, url } = await fixService();
+  try {
+    busy = true;
+    assert.equal(await postFix(url, 'd-q1'), 200);
+    assert.equal(await postFix(url, 'd-q1'), 200, 'a redelivery');
+    await sleep(60);
+    assert.deepEqual(commented, [fixQueued]);
+    assert.equal(invocations.length, 0);
+    const metaReads = () => calls.filter((c) => c.path === '/repos/acme/widgets/pulls/7/files?per_page=100').length;
+    const before = metaReads();
+    await sleep(60);
+    assert.equal(metaReads(), before, 'retries reuse the stored opening-card data');
+    busy = false;
+    while (!invocations.length) await sleep(10);
+    await sleep(60);
+    assert.equal(invocations.length, 1, 'started once');
+    assert.equal(invocations[0].body.requestId, 'github-delivery:d-q1');
+    assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
+    assert.match(invocations[0].body.input, /Instruction: the cache test/);
+    assert.equal(invocations[0].body.meta.id, 'abc123');
+  } finally {
+    busy = false;
+    svc.stop();
+  }
+});
+
+test('a queued /fix survives a restart: a new service reading the same file starts it', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const queueFile = join(mkdtempSync(join(tmpdir(), 'fixq-')), 'github-fixes.json');
+  const first = await fixService({ queueFile });
+  busy = true;
+  assert.equal(await postFix(first.url, 'd-q2'), 200);
+  first.svc.stop();
   busy = false;
-  assert.equal(invocations.length, 1);
-  assert.deepEqual(commented, [fixRefused('session is mid-run as agent reviewer; implementer can start once it finishes')]);
+  await sleep(60);
+  assert.equal(invocations.length, 0, 'nothing retries without the timer');
+  const second = await fixService({ queueFile });
+  try {
+    second.svc.resume();
+    while (!invocations.length) await sleep(10);
+    await sleep(60);
+    assert.equal(invocations.length, 1);
+    assert.equal(invocations[0].body.requestId, 'github-delivery:d-q2');
+    assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')), {}, 'started work leaves the file');
+  } finally {
+    second.svc.stop();
+  }
+});
+
+test('a /fix refused for any reason other than a running session is answered, not queued', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const { svc, url } = await fixService();
+  try {
+    busy = true;
+    busyDetail = 'agent implementer is not registered';
+    assert.equal(await postFix(url, 'd-q3'), 200);
+    busy = false;
+    await sleep(60);
+    assert.equal(invocations.length, 0);
+    assert.deepEqual(commented, [fixRefused('agent implementer is not registered')]);
+  } finally {
+    busy = false;
+    busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
+    svc.stop();
+  }
 });
 
 test('/implement on an issue runs the implementer in the issue session; a refused start is answered on the issue', async () => {
@@ -257,6 +354,26 @@ test('a pull request record carries every check run, past the first page', async
   assert.equal(pr.checks.length, 150);
   assert.deepEqual(pr.checks.filter((c: any) => c.conclusion === 'failure').map((c: any) => c.name), ['c2-49']);
   assert.deepEqual(pr.linkedIssues.map((i: any) => i.number), [3]);
+});
+
+test('a pull request record carries the open review feedback: latest human requests, unresolved threads only', async () => {
+  const pr = await (await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } })).json();
+  assert.deepEqual(pr.feedback.reviews.map((r: any) => [r.author, r.state, r.current]), [['maria', 'CHANGES_REQUESTED', false], ['lee', 'COMMENTED', true]]);
+  assert.deepEqual(pr.feedback.comments, [{ author: 'maria', path: 'app.ts', line: 4, body: 'Off by one.' }]);
+  assert.equal(pr.feedback.commentsError, undefined);
+  assert.equal(calls.findLast((c) => c.path === '/graphql')!.version, undefined, 'GraphQL gets no REST version header');
+  assert.equal(calls.findLast((c) => c.path.includes('/reviews?'))!.version, '2022-11-28');
+});
+
+test('GraphQL errors in a 200 answer are reported, not read as no threads', async () => {
+  graphqlErrors = true;
+  try {
+    const pr = await (await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } })).json();
+    assert.deepEqual(pr.feedback.comments, []);
+    assert.equal(pr.feedback.commentsError, 'Resource not accessible by integration');
+  } finally {
+    graphqlErrors = false;
+  }
 });
 
 test('a commit with more check runs than the service reads is refused, not reviewed against part of its CI', async () => {

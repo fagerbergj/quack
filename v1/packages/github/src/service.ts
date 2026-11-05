@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
-import { fixRefused, noticeFor, settled } from './notice.ts';
+import { reviewFeedback } from './feedback.ts';
+import { fixQueued, fixRefused, noticeFor, settled } from './notice.ts';
 import { prStateKey, pullStates, stateOf } from './pulls.ts';
+import { waitingQueue } from './queue.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
@@ -19,6 +21,10 @@ export type ServiceConfig = {
   issueBase?: Record<string, string>;
   /** Where PR states persist; without it they live in memory and are re-read after a restart. */
   statesFile?: string;
+  /** Where `/fix`es waiting for a busy session persist; without it they wait in memory and a restart drops them. */
+  queueFile?: string;
+  /** How often a waiting `/fix` retries; default 15 s. */
+  queuePollMs?: number;
 };
 
 const BACKOFF_CAP_MS = 30_000;
@@ -74,12 +80,39 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
   }
 }
 
-// A /fix or /implement the distributor refused is answered where it was written with its reason, never dropped.
-async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response): Promise<boolean> {
-  if (upstream.status !== 409 || t.role !== 'implementer') return false;
+// A /fix still waits this long for a busy session before it is given up on.
+const QUEUE_TTL_MS = 6 * 3600_000;
+
+/** A `/fix` waiting for its session to finish a run; the same submission the webhook would have sent. */
+type QueuedFix = { sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number; /** The opening-card data computed for the first submission. */ meta?: object };
+type FixQueue = ReturnType<typeof waitingQueue<QueuedFix>>;
+
+const midRun = (reason: string) => reason.includes('mid-run');
+const comment = (app: GithubApp, q: { owner: string; repo: string; number: number }, body: string) =>
+  app.asInstallation(q.owner, q.repo, 'POST', `/repos/${q.owner}/${q.repo}/issues/${q.number}/comments`, { body });
+const problemOf = async (upstream: Response) => {
   const problem = (await upstream.json().catch(() => ({}))) as { detail?: string; error?: string };
-  const reason = problem.detail ?? problem.error ?? 'the distributor refused the run';
-  await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: fixRefused(reason, t.issue) });
+  return problem.detail ?? problem.error ?? 'the distributor refused the run';
+};
+
+// A /fix the distributor refused is answered where it was written, never dropped; one that only waits on a running session is queued instead.
+async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response, queue: FixQueue, queued: QueuedFix): Promise<boolean> {
+  if (upstream.status !== 409 || t.role !== 'implementer') return false;
+  const reason = await problemOf(upstream);
+  if (t.issue || !midRun(reason)) await comment(app, queued, fixRefused(reason, t.issue));
+  else if (queue.add(queued.sessionKey, queued)?.requestId !== queued.requestId) await comment(app, queued, fixQueued);
+  return true;
+}
+
+// One retry of a queued /fix: done once it started or can never start. A session still mid-run, or a distributor outage, waits for the next try.
+async function startQueuedFix(app: GithubApp, config: ServiceConfig, q: QueuedFix): Promise<boolean> {
+  const payload = { key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(q.meta && { meta: q.meta }) };
+  const upstream = await submitToSession(config.distributorUrl, payload, config.fetch);
+  if (upstream.ok) return true;
+  const reason = await problemOf(upstream);
+  const waiting = upstream.status >= 500 || (upstream.status === 409 && midRun(reason));
+  if (waiting && Date.now() - q.at < QUEUE_TTL_MS) return false;
+  await comment(app, q, fixRefused(waiting ? 'the running agent did not finish in 6 hours' : reason));
   return true;
 }
 
@@ -99,7 +132,7 @@ async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trig
   send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
 }
 
-async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States) {
+async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States, queue: FixQueue) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
   const event = req.headers['x-github-event'] as string | undefined;
@@ -116,7 +149,8 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
   const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload }, config.fetch);
-  if (await noticeRefusedFix(app, trigger, upstream)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
+  const queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta };
+  if (await noticeRefusedFix(app, trigger, upstream, queue, queued)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
   if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
     state.watched.add(requestId);
@@ -227,7 +261,7 @@ async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: G
 
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const facts = await prFacts(app, owner, repo, number);
-  send(res, facts ? 200 : 404, facts ?? { error: 'no such pull request' });
+  send(res, facts ? 200 : 404, facts ? { ...facts, feedback: await reviewFeedback(app, owner, repo, number, facts.headSha) } : { error: 'no such pull request' });
 }
 
 /** The opening card's data, sent beside the input and never in it. shortcut: the first 100 files; a longer diff shows its first page. */
@@ -253,13 +287,15 @@ async function pullStatesRoute(req: IncomingMessage, res: ServerResponse, app: G
   send(res, 200, await states.lookup(app, keys));
 }
 
-export function createGithubService(app: GithubApp, config: ServiceConfig): App {
+/** `resume` re-arms the queued `/fix`es a restart found on disk; `stop` ends the retry timer. */
+export function createGithubService(app: GithubApp, config: ServiceConfig): App & { resume(): void; stop(): void } {
   const state: RunState = { posted: new Map(), watched: new Set() };
   const states = pullStates(config.statesFile);
-  return { handle: async (req, res) => {
+  const queue = waitingQueue<QueuedFix>(config.queueFile, (_key, q) => startQueuedFix(app, config, q), config.queuePollMs);
+  return { resume: queue.resume, stop: queue.stop, handle: async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;
-      if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state, states);
+      if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state, states, queue);
       const get = req.method === 'GET' ? { '/git-credential': () => gitCredential(req, res, app), '/pulls': () => pullStatesRoute(req, res, app, states) }[path] : undefined;
       if (get) return await get();
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;

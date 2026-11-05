@@ -29,3 +29,6 @@ export function noticeFor(outcome: RunOutcome, delivered: boolean): string | und
 
 /** Said on the PR (or issue) when the distributor refuses a `/fix` (`/implement`), with the distributor's own reason. */
 export const fixRefused = (reason: string, issue = false) => `Quack could not start \`${issue ? '/implement' : '/fix'}\` on this ${issue ? 'issue' : 'pull request'}: ${reason}.`;
+
+/** Said on the PR when a `/fix` arrives while the session is mid-run: it starts when that run ends. */
+export const fixQueued = 'Quack is still working on this pull request, so `/fix` is queued and starts when the running agent finishes.';
