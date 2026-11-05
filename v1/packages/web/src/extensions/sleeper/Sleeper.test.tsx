@@ -41,6 +41,15 @@ afterEach(() => vi.unstubAllGlobals());
 const page = (rows = ALL) => render(<Sleeper rows={rows} now={NOW} />);
 const card = async (name: string) => within(await screen.findByRole('article', { name }));
 
+test('a card shows as soon as its own read lands, while a slow session is still booting', async () => {
+  const stub = vi.mocked(fetch);
+  const real = stub.getMockImplementation()!;
+  stub.mockImplementation((url, init) => (String(url).includes(encodeURIComponent(':history')) ? new Promise<Response>(() => {}) : real(url, init)));
+  page();
+  expect(await screen.findByRole('article', { name: 'Waivers' })).toBeInTheDocument();
+  expect(screen.queryByRole('article', { name: 'League history' })).toBeNull();
+});
+
 test('the current week is one scroll: the lineup, then each job\'s latest result with Open', async () => {
   page();
   expect(await screen.findByRole('heading', { name: 'Week 9' })).toBeInTheDocument();
