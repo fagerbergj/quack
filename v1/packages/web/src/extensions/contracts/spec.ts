@@ -55,7 +55,7 @@ export type Field = { name: string; type: string; required: boolean; desc?: stri
 /** One declaration of a code contract, whatever language it was parsed from, as its box and card show it: fields, parameters or variants as rows, else its type as text. */
 export type Decl = {
   name: string;
-  kind: 'type' | 'interface' | 'function' | 'const' | 'other';
+  kind: 'type' | 'interface' | 'enum' | 'function' | 'const' | 'other';
   exported: boolean;
   generics?: string;
   doc?: string;

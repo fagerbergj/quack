@@ -73,6 +73,18 @@ function fn(d: ts.FunctionDeclaration, at: string): Pick<Decl, 'rows' | 'text'> 
 const generics = (n: { typeParameters?: ts.NodeArray<ts.TypeParameterDeclaration> }) => (n.typeParameters?.length ? `<${n.typeParameters.map(flat).join(', ')}>` : undefined);
 const isExported = (s: ts.Statement) => !!ts.getModifiers(s as ts.HasModifiers)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
+// A member with no initializer takes the previous numeric value plus one, from 0, as the compiler numbers it.
+function enumRows(e: ts.EnumDeclaration): Field[] {
+  let next = 0;
+  return e.members.map((m) => {
+    // From the text, so `-1` and `0x10` count as numbers; a string initializer is NaN and leaves the next member unnumbered.
+    const lit = m.initializer && !Number.isNaN(Number(flat(m.initializer))) ? Number(flat(m.initializer)) : undefined;
+    const value = m.initializer ? flat(m.initializer) : String(next);
+    next = (lit ?? (m.initializer ? NaN : next)) + 1;
+    return row(m.name.getText(), value, false, 0, `/${e.name.text}/${m.name.getText()}`, docOf(m) ?? inlineDoc(m));
+  });
+}
+
 function declsOf(s: ts.Statement): Array<Omit<Decl, 'uses' | 'exported'> & { node: ts.Node }> {
   if (ts.isTypeAliasDeclaration(s)) return [{ name: s.name.text, kind: 'type', generics: generics(s), doc: docOf(s), ...body(s.type, `/${s.name.text}`), node: s }];
   if (ts.isInterfaceDeclaration(s)) {
@@ -83,6 +95,7 @@ function declsOf(s: ts.Statement): Array<Omit<Decl, 'uses' | 'exported'> & { nod
   if (ts.isVariableStatement(s)) {
     return s.declarationList.declarations.map((d) => ({ name: d.name.getText(), kind: 'const' as const, doc: docOf(d), ...(d.type ? body(d.type, `/${d.name.getText()}`) : { rows: [] }), node: d }));
   }
+  if (ts.isEnumDeclaration(s)) return [{ name: s.name.text, kind: 'enum', doc: docOf(s), rows: enumRows(s), node: s }];
   const name = (s as unknown as ts.NamedDeclaration).name?.getText();
   return name ? [{ name, kind: 'other', doc: docOf(s), rows: [], text: flat(s), node: s }] : [];
 }

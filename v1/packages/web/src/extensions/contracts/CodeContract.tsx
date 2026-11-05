@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import { ClassDiagram } from './ClassDiagram.tsx';
-import { choicesAt, Info } from './Info.tsx';
+import { choicesAt, Info, Inline } from './Info.tsx';
 import { SchemaTree } from './SchemaTree.tsx';
 import type { Choice, Decl, Model } from './spec.ts';
 
-const GROUPS: Array<[string, Array<Decl['kind']>]> = [['Types', ['type', 'interface', 'other']], ['Functions', ['function']], ['Constants', ['const']]];
+const GROUPS: Array<[string, Array<Decl['kind']>]> = [['Types', ['type', 'interface', 'enum', 'other']], ['Functions', ['function']], ['Constants', ['const']]];
 const link = 'cursor-pointer border-0 bg-transparent p-0 font-mono text-[length:inherit] text-link underline decoration-link/40 underline-offset-2 hover:decoration-link';
 const pill = 'rounded bg-soft px-1.5 py-0.5 text-[11px] tracking-wide text-muted uppercase';
 
@@ -19,8 +19,6 @@ function Linked({ text, names }: { text: string; names: Set<string> }) {
   return <>{text.split(/([A-Za-z_$][\w$]*)/).map((t, i) => (names.has(t) ? <button key={i} type="button" onClick={() => jumpTo(t)} className={link}>{t}</button> : t))}</>;
 }
 
-// Doc comments mark code with backticks, as the contract's prose does.
-const Doc = ({ text }: { text: string }) => <>{text.split(/`([^`]+)`/).map((t, i) => (i % 2 ? <code key={i} className="rounded bg-soft px-1 font-mono text-[12px] text-ink-2">{t}</code> : t))}</>;
 
 function Refs({ label, list, names }: { label: string; list: string[]; names: Set<string> }) {
   if (!list.length) return null;
@@ -38,7 +36,7 @@ function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; used
         <span className="flex-1" />
         <Info choices={choices} />
       </div>
-      {d.doc && <p className="m-0 text-[13px] whitespace-pre-line text-muted"><Doc text={d.doc} /></p>}
+      {d.doc && <p className="m-0 text-[13px] whitespace-pre-line text-muted"><Inline text={d.doc} /></p>}
       {d.text && <code className="font-mono text-[12.5px] text-success [overflow-wrap:anywhere]">{d.rows.length ? 'includes ' : '= '}{code(d.text)}</code>}
       {d.rows.length > 0 && <SchemaTree rows={d.rows} whyAt={() => []} code={code} />}
       <Refs label="Uses" list={d.uses} names={names} />
