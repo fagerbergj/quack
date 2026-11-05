@@ -53,7 +53,7 @@ const serviceUrl = `http://127.0.0.1:${(service.address() as AddressInfo).port}`
 for (const n of prs) {
   const dir = resolve(outDir, `pr-${n}`);
   mkdirSync(join(dir, 'session'), { recursive: true });
-  const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), PORT: '0', QUACK_INDEX_URL: serviceUrl, QUACK_INDEX_TOKEN: 'bench' };
+  const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), PORT: '0', QUACK_INDEX_URL: serviceUrl, QUACK_INDEX_TOKEN: 'bench', QUACK_SESSION_KEY: `bench:${repo}#${n}` };
   const child = spawn(process.execPath, [main], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const log: string[] = [];
   child.stdout?.on('data', (d) => log.push(String(d)));

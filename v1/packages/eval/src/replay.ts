@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,7 +61,7 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   if (missing.length) throw new Error(`no eval service for pinned ${missing.join(', ')}`);
   const doubles = await Promise.all(Object.entries(pins).map(([k, pin]) => services[k](pin)));
   const dir = await mkdtemp(join(tmpdir(), 'quack-eval-'));
-  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, PORT: '0' };
+  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: `eval:${item.id}:${randomUUID().slice(0, 8)}`, PORT: '0' };
   const child = spawn(process.execPath, [RUNTIME], { env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   let stderr = '';
   child.stderr?.on('data', (d) => (stderr = (stderr + d).slice(-2000)));

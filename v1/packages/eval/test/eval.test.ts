@@ -138,6 +138,12 @@ test('a runtime killed by a signal also ends the replay at once', async () => {
   assert.deepEqual(r.record.outcome, { status: 'pending' });
 });
 
+test('every replay spawns its runtime with a session key of its own: the item id plus a per-run suffix', async () => {
+  const report = 'process.stderr.write(`Error: key ${process.env.QUACK_SESSION_KEY}\\n`);process.exit(1)';
+  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(report)}` } }, {});
+  assert.match(r.error ?? '', /key eval:x:[0-9a-f]{8}$/);
+});
+
 test('a labelled case scores whether the replay blocked it, so a passing review that misses a known defect still counts as a miss', () => {
   const withLabel = (label: string, content: string): ReplayResult => ({ ...result, item: { ...result.item, metadata: { label } }, record: { ...result.record, artifacts: { 'github.review': [{ ...result.record.artifacts['github.review'][1], content }] } } });
   const blocks = (f: Record<string, string>) => f['github.review'].includes('request_changes');
