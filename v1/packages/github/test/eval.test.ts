@@ -31,3 +31,13 @@ test('a replay is served the pinned pull request, and its reviews are captured, 
     await svc.close();
   }
 });
+
+test('a pin recorded after its PR merged is still served open, so the replay reviews it', async () => {
+  const svc = await evalService({ pr: { ...pr, state: 'closed' } });
+  try {
+    const served = await (await fetch(`${svc.env.QUACK_INDEX_URL}/apps/github/pulls/acme/widgets/7`, { headers: { authorization: `Bearer ${svc.env.QUACK_INDEX_TOKEN}` } })).json();
+    assert.equal(served.state, 'open');
+  } finally {
+    await svc.close();
+  }
+});
