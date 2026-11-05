@@ -3,13 +3,13 @@ export type Standing = { needsYou: Set<string>; failed: Set<string> };
 
 export type Distributor = ReturnType<typeof distributor>;
 
-/** The distributor's HTTP, for the home tools. Callers check a key against `sessions()` first: reads of a key it does not know answer 404. */
+/** The distributor's HTTP, for the home tools. Callers check a key with `session()` first: reads of a key it does not know answer 404. */
 export function distributor(url: string, doFetch: typeof fetch = fetch) {
   const path = (key: string, rest: string) => `${url}/sessions/${encodeURIComponent(key)}${rest}`;
   async function call<T>(target: string, init?: RequestInit): Promise<T> {
     const res = await doFetch(target, init);
     const body = (await res.json().catch(() => null)) as (T & { detail?: string; error?: string }) | null;
-    if (!res.ok) throw new Error(body?.detail ?? body?.error ?? `HTTP ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body?.detail ?? body?.error ?? `HTTP ${res.status}`), { status: res.status });
     return body as T;
   }
   const post = (target: string, body?: unknown) => call<unknown>(target, { method: 'POST', ...(body !== undefined && { body: JSON.stringify(body) }) });
@@ -26,7 +26,18 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
     }
   };
   return {
-    sessions: async () => (await call<{ sessions: SessionRow[] }>(`${url}/sessions`)).sessions,
+    /** Every session matching `filter` (the sessions API's Lucene-style expression); pages are followed to the end. */
+    async sessions(filter?: string): Promise<SessionRow[]> {
+      const rows: SessionRow[] = [];
+      for (let token = ''; ;) {
+        const page = await call<{ sessions: SessionRow[]; nextPageToken?: string }>(`${url}/sessions?${new URLSearchParams({ pageSize: '1000', ...(filter && { filter }), ...(token && { pageToken: token }) })}`);
+        rows.push(...page.sessions);
+        if (!page.nextPageToken) return rows;
+        token = page.nextPageToken;
+      }
+    },
+    /** One session, or undefined when the distributor knows no such key. */
+    session: (key: string) => call<SessionRow>(path(key, '')).catch((err: Error & { status?: number }) => (err.status === 404 ? undefined : Promise.reject(err))),
     async standing(): Promise<Standing> {
       const [questions, approvals, failures] = await Promise.all([indexed('questions?state=pending', 'questions'), indexed('approvals?state=pending', 'approvals'), indexed('failures', 'failures')]);
       return { needsYou: new Set([...questions, ...approvals].map((r) => r.session)), failed: new Set(failures.map((r) => r.session)) };

@@ -24,7 +24,7 @@ const line = (row: SessionRow, state: State) => `${row.title || row.key} | key $
 
 async function known(d: Distributor, key: string): Promise<SessionRow | string> {
   if (key.startsWith('home:')) return 'home conversations are not sessions to act on';
-  return (await d.sessions()).find((s) => s.key === key) ?? `no session with key ${key}; use find_sessions to get the key`;
+  return (await d.session(key)) ?? `no session with key ${key}; use find_sessions to get the key`;
 }
 
 // Each part of a session read is best effort: one failing endpoint should not hide the rest.
@@ -96,10 +96,11 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
       parameters: obj({ text: opt(str()), agent: opt(str()), state: opt(union(STATES.map((s) => lit(s)))), limit: opt(int({ minimum: 1, maximum: 25 })) }, { open: true }),
       replay: 'safe',
       async execute(args) {
-        const [rows, standing] = await Promise.all([d.sessions(), d.standing()]);
+        const filter = ['-key:home:*', ...(args.agent ? [`agent:${JSON.stringify(args.agent)}`] : [])].join(' AND ');
+        const [rows, standing] = await Promise.all([d.sessions(filter), d.standing()]);
         const needle = args.text?.toLowerCase();
         const found = rows
-          .filter((r) => !r.key.startsWith('home:') && (!args.agent || r.agent === args.agent) && (!needle || `${r.key} ${r.title ?? ''} ${r.agent}`.toLowerCase().includes(needle)))
+          .filter((r) => !needle || `${r.key} ${r.title ?? ''} ${r.agent}`.toLowerCase().includes(needle))
           .map((r) => ({ r, state: stateOf(r, standing) }))
           .filter((x) => !args.state || x.state === args.state)
           .sort((a, b) => b.r.lastActivity.localeCompare(a.r.lastActivity))

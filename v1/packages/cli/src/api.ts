@@ -66,7 +66,17 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
   }
 
   return {
-    sessions: async (): Promise<Json[]> => (await call('sessions')).sessions,
+    /** Every session matching `filter` (the sessions API's Lucene-style expression); pages are followed to the end. */
+    sessions: async (filter?: string): Promise<Json[]> => {
+      const rows: Json[] = [];
+      for (let token = ''; ;) {
+        const page = await call(`sessions?${new URLSearchParams({ pageSize: '1000', ...(filter && { filter }), ...(token && { pageToken: token }) })}`);
+        rows.push(...page.sessions);
+        if (!page.nextPageToken) return rows;
+        token = page.nextPageToken;
+      }
+    },
+    session: async (key: string): Promise<Json> => call(path(key)),
     agents: async (): Promise<Json[]> => (await call('agents')).agents,
     approvals: async (key: string): Promise<Json[]> => (await call(`${path(key)}/approvals`)).approvals,
     questions: async (key: string): Promise<Json[]> => (await call(`${path(key)}/questions`)).questions,
@@ -86,7 +96,7 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     /** Calls `onFrame` for every view frame and resolves when the run is over (at once if none is running). */
     follow: (key: string, onFrame: (items: any[] | undefined) => void) =>
       socket<true>(key, undefined, (f) => (f.type !== 'view' ? undefined : (onFrame(f.items), f.live?.run === undefined ? true : undefined)), 0),
-    remove: (key: string) => call(`${path(key)}/delete`, 'POST', {}),
+    remove: (key: string) => call(path(key), 'DELETE'),
     /** Returns once the server accepts the message; the run is not streamed. */
     send: (key: string, input: string) => socket(key, (ws) => ws.send(JSON.stringify({ type: 'input', input })), (f) => (f.type === 'accepted' ? f : undefined)),
     /** The first frame the socket sends: the newest window of the transcript as items. */

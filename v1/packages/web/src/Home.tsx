@@ -38,7 +38,7 @@ function Ask({ failed }: { failed: boolean }) {
   const start = async () => {
     let text = input;
     try {
-      if (!(await listSessions()).some((x) => x.key === HOME_KEY)) {
+      if (!(await listSessions(`key:${JSON.stringify(HOME_KEY)}`)).length) {
         // The distributor refuses a socket for an unknown key, so the first message creates the session; its images follow over the socket.
         if (!input.trim()) return setError('Write a message to start the conversation.');
         await startSession(HOME_KEY, HOME_AGENT, input);

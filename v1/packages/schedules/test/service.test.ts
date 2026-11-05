@@ -260,8 +260,16 @@ test('the retention sweep deletes only sessions idle past their agent retention'
     { key: 'running', running: true, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
   ];
   const deletes: string[] = [];
+  const asked: string[] = [];
   const fetchStub = (async (url: string, init?: { method?: string; headers?: Record<string, string> }) => {
-    if (init?.method !== 'DELETE') return { ok: true, json: async () => ({ sessions }) };
+    if (init?.method !== 'DELETE') {
+      // Two rows to a page, running sessions filtered out as the request asks.
+      const q = new URL(url).searchParams;
+      asked.push(q.get('filter') ?? '');
+      const rows = sessions.filter((s) => !s.running);
+      const from = Number(q.get('pageToken') ?? 0);
+      return { ok: true, json: async () => ({ sessions: rows.slice(from, from + 2), ...(from + 2 < rows.length && { nextPageToken: String(from + 2) }) }) };
+    }
     assert.equal(init.headers?.authorization, 'Bearer admin');
     deletes.push(decodeURIComponent(url.split('/sessions/')[1]));
     return { ok: true, status: 200 };
@@ -271,6 +279,7 @@ test('the retention sweep deletes only sessions idle past their agent retention'
   open.push(svc);
   await svc.tick();
   assert.deepEqual(deletes, ['old']);
+  assert.deepEqual(asked, ['running:false', 'running:false'], 'the four stopped sessions took two pages');
   await svc.tick();
   assert.deepEqual(deletes, ['old'], 'the automatic sweep runs once a day');
 });

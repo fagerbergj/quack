@@ -53,7 +53,9 @@ const stubViewport = (desktop: boolean, wide = false) =>
 
 let routes: Record<string, unknown>;
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-  const hit = routes[`${init?.method ?? 'GET'} /${url}`];
+  // The session list carries paging and filter parameters; a route without them answers any.
+  const route = `${init?.method ?? 'GET'} /${url}`;
+  const hit = routes[route] ?? routes[route.replace(/^GET \/sessions\?.*/, 'GET /sessions')];
   return new Response(JSON.stringify(hit ?? { title: 'Not Found', detail: 'not found' }), { status: hit ? 200 : 404, headers: { 'content-type': hit ? 'application/json' : 'application/problem+json' } });
 });
 
@@ -80,9 +82,9 @@ async function openSession() {
 
 const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T01:00:00.000Z', ...over });
 
-test('the list keeps the server order and labels rows by creation when an older session becomes active', async () => {
+test('the list is newest-created first however the server pages it, and labels rows by creation when an older session becomes active', async () => {
   const older = sess('gh:old', { title: 'Older', running: true, active: true, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' });
-  routes['GET /sessions'] = { sessions: [sess('gh:a', { title: 'Alpha', running: true, active: true, createdAt: '2026-11-01T03:00:00.000Z' }), sess('gh:new', { title: 'Newer', createdAt: '2026-11-01T02:00:00.000Z' }), older, sess('gh:z', { title: 'Zed', createdAt: '2026-11-01T00:00:00.000Z' })] };
+  routes['GET /sessions'] = { sessions: [older, sess('gh:a', { title: 'Alpha', running: true, active: true, createdAt: '2026-11-01T03:00:00.000Z' }), sess('gh:z', { title: 'Zed', createdAt: '2026-11-01T00:00:00.000Z' }), sess('gh:new', { title: 'Newer', createdAt: '2026-11-01T02:00:00.000Z' })] };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -90,6 +92,16 @@ test('the list keeps the server order and labels rows by creation when an older 
   expect(within(running).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Aa', '#/s/gh%3Aold']);
   expect(within(screen.getByRole('region', { name: 'Recent' })).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Anew', '#/s/gh%3Az']);
   expect(within(running).getByRole('link', { name: /Older/ }).querySelector('time')).toHaveAttribute('datetime', '2026-11-01T01:00:00.000Z');
+});
+
+test('sessions past the first page are listed: the pages are followed to the end', async () => {
+  routes['GET /sessions?pageSize=1000'] = { sessions: [sess('gh:1', { title: 'First page' })], nextPageToken: 'p2' };
+  routes['GET /sessions?pageSize=1000&pageToken=p2'] = { sessions: [sess('gh:2', { title: 'Second page' })] };
+  stubViewport(false);
+  location.hash = '#/sessions';
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /First page/ })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: /Second page/ })).toBeInTheDocument();
 });
 
 test('groups sessions: a running session with a pending approval lands in Needs you', async () => {
@@ -278,6 +290,16 @@ test('a double click on the first-ever Home send creates the session once', asyn
   await act(async () => { send.click(); send.click(); });
   await waitFor(() => expect(FakeSocket.all).toHaveLength(1));
   expect(fetchMock.mock.calls.filter(([u, i]) => i?.method === 'POST' && u.includes('home%3Amain/invocations'))).toHaveLength(1);
+});
+
+test('the first Home send asks only for home:main, by key filter', async () => {
+  routes['POST /sessions/home%3Amain/invocations?agent=quack'] = { status: 'accepted' };
+  render(<App />);
+  await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'hello');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await waitFor(() => expect(FakeSocket.all).toHaveLength(1));
+  const filtered = fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('sessions?') && u.includes('filter='));
+  expect(filtered.map((u) => new URL(u, 'http://x').searchParams.get('filter'))).toEqual(['key:"home:main"']);
 });
 
 test('a first send the distributor refuses shows the error and keeps the text', async () => {
@@ -1521,7 +1543,7 @@ test('the transcript scroller is the containing block for absolute children, so 
 const withRow = (over: object = {}) => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip', ...over })] };
   routes['PATCH /sessions/ui%3Au1'] = { key: 'ui:u1' };
-  routes['POST /sessions/ui%3Au1/delete'] = { key: 'ui:u1' };
+  routes['DELETE /sessions/ui%3Au1'] = { key: 'ui:u1' };
 };
 const menu = async (item: string) => {
   await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
@@ -1597,17 +1619,18 @@ test('Delete asks first, names the session, and goes back to the list once confi
   const dialog = screen.getByRole('dialog', { name: 'Delete session?' });
   expect(dialog).toHaveTextContent('Plan the trip');
   await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-  expect(sent('POST')).toEqual([]);
+  const deletes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE').map(([url]) => url);
+  expect(deletes()).toEqual([]);
   await menu('Delete');
   routes['GET /sessions'] = { sessions: [] };
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
   await waitFor(() => expect(location.hash).toBe('#/'));
-  expect(sent('POST')).toEqual([['sessions/ui%3Au1/delete', {}]]);
+  expect(deletes()).toEqual(['sessions/ui%3Au1']);
 });
 
 test('a refused delete keeps the dialog open with the server reason', async () => {
   withRow();
-  delete routes['POST /sessions/ui%3Au1/delete'];
+  delete routes['DELETE /sessions/ui%3Au1'];
   await openSession();
   await menu('Delete');
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
@@ -1784,9 +1807,8 @@ test('the header shows the cost with tokens on hover when the model is priced, a
 });
 
 test('session rows show the index spend: dollars when priced, tokens when not, nothing when idle', async () => {
-  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Priced' }), sess('gh:2', { title: 'Unpriced' }), sess('gh:3', { title: 'Fresh' })] };
   const tokens = (input: number) => ({ input, output: 0, cacheRead: 0, cacheWrite: 0 });
-  routes['GET /index/sessions'] = { sessions: [{ key: 'gh:1', cost: 0.42, tokens: tokens(9000) }, { key: 'gh:2', cost: 0, tokens: tokens(12000) }, { key: 'gh:3', cost: 0, tokens: tokens(0) }] };
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Priced', cost: 0.42, tokens: tokens(9000) }), sess('gh:2', { title: 'Unpriced', cost: 0, tokens: tokens(12000) }), sess('gh:3', { title: 'Fresh', cost: 0, tokens: tokens(0) })] };
   render(<App />);
   expect(await screen.findByRole('link', { name: /Priced/ })).toHaveTextContent('$0.42');
   expect(screen.getByRole('link', { name: /Unpriced/ })).toHaveTextContent('12k tokens');
