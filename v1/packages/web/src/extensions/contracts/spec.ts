@@ -106,6 +106,16 @@ export function fields(doc: Json, schema: Json | undefined, at: string, depth = 
   });
 }
 
+/** An operation's parameters as rows; a `$ref` to a shared parameter is followed, and the row's pointer is the shared one, where its choices live. */
+export function paramFields(doc: Json, o: Operation): Field[] {
+  return ((o.op.parameters ?? []) as Json[]).flatMap((raw, i) => {
+    const p = resolve(doc, raw, `${o.ptr}/parameters/${i}`);
+    if (!p) return [];
+    const s = resolve(doc, p.schema.schema, `${p.ptr}/schema`)?.schema ?? {};
+    return [{ name: p.schema.name, type: p.schema.schema ? typeOf(s) : 'string', required: Boolean(p.schema.required), desc: p.schema.description, depth: 0, ptr: p.ptr, where: p.schema.in, facts: facts(s) }];
+  });
+}
+
 const JSON_SCHEMA = 'content/application~1json/schema';
 
 /** Every pointer the REST page draws an element for (operation, auth, parameter, response, schema field), so a decision anywhere else goes to the title. */
@@ -118,7 +128,7 @@ export function restPointers(doc: Json, ops: Operation[]): Set<string> {
   for (const o of ops) {
     out.add(o.ptr);
     if (Object.keys((o.op.security?.[0] ?? {}) as Json).length) out.add(`${o.ptr}/security`);
-    ((o.op.parameters ?? []) as Json[]).forEach((_, i) => out.add(`${o.ptr}/parameters/${i}`));
+    for (const f of paramFields(doc, o)) out.add(f.ptr);
     schema((o.op.requestBody?.content?.['application/json'] as Json | undefined)?.schema, `${o.ptr}/requestBody/${JSON_SCHEMA}`);
     for (const [code, res] of Object.entries((o.op.responses ?? {}) as Json)) {
       out.add(`${o.ptr}/responses/${code}`);

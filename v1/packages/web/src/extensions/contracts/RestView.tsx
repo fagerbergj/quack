@@ -5,7 +5,7 @@ import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
 import { choicesAt, Info, Inline, unplaced } from './Info.tsx';
 import { SchemaTree } from './SchemaTree.tsx';
-import { fields, operations, resolve, restPointers, toYaml, type Choice, type ContractSpec, type Field, type Json, type Operation } from './spec.ts';
+import { fields, operations, paramFields, resolve, restPointers, toYaml, type Choice, type ContractSpec, type Json, type Operation } from './spec.ts';
 
 const METHOD: Record<string, string> = { GET: 'bg-link-bg text-link', POST: 'bg-success-bg text-success', DELETE: 'bg-danger-bg text-danger' };
 export const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
@@ -117,7 +117,7 @@ function Meta({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }) 
 }
 
 function Detail({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }) {
-  const params: Field[] = ((o.op.parameters ?? []) as Json[]).map((p, i) => ({ name: p.name, type: p.schema?.type ?? 'string', required: Boolean(p.required), desc: p.description, depth: 0, ptr: `${o.ptr}/parameters/${i}`, where: p.in, facts: [] }));
+  const params = paramFields(ctx.doc, o);
   const body = resolve(ctx.doc, (o.op.requestBody?.content?.['application/json'] as Json | undefined)?.schema, `${o.ptr}/requestBody/content/application~1json/schema`);
   const eg = example(o);
   return (
