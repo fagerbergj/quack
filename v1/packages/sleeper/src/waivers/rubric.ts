@@ -51,11 +51,18 @@ function byeCoverage(artifact: string, ev: Evidence): CodeResult {
   const rows = parse(artifact).candidates;
   const holes = f.table.find((t) => t.mine)?.byes ?? [];
   const open = holes.flatMap((h) => {
+    // Facts recorded before rubric 6 carry no `short`; a hole is at least one empty slot.
+    const short = h.short ?? 1;
     const covers = rows.filter((r) => r.player.pos === h.pos && r.bye !== h.week).length;
-    return covers < h.short ? [`week ${h.week} leaves ${h.short} ${h.pos} slot${h.short > 1 ? 's' : ''} empty and the claims cover ${covers}`] : [];
+    return covers < short ? [`week ${h.week} leaves ${short} ${h.pos} slot${short > 1 ? 's' : ''} empty and the claims cover ${covers}`] : [];
   });
   // The add's own week must sit beside the word: another team's bye named in the same why does not flag his.
-  const flags = (why: string, week: number) => new RegExp(`\\b(?:bye|sits|idle|off)\\b[^.;]*\\b${week}\\b|\\b${week}\\b[^.;]*\\b(?:bye|sits|idle|off)\\b`, 'i').test(why);
+  // The week stands alone: "proj 4.11" does not name week 11.
+  const flags = (why: string, week: number) => {
+    const w = `(?<![\\d.])${week}(?!\\.?\\d)`;
+    const gap = '(?:[^.;]|\\.(?!\\s|$))*?';
+    return new RegExp(`\\b(?:bye|sits|idle|off)\\b${gap}${w}|${w}${gap}\\b(?:bye|sits|idle|off)\\b`, 'i').test(why);
+  };
   const unflagged = rows.filter((r) => r.bye !== null && r.bye >= f.week && r.bye <= f.week + BYE_LEAD && !flags(r.why, r.bye)).map((r) => `${r.player.name}'s week ${r.bye} bye is not flagged`);
   const flaws = [...open, ...unflagged];
   const units = holes.length + rows.length;

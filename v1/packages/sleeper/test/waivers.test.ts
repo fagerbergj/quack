@@ -211,6 +211,10 @@ test('bye_coverage is absent when the claims fill every bye hole, and names an o
   assert.doesNotMatch((await gate('bye_coverage', f, flagged('Felix Free is on bye in week 10; claim him now.'))).detail!, /Felix Free/);
   assert.doesNotMatch((await gate('bye_coverage', f, flagged('Felix Free sits wk 10 but starts after.'))).detail!, /Felix Free/);
   assert.match((await gate('bye_coverage', f, flagged('Covers the week 11 bye of another back.'))).detail!, /Felix Free's week 10 bye is not flagged/);
+  assert.match((await gate('bye_coverage', f, flagged('Off IR, bye aside, proj 4.10 this week.'))).detail!, /Felix Free's week 10 bye is not flagged/);
+  // Facts sealed before holes carried `short` still score the hole half, as one empty slot.
+  const old = { ...f, table: f.table.map((t) => ({ ...t, byes: t.byes.map(({ short: _s, ...b }) => b) })) } as unknown as WaiverFacts;
+  assert.match((await gate('bye_coverage', old, noWr)).detail!, /^week 10 leaves 1 WR slot empty and the claims cover 0$/);
 });
 
 test('faab_language_on_rolling penalizes FAAB figures in a rolling league and not in a FAAB one', async () => {
