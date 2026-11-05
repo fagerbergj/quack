@@ -181,6 +181,8 @@ export function reviewEvidence(repoDir = 'repo') {
     return {
       review: [{ id: 'review', whole: true, state: { review: sealed.content } }],
       change: [changeUnit],
+      // Judged on the review alone: whether an approve says why the change is safe, not whether the diff is defect-free.
+      approve: r.verdict === 'approve' ? [{ id: 'approve', state: { review: sealed.content } }] : [],
       finding: findings,
       blocking: findings.filter((f) => f.blocking),
       lower: findings.filter((f) => !f.blocking),

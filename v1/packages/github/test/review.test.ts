@@ -65,12 +65,19 @@ test('blocking findings must name an anchor, and findings must cite lines that e
   assert.equal(cites('', { finding: [] }).met, 1);
 });
 
+test('approval_grounded judges an approve on the review alone, and has no unit on any other verdict', async () => {
+  const evidence = async (verdict: string) => reviewEvidence()({ snapshot: async () => undefined, conversationId: 'c' } as never, { content: `## Takeaway\nx\n## Verdict\n${verdict}\n## Findings\n` } as never, {} as never);
+  const approve = await evidence('approve');
+  assert.deepEqual(approve.approve, [{ id: 'approve', state: { review: '## Takeaway\nx\n## Verdict\napprove\n## Findings\n' } }]);
+  for (const v of ['request_changes', 'comment']) assert.deepEqual((await evidence(v)).approve, []);
+});
+
 test('the rubric scopes match the evidence the reviewer builds', () => {
   const scopes = new Set(reviewerRubric.criteria.flatMap((c) => c.checks.filter((k) => k.question).map((k) => k.scope ?? 'review')));
-  assert.deepEqual([...scopes].sort(), ['blocking', 'change', 'finding', 'lower', 'review']);
+  assert.deepEqual([...scopes].sort(), ['approve', 'blocking', 'change', 'finding', 'lower', 'review']);
   assert.ok(reviewerRubric.criteria.flatMap((c) => c.checks).some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
-  assert.equal(possible, 23);
+  assert.equal(possible, 26);
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {

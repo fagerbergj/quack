@@ -44,6 +44,7 @@ export const reviewerRubric: Rubric = {
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
+      { id: 'approval_grounded', label: "Approves without saying why it is safe", weight: 3, scope: 'approve', question: 'This review approves. Do its Takeaway and Verified sections say what about the change makes it safe to merge (which behaviour was checked and how it was checked), rather than only praising the change or asserting that it looks good or that tests pass?' },
       // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
       { id: 'promises_handled', label: "A promised behavior is missing", weight: 3, scope: 'change', question: 'Is every behaviour the description or linked issues say this change delivers either present in the diff, deferred to a linked follow-up, or reported as a blocking delivery finding? A loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.' },
       { id: 'sibling_parts', label: "Misses parts its sibling code has", weight: 2, scope: 'change', question: 'Where the diff adds another instance of an existing pattern, does the review report the parts its siblings carry that this one lacks (or are there none missing)?' },
