@@ -251,3 +251,26 @@ test('a typescript contract shows its source until its declarations load, its de
   expect(within(screen.getByRole('heading', { name: /SDK surface/ })).queryByRole('button', why)).toBeNull();
   expect(screen.getByRole('button', { name: 'contract.d.ts' })).toBeInTheDocument();
 });
+
+test('a $ref parameter shows its name, type, default and place, and a choice on the shared parameter sits on its row', async () => {
+  const spec = JSON.parse(raw(1)) as ContractSpec & { document: Record<string, any> };
+  const params = {
+    pageSize: { name: 'pageSize', in: 'query', description: 'Rows per page.', schema: { type: 'integer', default: 100 } },
+    filter: { name: 'filter', in: 'query', required: true, schema: { $ref: '#/components/schemas/Filter' } },
+  };
+  spec.document.components = { ...spec.document.components, parameters: params, schemas: { ...spec.document.components?.schemas, Filter: { type: 'string', example: 'agent = "reviewer"' } } };
+  const op = Object.values(spec.document.paths as Record<string, any>)[0].get;
+  op.parameters = [{ $ref: '#/components/parameters/pageSize' }, { $ref: '#/components/parameters/filter' }];
+  spec.choices = [{ id: 'f', pointer: '/components/parameters/filter', decision: 'Filter follows AIP-160.', why: [{ source: 'guide', text: 'One grammar.', ref: 'rest#filtering' }] }];
+  render(<>{contracts.full!(sealed(JSON.stringify(spec)))}</>);
+  const size = screen.getByText('pageSize').closest('li') as HTMLElement;
+  expect(size).toHaveTextContent('integer');
+  expect(size).toHaveTextContent('query');
+  expect(size).toHaveTextContent('default100');
+  expect(size).toHaveTextContent('Rows per page.');
+  const filter = screen.getByText('filter').closest('li') as HTMLElement;
+  expect(filter).toHaveTextContent('REQUIRED');
+  expect(filter).toHaveTextContent('example');
+  expect(within(filter).getByRole('button', { name: 'Why: Filter follows AIP-160.' })).toBeInTheDocument();
+  expect(within(screen.getByRole('heading', { name: /Sleeper schedule endpoint/ })).queryByRole('button', { name: /^Why/ })).toBeNull();
+});

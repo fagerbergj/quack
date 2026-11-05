@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Info } from './Info.tsx';
+import { Info, Inline } from './Info.tsx';
 import type { Choice, Field } from './spec.ts';
 
 const fact = 'inline-flex items-start gap-1 rounded bg-soft px-1.5 py-0.5 text-xs text-muted [overflow-wrap:anywhere]';
@@ -15,7 +15,7 @@ function Row({ f, choices, code }: { f: Field; choices: Choice[]; code?: Code })
       {f.required && <span className="text-[11px] tracking-wide text-danger">REQUIRED</span>}
       {f.where && <span className={fact}>{f.where}</span>}
       <span className="flex min-w-0 flex-[1_1_8rem] flex-col gap-1 text-[13px] text-muted">
-        {f.desc && <span>{f.desc}</span>}
+        {f.desc && <Inline text={f.desc} />}
         {f.facts.length > 0 && <span className="flex flex-wrap gap-1.5">{f.facts.map(([k, v]) => <span key={k} className={fact}><span className="flex-none whitespace-nowrap">{k}</span><code className="font-mono text-ink-2">{v}</code></span>)}</span>}
       </span>
       <Info choices={choices} />
