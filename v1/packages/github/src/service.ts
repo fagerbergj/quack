@@ -60,6 +60,8 @@ export function ownerRepo(raw: string): { owner: string; repo: string } | undefi
 type RunState = { posted: Map<string, number>; watched: Set<string> };
 // Lowercased like the installation cache: the webhook and the session may case the same repository differently.
 const prKey = (owner: string, repo: string, number: number) => `${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`;
+const baseFor = (bases: Record<string, string> | undefined, owner: string, repo: string) =>
+  Object.entries(bases ?? {}).find(([r]) => r.toLowerCase() === `${owner}/${repo}`.toLowerCase())?.[1];
 
 // Waits out a run the webhook started and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
 async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number, doFetch?: typeof fetch) {
@@ -263,7 +265,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
       const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
-      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), config.issueBase?.[`${item[2]}/${item[3]}`]) : pullRequest(res, app, item[2], item[3], Number(item[4])));
+      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), baseFor(config.issueBase, item[2], item[3])) : pullRequest(res, app, item[2], item[3], Number(item[4])));
       send(res, 404, { error: 'not found' });
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');

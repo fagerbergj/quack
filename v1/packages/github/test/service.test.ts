@@ -205,6 +205,10 @@ test('the issue route returns an issue with the default branch; a pull request n
   const onV1 = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, issueBase: { 'acme/widgets': 'v1', 'acme/other': 'next' } })));
   const issue = await fetch(`${onV1}/issues/acme/widgets/12`).then((r) => r.json());
   assert.equal(issue.baseRef, 'v1', 'the listed repository uses its issueBase');
+  const casedOnly = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, issueBase: { 'Acme/Widgets': 'v1' } })));
+  assert.equal((await fetch(`${casedOnly}/issues/acme/widgets/12`).then((r) => r.json())).baseRef, 'v1', 'the lookup ignores case, as prKey does');
+  const elsewhere = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, issueBase: { 'acme/other': 'next' } })));
+  assert.equal((await fetch(`${elsewhere}/issues/acme/widgets/12`).then((r) => r.json())).baseRef, 'trunk', 'an unlisted repository keeps its default branch');
 });
 
 test('a pull request is opened with the installation token, mentions of the bot defanged', async () => {
