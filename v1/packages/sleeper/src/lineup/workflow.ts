@@ -2,6 +2,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import { arr, obj, str } from '@earendil-works/pi-schema';
 import { type ClassifierRef, type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
+import { newsLink } from './news.ts';
 import type { Json, SleeperClient } from '../client.ts';
 import { buildCard, cardsKind, type Decision } from './card.ts';
 import { buildFacts, type Facts, type FactsDeps, type LineupInput, type PlayerFact } from './facts.ts';
@@ -30,7 +31,7 @@ const line = (p: PlayerFact) => {
 
 function factsPrompt(f: Facts): string {
   const now = (s: string) => (f.current[s] ? line(f.players[f.current[s]!]) : 'empty');
-  const open = f.open.map((s) => `${s} (now ${now(s)})\n${f.candidates[s].map((id) => `  - ${line(f.players[id])}${(f.news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('')}`).join('\n')}`);
+  const open = f.open.map((s) => `${s} (now ${now(s)})\n${f.candidates[s].map((id) => `  - ${line(f.players[id])}${(f.news[id] ?? []).map((n) => ` ${newsLink(n)}`).join('')}`).join('\n')}`);
   const locked = f.slots.filter((s) => !f.open.includes(s)).map((s) => `${s}: ${now(s)}`);
   const base = f.baseline.map((b) => `${b.slot}: ${b.name} ${b.proj}`);
   return [

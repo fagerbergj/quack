@@ -3,6 +3,7 @@ import type { Schema } from '@earendil-works/pi-schema';
 import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { type JudgeOptions, type Rubric } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
+import { newsLink } from '../lineup/news.ts';
 import { cardsKind } from '../lineup/card.ts';
 import { round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
@@ -80,7 +81,7 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
   });
 }
 
-const links = (items: Array<NewsItem & { player: string }>) => items.map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)} (${n.player})`).join('');
+const links = (items: Array<NewsItem & { player: string }>) => items.map((n) => ` ${newsLink(n)} (${n.player})`).join('');
 const scorers = (s: DigestFacts['games'][number]['sides'][number]) => s.top.map((t) => `${t.name} ${t.pts}`).join(', ') || 'none';
 
 function digestPrompt(f: DigestFacts): string {

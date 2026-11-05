@@ -13,7 +13,7 @@ import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildCard, buildFacts, buildSnapshot, createSleeperClient, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, registerLineupSchedules,
+  buildCard, buildFacts, buildSnapshot, createSleeperClient, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, newsLink, registerLineupSchedules,
   type Facts, type LineupCard, type LineupDeps,
 } from '../src/index.ts';
 import { closeCalls } from '../src/lineup/facts.ts';
@@ -344,7 +344,10 @@ test('close-call players get dated news inside 72 hours, and nobody else is sear
   assert.equal(exa.seen.length, close.length);
   assert.ok(exa.seen.every((r) => r.key === 'k' && r.body.numResults === 3 && r.body.startPublishedDate === hoursAgo(72) && r.body.includeDomains.includes('nfl.com')));
   assert.match(exa.seen.map((r) => r.body.query).join('\n'), /Rob Rowe/);
-  assert.deepEqual(f.news['102'], [{ title: 'Rob Rowe practice report', url: 'https://www.nfl.com/news/fresh', date: hoursAgo(5) }, { title: 'Depth chart notes', url: 'https://www.nfl.com/news/depth', date: hoursAgo(6) }]);
+  // A title that names the player stands alone; otherwise the highlight that names him rides along, into the prompt too.
+  const depth = { title: 'Depth chart notes', url: 'https://www.nfl.com/news/depth', date: hoursAgo(6), excerpt: 'Rob Rowe takes first-team reps.' };
+  assert.deepEqual(f.news['102'], [{ title: 'Rob Rowe practice report', url: 'https://www.nfl.com/news/fresh', date: hoursAgo(5) }, depth]);
+  assert.equal(newsLink(depth), `[Depth chart notes](https://www.nfl.com/news/depth), ${hoursAgo(6).slice(0, 16)}: "Rob Rowe takes first-team reps."`);
 });
 
 test('a failing search leaves a close call with no news rather than failing the lineup', async () => {
