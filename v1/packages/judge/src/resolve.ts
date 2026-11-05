@@ -37,7 +37,7 @@ async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined,
   const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId), id: 'judge-model' } : agentModel;
   const d = await decide(api, point, [resolver], ctx);
   if (!d) return { met: null, resolver: 'none', note: 'no resolver could decide' };
-  return { met: d.choice === 'yes', resolver: d.resolver, note: d.choice === 'yes' ? undefined : d.reason };
+  return { met: d.choice === 'yes', resolver: d.resolver, note: d.reason };
 }
 
 // One decision-model request per unit; confident answers stand, the rest escalate one check at a time (D16).

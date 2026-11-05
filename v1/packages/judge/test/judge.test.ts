@@ -153,6 +153,14 @@ test('a whole-artifact unit adds no prefix to its notes, another unit keeps its 
   assert.deepEqual(notes('says_why'), ['f1: too long']);
 });
 
+test('a pitfall keeps the reason where it is present, a met check keeps none', async () => {
+  const yes = (reason: string) => fauxAssistantMessage(`{"choice": "yes", "confidence": 0.9, "reason": "${reason}"}`);
+  const content = '## Takeaway\nFix the loop.\n## Verdict\nrequest changes\n## Findings\n- blocking: src/y.ts:3 I prefer tabs\n';
+  const { versions } = await run(undefined, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), yes('one sentence'), yes('says why'), yes('only taste'), fauxAssistantMessage('Done.')]);
+  const notes = (id: string) => versions[0].checks.find((c: any) => c.id === id).notes;
+  assert.deepEqual([notes('takeaway_actionable'), notes('says_why'), notes('preference_only')], [[], [], ['f1: only taste']]);
+});
+
 test('a check without a scope is an error, not a default scope', () => {
   assert.throws(() => unitsFor(undefined, { review: [] }), /name its evidence scope/);
   assert.deepEqual(unitsFor('review', { review: [] }), []);
