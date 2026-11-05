@@ -1,6 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { conventions, git, remoteFor, type SessionConfig } from './checkout.ts';
+import { closedIssues } from './webhook.ts';
 
 export type IssueRecord = { owner: string; repo: string; number: number; title: string; body: string; author: string | null; state: string; labels: string[]; baseRef: string };
 
@@ -50,13 +51,27 @@ export async function branchTaken(api: ToolExecutionApi, config: SessionConfig, 
   return listed && listed !== sha ? `the branch ${w.branch} already exists on ${w.issue.owner}/${w.issue.repo} with other commits; nothing was pushed` : '';
 }
 
+// pr.md's first line is the title; the rest is the body.
+const bodyOf = (prMd: string) => prMd.trim().split('\n').slice(1).join('\n').trim();
+
 /** Opens the pull request through the service, which holds the token; the body closes the issue. */
 export async function openPull(config: SessionConfig, w: IssueWork, title: string, body: string): Promise<string> {
-  const text = `${body.trim().split('\n').slice(1).join('\n').trim()}\n\nCloses #${w.issue.number}`.trim();
+  const text = `${bodyOf(body)}\n\nCloses #${w.issue.number}`.trim();
   const res = await fetch(`${config.serviceUrl}/pulls`, {
     method: 'POST', headers: { authorization: `Bearer ${config.serviceToken}` },
     body: JSON.stringify({ owner: w.issue.owner, repo: w.issue.repo, head: w.branch, base: w.issue.baseRef, title, body: text }),
   });
   if (!res.ok) throw new Error(`cannot open the pull request: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return ((await res.json()) as { url: string }).url;
+}
+
+/** Sets an open pull request's title and body to the pr.md the approver saw; an issue the live body closed and pr.md does not stays closed by it. */
+export async function editPull(config: SessionConfig, pr: { owner: string; repo: string; number: number }, title: string, prMd: string, liveBody: string | undefined): Promise<void> {
+  const text = bodyOf(prMd);
+  const kept = closedIssues(liveBody).filter((n) => !closedIssues(text).includes(n)).map((n) => `Closes #${n}`);
+  const res = await fetch(`${config.serviceUrl}/pulls/${pr.owner}/${pr.repo}/${pr.number}`, {
+    method: 'PATCH', headers: { authorization: `Bearer ${config.serviceToken}` },
+    body: JSON.stringify({ title, body: [text, ...kept].join('\n\n') }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
 }

@@ -52,6 +52,7 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
   const posted: any[] = [];
   const opened: any[] = [];
   const replies: any[] = [];
+  const edited: any[] = [];
   const url = await listen(
     createServer(async (req, res) => {
       if (req.headers.authorization !== 'Bearer svc') return res.writeHead(401).end('{}');
@@ -61,6 +62,10 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       if (req.url === '/replies') {
         replies.push(JSON.parse(raw));
         return res.writeHead(201).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7#discussion_r56' }));
+      }
+      if (req.method === 'PATCH') {
+        edited.push({ path: req.url, ...JSON.parse(raw) });
+        return res.writeHead(200).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7' }));
       }
       if (req.url === '/pulls' && req.method === 'POST') {
         opened.push(JSON.parse(raw));
@@ -76,5 +81,5 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       res.writeHead(200).end(JSON.stringify(pr));
     }),
   );
-  return { url, posted, replies, opened };
+  return { url, posted, replies, opened, edited };
 }

@@ -5,7 +5,7 @@ import { reviewFeedback } from './feedback.ts';
 import { fixQueued, fixRefused, noticeFor, settled } from './notice.ts';
 import { prStateKey, pullStates, stateOf } from './pulls.ts';
 import { waitingQueue } from './queue.ts';
-import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
+import { closedIssues, stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
   webhookSecret: string;
@@ -214,7 +214,6 @@ async function postReply(req: IncomingMessage, res: ServerResponse, app: GithubA
 }
 
 // Issues a description says it closes ("closes #12", "fixes #3"): the promises a review checks.
-const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
 
 const MAX_CHECK_PAGES = 10;
 
@@ -234,7 +233,7 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
   const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
   if (!pr) return undefined;
   const checks = { check_runs: await checkRuns(app, owner, repo, pr.head.sha) };
-  const closes = [...new Set([...String(pr.body ?? '').matchAll(CLOSES)].map((m) => Number(m[1])))];
+  const closes = closedIssues(pr.body);
   const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
   return {
     owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
@@ -260,6 +259,29 @@ async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: G
   const slug = await app.slug();
   const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `/repos/${r.owner}/${r.repo}/pulls`, { head: r.head, base: r.base, title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
   send(res, 201, { number: json?.number, url: json?.html_url });
+}
+
+// Rewrites a pull request's title and body from the description its approver saw; the session never holds the token (D56).
+async function editPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
+  if (typeof r.title !== 'string' || !r.title || typeof r.body !== 'string') return send(res, 400, { error: 'need a non-empty title and a body' });
+  const slug = await app.slug();
+  const { json } = await app.asInstallation(owner, repo, 'PATCH', `/repos/${owner}/${repo}/pulls/${number}`, { title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
+  // GitHub's 404 comes back as no body; a vanished pull request is not an edit.
+  if (!json?.html_url) return send(res, 404, { error: 'no such pull request' });
+  send(res, 200, { url: json.html_url });
+}
+
+// /issues|pulls/{owner}/{repo}/{n}: GET reads either, PATCH edits a pull request; false when the path or method is neither.
+async function itemRoute(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, path: string): Promise<boolean> {
+  const item = /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
+  if (!item) return false;
+  const [, what, owner, repo, n] = item;
+  if (req.method === 'PATCH' && what === 'pulls') await editPullRequest(req, res, app, owner, repo, Number(n));
+  else if (req.method !== 'GET') return false;
+  else if (what === 'issues') await issueRoute(res, app, owner, repo, Number(n), baseFor(config.issueBase, owner, repo));
+  else await pullRequest(res, app, owner, repo, Number(n));
+  return true;
 }
 
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
@@ -303,9 +325,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       if (get) return await get();
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
-      const item = req.method === 'GET' ? /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path) : null;
-      if (item) return await (item[1] === 'issues' ? issueRoute(res, app, item[2], item[3], Number(item[4]), baseFor(config.issueBase, item[2], item[3])) : pullRequest(res, app, item[2], item[3], Number(item[4])));
-      send(res, 404, { error: 'not found' });
+      if (!(await itemRoute(req, res, app, config, path))) send(res, 404, { error: 'not found' });
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
       send(res, err instanceof SyntaxError ? 400 : 502, { error: (err as Error).message });

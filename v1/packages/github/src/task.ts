@@ -4,7 +4,7 @@ import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earen
 import { attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
 import { conventions, fetchRecord, findRecord, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
 import { sessionRuns, unbackedClaims } from './claims.ts';
-import { branchTaken, checkoutIssue, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
+import { branchTaken, checkoutIssue, editPull, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
 import { renderFeedback } from './feedback.ts';
 
 const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
@@ -97,7 +97,9 @@ function pushTool(config: SessionConfig, dir: string): ToolRegistration {
       await api.commit(async (tx) => { (await tx.doc(PullRequestDoc, api.conversationId)).pr!.headSha = sha; }, ctx);
       const url = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.number}`;
       await attachLink(api, prBodyKind.kind, args.version, { label: 'Pushed', url }, ctx);
-      return reply(`Pushed ${sha} to ${pr.headRef}: ${url}`);
+      // The approver read this pr.md with the push; without the edit the pull request keeps the text it opened with.
+      const note = await editPull(config, pr, args.title, args.body, live.body).then(() => '', (err) => `; the description was not updated (${String(err)})`);
+      return reply(`Pushed ${sha} to ${pr.headRef}: ${url}${note}`);
     },
   }) as ToolRegistration);
 }

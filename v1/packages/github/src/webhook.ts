@@ -100,3 +100,8 @@ export function triggerFor(event: string | undefined, p: Payload, label: string,
   if (isReviewComment && TRUSTED.has(p.comment.author_association)) return reviewTrigger(p, p.issue, `/review by ${p.comment.user?.login}`);
   return mentionTrigger(event, p, slug);
 }
+
+const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+
+/** The issue numbers a pull request body closes, by GitHub's closing keywords anywhere in the text. */
+export const closedIssues = (body: string | undefined) => [...new Set([...String(body ?? '').matchAll(CLOSES)].map((m) => Number(m[1])))];
