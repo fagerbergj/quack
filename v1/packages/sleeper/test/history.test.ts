@@ -11,7 +11,7 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildHistoryCard, buildHistoryFacts, createSleeperClient, createSleeperService, DEFINITIONS, historyEvidence, historyKey, historyRubric, historyWorkflow, verdictOf,
+  buildHistoryCard, buildHistoryFacts, createSleeperClient, createSleeperService, DEFINITIONS, historyEvidence, historyKey, historyRubric, historyWorkflow, misquotedPicks, verdictOf,
   type HistoryCard, type HistoryFacts,
 } from '../src/index.ts';
 import type { HistoryDecision } from '../src/history/card.ts';
@@ -94,6 +94,25 @@ test('figures_from_tools passes the card and fails a changed figure, a verdict o
   assert.equal((await gate(f, { ...c, seasons: c.seasons.slice(0, 1) })).met, 0, 'a dropped season');
 });
 
+test('a pick or rank a note quotes for a drafted player must be his, by full name or a last name unique in that draft', async () => {
+  const row = (name: string, pick: number, drafted_as: number, finished: number) => ({ round: 1, pick, player: { id: name, name, pos: 'WR' }, drafted_as, finished, pts: 100, verdict: 'as_expected' as const });
+  const draft = [row('Zay Flowers', 57, 24, 7), row('Cooper Kupp', 6, 3, 32), row('Mike Williams', 40, 20, 30), row('Javonte Williams', 41, 10, 12)];
+  assert.deepEqual(misquotedPicks('Steals: Flowers pick 57 WR24→WR7; Kupp (pick 6, WR3→32) busted.', draft), []);
+  assert.deepEqual(misquotedPicks('Flowers pick 54 WR24→WR7, then Kupp WR3→12.', draft), ['Flowers pick 54 (the draft has 57)', 'Kupp 3→12 (the draft has 3→32)']);
+  // "Williams" names two players, so only a full name binds; a figure after the next drafted name is that player's.
+  assert.deepEqual(misquotedPicks('Williams pick 99. Flowers then Kupp pick 6.', draft), []);
+  assert.deepEqual(misquotedPicks('Kupp 28→35 pts.', draft), []);
+  assert.deepEqual(misquotedPicks('steals: flowers pick 54 was a reach.', draft), ['flowers pick 54 (the draft has 57)']);
+  const f = await factsOf();
+  const c = buildHistoryCard(f, decision);
+  const pick = f.seasons[1].draft![0];
+  const note = (text: string) => ({ ...c, seasons: c.seasons.map((s) => (s.season === '2025' ? { ...s, note: text } : s)) });
+  assert.equal((await gate(f, note(`${pick.player.name} pick ${pick.pick} anchored it.`))).met, 1);
+  const bad = await gate(f, note(`${pick.player.name} pick ${pick.pick + 3} anchored it.`));
+  assert.equal(bad.met, 0.5);
+  assert.match(bad.detail!, new RegExp(`2025 note quotes ${pick.player.name} pick ${pick.pick + 3} \\(the draft has ${pick.pick}\\)`));
+});
+
 test('a row\'s judge evidence carries that season\'s figures; a season with no note has no row', async () => {
   const f = await factsOf();
   const ev = await historyEvidence(f)(null, { content: JSON.stringify(buildHistoryCard(f, decision)) });
@@ -135,7 +154,7 @@ test('the workflow seals a history card whose figures are the tools and the judg
   const { sealed, verdict, judged } = await run(decision);
   const c = JSON.parse(sealed.content) as HistoryCard;
   assert.deepEqual([c.kind, c.seasons.map((s) => s.season), c.seasons[1].draft!.length], ['history', ['2026', '2025'], 3]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@2', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@3', [], true]);
   assert.ok(judged.some((q) => /schedule luck/.test(q)));
 });
 
