@@ -177,8 +177,11 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   const comments = Array.isArray(r.comments) ? r.comments.filter((c: any) => typeof c?.path === 'string' && Number.isInteger(c.line) && typeof c.body === 'string') : [];
   const slug = await app.slug();
   const path = `/repos/${r.owner}/${r.repo}/pulls/${r.number}/reviews`;
+  // GitHub refuses an approve or request-changes from a pull request's author, and the implementer opens pull requests as this app.
+  const own = r.event !== 'COMMENT' && String((await app.asInstallation(r.owner, r.repo, 'GET', `/repos/${r.owner}/${r.repo}/pulls/${r.number}`)).json?.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
+  const lead = own ? `**Verdict: ${r.event === 'APPROVE' ? 'approve' : 'request changes'}.** GitHub does not take this verdict from a pull request's own author, so it is posted as a comment.\n\n` : '';
   const post = (body: string, inline: any[]) => app.asInstallation(r.owner, r.repo, 'POST', path, {
-    event: r.event, body: stripMentions(body, slug), ...(r.commitId ? { commit_id: r.commitId } : {}),
+    event: own ? 'COMMENT' : r.event, body: stripMentions(lead + body, slug), ...(r.commitId ? { commit_id: r.commitId } : {}),
     ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body, slug) })) } : {}),
   });
   // GitHub answers 422 when an inline line is off the diff; only then does the review go as written, findings in the body. Outages are the caller's to retry.
