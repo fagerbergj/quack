@@ -15,7 +15,7 @@
 | # | Indicator | Definition and example | What a finding cites | Mechanical? | False positives | Harm |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | **Test passes without the change** | A new or changed test is green on the base commit, so it does not test the change. A fix PR adds `expect(fmt(0)).toBe('0')`, which the old code already returned. | The test file and its result on base | Yes: run the test with base sources | New tests for behavior that already worked (refactors, pinning tests); compile-only failures count as red | High: the tests assert nothing about the change, but CI shows green |
-| 2 | **Focused, skipped or retried tests** | `.only`, `{ only: true }`, a new `.skip`, `retries`, `--reruns`, a CI `retry:` | The line | Yes: a token lint over added lines | Near zero for `.only`; low for skips that cite an issue | High: `.only` silently drops the rest of the suite, and retries hide real failures |
+| 2 | **Focused, skipped or retried tests** | `.only`, `{ only: true }`, a new `.skip`, `retries`, `--reruns`, a CI `retry:` | The line | Yes: per-language signal patterns over added lines | Near zero for `.only`; low for skips that cite an issue | High: `.only` silently drops the rest of the suite, and retries hide real failures |
 | 3 | **Tautological assertion** | The expected value comes from the test's own stub, from the code under test, or is the same expression as the actual. `stub.returns(42); expect(svc.get()).toBe(42)` | The arrange line and the assert line | Partly: a lint for self-comparison and stub-equals-expected; otherwise judged per test | Interaction tests that legitimately check call arguments | High: green over any bug |
 | 4 | **No assertion executes** | The test body has no assertion, or its only assertion sits in a loop over a possibly empty list, a catch block, or a mock's body | The test body | Partly: no assertion call is lint-detectable; the rotten-green forms need a judgement or a run | Smoke tests that only check nothing throws | High |
 | 5 | **Flake source in a test** | A fixed sleep after async work, a wall-clock read that feeds an assertion, an unseeded random value, a real network host, shared state with no teardown | The line plus the assertion it feeds | The token is lint-detectable; whether it decides the outcome is judged | Sleeps inside a polling loop with a timeout, a timer that is itself the subject, stopwatch reads with slack | High: async waits are the largest flaky category (Luo et al., 45% of classified fixes) |
@@ -25,55 +25,81 @@
 | 9 | **Swallowed error** | An empty catch, or a catch that returns `null` or `[]` | The catch block and the failure it hides | Empty catch: lint; return-empty: judged | Documented suppressions | Medium-high |
 | 10 | **Hallucinated API or package** | A call, option or dependency that does not exist in the installed version | The call and the lockfile version | Calls: typecheck and CI; packages: a registry lookup | Near zero for a missing package | High, but CI already catches most of it |
 
-Rows 1, 2 and 6 are deterministic gates for the implementer. Rows 3-5 and 7-9 are judged checks, each over a listed set. Row 10 stays with CI and typecheck.
+Rows 1, 2 and 6 are deterministic gates for the implementer, each with a language-neutral core and per-language adapters (below). Rows 3-5 and 7-9 are judged checks, each over a listed set. Row 10 stays with CI and typecheck.
+
+## How the checks handle languages
+
+Every rule below has a core that does not depend on the language, and per-language adapters that do only the language-shaped parts: finding test files, splitting out test cases and functions, narrowing a test run to one file, and matching signal patterns. A language without an adapter falls back to the judge. A per-item question ("is this file a test?", "which test cases does this hunk add?") replaces the missing splitter, and the judged check replaces the missing pattern. This is the judge's own splitter rule: deterministic where the shape is known, a model as the fallback.
+
+Adapters ship first for TS/JS, Go and Python, the languages of the operator's repos. Each adapter is a small table of globs and patterns, not new check logic.
+
+| Adapter part | TS/JS | Go | Python | No adapter |
+| --- | --- | --- | --- | --- |
+| Test files | The runner's config: `node --test` globs in `package.json` scripts, Vitest `include`, Jest `testMatch`. Default `*.test.*`, `*.spec.*` | `*_test.go` (the language's own rule) | pytest `testpaths` and `python_files` from `pyproject.toml`, `pytest.ini` or `setup.cfg`. Default `test_*.py`, `*_test.py` | Per changed file: "Is this file a test?" |
+| Test cases | `test(`, `it(`, `describe(` calls | `func Test...(t *testing.T)` | `def test_...`, `class Test...` | Per hunk: "Which test cases does this hunk add or change?" |
+| Functions | Top-level and exported functions and methods | `func` declarations | `def` at module or class level | Per hunk: "Which functions does this hunk add?" |
+| Narrow a run to one file | `node --test <file>`, `vitest run <file>`, `jest <file>` | `go test ./<pkg>` (package granularity) | `pytest <file>` | Run the verified command as is (whole suite) |
+| Reinstall before a base run | When `package.json` or the lockfile changed | When `go.mod` or `go.sum` changed | When the lockfile or requirements changed | Never |
+
+A repo can override any row in its conventions. For example, jinja's `src/jinja2/tests.py` is production code that the default Python glob would misread.
 
 ## Implementer: deterministic gates first
 
 Luo et al. found "most flaky tests (78%) are flaky the first time they are written", so the commit that adds a test is the cheapest place to catch it. Mark Seemann's rule for tautologies points the same way: "If you haven't seen it fail, you don't know if you've avoided a tautology."
 
-These gates run inside `deliver`'s `problems()` in the session sandbox, before the human approval. A failure returns "Not delivered; fix these" with each item, exactly as the commit-subject check does today. They need no model.
+These gates run inside `deliver`'s `problems()` in the session sandbox, before the human approval. A failure returns "Not delivered; fix these" with each item, exactly as the commit-subject check does today. They need no model unless a language has no adapter.
 
 ### G1 `new_tests_fail_on_base`
 
-- **Rule.** Every test file the delivery adds or changes must fail on the base sources. A file that passes there fails the gate.
-- **Which files are tests.** Changed files matching the repo's test globs (`*.test.*`, `*_test.go`, `test_*.py`, `*_spec.*`, `**/tests/**`). A repo can override the globs in its conventions, since jinja's `src/jinja2/tests.py` is production code.
-- **Which command.** The test commands under "How verified" in `artifacts/pr.md` that the session ran green. `claimedCommands` and `sessionRuns` already collect them. The command is narrowed to the file through one runner adapter each: `node --test <file>`, `go test ./<pkg>`, `pytest <file>`, `vitest run <file>`.
+- **Core rule.** Each test file the delivery adds or changes must fail when run against the base commit's non-test sources. A file that passes there fails the gate.
+- **Which command.** The test commands under "How verified" in `artifacts/pr.md` that the session ran green. `claimedCommands` and `sessionRuns` already collect them, for any language.
 - **How it runs.**
   1. `git checkout <base> -- <changed non-test files>` in `./repo`.
-  2. Run the narrowed command per test file with a 5 min timeout.
-  3. `git checkout HEAD -- .` to restore the head sources.
-  - Using the same tree keeps `node_modules` and workspace links valid. A separate worktree with borrowed `node_modules` would resolve workspace packages to the head tree and test head code. If `package.json` or the lockfile changed, it reinstalls first.
+  2. Reinstall if the adapter says so.
+  3. Run the narrowed command for each test file, with a 5 min timeout.
+  4. `git checkout HEAD -- .` to restore the head sources.
+- **Without an adapter.** The verified command runs once, unnarrowed. If it exits 0 on base, every changed test file is flagged together. That is coarser but still language-neutral.
+- **TS adapter: `node_modules`.** The base run uses the same tree on purpose. A separate worktree with a borrowed `node_modules` resolves workspace packages (`@quack/*` and the like) to the head tree, so it would test head code. Go modules and Python virtualenvs have no such links, so their adapters can use either tree.
 - **Exemptions.**
   - The delivery's commits are all `refactor:` or `test:`.
-  - `artifacts/pr.md` has a "Pass on base" line naming the file and the reason, which the approver reads.
+  - `artifacts/pr.md` has a "Pass on base" line that names the file and the reason, which the approver reads.
   - A timeout is reported as a timeout, never as a pass.
-- **Limit.** A test that fails on base only because it imports a new symbol passes the gate. G2's assertion rule and the judged check J2 cover that case.
-- **Cost.** One extra test run per changed test file. That is seconds for `node --test` on one file and minutes at worst for a whole Go package. It uses no model.
+- **Limit.** A test that fails on base only because it imports a new symbol passes the gate. G2's no-assertion signal and the judged check J2 cover that case.
+- **Cost.** One extra test run per changed test file: seconds for one TS or Python file, up to a whole package for Go. No model.
 
-### G2 `test_diff_lint`
+### G2 `test_signals`
 
-A token lint over added lines in test files and CI config. Hard failures:
+A catalog of signals for flake sources and vacuity, matched over the lines the delivery adds to test files and CI config. The catalog itself is language-neutral; only the patterns are per language. A hard signal fails `deliver`. Each soft signal becomes a unit for the judged check J1. In a language without an adapter, every added test case becomes a J1 and J2 unit instead.
 
-- **Focused test:** `.only(`, `only: true`, `fit(`, `fdescribe(`, `test.only`.
-- **Newly skipped test** without `#<issue>` on the same line: `.skip(`, `skip: true`, `xit(`, `t.Skip(`, `@pytest.mark.skip`.
-- **Retries added:** `retries`, `retry:`, `--reruns`, `@pytest.mark.flaky`, `this.retries(`.
-- **A new test case with no assertion call** in its body (`assert`, `expect(`, `t.Error`, `t.Fatal`, `require.`). Bodies that only check that nothing throws go in an `assert.doesNotThrow`.
+| Signal | Kind | TS/JS | Go | Python |
+| --- | --- | --- | --- | --- |
+| Focused test | hard | `.only(`, `only: true`, `fit(`, `fdescribe(` | none: `go test` has no in-code focus marker (`-run` is a flag) | none in core pytest; `-k` is a flag |
+| Newly skipped, with no `#<issue>` on the line | hard | `.skip(`, `skip: true`, `xit(`, `.todo(` | `t.Skip(` | `@pytest.mark.skip`, `pytest.skip(`, `@unittest.skip` |
+| Retries added | hard | `retries`, `this.retries(`; `retry:` in CI YAML | a retry loop around `go test` in CI scripts; `retry:` in CI YAML | `--reruns`, `@pytest.mark.flaky`; `retry:` in CI YAML |
+| Test case with no assertion | hard | no `assert`, `expect(` or `t.assert` in the body | no `t.Error`, `t.Fatal`, `require.` or `assert.` in the body | no `assert` statement or `self.assert*` in the body |
+| Fixed sleep | soft | `setTimeout(`, `sleep(` | `time.Sleep(` | `time.sleep(`, `asyncio.sleep(` |
+| Real clock | soft | `Date.now()`, `new Date()` with no argument | `time.Now()` | `datetime.now(`, `date.today(`, `time.time(` |
+| Unseeded randomness | soft | `Math.random(`, `crypto.randomUUID(` | `rand.` without `rand.New(rand.NewSource(` | `random.` without `random.Random(<seed>)`, `uuid4(` |
+| Real network | soft | a URL literal whose host is not `localhost`, `127.0.0.1` or `::1`; this one pattern serves every language | same | same |
 
-Soft hits are not failures. Each becomes a unit for the judged check J1:
-
-- `sleep(`, `setTimeout(`, `time.Sleep(`
-- `Date.now()`, `new Date()`, `time.Now()`, `datetime.now`
-- `Math.random`, `random.` without a seed
-- any URL literal whose host is not `localhost`, `127.0.0.1` or `::1`
+A test that only checks that nothing throws must say so explicitly: `assert.doesNotThrow` in TS/JS, `require.NoError` in Go, and in Python, which has no such assertion, a `# no-raise` comment on the `def` line. That keeps the no-assertion signal a hard failure.
 
 Cost: milliseconds.
 
 ### G3 `no_new_clones`
 
-- **Rule.** Fail when the delivery adds a clone of at least 50 tokens that the base commit did not have. Clones that already exist never fail a delivery. Test files use 100 tokens because table-driven tests repeat by design.
-- **How it runs.** `jscpd --min-tokens 50 --baseline-from-ref <base> --fail-on-new-clones .`. jscpd's README describes the baseline mode as one that "tolerates legacy clones and fails the build on regressions", so no filtering code is needed.
+- **Core rule.** Fail when the delivery adds a clone of at least 50 tokens that the base commit did not have. Clones that already exist never fail a delivery.
+- **How it runs.** `jscpd --min-tokens 50 --baseline-from-ref <base> --fail-on-new-clones .`. jscpd's README describes the baseline mode as one that "tolerates legacy clones and fails the build on regressions".
+- **Configured per repo** in its `.jscpd.json`: the token floor, ignored paths (fixtures, generated code), and a higher floor for tests, since table-driven tests repeat by design. Without that file, the defaults above apply.
+- **Languages.** jscpd's README claims token clone detection for "224 language formats". Its function-level `--similarity` covers 15 languages: JavaScript, TypeScript, Python, Java, Kotlin, Scala, C#, Go, Rust, C, C++, PHP, Ruby, Swift and Clojure. So the gate itself is language-neutral. The `new_function` candidate search below gets similarity pairs only in those 15.
 - **Install.** jscpd is installed in the quack-v1 image, not fetched at run time.
-- **Cost.** One pass over the repo, seconds at quack's size, with no model.
+- **Cost.** One pass over the repo, seconds at quack's size. No model.
+
+### Still language-specific, and why
+
+- **G1's per-file narrowing.** Each runner takes a file differently, and Go narrows only to a package. The unnarrowed fallback works everywhere but flags all changed test files together.
+- **G2's focused-test signal.** It exists only where the framework puts a focus marker in code (TS/JS). In Go and core pytest, focus is a command-line flag, so the row is empty by design, not by omission.
+- **Similarity candidates for `new_function`.** They exist only in jscpd's 15 tree-sitter languages. Elsewhere, candidates come from name tokens alone.
 
 ### Implementer rubric (judged, per item)
 
@@ -81,7 +107,7 @@ This adds to the audit's proposal (gates `claims_match_activity`, `checks_pass`,
 
 | Check | Weight | scope / chunk / fanIn | Question |
 | --- | --- | --- | --- |
-| J1 `flake_hit_harmless` | 3 | `flake_hit` (each G2 soft hit, with 15 lines around it) / item / share | Does this test's result stay the same however long the work takes, whatever the date or time, whatever random value is drawn, and whether or not the network is up? |
+| J1 `flake_hit_harmless` | 3 | `flake_hit` (each G2 soft signal, with 15 lines around it) / item / share | Does this test's result stay the same however long the work takes, whatever the date or time, whatever random value is drawn, and whether or not the network is up? |
 | J2 `test_can_fail` | 3 | `new_test` (each added test case's body plus the functions it calls in the diff) / item / share | If the code under test returned a wrong value, would an assertion in this test fail? |
 | `minimal_diff` | 2 | `hunk` / item / share | Does this hunk serve the task the PR body states? |
 
@@ -97,16 +123,16 @@ Replace the existing test line in "What to check" (item 4, "Tests: would they fa
 6. Boundaries: when a public signature, config key or error names the module's storage, transport or vendor, ask whether swapping that dependency would force callers to change. If so, report it with the symbol.
 ```
 
-This adds about 110 words, and the old items 5 and 6 renumber to 7 and 8. No prompt line covers G-type tokens (`.only`, retries). Those reach the reviewer as evidence.
+This adds about 110 words, and the old items 5 and 6 renumber to 7 and 8. No prompt line covers the hard G2 signals (focus markers, retries). Those reach the reviewer as evidence.
 
 ### Evidence units added to `reviewEvidence`
 
 All are listed in code from the diff, so every check below quantifies over a known set:
 
-- **`new_test`:** each test case the diff adds or changes, found from hunk headers and the test-call patterns of G2, with its body.
-- **`flake_hit`:** each G2 soft hit in added test lines, with 15 lines of context.
+- **`new_test`:** each test case the diff adds or changes, found by the language adapter's test-case splitter (or the per-hunk model fallback), with its body.
+- **`flake_hit`:** each G2 soft signal in added test lines, with 15 lines of context.
 - **`clone`:** each G3 clone that overlaps added lines, with both fragments.
-- **`new_function`:** each added top-level or exported function. The three closest existing functions come from shared camelCase name tokens and jscpd clone pairs.
+- **`new_function`:** each added function, from the adapter's function splitter (or the model fallback). Its three closest existing functions come from shared name tokens (split on case and `_`) and, in jscpd's 15 similarity languages, from its function pairs.
 - **`blocking_tests` and `blocking_design`:** the blocking findings anchored `tests` and `design`, filtered by anchor like today's `blocking` scope.
 - For each unit, code records whether any finding cites a line within 3 lines of it (`reported`).
 
@@ -125,7 +151,7 @@ Each check is "for each listed item, did the review handle it", split into posit
 | `tests_finding_shows_failure` | 2 | `blocking_tests` (blocking findings with anchor `tests`) / item / share | Does this finding show either a wrong output the test would still pass on, or a condition (timing, order, date, seed, network) under which the test fails on correct code? |
 | `leak_finding_substitution` | 1 | `blocking_design` (blocking findings with anchor `design` that name a leak) / item / share | Does this finding name the public symbol that carries the internal name, and would replacing that internal dependency force a caller to change it? |
 
-Every question asks about one item and is phrased so that yes is the finding. None asks whether something is absent from the whole diff.
+Every question asks about one item and is phrased so that yes is the finding. None asks whether something is absent from the whole diff. No question names a language. Only the splitters that produce `new_test`, `flake_hit` and `new_function` are per-language, with the model as their fallback.
 
 ### Cost
 
@@ -209,6 +235,7 @@ The bar is no slower and no added false positives, starting with one case.
 3. Is about 110 more prompt words acceptable, against the audit's push to keep the prompt near 850?
 4. Should `leak_finding_substitution` ship at all, given that boundary imports are already gated in quack's own CI by `tools/boundary.ts`? It matters only for other repos.
 5. Is jscpd acceptable as a new dependency in the quack-v1 image?
+6. Are TS/JS, Go and Python the right first adapters? Does any repo quack works on use another language that should get one before it falls back to the judge?
 
 ## Sources checked
 
@@ -219,7 +246,7 @@ Opened on 2026-11-05 and used as stated:
 - **Petrović and Ivanković, ICSE-SEIP 2018:** "the reported usefulness of the surfaced results improved from 20% to 80%"; mutants on covered, diff-touched, non-arid lines only.
 - **Vera-Pérez et al., EMSE 2019:** pseudo-tested methods in "all 21 mature Java projects" studied, from 1% to 46%.
 - **Seemann, "Tautological assertion", 2019:** the quote above.
-- **jscpd README and jscpd.dev:** `--baseline`, `--baseline-from-ref`, `--fail-on-new-clones[=N]`, `--changed`, `--threshold`, `--min-tokens`.
+- **jscpd README and jscpd.dev:** `--baseline`, `--baseline-from-ref`, `--fail-on-new-clones[=N]`, `--changed`, `--threshold`, `--min-tokens`; "224 language formats"; the 15 languages `--similarity` covers; config read from `.jscpd.json`.
 - **PMD CPD docs (7.29.0):** `--minimum-tokens` is required; exit 4 on duplication.
 - **RepoReuse, arXiv 2609.35357:** agents "leave duplicated logic in 50.8% of task chains by turn 5, all while pass rates barely move."
 - **GitClear 2025:** copy/pasted lines rose from 8.3% to 12.3% of changed lines; moved lines fell from 25% to under 10% (2021-2024).
