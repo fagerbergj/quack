@@ -64,7 +64,7 @@ test('facts hold the waiver context, the competition table, bucketed free agents
   assert.deepEqual(f.table.map((t) => [t.team, t.priority, t.faabLeft]), [['Mallard Mayhem', 2, null], ['teal', 1, null], ['Pintail Pride', 3, null]]);
   assert.deepEqual(f.table[0].needs, { TE: 1 });
   assert.deepEqual(f.table[1].needs, { RB: 2, WR: 2, TE: 2, K: 1, DEF: 1 });
-  assert.deepEqual(f.table[0].byes, [{ week: 10, pos: 'WR', out: 3 }]);
+  assert.deepEqual(f.table[0].byes, [{ week: 10, pos: 'WR', out: 3, short: 1 }]);
   assert.deepEqual(f.buckets.RB, ['300', '301']);
   assert.deepEqual(f.buckets.WR, ['302', '303']);
   assert.deepEqual(f.widely, ['300', '302', '303']);
@@ -197,6 +197,22 @@ test('widely_owned_accounted fails a card that neither claims nor passes over a 
   assert.equal((await gate('widely_owned_accounted', f, buildWaiversCard(f, { ...rollingDecision, passed: [{ playerId: '303', why: 'Out.' }] }))).met, 1);
 });
 
+test('bye_coverage is absent when the claims fill every bye hole, and names an open hole and an add\'s unflagged bye', async () => {
+  const { f, card: c } = await card();
+  assert.deepEqual(await gate('bye_coverage', f, c), { met: 0, detail: undefined });
+  // Without the WR claim the week-10 hole stays open; an add on bye next week whose why never says so is flagged.
+  const noWr = buildWaiversCard(f, { ...rollingDecision, claims: [rollingDecision.claims[0]] });
+  assert.match((await gate('bye_coverage', f, noWr)).detail!, /^week 10 leaves 1 WR slot empty and the claims cover 0$/);
+  const onBye = { ...noWr, candidates: noWr.candidates.map((r) => ({ ...r, bye: 10 })) };
+  const r = await gate('bye_coverage', f, onBye);
+  assert.match(r.detail!, /Felix Free's week 10 bye is not flagged/);
+  assert.equal(r.met, 1);
+  const flagged = (why: string) => ({ ...onBye, candidates: onBye.candidates.map((x) => ({ ...x, why })) });
+  assert.doesNotMatch((await gate('bye_coverage', f, flagged('Felix Free is on bye in week 10; claim him now.'))).detail!, /Felix Free/);
+  assert.doesNotMatch((await gate('bye_coverage', f, flagged('Felix Free sits wk 10 but starts after.'))).detail!, /Felix Free/);
+  assert.match((await gate('bye_coverage', f, flagged('Covers the week 11 bye of another back.'))).detail!, /Felix Free's week 10 bye is not flagged/);
+});
+
 test('faab_language_on_rolling penalizes FAAB figures in a rolling league and not in a FAAB one', async () => {
   const { f, card: c } = await card();
   const talks = { ...c, candidates: c.candidates.map((r, i) => (i ? r : { ...r, why: 'Felix Free is worth a $20 bid.' })) };
@@ -225,9 +241,8 @@ test('a row\'s judge evidence carries its news, the designations of both players
   const f = { ...(await factsOf()), news: { '300': [item] } };
   const c = buildWaiversCard(f, rollingDecision);
   const ev = await waiversEvidence(f)(null, { content: JSON.stringify(c) });
-  const row = ev.row[0].state as unknown as { news: Array<{ url: string }>; designations: Record<string, string>; waiver_type: string; bye_exposure: unknown[] };
+  const row = ev.row[0].state as unknown as { news: Array<{ url: string }>; designations: Record<string, string>; waiver_type: string };
   assert.deepEqual([row.news.map((n) => n.url), row.designations, row.waiver_type], [[item.url], { 'Felix Free': 'none', 'Dan Dash': 'none' }, 'rolling']);
-  assert.equal(row.bye_exposure.length, 1);
   assert.deepEqual(ev.close.map((u) => u.id), ['claim1']);
   assert.equal(ev.row.length, 2);
 });
@@ -268,7 +283,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
   const { sealed, judged, verdict } = await runWaivers(base, rollingDecision);
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@5', [], true, ['close-call news not checked: no news source']]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@6', [], true, ['close-call news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(verdict.checks.some((k) => k.id === 'faab_language_on_rolling'));
   assert.ok(judged.some((q) => /queue position spent/.test(q)));
@@ -277,7 +292,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
 test('the workflow seals a FAAB card with its bids, and with a news source the close calls are scored', async () => {
   const { sealed, verdict, judged } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@5', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@6', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });

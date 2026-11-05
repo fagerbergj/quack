@@ -1,6 +1,6 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
 import type { Candidate, WaiversCard } from './card.ts';
-import { worth, type WaiverFacts } from './facts.ts';
+import { BYE_LEAD, worth, type WaiverFacts } from './facts.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
 const parse = (artifact: string) => JSON.parse(artifact) as WaiversCard;
@@ -44,6 +44,24 @@ function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
   return share(f.widely.length - missing.length, f.widely.length, `no claim or reason for ${missing.map((id) => f.free[id].name).join(', ')}`);
 }
 
+// A pitfall over the bye holes and the claims: a hole needs as many claims at its position, on another bye, as it is short,
+// and an add whose own bye falls inside the lead time says so in `why`.
+function byeCoverage(artifact: string, ev: Evidence): CodeResult {
+  const f = factsOf(ev);
+  const rows = parse(artifact).candidates;
+  const holes = f.table.find((t) => t.mine)?.byes ?? [];
+  const open = holes.flatMap((h) => {
+    const covers = rows.filter((r) => r.player.pos === h.pos && r.bye !== h.week).length;
+    return covers < h.short ? [`week ${h.week} leaves ${h.short} ${h.pos} slot${h.short > 1 ? 's' : ''} empty and the claims cover ${covers}`] : [];
+  });
+  // The add's own week must sit beside the word: another team's bye named in the same why does not flag his.
+  const flags = (why: string, week: number) => new RegExp(`\\b(?:bye|sits|idle|off)\\b[^.;]*\\b${week}\\b|\\b${week}\\b[^.;]*\\b(?:bye|sits|idle|off)\\b`, 'i').test(why);
+  const unflagged = rows.filter((r) => r.bye !== null && r.bye >= f.week && r.bye <= f.week + BYE_LEAD && !flags(r.why, r.bye)).map((r) => `${r.player.name}'s week ${r.bye} bye is not flagged`);
+  const flaws = [...open, ...unflagged];
+  const units = holes.length + rows.length;
+  return { met: units ? flaws.length / units : 0, detail: flaws.length ? flaws.join('; ') : undefined };
+}
+
 const FAAB_WORDS = /\bfaab\b|\bbids?\b|\bbidding\b|\$\s?\d|\bbudget\b/i;
 
 // A pitfall: met is 1 when the card talks FAAB in a league that has none.
@@ -63,7 +81,7 @@ export function waiversEvidence(f: WaiverFacts) {
     const card = parse(sealed.content);
     const unit = (r: Candidate) => ({
       id: `claim${r.rank}`,
-      state: { row: r, week: f.week, waiver_type: f.waiverType, my_priority: f.myPriority, faab_left: f.faabLeft, teams: f.teams, news: r.news ?? [], designations: designations(r), bye_exposure: f.table.find((t) => t.mine)?.byes ?? [] } as never,
+      state: { row: r, week: f.week, waiver_type: f.waiverType, my_priority: f.myPriority, faab_left: f.faabLeft, teams: f.teams, news: r.news ?? [], designations: designations(r) } as never,
     });
     const rows = card.candidates.map(unit);
     return {
@@ -78,7 +96,7 @@ export function waiversEvidence(f: WaiverFacts) {
 // The audit's waivers table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 5,
+  version: 6,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
@@ -94,7 +112,7 @@ export const waiversRubric: Rubric = {
       { id: 'close_call_news', label: "A close call doesn't cite the news", weight: 3, scope: 'close', question: 'Does this close top claim or drop reflect the attached `news`, naming the right player for each report and the Sleeper `designations`?' },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'bye_coverage', label: "Misses a bye week in the plan", weight: -2, scope: 'row', question: 'Does it miss a bye inside the lead time, or count a shared bye as one slot?' },
+      { id: 'bye_coverage', label: "Misses a bye week in the plan", weight: -2, code: byeCoverage },
       { id: 'crowd_metric_as_value', label: "Treats a crowd number as scoring evidence", weight: -3, scope: 'row', question: 'Is a trending or ownership number given as evidence the player will score, rather than as how hard he is to land?' },
       { id: 'ordered_fallback_flagged', label: "Calls backup claims a conflict", weight: -4, scope: 'card', question: 'Does it describe claims that share a drop as a mistake or a conflict?' },
       { id: 'faab_language_on_rolling', label: "Talks about FAAB in a non-FAAB league", weight: -4, code: faabLanguageOnRolling },

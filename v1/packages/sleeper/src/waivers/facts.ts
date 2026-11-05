@@ -15,7 +15,8 @@ export const worth = (p: Valued): number | null =>
 /** `owned` is Sleeper's platform-wide ownership percent and `adds` its 24-hour add count, null when the player is not on the trending list: scarcity signals, not value. */
 export type FreeAgent = Valued & { owned: number | null; adds: number | null };
 export type Mine = Valued & { role: 'starter' | 'bench' | 'ir' };
-export type Bye = { week: number; pos: string; out: number };
+/** `short` is how many starting slots at `pos` the bye leaves empty, so two starters sharing it make a two-slot hole. */
+export type Bye = { week: number; pos: string; out: number; short: number };
 /** One league-competition row: what the team lacks, what it can spend and where a bye leaves it short. */
 export type TeamRow = { rosterId: number; team: string; mine: boolean; priority: number | null; faabLeft: number | null; needs: Record<string, number>; byes: Bye[] };
 
@@ -81,7 +82,8 @@ export function teamNeeds(players: WPlayer[], slots: string[], positions: string
   const byes = Array.from({ length: BYE_LEAD + 1 }, (_, i) => week + i).flatMap((w) => positions.flatMap((pos) => {
     const here = healthy.filter((p) => p.pos === pos);
     const out = here.filter((p) => p.bye === w).length;
-    return out > 0 && here.length - out < required(pos) ? [{ week: w, pos, out }] : [];
+    const short = required(pos) - (here.length - out);
+    return out > 0 && short > 0 ? [{ week: w, pos, out, short }] : [];
   }));
   return { needs, byes };
 }
