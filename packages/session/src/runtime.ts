@@ -218,12 +218,14 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       return found.reverse();
     },
     // The messages the transcript view shows, tool calls and results included; the system prompt and other log entries stay out.
-    async transcript(): Promise<Array<{ kind: string; model: unknown }>> {
-      const found: Array<{ kind: string; model: unknown }> = [];
+    // With `conversation`, a child conversation of this session (a subagent's); undefined when there is none such.
+    async transcript(conversation?: string): Promise<Array<{ id: unknown; kind: string; model: unknown }> | undefined> {
+      if (conversation !== undefined && !(await harness.conversation(conversation as never, ctx))) return undefined;
+      const found: Array<{ id: unknown; kind: string; model: unknown }> = [];
       let cursor: unknown;
       do {
-        const page = await root.commit((tx) => tx.scanEntries({ conversationId: root.id, order: 'ascending' }, 200, cursor as never), ctx);
-        for (const e of page.items) if (EXPORTED.has(e.kind) && e.model?.length) found.push({ kind: e.kind, model: e.model });
+        const page = await root.commit((tx) => tx.scanEntries({ conversationId: (conversation ?? root.id) as never, order: 'ascending' }, 200, cursor as never), ctx);
+        for (const e of page.items) if (EXPORTED.has(e.kind) && e.model?.length) found.push({ id: e.id, kind: e.kind, model: e.model });
         cursor = page.next as never;
       } while (cursor);
       return found;

@@ -263,6 +263,33 @@ test('a run held past the cap requeues behind waiters at its next generation', a
   assert.deepEqual([waiter.granted, again.granted], [true, false]);
 });
 
+test('parallel calls in one session take one slot each and queue past the limit', async () => {
+  fresh(2);
+  const g = gate('s');
+  const calls = [begin(g), begin(g), begin(g)];
+  await clock.settle();
+  assert.deepEqual(calls.map((c) => c.granted), [true, true, false]);
+  assert.deepEqual(heldBy().sort(), ['s', 's#1']);
+  assert.equal(notes.s, 'Waiting for a model slot (0 ahead)');
+  g.end();
+  await clock.advance(1000);
+  assert.equal(calls[2].granted, true, 'the call that ended hands its slot to the queued one without waiting for the idle grace');
+});
+
+test('a call reuses the idle slot of the one before it, and all slots go back after the grace', async () => {
+  fresh(2);
+  const g = gate('s');
+  await g.begin('swap');
+  await g.begin('swap');
+  g.end();
+  await g.begin('swap');
+  assert.deepEqual(heldBy().sort(), ['s', 's#1']);
+  g.end();
+  g.end();
+  await clock.advance(GRACE + 1);
+  assert.deepEqual(heldBy(), []);
+});
+
 test('the service serves acquire, heartbeat and release relative to its mount', async () => {
   const app = createSlotsService({ dbPath: ':memory:', limits: { swap: 1 } });
   const service = serveApp(app).listen(0);

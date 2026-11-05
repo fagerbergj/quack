@@ -130,6 +130,10 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],
   ['GET', /^\/export$/, exported],
+  ['GET', /^\/transcript$/, async (s, req) => {
+    const transcript = await s.transcript(new URL(req.url ?? '', 'http://x').searchParams.get('conversation') ?? undefined);
+    return transcript ? [200, { transcript }] : [404, { error: 'no such conversation' }];
+  }],
   ['POST', /^\/abort$/, abort],
   ['POST', /^\/resume$/, resume],
   ['POST', /^\/approvals\/([^/]+)$/, decide],

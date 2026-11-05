@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, takeLaunchToken } from '@quack/session';
 import { startPublisher } from '@quack/index';
+import { distributorAgents, subagentExtension } from '@quack/subagent';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -22,8 +23,11 @@ const config = parseDeployment(readJson(env('QUACK_CONFIG')));
 const definition = readJson(env('QUACK_AGENT'));
 // Only the providers this agent names are asked for their models, so one that is down cannot slow an agent that never uses it.
 const deployment = await resolveDeployment(config, fetch, referencedProviders(definition, config));
-const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions);
-const { name: agentName, version: agentVersion, extensions } = definition;
+const { name: agentName, version: agentVersion, extensions, subagents } = definition;
+const distributorUrl = process.env.QUACK_INDEX_URL?.replace(/\/$/, '');
+// An agent turns the tool off with `subagents: false`; the rest get it, like the slots gate.
+const subagent = subagents === false ? [] : [() => [subagentExtension(deployment.subagents, distributorUrl ? distributorAgents({ distributorUrl, deployment, catalog }) : undefined)]];
+const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, [...deploymentExtensions, ...subagent]);
 
 const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, key: env('QUACK_SESSION_KEY') });
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
