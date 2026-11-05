@@ -5,7 +5,7 @@ import { agentModel, decide, modelResolver } from '@quack/sdk';
 import type { Check, Unit } from './rubric.ts';
 
 /** A decision model such as Clef, reached through pi-ai's classifier API. */
-export type ClassifierRef = { provider: string; modelId: string; maxInputTokens: number; act?: number; /** Units classified at once (default 1); the decision server needs that many slots. */ concurrency?: number };
+export type ClassifierRef = { provider: string; modelId: string; maxInputTokens: number; act?: number };
 
 export type Answer = { met: boolean | null; resolver: string; note?: string };
 
@@ -39,16 +39,11 @@ async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined,
   return { met: d.choice === 'yes', resolver: d.resolver, note: d.choice === 'yes' ? undefined : d.reason };
 }
 
-/** The decision model's probabilities for one unit, asked once and memoized, so a later read is free. */
-export async function probabilitiesOf(api: ToolExecutionApi, ref: ClassifierRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | null> {
-  const key = `${memo}:${unit.id}:classifier`;
-  const stored = await api.memo<Record<string, number> | null>(key, ctx);
-  return stored !== undefined ? stored : api.memo(key, (ref ? await classify(api, ref, unit, checks, ctx) : undefined) ?? null, ctx);
-}
-
 // One decision-model request per unit; confident answers stand, the rest escalate one check at a time (D16).
 export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | undefined, judgeModel: ModelRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, Answer>> {
-  const probabilities = await probabilitiesOf(api, ref, memo, unit, checks, ctx);
+  const key = `${memo}:${unit.id}:classifier`;
+  const stored = await api.memo<Record<string, number> | null>(key, ctx);
+  const probabilities = stored !== undefined ? stored : await api.memo(key, (ref ? await classify(api, ref, unit, checks, ctx) : undefined) ?? null, ctx);
   const act = ref?.act ?? 0.8;
   const answers: Record<string, Answer> = {};
   for (const check of checks) {
