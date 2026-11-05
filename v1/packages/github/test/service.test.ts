@@ -202,9 +202,9 @@ test('the issue route returns an issue with the default branch; a pull request n
   const get = (n: number, token = 'svc-secret') => fetch(`${service}/issues/acme/widgets/${n}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: await r.json() }));
   assert.deepEqual((await get(12)).body, { owner: 'acme', repo: 'widgets', number: 12, title: 'Add TTL', body: 'b', author: 'dev', state: 'open', labels: ['bug'], baseRef: 'trunk' });
   assert.equal((await get(9)).status, 404);
-  const onV1 = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, issueBase: 'v1' })));
+  const onV1 = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, issueBase: { 'acme/widgets': 'v1', 'acme/other': 'next' } })));
   const issue = await fetch(`${onV1}/issues/acme/widgets/12`).then((r) => r.json());
-  assert.equal(issue.baseRef, 'v1', 'issueBase replaces the default branch');
+  assert.equal(issue.baseRef, 'v1', 'the listed repository uses its issueBase');
 });
 
 test('a pull request is opened with the installation token, mentions of the bot defanged', async () => {
