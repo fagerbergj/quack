@@ -71,3 +71,16 @@ test('a typescript spec validates, its pointers name exports, and a string docum
   assert.deepEqual(validateSpec(JSON.stringify(spec)), []);
   assert.deepEqual(validateSpec(JSON.stringify({ ...spec, document: { type: 'object' } })).length, 1);
 });
+
+test('re-exports obey the import allow-list and the TSDoc rule, and export * is refused', async () => {
+  assert.deepEqual(await codes("/** R. */\nexport { X } from 'left-pad';\n"), ['ts2307', 'import-not-allowed']);
+  assert.deepEqual(await codes("export { Extension } from '@earendil-works/pi-durable';\n"), ['missing-tsdoc']);
+  assert.deepEqual(await codes("/** R. */\nexport { Extension } from '@earendil-works/pi-durable';\n"), []);
+  assert.deepEqual(await codes("/** R. */\nexport * from '@earendil-works/pi-durable';\n"), ['export-star']);
+});
+
+test('diff reports a removed re-export', async () => {
+  const re = "/** R. */\nexport { Extension, defineExtension } from '@earendil-works/pi-durable';\n";
+  const out = await breaks(re, re.replace(', defineExtension', ''));
+  assert.deepEqual(out, ['export-removed /defineExtension: export "defineExtension" is removed, so code that names it no longer compiles']);
+});

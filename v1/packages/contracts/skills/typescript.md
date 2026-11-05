@@ -25,7 +25,7 @@ Ask. Suggested: a discriminated union with a literal `kind` field over several b
 Check. No `any` in an exported signature and no default export. Use `unknown` and narrow it, or name the type. Ask whether a class belongs in the surface. Suggested: none, unless callers need its behavior; a type or interface describes shape without tying callers to an implementation.
 
 ### compatibility
-Check. The diff compiles each export from the old and the new version in both directions. If the new type does not fit the old one, values core now produces break old consumers (a widened union, a removed field, a changed type). If the old type does not fit the new one, values extensions already provide break (a new required field, a narrowed return type). A removed export is breaking; a new export or a new optional field is safe. A break names its callers.
+Check. The diff compiles each export from the old and the new version in both directions. If the new type does not fit the old one, values core now produces break old consumers (a widened union or a changed type). If the old type does not fit the new one, values extensions already provide break (a new required field, a narrowed return type). A removed export is breaking, including a re-exported name. A new export or a new optional field is safe. Removing an optional field is not reported, so judge it yourself and list it in `compatibility`. Re-exported names are checked for removal only, and `export *` is refused: list the names. A break names its callers.
 
 ### versioning
 Ask. Suggested: compatible changes ship in place; a break gets a new export name (`FooV2`) kept beside the old while both are in use.

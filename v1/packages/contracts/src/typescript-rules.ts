@@ -40,7 +40,9 @@ export type Export = { name: string; type: boolean; value: boolean; params: numb
 
 const isExported = (n: ts.Node) => ts.canHaveModifiers(n) && !!ts.getModifiers(n)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
 
+// A re-exported name has no declaration here, so it is listed for removal checks but not probed.
 function describe(n: ts.Statement): Omit<Export, 'node'>[] {
+  if (ts.isExportDeclaration(n)) return n.exportClause && ts.isNamedExports(n.exportClause) ? n.exportClause.elements.map((e) => ({ name: e.name.text, type: false, value: false, params: 0 })) : [];
   if (ts.isVariableStatement(n)) return n.declarationList.declarations.map((d) => ({ name: d.name.getText(), type: false, value: true, params: 0 }));
   const name = (n as unknown as ts.NamedDeclaration).name?.getText();
   if (!name) return [];
@@ -50,7 +52,7 @@ function describe(n: ts.Statement): Omit<Export, 'node'>[] {
 }
 
 /** Top-level exported declarations, one entry per name per statement (a type-and-const pair gives two). */
-export const exportsOf = (sf: ts.SourceFile): Export[] => sf.statements.filter(isExported).flatMap((node) => describe(node).map((d) => ({ ...d, node })));
+export const exportsOf = (sf: ts.SourceFile): Export[] => sf.statements.filter((s) => isExported(s) || ts.isExportDeclaration(s)).flatMap((node) => describe(node).map((d) => ({ ...d, node })));
 
 // The probe's module paths are absolute; show them as prev. and next.
 export const oneLine = (m: string | ts.DiagnosticMessageChain) => ts.flattenDiagnosticMessageText(m, ' ').replace(/import\("[^"]*\/(prev|next)"\)\./g, '$1.').replace(/\s+/g, ' ').slice(0, 300);
@@ -62,7 +64,7 @@ function compileFindings(p: ts.Program, sf: ts.SourceFile): Finding[] {
 }
 
 function importFindings(sf: ts.SourceFile): Finding[] {
-  return sf.statements.filter(ts.isImportDeclaration).flatMap((n) => {
+  return sf.statements.filter((s): s is ts.ImportDeclaration | ts.ExportDeclaration => ts.isImportDeclaration(s) || (ts.isExportDeclaration(s) && !!s.moduleSpecifier)).flatMap((n) => {
     const spec = (n.moduleSpecifier as ts.StringLiteral).text;
     return spec.startsWith('@earendil-works/') || spec.startsWith('node:') ? [] : [find('import-not-allowed', `imports "${spec}"; only @earendil-works/* packages and node: built-ins may be named`, `line ${line(sf, n.getStart())}`)];
   });
@@ -77,7 +79,9 @@ function containsAny(n: ts.Node): boolean {
 const isDefault = (s: ts.Statement) => ts.isExportAssignment(s) || (isExported(s) && !!ts.getModifiers(s as ts.HasModifiers)?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword));
 
 function exportFindings(sf: ts.SourceFile): Finding[] {
-  const out = sf.statements.filter(isDefault).map((s) => find('default-export', 'default exports are not allowed; name the export', `line ${line(sf, s.getStart())}`));
+  const stars = sf.statements.filter((s) => ts.isExportDeclaration(s) && !(s.exportClause && ts.isNamedExports(s.exportClause)));
+  const out = stars.map((s) => find('export-star', 'export * hides the surface; list the exported names', `line ${line(sf, s.getStart())}`));
+  out.push(...sf.statements.filter(isDefault).map((s) => find('default-export', 'default exports are not allowed; name the export', `line ${line(sf, s.getStart())}`)));
   for (const e of exportsOf(sf)) {
     if (!hasTsdoc(sf, e.node)) out.push(find('missing-tsdoc', `export "${e.name}" has no TSDoc comment saying who provides it and who consumes it`, `/${e.name}`));
     if (containsAny(e.node)) out.push(find('no-any', `export "${e.name}" uses any; name the type or use unknown`, `/${e.name}`));
