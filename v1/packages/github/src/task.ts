@@ -40,7 +40,7 @@ export function checkoutTaskTool(config: SessionConfig) {
   const dir = config.repoDir ?? 'repo';
   return defineTool({
     name: 'checkout_task',
-    description: `Check out the head branch of a pull request into ./${dir} and return its description, CI checks, the latest review's findings, linked issues and the repo's conventions. For an issue number, create the work branch quack/<n>-<slug> from the default branch and return the issue instead. Call it first.`,
+    description: `Check out the head branch of a pull request into ./${dir} and return its description, CI checks, the latest review's findings, linked issues and the repo's conventions. For an issue number, create the work branch quack/<n>-<slug> from the base branch (the repository's default unless the deployment sets one) and return the issue instead. Call it first.`,
     parameters: obj({ repository: str({ description: 'owner/repo' }), number: int({ minimum: 1 }) }, { open: true }),
     replay: 'safe',
     async execute(args, api, ctx) {

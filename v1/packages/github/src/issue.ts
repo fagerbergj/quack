@@ -25,7 +25,7 @@ export async function fetchIssue(config: SessionConfig, owner: string, repo: str
   return res.json() as Promise<IssueRecord>;
 }
 
-/** Clones the default branch and cuts the work branch from it; returns the facts the task needs. */
+/** Clones the base branch (the repository's default unless the deployment sets issueBase) and cuts the work branch from it; returns the facts the task needs. */
 export async function checkoutIssue(api: ToolExecutionApi, config: SessionConfig, dir: string, issue: IssueRecord, ctx: Context) {
   const remote = remoteFor(config, issue.owner, issue.repo);
   const run = (...args: string[]) => git(api, args, config, remote, ctx);
