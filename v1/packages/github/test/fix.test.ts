@@ -15,6 +15,10 @@ test('a trusted /fix on a PR starts the implementer in the PR session, with the 
   assert.match(t.input, /Instruction: the flaky cache test\nand the lint error/);
 });
 
+test('/fix tells the implementer to start with checkout_task for the open review feedback', () => {
+  assert.match(fix('/fix')!.input, /Start with checkout_task: .*open review feedback/);
+});
+
 test('a bare /fix asks for CI and review findings', () => {
   assert.match(fix(' /fix ')!.input, /Instruction: \(none; fix failing CI and open review findings\)/);
 });

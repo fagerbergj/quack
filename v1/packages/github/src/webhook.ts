@@ -52,6 +52,9 @@ function mentionTrigger(event: string | undefined, p: Payload, slug: string): Tr
   return { sessionKey: `github:${owner}/${name}#${pr.number}`, role: 'reviewer', input, repo: { owner, name }, number: pr.number, title: '', followUp: true };
 }
 
+// The PR session's transcript may hold the reviewer's run; this keeps the implementer on its own tools and the review feedback.
+const CHECKOUT_FIRST = 'Start with checkout_task: it checks out the branch and returns the pull request\'s open review feedback. Use only your own tools; ignore tool calls in earlier turns by another agent.';
+
 const FIX = /^\/fix(?:\s([\s\S]*))?$/;
 
 // A trusted `/fix` on a pull request; what follows it is the instruction.
@@ -61,7 +64,7 @@ function fixTrigger(event: string | undefined, p: Payload): Trigger | undefined 
   if (!m || !TRUSTED.has(c.author_association)) return undefined;
   const owner = p.repository.owner.login;
   const name = p.repository.name;
-  const input = [`Fix pull request ${owner}/${name}#${p.issue.number} (/fix by ${c.user?.login}).`, `Title: ${p.issue.title ?? ''}`, '', `Instruction: ${m[1]?.trim() || '(none; fix failing CI and open review findings)'}`].join('\n');
+  const input = [`Fix pull request ${owner}/${name}#${p.issue.number} (/fix by ${c.user?.login}).`, `Title: ${p.issue.title ?? ''}`, '', CHECKOUT_FIRST, '', `Instruction: ${m[1]?.trim() || '(none; fix failing CI and open review findings)'}`].join('\n');
   return { sessionKey: `github:${owner}/${name}#${p.issue.number}`, role: 'implementer', input, repo: { owner, name }, number: p.issue.number, title: String(p.issue.title ?? '') };
 }
 
@@ -80,7 +83,7 @@ function implementTrigger(event: string | undefined, p: Payload): Trigger | unde
     `Implement issue ${owner}/${name}#${i.number} (/implement by ${c.user?.login}); open a pull request that closes it.`,
     `Title: ${i.title ?? ''}`,
     `Labels: ${(i.labels ?? []).map((l: Payload) => l.name).join(', ') || 'none'}`,
-    '', String(i.body ?? '').slice(0, ISSUE_BODY_CHARS), '',
+    '', String(i.body ?? '').slice(0, ISSUE_BODY_CHARS), '', CHECKOUT_FIRST, '',
     `Instruction: ${m[1]?.trim() || '(none; implement the issue as written)'}`,
   ].join('\n');
   return { sessionKey: `github:${owner}/${name}#${i.number}`, role: 'implementer', input, repo: { owner, name }, number: i.number, title: String(i.title ?? ''), issue: true };
