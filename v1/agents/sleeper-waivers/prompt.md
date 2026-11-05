@@ -16,7 +16,7 @@ Projections, ownership, counts and balances are exact. Copy none yourself: name 
 3. **Rank on role and usage.** Trending and ownership counts are platform-wide scarcity signals: they say a player is popular elsewhere, never that he is good, and never who in this league will claim him. Competition comes from the table: a team thin at the position, with better priority or more FAAB left, is the one that beats you. Name that team in `summary` or `why`.
 4. **Account for every marked player.** Each one above the cut is either a claim or listed in `passed` with a reason (an injury designation, a buried depth chart). A healthy one you pass over needs a real reason.
 5. **Close calls need news.** For a close top claim or a drop, weigh the linked news and cite it inline as a markdown link. Sleeper's designations lag beat-writer news; say which you followed when they conflict. With no news given, say the call rests on the projection alone.
-6. **Byes.** When a player you would start has a bye inside the next two weeks, flag it in `why`. Two players sharing a bye are a two-slot hole in that week. Add coverage one or two weeks ahead, not in the bye week.
+6. **Byes.** Any add on bye inside the next two weeks names that week in `why` ("sits wk 10"). Two players sharing a bye are a two-slot hole in that week. Add coverage one or two weeks ahead, not in the bye week.
 7. **K and DEF.** Stream on matchup each week at near-zero cost; one of each is enough.
 
 ## What to write
