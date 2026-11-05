@@ -72,13 +72,14 @@ test('delete removes the directory and index rows, and is refused while running'
   assert.equal((await readdir(dataDir)).includes(sessionDirName('idle')), false);
 });
 
-test('an unknown key is 404, a bad body 400, and a non-JSON caller 415', async () => {
+test('an unknown key is 404, a bad body 400, and a non-JSON caller 415 (400 on the legacy delete route)', async () => {
   const { call } = await start();
   assert.equal((await call('PATCH', '/sessions/nope', { title: 'x' })).status, 404);
   assert.equal((await call('POST', '/sessions/nope/delete')).status, 404);
   assert.equal((await call('PATCH', '/sessions/idle', { title: 5 })).status, 400);
   assert.equal((await call('PATCH', '/sessions/idle', {})).status, 400);
-  assert.equal((await call('POST', '/sessions/idle/delete', {}, { 'content-type': 'text/plain' })).status, 415);
+  assert.equal((await call('POST', '/sessions/idle/delete', {}, { 'content-type': 'text/plain' })).status, 400);
+  assert.equal((await call('PATCH', '/sessions/idle', { title: 'x' }, { 'content-type': 'text/plain' })).status, 415);
 });
 
 test('export downloads one file with the session metadata and what the process returns, and 404s an unknown key', async () => {
