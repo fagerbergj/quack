@@ -18,8 +18,8 @@ const scenario: Scenario = {
     });
     await eachView(ctx, 'session view', async (page, label) => {
       await page.goto(`${ctx.url}/#/s/qa-review`);
-      // The transcript scrolls inside the live region, not the window.
-      const log = page.locator('[aria-live="polite"]');
+      // The transcript scrolls inside the session pane, not the window.
+      const log = page.getByRole('log', { name: 'Transcript' });
       await visible(log.getByText('Approve. The retry backoff now caps at 30 seconds'));
       await ctx.shot(page, `session-${label}`);
     });
