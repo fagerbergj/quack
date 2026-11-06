@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import type { Fact } from '@quack/index';
 import { createDistributor, processDriver, recordTurns, sessionDirName, type HostDriver } from '../src/index.ts';
+import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
 
 const cleanups: Array<() => void> = [];
 after(() => cleanups.forEach((fn) => fn()));
@@ -47,13 +48,13 @@ async function start(opts: { sessions?: Record<string, Seed>; running?: string[]
   const ensure = async () => { if (opts.pingUrl) return opts.pingUrl; throw new Error('a read must not start a process'); };
   const driver: HostDriver = { ...real, running: () => running, stop, sessions: async () => (await real.sessions()).map((s) => ({ ...s, running: running.includes(s.key) })), session: async (k) => { const s = await real.session(k); return s && { ...s, running: running.includes(s.key) }; }, ensure, setWake: async () => {} };
   const forgotten: string[] = [];
-  const server = createDistributor(driver, { retire: { token: opts.token, waiting: async () => false, forget: async (k) => void forgotten.push(k) }, spend: opts.spend }).listen(0);
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, retire: { token: opts.token, waiting: async () => false, forget: async (k) => void forgotten.push(k) }, spend: opts.spend }).listen(0);
   await new Promise((r) => server.once('listening', r));
   cleanups.push(() => server.close());
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
   const call = async (method: string, path: string, init: { body?: unknown; headers?: Record<string, string> } = {}) => {
     // A browser call arrives through the proxy with the caller's identity; a test passes headers to be another caller.
-    const res = await fetch(url(path), { method, headers: init.headers ?? { 'x-authentik-username': 'jason', ...(init.body ? { 'content-type': 'application/json' } : {}) }, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
+    const res = await fetch(url(path), { method, headers: init.headers ?? { ...PERSON, ...(init.body ? { 'content-type': 'application/json' } : {}) }, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
     return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as any };
   };
   const list = (query = '') => call('GET', `/sessions${query}`);
@@ -209,7 +210,7 @@ test('rename, archive and delete take the admin token or the proxy identity and 
   assert.equal((await call('PATCH', key('contracts:abc'), { ...bearer('admin'), body: { title: 'x' } })).status, 200);
   assert.equal((await call('POST', `${key('sleeper:platinum:2:lineup')}/delete`, { ...bearer('admin'), body: {} })).status, 401);
   assert.equal((await call('DELETE', key('contracts:abc'), bearer('admin'))).status, 200);
-  assert.equal((await call('DELETE', key('sleeper:gold:1:lineup'), { headers: { 'x-authentik-username': 'jason' } })).status, 200);
+  assert.equal((await call('DELETE', key('sleeper:gold:1:lineup'), { headers: { ...PERSON } })).status, 200);
   const legacy = await call('POST', `${key('sleeper:platinum:2:lineup')}/delete`, { body: {} });
   assert.deepEqual([legacy.status, legacy.body], [200, { key: 'sleeper:platinum:2:lineup' }]);
   assert.equal((await call('POST', `${key('sleeper:platinum:2:lineup')}/delete`, { body: {} })).status, 404);

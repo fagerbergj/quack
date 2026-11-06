@@ -34,7 +34,7 @@ async function host(agents: string[] = []) {
     const entry = { dir, stopped: false, release: () => {} };
     launches.push(entry);
     if (held) await new Promise<void>((r) => (entry.release = r));
-    return { url: `http://launch-${launches.length}`, stop: async () => void (entry.stopped = true), onExit: () => {} };
+    return { url: `http://launch-${launches.length}`, token: 't', stop: async () => void (entry.stopped = true), onExit: () => {} };
   };
   const driver = sessionHost({ dataDir: join(root, 'data'), agentsDir, defaultAgent: '' }, launch);
   return { driver, launches, hold: () => void (held = true), dataDir: join(root, 'data'), agentsDir };

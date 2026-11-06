@@ -1,6 +1,7 @@
 // Runs the v1 reviewer on PRs v0 already reviewed, each at the head v0 first reviewed, posting nothing.
 // Usage: node tools/bench/run.ts <out-dir> <deployment.json> <agent.json> <owner/repo> <pr>...
 import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
@@ -32,7 +33,10 @@ const serviceUrl = `http://127.0.0.1:${(service.address() as AddressInfo).port}`
 for (const n of prs) {
   const dir = resolve(outDir, `pr-${n}`);
   mkdirSync(join(dir, 'session'), { recursive: true });
-  const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), PORT: '0', QUACK_INDEX_URL: serviceUrl, QUACK_INDEX_TOKEN: 'bench', QUACK_SESSION_KEY: `bench:${repo}#${n}` };
+  // The runtime's server answers only its launch token, which it reads from this file and removes.
+  const token = randomUUID();
+  writeFileSync(join(dir, 'launch-token'), token, { mode: 0o600 });
+  const env = { ...process.env, QUACK_CONFIG: resolve(deployment), QUACK_AGENT: resolve(agent), QUACK_SESSION_DIR: join(dir, 'session'), QUACK_SESSION_TOKEN_FILE: join(dir, 'launch-token'), PORT: '0', QUACK_INDEX_URL: serviceUrl, QUACK_INDEX_TOKEN: 'bench', QUACK_SESSION_KEY: `bench:${repo}#${n}` };
   const child = spawn(process.execPath, [main], { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const log: string[] = [];
   child.stdout?.on('data', (d) => log.push(String(d)));
@@ -44,7 +48,7 @@ for (const n of prs) {
     const deadline = started + 30 * 60_000;
     const port = await childPort(child, 'runtime', deadline - Date.now());
     // A survivor of a stopped run would answer the next run's requestId from its old session, so stopChild escalates to SIGKILL.
-    result = await untilSettled(`http://127.0.0.1:${port}`, { input: `Review pull request ${repo}#${n}.`, requestId: `bench-${n}` }, deadline, child);
+    result = await untilSettled({ url: `http://127.0.0.1:${port}`, token }, { input: `Review pull request ${repo}#${n}.`, requestId: `bench-${n}` }, deadline, child);
   } catch (err) {
     result = { status: 'error', error: String(err) };
   } finally {

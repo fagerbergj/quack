@@ -80,7 +80,7 @@ async function answer(session: Awaited<ReturnType<typeof openSession>>, decision
   for (;;) {
     const [pending] = await pendingApprovals(session.root, BACKGROUND_CONTEXT);
     if (pending) {
-      await resolveApproval(session.root, pending.id, { decision, by: 'operator', reason: decision === 'reject' ? 'not now' : undefined }, BACKGROUND_CONTEXT);
+      await resolveApproval(session.root, pending.id, { decision, by: { kind: 'person', name: 'operator' }, reason: decision === 'reject' ? 'not now' : undefined }, BACKGROUND_CONTEXT);
       return pending;
     }
     if (Date.now() > deadline) throw new Error('no approval was requested');

@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { credentialBroker, containerEnv, dockerApi, dockerLauncher, parseDockerHost, parseHostConfig, reapSessions, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
+import { credentialBroker, containerEnv, dockerApi, dockerLauncher, onSessionNetwork, parseDockerHost, parseHostConfig, reapSessions, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
 import { proxyProviders } from '../src/keyed-services.ts';
 
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -118,6 +118,7 @@ test('the container gets no secrets: keyed services are proxied, the distributor
 test('a session with a named data volume mounts only its subpath of it', async () => {
   const { docker, broker } = await setup();
   const dir = await mkdtemp(join(tmpdir(), 'quack-vol-'));
+  await mkdir(join(dir, 'abc'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const launch = dockerLauncher({ api: docker.api, broker, image: 'i', runtime: 'runsc', network: 'n', data: { volume: 'quack_quack-v1-data' }, distributorUrl: 'http://d', inherit: () => ({}), urlFor: () => docker.sessionUrl, sleep: async () => {}, startTimeoutMs: 1000 });
   await launch({ key: 'a', dir: join(dir, 'abc'), agentPath: undefined });
@@ -256,6 +257,7 @@ test('a container that exits while starting fails the start and leaves no token'
     return res;
   };
   const dir = await mkdtemp(join(tmpdir(), 'quack-dead-'));
+  await mkdir(join(dir, 'abc'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const launch = dockerLauncher({ api: dead, broker, image: 'i', runtime: 'runsc', network: 'n', data: { hostDir: '/h' }, distributorUrl: 'http://d', inherit: () => ({}), urlFor: () => 'http://127.0.0.1:9', sleep: async () => {}, startTimeoutMs: 1000 });
   await assert.rejects(launch({ key: 'a', dir: join(dir, 'abc'), agentPath: undefined }), /exited during start/);
@@ -309,4 +311,28 @@ test('a model response streams through the broker as it is produced', async () =
   assert.match(new TextDecoder().decode((await reader.read()).value), /one/, 'the first chunk arrives before the upstream finishes');
   release();
   assert.match(new TextDecoder().decode((await reader.read()).value), /two/);
+});
+
+test('a container gets its server token as a file in its own mount, listens on its interface, and is probed with that token', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-docker-'));
+  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
+  const probes: Array<string | undefined> = [];
+  const sessionUrl = await listen((req, res) => (probes.push(req.headers.authorization), res.end('{}')));
+  const docker = fakeDocker(sessionUrl);
+  const launch = dockerLauncher({ api: docker.api, broker: credentialBroker(), image: 'i', runtime: 'runsc', network: 'n', data: { hostDir: '/h' }, distributorUrl: 'http://d:8081', inherit: () => ({}), urlFor: () => sessionUrl, sleep: async () => {}, startTimeoutMs: 1000 });
+  const driver = sessionHost({ dataDir }, launch);
+  await driver.ensure('a');
+  const token = driver.credential('a')!;
+  assert.equal(await readFile(join(dataDir, sessionDirName('a'), '.launch-token'), 'utf8'), token);
+  const env: string[] = [...docker.containers.values()][0].body.Env;
+  assert.ok(env.includes('QUACK_SESSION_TOKEN_FILE=/session/.launch-token') && env.includes('QUACK_SESSION_HOST=0.0.0.0'));
+  assert.ok(!env.some((e) => e.includes(token)), 'the token is never in the environment, which its shells could read');
+  assert.deepEqual(probes, [`Bearer ${token}`]);
+});
+
+test('the public listener can tell peers on the session network from everyone else, and a network it cannot read stops the boot', async () => {
+  const api: DockerCall = async (_m, path) => (path === '/networks/quack-sessions' ? { status: 200, body: { IPAM: { Config: [{ Subnet: '172.30.0.0/16' }, { Subnet: 'fd00:30::/64' }] } } } : { status: 404, body: { message: 'no such network' } });
+  const onIt = await onSessionNetwork(api, 'quack-sessions');
+  assert.deepEqual(['172.30.4.2', '::ffff:172.30.4.2', 'fd00:30::9', '172.31.0.2', '127.0.0.1', '::1', undefined].map((a) => onIt(a)), [true, true, true, false, false, false, false]);
+  await assert.rejects(onSessionNetwork(api, 'gone'), /no subnet/);
 });

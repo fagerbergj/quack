@@ -5,8 +5,11 @@ import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { authorized, type Fact } from '@quack/index';
-import { sendProblem, serviceHttp } from '@quack/sdk';
+import { principalName, safeEqual, sendProblem, serviceHttp, type Principal } from '@quack/sdk';
+import { PRINCIPAL_HEADER, principalHeader } from '@quack/session';
+import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver, type SessionInfo } from './process-driver.ts';
+import { sessionRefusal, type SessionCaller } from './session-access.ts';
 import { listQuery, paged } from './session-list.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
@@ -66,11 +69,12 @@ function sessionPath(url: string | undefined): { key: string; path: string; sear
 }
 
 // Splices a WebSocket upgrade onto the owning session's /ws; the session process speaks the protocol.
-async function proxyUpgrade(target: string, req: IncomingMessage, path: string, client: Duplex, head: Buffer) {
+async function proxyUpgrade(target: string, auth: Record<string, string>, req: IncomingMessage, path: string, client: Duplex, head: Buffer) {
   const { hostname, port } = new URL(target);
   const upstream = connect(Number(port), hostname);
   await new Promise((resolve, reject) => upstream.once('connect', resolve).once('error', reject));
-  const headers = req.rawHeaders.reduce((acc, v, i) => acc + (i % 2 ? `${v}\r\n` : `${v}: `), '');
+  const pairs = req.rawHeaders.flatMap((v, i) => (i % 2 ? [] : [[v, req.rawHeaders[i + 1]!]])).filter(([name]) => !NOT_FORWARDED.has(name.toLowerCase()));
+  const headers = [...pairs, ...Object.entries(auth)].map(([name, v]) => `${name}: ${v}\r\n`).join('');
   upstream.write(`GET ${path} HTTP/1.1\r\n${headers}\r\n`);
   if (head.length) upstream.write(head);
   upstream.pipe(client).pipe(upstream);
@@ -79,11 +83,17 @@ async function proxyUpgrade(target: string, req: IncomingMessage, path: string, 
   client.on('error', end).on('close', end);
 }
 
+/** The header the reverse proxy adds with the deployment's proxy secret, so a local process cannot pass off an identity header as the proxy's. */
+export const PROXY_PROOF = 'x-quack-proxy-secret';
+
+// A caller's own credential, identity or principal never reaches a session; the distributor sets them.
+const NOT_FORWARDED = new Set(['authorization', 'x-authentik-username', PROXY_PROOF, PRINCIPAL_HEADER]);
+
 // node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
 // A client that hangs up aborts the upstream request.
-function forward(url: string, method: string, body: Uint8Array | undefined, res: ServerResponse, user?: string): Promise<void> {
+function forward(url: string, method: string, body: Uint8Array | undefined, res: ServerResponse, auth: Record<string, string>): Promise<void> {
   return new Promise((resolve, reject) => {
-    const up = request(url, { method, headers: { 'content-type': 'application/json', ...(user ? { 'x-authentik-username': user } : {}) } }, (r) => {
+    const up = request(url, { method, headers: { 'content-type': 'application/json', ...auth } }, (r) => {
       res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
       r.pipe(res).on('finish', resolve);
       r.on('error', (err) => (res.destroyed || res.writableFinished ? resolve() : reject(err)));
@@ -92,6 +102,14 @@ function forward(url: string, method: string, body: Uint8Array | undefined, res:
     up.on('error', (err) => (res.headersSent || res.destroyed ? resolve() : reject(err)));
     up.end(body);
   });
+}
+
+/** The caller on the public listener: the person the proxy names, when the request carries the proxy's proof, else the tailnet; undefined for an identity nobody vouched for. */
+function principalOf(req: IncomingMessage, secret: string | undefined): Principal | undefined {
+  const name = req.headers['x-authentik-username'];
+  if (name === undefined) return { kind: 'tailnet' };
+  const proof = req.headers[PROXY_PROOF];
+  return secret && typeof proof === 'string' && safeEqual(proof, secret) && typeof name === 'string' && name ? { kind: 'person', name } : undefined;
 }
 
 function errorStatus(err: unknown): number {
@@ -121,7 +139,7 @@ export const recordTurns = (driver: Pick<HostDriver, 'touch'>) => async (session
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, and whether that session may reach others. */ sessions?: { sessionOf(token: string): string | undefined; crossSession(key: string): Promise<boolean> }; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
@@ -145,6 +163,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   const idleMs = opts.idleMs ?? 10 * 60_000;
   const idle = (key: string) => !holds.get(key) && now() - (lastUse.get(key) ?? 0) >= idleMs;
   const hold = (key: string, by: number) => holds.set(key, (holds.get(key) ?? 0) + by);
+  // The session's server takes only the distributor's bearer, and a decision only the principal named beside it.
+  const upstream = (key: string, who?: Principal): Record<string, string> => {
+    const token = driver.credential(key);
+    return { ...(token && { authorization: `Bearer ${token}` }), ...(who && { [PRINCIPAL_HEADER]: principalHeader(who) }) };
+  };
 
   // Sweeps and wake-ups run one at a time; a caller awaiting `maintain` also waits out those queued before it.
   let queue: Promise<void> = Promise.resolve();
@@ -190,7 +213,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const deadline = new AbortController();
     const cancel = setTimer(() => deadline.abort(new Error(`session ${key} did not answer /ping within ${PING_TIMEOUT_MS} ms`)), PING_TIMEOUT_MS);
     try {
-      return (await (await fetch(`${url}/ping`, { signal: deadline.signal })).json()) as Ping;
+      return (await (await fetch(`${url}/ping`, { headers: upstream(key), signal: deadline.signal })).json()) as Ping;
     } finally {
       cancel();
     }
@@ -266,19 +289,19 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   async function peekApprovals(key: string, search: string, res: ServerResponse) {
     if ((await driver.agentOf(key)) === undefined) return sendProblem(res, 404, 'no such session');
     if (!driver.running().includes(key)) return send(res, 200, { approvals: [] });
-    const upstream = await fetch(`${await driver.ensure(key)}/approvals${search}`);
-    res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
-    res.end(Buffer.from(await upstream.arrayBuffer()));
+    const found = await fetch(`${await driver.ensure(key)}/approvals${search}`, { headers: upstream(key) });
+    res.writeHead(found.status, { 'content-type': found.headers.get('content-type') ?? 'application/json' });
+    res.end(Buffer.from(await found.arrayBuffer()));
   }
 
   // One self-contained file: the session's metadata beside its transcript and sealed artifacts, as a download.
   async function exportSession(info: SessionInfo, url: string, res: ServerResponse) {
-    const upstream = await fetch(`${url}/export`);
-    if (!upstream.ok) return sendProblem(res, 502, 'session export failed');
+    const exported = await fetch(`${url}/export`, { headers: upstream(info.key) });
+    if (!exported.ok) return sendProblem(res, 502, 'session export failed');
     const { running: _running, ...session } = info;
     const name = `quack-${info.key.replace(/[^A-Za-z0-9._-]+/g, '-')}.json`;
     res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': `attachment; filename="${name}"` });
-    res.end(JSON.stringify({ session, ...(await upstream.json() as object) }, null, 2));
+    res.end(JSON.stringify({ session, ...(await exported.json() as object) }, null, 2));
   }
 
   // Only a submission starts a session; any other request for an unknown or deleted key is a 404 that creates nothing.
@@ -350,7 +373,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   }
 
   // One agent's definition at a version, and promotion of its current draft; same boundary as housekeeping.
-  async function agentRoutes(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  async function agentRoutes(req: IncomingMessage, res: ServerResponse, who: Principal | undefined): Promise<boolean> {
     const match = /^\/agents\/([^/?]+)(\/promote|\?version=(\d+))?$/.exec(req.url ?? '');
     const name = match && safeDecode(match[1]!);
     if (!name || (req.method === 'GET' ? match[2]?.startsWith('/') : match[2] !== '/promote')) return false;
@@ -362,7 +385,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const { version } = ((await json(req).catch(() => null)) ?? {}) as { version?: unknown };
     if (typeof version !== 'number') return sendProblem(res, 400, 'version must be a number'), true;
     const status = await driver.promote(name, version);
-    console.log(`agent ${name} version ${version} promoted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
+    console.log(`agent ${name} version ${version} promoted by ${who ? principalName(who) : 'tailnet'}`);
     send(res, 200, { name, version, status });
     return true;
   }
@@ -425,24 +448,24 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   }
 
   // Why a housekeeping request is refused before it runs, if it is: it needs the admin token or the proxy's identity (the legacy route only the identity), and a body must be JSON (a cross-site form cannot send it).
-  function refusal(req: IncomingMessage, key: string | undefined, legacy: boolean): [number, string] | undefined {
-    const proxied = Boolean(req.headers['x-authentik-username']);
+  function refusal(req: IncomingMessage, who: Principal | undefined, key: string | undefined, legacy: boolean): [number, string] | undefined {
+    const proxied = who?.kind === 'person';
     if (legacy || !req.headers.authorization ? !proxied : !authorized(req, opts.retire!.token ?? '')) return [401, 'unauthorized'];
     if (!key || !KEY.test(key)) return [400, 'invalid session key'];
     return req.method !== 'DELETE' && !req.headers['content-type']?.startsWith('application/json') ? [legacy ? 400 : 415, 'send JSON'] : undefined;
   }
 
   // Rename, archive and delete change what a person sees, so each needs a credential; reads stay perimeter-trusted.
-  async function housekeeping(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  async function housekeeping(req: IncomingMessage, res: ServerResponse, who: Principal | undefined): Promise<boolean> {
     const match = opts.retire && /^\/sessions\/([^/]+)(\/delete)?$/.exec(new URL(req.url ?? '', 'http://distributor').pathname);
     const legacy = Boolean(match?.[2]);
     if (!match || !(legacy ? req.method === 'POST' : req.method === 'PATCH' || req.method === 'DELETE')) return false;
     const key = safeDecode(match[1]!);
-    const refused = refusal(req, key, legacy);
+    const refused = refusal(req, who, key, legacy);
     if (refused) sendProblem(res, ...refused);
     else if (req.method === 'PATCH') await patch(key!, req, res);
     else {
-      console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'the admin token'}`);
+      console.log(`session ${key} deleted by ${who?.kind === 'person' ? who.name : 'the admin token'}`);
       await retire(key!, res);
     }
     return true;
@@ -460,11 +483,12 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     await stopSession(key, undefined);
   }
 
-  const removal = async (req: IncomingMessage, res: ServerResponse) => (await housekeeping(req, res)) || (await agentRoutes(req, res));
+  const removal = async (req: IncomingMessage, res: ServerResponse, who: Principal | undefined) => (await housekeeping(req, res, who)) || (await agentRoutes(req, res, who));
 
-  const server = createServer(async (req, res) => {
+  // `who` is the public caller's principal; a session caller has none, and the session listener lets it reach no route that would read one.
+  async function route(req: IncomingMessage, res: ServerResponse, who: Principal | undefined) {
     try {
-      if (await listing(req, res) || await removal(req, res)) return;
+      if (await listing(req, res) || await removal(req, res, who)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return sendProblem(res, 404, 'not found');
@@ -475,15 +499,22 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       if (req.method === 'GET' && path === '/export') return await exportRoute(key, agent, res);
       await withSession(key, agent, `${req.method} ${path}`, async (url) => {
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-        await forward(url + path + search, req.method ?? 'GET', body, res, req.headers['x-authentik-username']?.toString());
+        await forward(url + path + search, req.method ?? 'GET', body, res, upstream(key, who));
       });
     } catch (err) {
       sendProblem(res, errorStatus(err), err instanceof Error ? err.message : String(err));
     }
+  }
+
+  const server = createServer((req, res) => {
+    const who = principalOf(req, opts.proxySecret);
+    if (!who) return sendProblem(res, 401, 'identity header without the proxy\'s proof');
+    void route(req, res, who);
   });
+  if (opts.refuse) server.on('connection', (socket) => void (opts.refuse!(socket.remoteAddress) && socket.destroy()));
   server.on('upgrade', async (req, socket, head) => {
     const target = sessionPath(req.url);
-    if (!target || target.path !== '/ws') return socket.destroy();
+    if (!target || target.path !== '/ws' || !principalOf(req, opts.proxySecret)) return socket.destroy();
     hold(target.key, 1);
     const open = sockets.get(target.key) ?? sockets.set(target.key, new Set()).get(target.key)!;
     open.add(socket);
@@ -494,11 +525,36 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       await mustExist(target.key, 'GET /ws');
       const url = await driver.ensure(target.key, target.agent);
       arm(target.key, undefined);
-      await proxyUpgrade(url, req, '/ws', socket, head);
+      await proxyUpgrade(url, upstream(target.key), req, '/ws', socket, head);
     } catch {
       socket.destroy();
     }
   });
-  server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); });
-  return Object.assign(server, { drain, sweep: () => maintain(sweepOnce) });
+  const sessions = sessionListener(route, opts.sessions);
+  server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); if (sessions.listening) sessions.close(); });
+  return Object.assign(server, { drain, sweep: () => maintain(sweepOnce), sessions });
+}
+
+/** The only listener a session's environment names: every request needs a current launch credential, identity headers count for nothing, and the credential reaches only what sessionRefusal allows. */
+function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who: undefined) => Promise<unknown>, auth: { sessionOf(token: string): string | undefined; crossSession(key: string): Promise<boolean> } | undefined) {
+  const caller = async (req: IncomingMessage): Promise<SessionCaller | undefined> => {
+    const token = sessionToken(req);
+    const key = token === undefined ? undefined : auth?.sessionOf(token);
+    return key === undefined ? undefined : { key, crossSession: await auth!.crossSession(key) };
+  };
+  const server = createServer(async (req, res) => {
+    try {
+      const who = await caller(req);
+      if (!who) return sendProblem(res, 401, 'unauthorized');
+      // Routed by the normalized path the policy saw, so a `..` cannot reach a route it refused.
+      const { pathname, search } = new URL(req.url ?? '', 'http://distributor');
+      req.url = pathname + search;
+      const refused = sessionRefusal(req.method ?? 'GET', pathname, who);
+      if (refused) return sendProblem(res, ...refused);
+      await route(req, res, undefined);
+    } catch (err) {
+      sendProblem(res, 502, err instanceof Error ? err.message : String(err));
+    }
+  });
+  return server.on('upgrade', (_req, socket) => socket.destroy());
 }

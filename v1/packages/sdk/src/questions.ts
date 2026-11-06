@@ -1,5 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation } from '@earendil-works/pi-durable';
+import { principalName, type Principal } from './principal.ts';
 import { whileWaiting } from './signals.ts';
 import type { Resolver } from './decide.ts';
 
@@ -16,7 +17,8 @@ export type Question = {
   suggested?: number | null;
   freeText?: boolean;
   askedAt: number;
-  answer: { choice: string; by: string; at: number; note?: string; text?: string } | null;
+  // `by` is a bare string in answers recorded before principals were typed.
+  answer: { choice: string; by: Principal | string; at: number; note?: string; text?: string } | null;
   /** The run that asked ended without an answer, so nobody is waiting on it. */
   closed: boolean;
 };
@@ -57,7 +59,7 @@ function checkInput(q: Question, input: AnswerInput): Omit<NonNullable<Question[
   return q.options.includes(input.choice!) ? { choice: input.choice!, ...(note && { note }) } : undefined;
 }
 
-export async function answerQuestion(conversation: Conversation, id: string, input: AnswerInput | string, by: string, ctx: Context): Promise<AnswerResult> {
+export async function answerQuestion(conversation: Conversation, id: string, input: AnswerInput | string, by: Principal, ctx: Context): Promise<AnswerResult> {
   const given = typeof input === 'string' ? { choice: input } : input;
   return conversation.commit(async (tx): Promise<AnswerResult> => {
     const q = (await tx.doc(Questions, conversation.id)).items[id];
@@ -99,7 +101,7 @@ export function person(signal?: AbortSignal): Resolver {
         stop?.addEventListener('abort', () => reject(stop.reason), { once: true });
         watch.start(async () => { const a = found(); if (a) resolve({ ...a }); });
       }).finally(() => watch.stop()));
-      return { choice: answer.choice, confidence: 1, reason: `answered by ${answer.by}`, ...(answer.note && { note: answer.note }), ...(answer.text && { text: answer.text }) };
+      return { choice: answer.choice, confidence: 1, reason: `answered by ${principalName(answer.by)}`, ...(answer.note && { note: answer.note }), ...(answer.text && { text: answer.text }) };
     },
   };
 }

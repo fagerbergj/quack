@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
-import { Approvals, Artifacts, Failures, Questions, type Approval, type FailureRow, type Question, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, Failures, principalName, Questions, type Approval, type FailureRow, type Question, type SealedArtifact } from '@quack/sdk';
 
 /** One thing the index records about a session. `rev` only grows, so an older copy never overwrites a newer one. */
 export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'question' | 'failure' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
@@ -42,7 +42,7 @@ export function artifactFacts(artifacts: { kinds: Record<string, { versions: Sea
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {
   return Object.entries(approvals?.items ?? {}).map(([id, a]): Fact => {
     const v = a.verdict;
-    return { id: `approval:${id}`, kind: 'approval', rev: v ? 2 : 1, at: v?.at ?? a.requestedAt, data: { tool: a.tool, state: v ? 'resolved' : 'pending', decision: v?.decision ?? null, by: v?.by ?? null, args: v ? null : a.args } };
+    return { id: `approval:${id}`, kind: 'approval', rev: v ? 2 : 1, at: v?.at ?? a.requestedAt, data: { tool: a.tool, state: v ? 'resolved' : 'pending', decision: v?.decision ?? null, by: v ? principalName(v.by) : null, args: v ? null : a.args } };
   });
 }
 
@@ -52,7 +52,7 @@ function questionFacts(questions: { items: Record<string, Question> } | undefine
     const state = q.answer ? 'answered' : q.closed ? 'closed' : 'pending';
     return {
       id: `question:${id}`, kind: 'question', rev: state === 'pending' ? 1 : 2, at: q.answer?.at ?? q.askedAt,
-      data: { question: q.question, options: q.options, evidence: q.evidence, header: q.header ?? null, title: q.title ?? null, detail: q.detail ?? null, optionDescriptions: q.optionDescriptions ?? {}, suggested: q.suggested ?? null, freeText: q.freeText ?? false, askedAt: q.askedAt, state, choice: q.answer?.choice ?? null, by: q.answer?.by ?? null },
+      data: { question: q.question, options: q.options, evidence: q.evidence, header: q.header ?? null, title: q.title ?? null, detail: q.detail ?? null, optionDescriptions: q.optionDescriptions ?? {}, suggested: q.suggested ?? null, freeText: q.freeText ?? false, askedAt: q.askedAt, state, choice: q.answer?.choice ?? null, by: q.answer ? principalName(q.answer.by) : null },
     };
   });
 }

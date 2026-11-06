@@ -56,7 +56,7 @@ test('start asks first, showing the summary and filled params, and runs the acti
   assert.deepEqual(item.args, { action: 'ping_thing', summary: 'Pings a thing: thing x', params: { thing: 'x' } });
   assert.deepEqual(started, [], 'nothing starts before the verdict');
 
-  assert.equal(await resolveApproval(session.root, item.id, { decision: 'approve', by: 'jf' }, BACKGROUND_CONTEXT), true);
+  assert.equal(await resolveApproval(session.root, item.id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, BACKGROUND_CONTEXT), true);
   const done = await session.submit('ping x', 'r1', true);
   assert.equal(done.status, 'done');
   assert.deepEqual(started, [{ thing: 'x' }]);
@@ -68,7 +68,7 @@ test('a rejected start never runs the action', async () => {
   const session = await homeSession(callStart(), fauxAssistantMessage('Ok, not starting.'));
   await session.submit('ping x', 'r2');
   const item = await pending(session);
-  await resolveApproval(session.root, item.id, { decision: 'reject', reason: 'no', by: 'jf' }, BACKGROUND_CONTEXT);
+  await resolveApproval(session.root, item.id, { decision: 'reject', reason: 'no', by: { kind: 'person', name: 'jf' } }, BACKGROUND_CONTEXT);
   assert.equal((await session.submit('ping x', 'r2', true)).status, 'done');
   assert.deepEqual(started, []);
   await session.close();

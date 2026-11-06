@@ -26,7 +26,7 @@ const later = () => Date.now() + 60_000;
 
 test('a run is polled by its request id until it settles, and a dropped connection is retried', async () => {
   const s = await runtimeStub(['drop', [202, { status: 'queued' }], [202, { status: 'placed' }], [202, { status: 'done', answer: 'ok' }]]);
-  assert.deepEqual(await untilSettled(s.url, inv, later(), undefined, 0), { status: 'done', answer: 'ok' });
+  assert.deepEqual(await untilSettled({ url: s.url }, inv, later(), undefined, 0), { status: 'done', answer: 'ok' });
   assert.deepEqual(s.ids, ['r-1', 'r-1', 'r-1', 'r-1']);
   s.close();
 });
@@ -34,14 +34,14 @@ test('a run is polled by its request id until it settles, and a dropped connecti
 test('an error status from /invocations is a harness failure, not an unanswered run', async () => {
   for (const [status, body, message] of [[500, { error: 'boom' }, /HTTP 500: boom/], [400, { error: 'input must be a string' }, /HTTP 400/], [200, {}, /without a status/]] as const) {
     const s = await runtimeStub([[status, body]]);
-    await assert.rejects(untilSettled(s.url, inv, later(), undefined, 0), message);
+    await assert.rejects(untilSettled({ url: s.url }, inv, later(), undefined, 0), message);
     s.close();
   }
 });
 
 test('a run that never settles ends at the deadline', async () => {
   const s = await runtimeStub([[202, { status: 'queued' }]]);
-  await assert.rejects(untilSettled(s.url, inv, Date.now(), undefined, 0), /run timed out/);
+  await assert.rejects(untilSettled({ url: s.url }, inv, Date.now(), undefined, 0), /run timed out/);
   s.close();
 });
 

@@ -1,10 +1,11 @@
+import { BlockList, isIP, isIPv4 } from 'node:net';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { shellEnv } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import type { DockerCall } from './docker-api.ts';
 import { proxyKeyedServices, proxyProviders } from './keyed-services.ts';
-import type { Launch } from './process-driver.ts';
+import { LAUNCH_TOKEN_FILE, writeLaunchToken, type Launch } from './process-driver.ts';
 
 const SESSION_MOUNT = '/session';
 const SESSION_PORT = 8080;
@@ -20,7 +21,7 @@ export type DockerLauncherOptions = {
   network: string;
   /** The data volume holds each session's directory: a named volume (each session mounts its subpath; Docker 26+) or a host path (bind). */
   data: { volume: string } | { hostDir: string };
-  /** What a session container uses to reach this distributor, e.g. http://quack-v1:8080. */
+  /** What a session container uses to reach this distributor's session listener (QUACK_SESSION_PORT), e.g. http://quack-v1:8081. */
   distributorUrl: string;
   inherit: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
   /** Variables copied into containers as they are; these are secrets the container then holds until they are proxied. */
@@ -38,7 +39,7 @@ export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; tok
   Object.assign(env, proxyKeyedServices(inherited, { broker: o.broker, distributorUrl: o.distributorUrl, token: o.token }));
   for (const name of o.passthrough) if (inherited[name] !== undefined) env[name] = inherited[name]!;
   const dropped = Object.keys(inherited).filter((n) => !(n in env) && !n.startsWith('QUACK_CONFIG'));
-  Object.assign(env, { PORT: String(SESSION_PORT), QUACK_SESSION_DIR: SESSION_MOUNT, QUACK_SESSION_KEY: o.key });
+  Object.assign(env, { PORT: String(SESSION_PORT), QUACK_SESSION_HOST: '0.0.0.0', QUACK_SESSION_TOKEN_FILE: `${SESSION_MOUNT}/${LAUNCH_TOKEN_FILE}`, QUACK_SESSION_DIR: SESSION_MOUNT, QUACK_SESSION_KEY: o.key });
   if (o.agentPath) env.QUACK_AGENT = o.agentPath.replace(o.dir, SESSION_MOUNT);
   if (inherited.QUACK_CONFIG) env.QUACK_CONFIG = `${SESSION_MOUNT}/deployment.json`;
   return { env, dropped };
@@ -69,12 +70,12 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
   };
 
   // Probes /ping until it answers; a container that exits first fails the start at once instead of at the timeout.
-  async function ready(url: string, name: string, gone: Promise<unknown>) {
+  async function ready(url: string, token: string, name: string, gone: Promise<unknown>) {
     let dead = false;
     void gone.then(() => (dead = true));
     const deadline = Date.now() + (opts.startTimeoutMs ?? 60_000);
     while (!dead) {
-      if (await fetch(`${url}/ping`, { signal: AbortSignal.timeout(PING_TIMEOUT_MS) }).then((r) => r.ok, () => false)) return;
+      if (await fetch(`${url}/ping`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(PING_TIMEOUT_MS) }).then((r) => r.ok, () => false)) return;
       if (Date.now() > deadline) throw new Error(`session container ${name} did not answer /ping`);
       await sleep(100);
     }
@@ -97,6 +98,8 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
       if (fresh.length) console.warn(`docker driver: not passing ${fresh.join(', ')} to session containers; list a name in QUACK_SESSION_PASSTHROUGH to pass it`);
       fresh.forEach((n) => warned.add(n));
       await api('DELETE', `/containers/${name}?force=1`);
+      // Written once any old container is gone, so only this launch can read it.
+      const serverToken = await writeLaunchToken(dir);
       await call('POST', `/containers/create?name=${name}`, {
         Image: opts.image,
         Cmd: opts.command ?? ['node', 'packages/runtime/src/main.ts'],
@@ -110,12 +113,13 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
       void gone.then(() => opts.broker.revoke(token));
       await call('POST', `/containers/${name}/start`, undefined, [204]);
       const url = (opts.urlFor ?? ((n) => `http://${n}:${SESSION_PORT}`))(name);
-      await ready(url, name, gone).catch(async (err) => {
+      await ready(url, serverToken, name, gone).catch(async (err) => {
         await api('POST', `/containers/${name}/stop?t=0`);
         throw err;
       });
       return {
         url,
+        token: serverToken,
         onExit: (cb) => void gone.then(cb),
         stop: async () => {
           await api('POST', `/containers/${name}/stop?t=${STOP_GRACE_SECONDS}`);
@@ -126,6 +130,23 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
       opts.broker.revoke(token);
       throw err;
     }
+  };
+}
+
+/** Whether a peer address is on the session containers' network, so the public listener can drop it; throws when the network cannot be read, as sessions must not boot unfenced. */
+export async function onSessionNetwork(api: DockerCall, network: string): Promise<(address: string | undefined) => boolean> {
+  const { status, body } = await api('GET', `/networks/${encodeURIComponent(network)}`);
+  const subnets = ((body as { IPAM?: { Config?: Array<{ Subnet?: string }> } } | null)?.IPAM?.Config ?? []).flatMap((c) => (c.Subnet ? [c.Subnet] : []));
+  if (status !== 200 || !subnets.length) throw new Error(`docker network ${network} has no subnet to fence off (answered ${status})`);
+  const list = new BlockList();
+  for (const subnet of subnets) {
+    const [net, prefix] = subnet.split('/');
+    list.addSubnet(net!, Number(prefix), isIPv4(net!) ? 'ipv4' : 'ipv6');
+  }
+  // A dual-stack listener reports IPv4 peers as ::ffff:a.b.c.d.
+  return (address = '') => {
+    const v4 = address.replace(/^::ffff:/, '');
+    return isIPv4(v4) ? list.check(v4, 'ipv4') : isIP(address) === 6 && list.check(address, 'ipv6');
   };
 }
 

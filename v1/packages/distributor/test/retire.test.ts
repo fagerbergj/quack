@@ -70,7 +70,7 @@ test('an invocation racing a delete waits for it and then starts a fresh session
   servers.push(() => upstream.close());
   await new Promise((r) => upstream.once('listening', r));
   const driver = {
-    running: () => [], wakes: async () => [], stop: async () => {}, setWake: async () => {}, touch: async () => {},
+    running: () => [], wakes: async () => [], stop: async () => {}, setWake: async () => {}, touch: async () => {}, credential: () => undefined,
     remove: async () => { await gate; log.push('remove'); return true; },
     ensure: async () => { log.push('ensure'); return `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`; },
   } as unknown as HostDriver;

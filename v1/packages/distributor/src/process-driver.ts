@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -56,14 +56,24 @@ export type HostDriver = {
   wakes(): Promise<Array<{ key: string; at: number }>>;
   running(): string[];
   pid(key: string): number | undefined;
+  /** The bearer the session's running server requires; undefined when none runs. */
+  credential(key: string): string | undefined;
 };
 
 /** A session's running process or container, as its launcher reports it. */
-export type Launched = { url: string; pid?: number; stop(): Promise<void>; onExit(cb: () => void): void };
+export type Launched = { url: string; /** The bearer its server requires, minted for this launch. */ token: string; pid?: number; stop(): Promise<void>; onExit(cb: () => void): void };
 /** Starts one session: `dir` is its data directory and `agentPath` its pinned definition. Rejects when it cannot come up. */
 export type Launch = (spec: { key: string; dir: string; agentPath: string | undefined }) => Promise<Launched>;
 
 type Child = { launched: Launched; stopping: boolean };
+
+/** Where in its directory a session finds its launch's server token, which it reads and removes at boot. */
+export const LAUNCH_TOKEN_FILE = '.launch-token';
+export async function writeLaunchToken(dir: string): Promise<string> {
+  const token = randomBytes(32).toString('hex');
+  await writeFile(join(dir, LAUNCH_TOKEN_FILE), token, { mode: 0o600 });
+  return token;
+}
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
@@ -453,7 +463,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
+  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
@@ -477,8 +487,9 @@ function processLauncher(opts: LauncherOptions): Launch {
     // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
     const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
     const reportDir = await mkdtemp(join(tmpdir(), 'quack-report-'));
+    const serverToken = await writeLaunchToken(dir);
     const token = opts.broker?.mint(key);
-    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(token && { QUACK_INDEX_TOKEN: token }), ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
+    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(token && { QUACK_INDEX_TOKEN: token }), ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_HOST: '127.0.0.1', QUACK_SESSION_TOKEN_FILE: join(dir, LAUNCH_TOKEN_FILE), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     if (token) proc.once('exit', () => opts.broker!.revoke(token));
@@ -492,6 +503,7 @@ function processLauncher(opts: LauncherOptions): Launch {
       const url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
       return {
         url,
+        token: serverToken,
         pid: proc.pid,
         onExit: (cb) => (proc.exitCode !== null || proc.signalCode ? cb() : void proc.once('exit', cb)),
         stop: async () => {
