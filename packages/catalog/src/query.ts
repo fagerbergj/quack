@@ -31,6 +31,13 @@ type Value = string | number | bigint | boolean;
 type Leaf = Record<string, unknown> & { kind: string };
 const OPS: Record<string, 'gt' | 'gte' | 'lt' | 'le'> = { ':>': 'gt', ':>=': 'gte', ':<': 'lt', ':<=': 'le' };
 
+function epochMs(field: string, text: string, bad: (what: string) => QueryError): number {
+  if (ZONELESS.test(text)) throw new QueryError(`${field} takes a date-time with Z or an offset, so it reads the same on every host: add one, as in ${text.length === 16 ? `${text}:00` : text}Z`);
+  const ms = DATE.test(text) ? Date.parse(text) : NaN;
+  if (Number.isNaN(ms)) throw bad('an RFC 3339 date or date-time');
+  return ms;
+}
+
 function typed(field: string, kind: ValueKind, text: string): Value {
   const bad = (what: string) => new QueryError(`${field} takes ${what}, not ${JSON.stringify(text)}`);
   if (Array.isArray(kind)) {
@@ -45,12 +52,7 @@ function typed(field: string, kind: ValueKind, text: string): Value {
     if (!/^\d+$/.test(text) || BigInt(text) >= 2n ** 63n) throw bad('an integer count of micros');
     return BigInt(text);
   }
-  if (kind === 'date') {
-    if (ZONELESS.test(text)) throw new QueryError(`${field} takes a date-time with Z or an offset, so it reads the same on every host: add one, as in ${text.length === 16 ? `${text}:00` : text}Z`);
-    const ms = DATE.test(text) ? Date.parse(text) : NaN;
-    if (Number.isNaN(ms)) throw bad('an RFC 3339 date or date-time');
-    return ms;
-  }
+  if (kind === 'date') return epochMs(field, text, bad);
   if (kind === 'bool') {
     if (text !== 'true' && text !== 'false') throw bad('true or false');
     return text === 'true';
