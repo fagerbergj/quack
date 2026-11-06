@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { Artifacts, decide, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension } from '@quack/workflows';
+import { runWorkflow, startWorkflow, WorkflowDoc, workflowExtension } from '@quack/workflows';
 import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
 
 // A real two-page PDF, written by hand so the render step runs the actual library.
@@ -302,7 +302,12 @@ test('a restart mid-transcribe resumes at the next page; the finished page is vi
   try {
     const a = await open(dir, scripted((n) => (n === 1 ? 'one' : 'hang')), workflow);
     await startWorkflow(a.harness, a.root, workflow, input, 'v1');
-    await watchUntil((await a.harness.watchDoc(WorkflowDoc, a.root.id, ctx))!, (d) => (transcribing(d)?.progress?.done === 1 ? true : undefined));
+    const watch = (await a.harness.watchDoc(WorkflowDoc, a.root.id, ctx))!;
+    await new Promise<void>((resolve) => {
+      const check = async () => { if (watch.value && transcribing(watch.value)?.progress?.done === 1) resolve(); };
+      void check();
+      watch.start(check);
+    }).finally(() => watch.stop());
     await a.close();
 
     const second = scripted((n) => `again ${n}`);

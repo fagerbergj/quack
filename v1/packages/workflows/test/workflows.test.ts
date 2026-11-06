@@ -9,7 +9,7 @@ import { num, obj, str } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import { answerQuestion, Approvals, Artifacts, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
+import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -26,7 +26,6 @@ function open(dir: string, workflow: Workflow, ...replies: (string | FauxRespons
 
 type Open = Awaited<ReturnType<typeof open>>;
 const doc = async (s: Open) => (await s.harness.snapshot(WorkflowDoc, s.root.id, ctx))!;
-const waitFor = async (s: Open, pick: Parameters<typeof watchUntil>[1]) => watchUntil((await s.harness.watchDoc(WorkflowDoc, s.root.id, ctx))!, pick);
 
 // The first open question; touching the document first lets it be watched before anything has asked.
 async function asked(s: Open) {
