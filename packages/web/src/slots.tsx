@@ -7,6 +7,9 @@ const providers = EXTENSIONS.flatMap((e) => e.provider ?? []);
 const notices = EXTENSIONS.flatMap((e) => e.notice ?? []);
 const rails = EXTENSIONS.flatMap((e) => e.rail ?? []);
 
+/** The studio pane of the first extension that claims the session, if any. */
+export const studioFor = (key: string) => EXTENSIONS.map((e) => e.studio).find((s) => s?.match(key));
+
 /** Every extension's shared state around the shell, outermost first in registry order. */
 export function ExtensionProviders({ rows, children }: { rows: Row[] | undefined; children: ReactNode }) {
   return providers.reduceRight<ReactNode>((inner, Provider) => <Provider rows={rows}>{inner}</Provider>, children);

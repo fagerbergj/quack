@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
@@ -7,15 +7,16 @@ import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
 import { artifactName } from './Artifacts.tsx';
 import { CheckProgress, liveChecks, progressLabel } from './CheckResult.tsx';
-import { SessionKeyContext } from './extension.ts';
+import { SessionKeyContext, type StudioProps } from './extension.ts';
 import { Work } from './Work.tsx';
 import { ContextRail, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { useMenu } from './useMenu.ts';
+import { useDesktop } from './useDesktop.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
-import { SessionChips } from './slots.tsx';
+import { SessionChips, studioFor } from './slots.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { useLoad } from './useLoad.ts';
@@ -317,6 +318,55 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
 
 const NO_META: Array<Record<string, unknown>> = [];
 
+// The reason a studio's approval is declined with when the person writes instead of approving; their message says the rest.
+export const SUPERSEDED = 'Sent a message instead';
+
+// A studio session shows its pane beside the transcript, and decides the approvals the pane owns there rather than as transcript cards.
+function useStudio(sessionKey: string, approvals: Approval[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
+  const studio = studioFor(sessionKey);
+  const [tab, setTab] = useState<'pane' | 'chat'>('pane');
+  if (!studio) return { studio, tab, setTab, send, cards: approvals, busy: running, chat: '' };
+  const owned = approvals.filter(studio.owns);
+  // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
+  const steer: Send = async (input, whenBusy, images) => {
+    if (!owned.length) return send(input, whenBusy, images);
+    if (!(await send(input, 'steer', images))) return false;
+    await Promise.all(owned.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
+    return true;
+  };
+  // Below lg the chat column shows only on its tab; from lg it is a fixed column beside the pane.
+  const chat = `lg:max-w-[440px] lg:border-r lg:border-line ${tab === 'chat' ? '' : 'max-lg:hidden'}`;
+  return { studio, tab, setTab, send: steer, cards: approvals.filter((a) => !studio.owns(a)), busy: running && !owned.length, chat };
+}
+type Live = ReturnType<typeof useStudio>;
+
+// Below lg a studio session is one pane at a time; the chat tab counts the questions waiting there.
+function StudioTabs({ live: { studio, tab, setTab }, waiting }: { live: Live; waiting: number }) {
+  if (!studio) return null;
+  const cls = 'flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1.5 border-0 border-b-2 border-transparent bg-transparent text-[13.5px] text-muted aria-selected:border-ink aria-selected:font-semibold aria-selected:text-ink';
+  return (
+    <div role="tablist" aria-label="Show" className="flex border-b border-line lg:hidden">
+      <button type="button" role="tab" aria-selected={tab === 'pane'} onClick={() => setTab('pane')} className={cls}>{studio.label}</button>
+      <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')} className={cls}>
+        Chat{waiting > 0 && ' '}{waiting > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] font-semibold text-warning">{waiting}</span>}
+      </button>
+    </div>
+  );
+}
+
+// Beside the chat: the studio's pane when the session has one, else the context rail.
+function Side({ live, rail, ...props }: Omit<StudioProps, 'visible'> & { live: Live; rail: ReactNode }) {
+  const Pane = live.studio?.Pane;
+  // From lg the pane sits beside the chat; below it, only its tab shows it.
+  const visible = useDesktop() || live.tab === 'pane';
+  if (!Pane) return rail;
+  return (
+    <section aria-label={live.studio!.label} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
+      <Pane {...props} visible={visible} />
+    </section>
+  );
+}
+
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
@@ -332,6 +382,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
+  const live = useStudio(sessionKey, approvals, send, pending.decide, setError, view.running);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered} onDetails={details.show}>
@@ -340,15 +391,16 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
+      <StudioTabs live={live} waiting={standing.questions.length} />
       <div className="flex min-h-0 flex-1">
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${live.chat}`}>
         <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <SessionKeyContext value={sessionKey}>
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             </SessionKeyContext>
-            <ApprovalCards sessionKey={sessionKey} title={name.text} {...pending} />
+            <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.cards} decide={pending.decide} />
             <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
             <Running view={view} waiting={waiting > 0} active={tone === 'run'} />
@@ -357,11 +409,11 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
         {/* On a phone the keyboard leaves room for an open answer field or the composer, not both; focus would flicker it under a tap. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 max-lg:group-has-[[data-answer]]/pane:hidden bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[860px] flex-col gap-2">
-            <Composer sessionKey={sessionKey} state={state} busy={view.running} send={send} queued={queued} unqueue={unqueue} />
+            <Composer sessionKey={sessionKey} state={state} busy={live.busy} send={live.send} queued={queued} unqueue={unqueue} />
           </div>
         </div>
       </div>
-      <ContextRail {...rail} details={details} placement="rail" />
+      <Side live={live} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />
       {work && <Work artifact={work} session={sessionKey} onClose={() => setWork(null)} />}

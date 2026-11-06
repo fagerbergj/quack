@@ -1,88 +1,132 @@
-import { Graph, layout, type EdgeLabel, type GraphLabel, type NodeLabel } from '@dagrejs/dagre';
-import { useMemo } from 'react';
+import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
+import { defaultFocus, focusView, type Box, type Focused } from './class-model.ts';
 import type { Decl } from './spec.ts';
 
-// Monospace at 12px; boxes are sized from character counts, since text cannot be measured before it is drawn.
-const CH = 7.25, ROW = 18, HEAD = 34, PAD = 10, MAX_ROWS = 8, MAX_CHARS = 46;
+// Monospace at 12px; boxes are sized from character counts, since ELK needs sizes before anything is drawn.
+const CH = 7.25, ROW = 22, HEAD = 32, PAD = 10, MAX_CHARS = 48;
 const clip = (s: string) => (s.length > MAX_CHARS ? `${s.slice(0, MAX_CHARS - 1)}…` : s);
+const rowText = (r: Box['rows'][number]) => `${r.name} ${clip(r.type)}`;
+const size = (b: Box) => ({
+  width: Math.ceil(Math.max(b.decl.name.length + (b.decl.generics?.length ?? 0) + b.decl.kind.length + 4, ...b.rows.map((r) => rowText(r).length + r.chips.join('  ').length + 2 * r.chips.length)) * CH + 2 * PAD + 12),
+  height: HEAD + b.rows.length * ROW + 8,
+});
 
-export type Box = { decl: Decl; x: number; y: number; w: number; h: number; lines: Array<[string, string]> };
-export type Diagram = { width: number; height: number; boxes: Box[]; edges: Array<{ from: string; to: string; d: string }> };
+const elk = new ELK();
 
-const DRAWN = new Set<Decl['kind']>(['type', 'interface', 'enum', 'other']);
-
-// A box lists the top-level fields (a union's variants as `| …`), or the aliased type when there are none.
-function lines(d: Decl): Array<[string, string]> {
-  const top = d.rows.filter((r) => r.depth === 0).map((r): [string, string] => {
-    if (r.where === 'one of') return [`| ${r.name}`, ''];
-    return d.kind === 'enum' ? [r.name, ` = ${r.type}`] : [`${r.name}${r.required ? '' : '?'}`, `: ${r.type}`];
-  });
-  if (!top.length && d.text) return [[clip(`= ${d.text}`), '']];
-  const shown = top.slice(0, MAX_ROWS).map(([n, t]): [string, string] => [clip(n), clip(n + t).slice(clip(n).length)]);
-  return top.length > MAX_ROWS ? [...shown, [`+ ${top.length - MAX_ROWS} more`, '']] : shown;
+/** Places the boxes left to right with ELK's layered algorithm: one port per field that holds an arrow, in field order, so arrows leave from their field. */
+async function place(view: Focused): Promise<{ at: Map<string, { x: number; y: number }>; width: number }> {
+  const graph: ElkNode = {
+    id: 'root',
+    layoutOptions: { 'elk.algorithm': 'layered', 'elk.direction': 'RIGHT', 'elk.edgeRouting': 'ORTHOGONAL', 'elk.spacing.nodeNode': '28', 'elk.layered.spacing.nodeNodeBetweenLayers': '64' },
+    children: view.boxes.map((b) => ({
+      id: b.decl.name, ...size(b),
+      layoutOptions: { 'elk.portConstraints': 'FIXED_ORDER' },
+      ports: [{ id: `${b.decl.name}:in`, layoutOptions: { 'elk.port.side': 'WEST' } }, ...b.rows.flatMap((r, i) => (r.edges.length ? [{ id: `${b.decl.name}:${i}`, layoutOptions: { 'elk.port.side': 'EAST', 'elk.port.index': String(i) } }] : []))],
+    })),
+    edges: view.edges.map((e) => ({ id: e.id, sources: [`${e.source}:${e.row}`], targets: [`${e.target}:in`] })),
+  };
+  const laid = await elk.layout(graph);
+  return { at: new Map((laid.children ?? []).map((c) => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }])), width: laid.width ?? 0 };
 }
 
-/** Lays out a code contract's types as a class diagram: one box per type, an arrow from each type to the types it names. */
-export function classDiagram(decls: Decl[]): Diagram {
-  const types = decls.filter((d) => DRAWN.has(d.kind));
-  const names = new Set(types.map((d) => d.name));
-  const g = new Graph<GraphLabel, NodeLabel, EdgeLabel>();
-  g.setGraph({ rankdir: 'LR', nodesep: 20, ranksep: 56, marginx: 4, marginy: 4 });
-  g.setDefaultEdgeLabel(() => ({}));
-  for (const d of types) {
-    const ls = lines(d), title = `${d.name}${d.generics ?? ''}`;
-    const w = Math.max(title.length + d.kind.length + 4, ...ls.map(([n, t]) => n.length + t.length)) * CH + 2 * PAD;
-    g.setNode(d.name, { width: w, height: HEAD + ls.length * ROW + PAD });
-  }
-  for (const d of types) for (const u of d.uses) if (names.has(u)) g.setEdge(d.name, u);
-  layout(g);
-  const boxes = types.map((decl) => {
-    const n = g.node(decl.name);
-    return { decl, x: n.x! - n.width / 2, y: n.y! - n.height / 2, w: n.width, h: n.height, lines: lines(decl) };
-  });
-  const edges = g.edges().map((e) => ({ from: e.v, to: e.w, d: (g.edge(e).points ?? []).map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ') }));
-  const { width = 0, height = 0 } = g.graph();
-  return { width, height, boxes, edges };
-}
+type Act = { focus: (name: string) => void; jump: (name: string) => void };
+const Acts = createContext<Act>({ focus: () => {}, jump: () => {} });
+type BoxNode = Node<{ box: Box }, 'box'>;
 
-function TypeBox({ b, onJump }: { b: Box; onJump: (name: string) => void }) {
-  const go = () => onJump(b.decl.name);
+const chip = 'nodrag cursor-pointer rounded border-0 bg-link-bg px-1 font-mono text-[11px] text-link hover:underline focus-visible:shadow-ring';
+
+function BoxView({ data: { box } }: NodeProps<BoxNode>) {
+  const act = useContext(Acts);
+  const { decl } = box;
   return (
-    <g role="button" tabIndex={0} aria-label={`${b.decl.name}, go to its declaration`} onClick={go} onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), go())} className="cursor-pointer outline-none [&:focus-visible>rect]:stroke-link [&:hover>rect]:stroke-ink-2">
-      <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={8} strokeDasharray={b.decl.exported ? undefined : '4 3'} className="fill-surface stroke-line" strokeWidth={1.25} />
-      <rect x={b.x} y={b.y} width={b.w} height={HEAD - 8} rx={8} className="fill-soft" />
-      <text x={b.x + PAD} y={b.y + 17} className="fill-ink font-mono text-[12px] font-semibold">
-        {b.decl.name}<tspan className="fill-muted font-normal">{b.decl.generics}</tspan>
-        <tspan dx={8} className="fill-muted text-[10px] font-normal tracking-wide uppercase">{b.decl.kind === 'other' ? '' : b.decl.kind}</tspan>
-      </text>
-      {b.lines.map(([n, t], i) => (
-        <text key={i} x={b.x + PAD} y={b.y + HEAD + 4 + i * ROW} className="fill-ink-2 font-mono text-[12px]">
-          {n}<tspan className="fill-success">{t}</tspan>
-        </text>
+    <div style={size(box)} className={`overflow-hidden rounded-lg border bg-surface font-mono text-[12px] text-ink-2 ${box.focus ? 'border-link shadow-ring' : 'border-line-strong'} ${decl.exported ? '' : 'border-dashed'}`}>
+      <Handle type="target" position={Position.Left} id="in" isConnectable={false} style={{ top: HEAD / 2 }} />
+      <button
+        type="button" onClick={() => (box.focus ? act.jump(decl.name) : act.focus(decl.name))}
+        aria-label={box.focus ? `${decl.name}, go to its declaration` : `Centre the diagram on ${decl.name}`}
+        style={{ height: HEAD }} className="nodrag flex w-full cursor-pointer items-center gap-2 border-0 border-b border-line bg-soft px-2.5 text-left font-mono text-[12px] font-semibold text-ink hover:underline focus-visible:shadow-ring"
+      >
+        <span>{decl.name}<span className="font-normal text-muted">{decl.generics}</span></span>
+        {decl.kind !== 'other' && <span className="text-[10px] font-normal tracking-wide text-muted uppercase">{decl.kind}</span>}
+      </button>
+      {box.rows.map((r, i) => (
+        <div key={i} style={{ height: ROW }} className="relative flex items-center gap-1.5 px-2.5 whitespace-nowrap">
+          <span className="min-w-0 truncate">{r.name} <span className="text-success">{clip(r.type)}</span></span>
+          {r.chips.map((c) => <button key={c} type="button" onClick={() => act.focus(c)} aria-label={`Centre the diagram on ${c}`} className={chip}>{c}</button>)}
+          {r.edges.length > 0 && <Handle type="source" position={Position.Right} id={`r${i}`} isConnectable={false} />}
+        </div>
       ))}
-    </g>
+    </div>
   );
 }
 
-/** The contract's types and how they reference each other; a box opens its declaration below. Functions and constants are listed, not drawn. */
+const nodeTypes = { box: BoxView };
+
+/** The focused view as React Flow nodes and edges, once ELK has placed it; undefined while it lays out. */
+function useFlow(view: Focused) {
+  const [flow, setFlow] = useState<{ nodes: BoxNode[]; edges: Edge[]; width: number }>();
+  useEffect(() => {
+    let live = true;
+    void place(view).then(({ at, width }) => live && setFlow({
+      width,
+      nodes: view.boxes.map((box) => ({ id: box.decl.name, type: 'box', position: at.get(box.decl.name) ?? { x: 0, y: 0 }, data: { box }, ...size(box), ariaLabel: `${box.decl.name}${box.focus ? ', centred' : ''}` })),
+      edges: view.edges.map((e) => ({ id: e.id, source: e.source, sourceHandle: `r${e.row}`, target: e.target, targetHandle: 'in', type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, ariaLabel: `${e.source} uses ${e.target}` })),
+    }));
+    return () => void (live = false);
+  }, [view]);
+  return flow;
+}
+
+const READABLE = 0.6;
+
+function useWidth(el: RefObject<HTMLDivElement | null>) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    if (!el.current) return;
+    const ro = new ResizeObserver(([e]) => setW(e!.contentRect.width));
+    ro.observe(el.current);
+    setW(el.current.clientWidth);
+    return () => ro.disconnect();
+  }, [el]);
+  return w;
+}
+
+/** The contract's types around one in focus: what it uses and what uses it, each arrow leaving from the field that holds the reference.
+ * A box or chip re-centres the diagram; the declarations below list every type, so they are its text alternative. */
 export function ClassDiagram({ decls, onJump }: { decls: Decl[]; onJump: (name: string) => void }) {
-  const dg = useMemo(() => classDiagram(decls), [decls]);
-  if (!dg.boxes.length) return null;
+  const [focus, setFocus] = useState(() => defaultFocus(decls));
+  useEffect(() => setFocus((f) => (f && decls.some((d) => d.name === f) ? f : defaultFocus(decls))), [decls]);
+  const view = useMemo(() => (focus ? focusView(decls, focus) : { boxes: [], edges: [] }), [decls, focus]);
+  const flow = useFlow(view);
+  const acts = useMemo(() => ({ focus: setFocus, jump: onJump }), [onJump]);
+  const note = useId();
+  const frame = useRef<HTMLDivElement>(null);
+  const room = useWidth(frame);
+  // Fitted below READABLE the text cannot be read, so a narrow frame opens on the focused box and pans from there.
+  const fitAll = !flow || flow.width * READABLE <= room;
+  if (!view.boxes.length) return null;
   return (
-    <section aria-label="Class diagram" className="min-w-0 rounded-[18px] border border-line bg-surface p-4">
-      <h2 className="m-0 mb-3 text-[15px] font-semibold">Class diagram</h2>
-      <div className="max-h-[70vh] overflow-auto rounded-xl border border-line bg-canvas">
-        <svg width={dg.width} height={dg.height} viewBox={`0 0 ${dg.width} ${dg.height}`} className="block">
-          <defs>
-            <marker id="cd-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0 0L10 5L0 10z" className="fill-muted" />
-            </marker>
-          </defs>
-          {dg.edges.map((e) => <path key={`${e.from}>${e.to}`} d={e.d} fill="none" strokeWidth={1.25} markerEnd="url(#cd-arrow)" className="stroke-muted"><title>{`${e.from} uses ${e.to}`}</title></path>)}
-          {dg.boxes.map((b) => <TypeBox key={b.decl.name} b={b} onJump={onJump} />)}
-        </svg>
+    <section aria-label="Class diagram" aria-describedby={note} className="min-w-0 rounded-[18px] border border-line bg-surface p-4">
+      <h2 className="m-0 mb-3 text-[15px] font-semibold">Class diagram <span className="font-normal text-muted">around {focus}</span></h2>
+      <div ref={frame} className="class-diagram h-[420px] overflow-hidden rounded-xl border border-line sm:h-[520px]">
+        <Acts value={acts}>
+          {flow && (
+            <ReactFlow
+              key={focus} nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} fitView fitViewOptions={fitAll ? undefined : { nodes: [{ id: focus! }], maxZoom: 1 }} minZoom={0.2}
+              nodesDraggable={false} nodesConnectable={false} zoomOnScroll={false} preventScrolling={false} onNodeClick={(_, n) => n.id !== focus && setFocus(n.id)}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background gap={20} size={1} />
+              <Controls showInteractive={false} />
+              {room >= 640 && <MiniMap pannable zoomable ariaLabel="Overview of the class diagram" />}
+            </ReactFlow>
+          )}
+        </Acts>
       </div>
-      <p className="m-0 mt-2 text-xs text-muted">An arrow points from a type to a type it uses. A dashed box is not exported.</p>
+      <p id={note} className="m-0 mt-2 text-xs text-muted">{focus} with the types it uses and that use it. An arrow leaves from the field that names a type; a chip names one outside this view or used by many. Select a box or a chip to centre on it; the declarations below list every type.</p>
     </section>
   );
 }

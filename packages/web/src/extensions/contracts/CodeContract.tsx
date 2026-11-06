@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { ClassDiagram } from './ClassDiagram.tsx';
+import { useMark } from './diff.ts';
 import { choicesAt, Info, Inline } from './Info.tsx';
-import { SchemaTree } from './SchemaTree.tsx';
+import { MarkTag, SchemaTree } from './SchemaTree.tsx';
 import type { Choice, Decl, Model } from './spec.ts';
 
 const GROUPS: Array<[string, Array<Decl['kind']>]> = [['Types', ['type', 'interface', 'enum', 'other']], ['Functions', ['function']], ['Constants', ['const']]];
@@ -33,6 +34,7 @@ function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; used
         <h3 className="m-0 font-mono text-[15px] font-semibold [overflow-wrap:anywhere]">{d.name}<span className="font-normal text-muted">{d.generics}</span></h3>
         {d.kind !== 'other' && <span className={pill}>{d.kind}</span>}
         {!d.exported && <span className={pill}>not exported</span>}
+        <MarkTag m={useMark(`/${d.name}`)} />
         <span className="flex-1" />
         <Info choices={choices} />
       </div>

@@ -1,7 +1,7 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
-import { classDiagram } from './ClassDiagram.tsx';
+import { defaultFocus, focusView, HUB } from './class-model.ts';
 import { declarations } from './typescript-model.ts';
 
 const dts = `import type { Context } from '@earendil-works/chord/context';
@@ -67,19 +67,37 @@ test('constants, unexported types and imports are kept apart', () => {
   expect(m.imports).toEqual([{ from: '@earendil-works/chord/context', names: ['Context'] }]);
 });
 
-test('the class diagram draws the types only, with an arrow from each type to the types it uses', () => {
-  const dg = classDiagram(declarations(dts).decls);
-  expect(dg.boxes.map((b) => b.decl.name).sort()).toEqual(['Limits', 'Manifest', 'Running', 'Store']);
-  expect(dg.edges.map((e) => `${e.from}>${e.to}`).sort()).toEqual(['Manifest>Limits', 'Manifest>Store', 'Running>Manifest']);
-  expect(dg.boxes.find((b) => b.decl.name === 'Store')!.lines).toEqual([["| kind: 'sqlite'", ''], ["| kind: 'postgres'", '']]);
-  for (const b of dg.boxes) expect(b.x >= 0 && b.y >= 0 && b.x + b.w <= dg.width && b.y + b.h <= dg.height).toBe(true);
+const edgesOf = (v: ReturnType<typeof focusView>) => v.edges.map((e) => `${e.source}.${v.boxes.find((b) => b.decl.name === e.source)!.rows[e.row]!.name}>${e.target}`).sort();
+
+test('the diagram centres on one type: it, what it uses and what uses it, each arrow leaving from the field that names the type', () => {
+  const v = focusView(declarations(dts).decls, 'Manifest');
+  expect(v.boxes.map((b) => `${b.decl.name}${b.focus ? '*' : ''}`).sort()).toEqual(['Manifest*', 'Running', 'Store']);
+  expect(edgesOf(v)).toEqual(['Manifest.store?:>Store', 'Running.extends>Manifest']);
+  expect(v.boxes.find((b) => b.decl.name === 'Store')!.rows.map((r) => `${r.name} ${r.type}`)).toEqual(["| kind: 'sqlite' ", "| kind: 'postgres' "]);
+  // Limits is named only inside an inline object, two hops from the focus, so it is not drawn.
+  expect(focusView(declarations(dts).decls, 'Store').boxes.map((b) => b.decl.name).sort()).toEqual(['Manifest', 'Store']);
+  expect(focusView(declarations(dts).decls, 'start').boxes).toEqual([]);
 });
 
-test('a box with many fields shows the first eight and counts the rest', () => {
-  const wide = `export type Wide = { ${Array.from({ length: 11 }, (_, i) => `f${i}: string;`).join(' ')} };`;
-  const [box] = classDiagram(declarations(wide).decls).boxes;
-  expect(box!.lines).toHaveLength(9);
-  expect(box!.lines[8]).toEqual(['+ 3 more', '']);
+test('the diagram opens on the root type that names the most others, else the most-named exported type', () => {
+  expect(defaultFocus(declarations(dts).decls)).toBe('Running');
+  const flat = 'export type A = { b: B }; export type B = { n: number }; export type C = { b: B };';
+  expect(defaultFocus(declarations(flat).decls)).toBe('A');
+  expect(defaultFocus(declarations('export type A = { n: number }; export type B = A; type C = { a: A };').decls)).toBe('B');
+});
+
+test(`a type more than ${HUB} boxes in view name is a chip on each field, not an arrow from each; one out of view is a chip too`, () => {
+  const users = Array.from({ length: HUB + 1 }, (_, i) => `export type U${i} = { id: Id; root: Root };`).join('\n');
+  const src = `export type Id = string;\nexport type Root = { ${Array.from({ length: HUB + 1 }, (_, i) => `u${i}: U${i};`).join(' ')} id: Id };\n${users}\nexport type Far = { u: U0 };`;
+  const v = focusView(declarations(src).decls, 'Root');
+  expect(v.boxes.map((b) => b.decl.name)).not.toContain('Id');
+  expect(v.boxes.find((b) => b.focus)!.rows.at(-1)).toEqual({ name: 'id:', type: 'Id', edges: [], chips: ['Id'] });
+  const u0 = v.boxes.find((b) => b.decl.name === 'U0')!;
+  expect(u0.rows.map((r) => [r.name, r.edges, r.chips])).toEqual([['id:', [], ['Id']], ['root:', ['Root'], []]]);
+  const hubbed = focusView(declarations(src).decls, 'U0');
+  expect(hubbed.boxes.map((b) => b.decl.name).sort()).toEqual(['Far', 'Id', 'Root', 'U0']);
+  expect(edgesOf(hubbed)).toEqual(['Far.u:>U0', 'Root.id:>Id', 'Root.u0:>U0', 'U0.id:>Id', 'U0.root:>Root']);
+  expect(hubbed.boxes.find((b) => b.decl.name === 'Root')!.rows[1]).toEqual({ name: 'u1:', type: 'U1', edges: [], chips: ['U1'] });
 });
 
 test('a TypeScript contract opens as a diagram and a card per declaration, with linked types and the why on its card', async () => {
@@ -87,7 +105,10 @@ test('a TypeScript contract opens as a diagram and a card per declaration, with 
   const spec = { kind: 'typescript', title: 'Stores', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: dts, choices: [{ id: 's', pointer: '/Store', decision: 'Store is a union.', why: [{ source: 'guide', text: 'One shape per kind.', ref: 'typescript#unions' }] }] };
   render(<>{contracts.full!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
   const diagram = await screen.findByRole('region', { name: 'Class diagram' });
-  expect(within(diagram).getByRole('button', { name: 'Manifest, go to its declaration' })).toBeInTheDocument();
+  // A click alone: d3-zoom's mousedown reads the event's view, which jsdom leaves null.
+  fireEvent.click(await within(diagram).findByRole('button', { name: 'Centre the diagram on Manifest' }));
+  expect(await within(diagram).findByRole('button', { name: 'Manifest, go to its declaration' })).toBeInTheDocument();
+  expect(within(diagram).getByRole('heading')).toHaveTextContent('around Manifest');
   const list = screen.getByRole('region', { name: 'Declarations' });
   expect(within(list).getByRole('heading', { name: 'Functions 1' })).toBeInTheDocument();
   const store = within(list).getByRole('article', { name: 'Store' });
@@ -105,7 +126,7 @@ test('an enum lists its members with their values, implicit ones numbered as the
   expect(e!.rows.map((r) => [r.name, r.type, r.desc])).toEqual([['Info', "'info'", 'Quiet.'], ['Error', "'error'", undefined]]);
   const [mode] = declarations('export enum Mode { Auto, Fast = 5, Faster, Named = "n" }').decls;
   expect(mode!.rows.map((r) => [r.name, r.type])).toEqual([['Auto', '0'], ['Fast', '5'], ['Faster', '6'], ['Named', '"n"']]);
-  expect(classDiagram([mode!]).boxes[0]!.lines).toEqual([['Auto', ' = 0'], ['Fast', ' = 5'], ['Faster', ' = 6'], ['Named', ' = "n"']]);
+  expect(focusView([mode!], 'Mode').boxes[0]!.rows.map((r) => `${r.name} ${r.type}`)).toEqual(['Auto = 0', 'Fast = 5', 'Faster = 6', 'Named = "n"']);
   const [neg] = declarations('export enum E { A = -1, B, C = 0x10, D }').decls;
   expect(neg!.rows.map((r) => [r.name, r.type])).toEqual([['A', '-1'], ['B', '0'], ['C', '0x10'], ['D', '17']]);
 });

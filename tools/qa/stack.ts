@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createSchedulesService } from '@quack/schedules';
 import { inProcessFetch } from '@quack/sdk';
 import { FAKE_MODEL, fakeModel } from './fake-model.ts';
+import { seedContracts } from './seed-contracts.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const STATE = join(tmpdir(), 'quack-qa-stack.json');
@@ -14,7 +15,7 @@ const STATE = join(tmpdir(), 'quack-qa-stack.json');
 export type StackOpts = {
   /** A built web dir, or `current` to build this tree's packages/web first. */
   web?: string;
-  /** A directory of session data dirs to copy in, `demo` to create sessions through the fake model, or `none`. */
+  /** A directory of session data dirs to copy in, `demo` to create sessions through the fake model, `contracts` for two Studio contracts each with a version awaiting approval, or `none`. */
   seed?: string;
   /** Extensions to mount in the distributor (listed under `extensions` in the deployment file); schedules also gets two sample schedules in its database. */
   apps?: string[];
@@ -132,7 +133,8 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     if (!existsSync(join(web, 'index.html'))) throw new Error(`no built web at ${web}`);
     const dataDir = join(parts.tmp, 'data');
     mkdirSync(dataDir);
-    if (opts.seed && opts.seed !== 'none' && opts.seed !== 'demo') copySeed(resolve(opts.seed), dataDir);
+    if (opts.seed === 'contracts') await seedContracts(dataDir);
+    else if (opts.seed && opts.seed !== 'none' && opts.seed !== 'demo') copySeed(resolve(opts.seed), dataDir);
     const config = join(parts.tmp, 'deployment.json');
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
@@ -180,5 +182,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'up') await up(rest);
   else if (cmd === 'down') await down();
-  else console.error('usage: node tools/qa/stack.ts up [--web <dir|current>] [--seed <dir|demo|none>] [--apps schedules,slots] [--model local|none|fake] | down');
+  else console.error('usage: node tools/qa/stack.ts up [--web <dir|current>] [--seed <dir|demo|contracts|none>] [--apps schedules,slots] [--model local|none|fake] | down');
 }

@@ -48,3 +48,11 @@ test('with nothing approved, a break is diffed against the first passing version
   const specs = [sealed(1, scheduleSpecV1(refs), true, 20), sealed(2, scheduleSpecV2(refs, [SLEEPER_PAGE]), true, 40), draft];
   assert.ok((await breaksOf(fakeApi(specs, []), draft)).length > 0);
 });
+
+test('a record that names its artifact is exact, even when a later passing draft shares its spec version', () => {
+  const exact: SealedArtifact = { ...record(1, 'a1', 30), content: JSON.stringify({ version: 1, artifact: 2, hash: 'h2', note: '', approval: 'a1' }) };
+  const specs = [...history.specs.slice(0, 2), sealed(3, { ...scheduleSpecV1(refs), title: 'later draft' }, true, 22)];
+  const all = { 'contract.spec': { versions: specs }, 'contract.approved': { versions: [exact] } };
+  assert.equal(approvedSpec(all, history.approvals)?.version, 2);
+  assert.equal(approvedSpec(all, history.approvals, 2), undefined);
+});
