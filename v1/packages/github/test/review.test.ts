@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseReview, reviewKind, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
-import { claimedNames, misquotes, quotedCode } from '../src/review.ts';
+import { claimedNames, dependencyDirs, misquotes, quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
 Fix the double-counted cache tokens before merging.
@@ -134,6 +134,33 @@ test('a quote is invented only when a name it claims is in no repo file, diff or
   calls = 0;
   for (const t of ['calls `gone.fetchAll() === 1`', 'again `gone.fetchAll() === 1`']) assert.deepEqual(await check('', '', t, shared), ['fetchAll']);
   assert.equal(calls, 2, 'two searches (repo, deps) for one name across two findings');
+});
+
+test('dependencies are searched where the reviewed repo installs them, each search bounded; one that times out does not convict', async () => {
+  const argvs: string[][] = [];
+  const opts: unknown[] = [];
+  const api = (dep: (argv: string[]) => unknown) => ({ env: { exec: async (argv: string[], o: unknown) => (argvs.push(argv), opts.push(o), argv[0] === 'git' ? { ok: true, value: { exitCode: 1 } } : dep(argv)) } });
+  const finding = { index: 1, label: 'nit', text: 'it calls `return computeTotals(a)`' } as never;
+  assert.deepEqual(await misquotes(api(() => ({ ok: false, error: { code: 'timeout' } })) as never, 'r', finding, '', '', {} as never, new Map(), ['r/node_modules', 'r/web/node_modules']), []);
+  assert.deepEqual(argvs.at(-1)!.slice(-2), ['r/node_modules', 'r/web/node_modules']);
+  assert.ok(opts.every((o) => (o as { timeout?: number }).timeout! > 0), 'every search has a timeout');
+  assert.deepEqual(await misquotes(api(() => ({ ok: true, value: { exitCode: 1 } })) as never, 'r', finding, '', '', {} as never, new Map(), []), ['computeTotals'], 'no dependencies: only the repo is searched');
+  assert.equal(argvs.at(-1)![0], 'git');
+  assert.ok(!argvs.flat().some((a) => a.includes('v1/node_modules')), 'no layout is hard-coded');
+});
+
+test('dependency dirs sit beside every tracked package.json', async () => {
+  const api = { env: { exec: async (_argv: string[], o: { onOutput: (t: string) => void }) => (o.onOutput('package.json\nweb/package.json\n'), { ok: true, value: { exitCode: 0 } }) } };
+  assert.deepEqual(await dependencyDirs(api as never, 'repo', {} as never), ['repo/node_modules', 'repo/web/node_modules']);
+});
+
+test('a failing git diff fails the evidence build instead of scoring the review on no diff', async () => {
+  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: '', baseRef: 'main', headSha: 'abc', checks: [], linkedIssues: [] };
+  const api = (exitCode: number) => ({ conversationId: 'c', snapshot: async () => ({ pr }), env: { exec: async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o?.onOutput?.(exitCode ? 'fatal: bad revision origin/main...HEAD' : ''), { ok: true, value: { exitCode } }) } });
+  const sealed = { content: '## Takeaway\nx\n## Verdict\napprove\n## Findings\n' } as never;
+  await assert.rejects(reviewEvidence()(api(128) as never, sealed, {} as never), /git diff in repo failed: fatal: bad revision/);
+  const ok = await reviewEvidence()(api(0) as never, sealed, {} as never);
+  assert.equal((ok.change[0].state as { diff: string }).diff, '(empty diff)', 'an empty diff that git produced is not an unavailable one');
 });
 
 test('a cited path resolves against tracked files: checkout prefix stripped, then a unique tail (prod cases)', () => {
