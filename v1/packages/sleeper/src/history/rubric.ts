@@ -64,7 +64,7 @@ export function historyEvidence(f: HistoryFacts) {
   };
 }
 
-// The audit's history table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// History weights are unreplayed: replay them before any weight gates delivery.
 export const historyRubric: Rubric = {
   name: 'sleeper.history',
   version: 3,

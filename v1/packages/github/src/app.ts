@@ -16,7 +16,7 @@ export class GithubError extends Error {
   }
 }
 
-// A GitHub App client: RS256 JWT for the app, then a cached installation token per repo, as v0 does (D56).
+// A GitHub App client: RS256 JWT for the app, then a cached installation token per repo, as v0 does.
 export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
   const api = (config.apiUrl ?? 'https://api.github.com').replace(/\/+$/, '');
   const installs = new Map<string, number>();

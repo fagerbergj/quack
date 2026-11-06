@@ -12,7 +12,7 @@ export const LINEUP_WORKFLOW = 'sleeper.lineup';
 
 export type LineupDeps = {
   client: SleeperClient;
-  /** Today's league snapshot from the service half (SL-5). */
+  /** Today's league snapshot from the service half. */
   snapshot: (league: string) => Promise<Json>;
   news?: FactsDeps['news'];
   classifier?: ClassifierRef;
@@ -44,7 +44,7 @@ function factsPrompt(f: Facts): string {
   ].join('\n\n');
 }
 
-/** Lineup job (SL-1): facts, one model decision, a sealed card, then the judge's verdict on it. */
+/** Lineup job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function lineupWorkflow(deps: LineupDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
   // close_call_news cannot be met without a news source, so it is scored only once one is wired; the verdict says so.

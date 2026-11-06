@@ -5,6 +5,7 @@ import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { useLeagueSessions, useResults, wanted, weekResult, type Result } from './week.ts';
+import { Dialog } from '../../Dialog.tsx';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
 type Player = { id: string; name: string; pos: string; team: string | null; inj: string | null };
@@ -206,12 +207,12 @@ type SheetProps = { found: Result[]; runs: Run[]; running: (job: string) => bool
 
 function JobSheet({ found, runs, running, status, onRun, onJump, onClose }: SheetProps) {
   return (
-    <div role="dialog" aria-modal="true" aria-label="Run a job" onKeyDown={(e) => e.key === 'Escape' && onClose()} className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" />
-      <div className="relative flex max-h-[85dvh] w-full flex-col overflow-y-auto rounded-t-[22px] border border-line bg-canvas px-4 pt-3 pb-[calc(1rem+var(--safe-b))] shadow-lift sm:max-w-md sm:rounded-[22px]">
+    // The frame only places the sheet; clicks beside it reach the backdrop beneath.
+    <Dialog label="Run a job" onClose={onClose} className="pointer-events-none fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+      <div className="pointer-events-auto relative flex max-h-[85dvh] w-full flex-col overflow-y-auto rounded-t-[22px] border border-line bg-canvas px-4 pt-3 pb-[calc(1rem+var(--safe-b))] shadow-lift sm:max-w-md sm:rounded-[22px]">
         <div className="flex items-center gap-2">
           <h2 className="m-0 flex-1 text-[16px] font-semibold">Run a job</h2>
-          <button type="button" autoFocus aria-label="Close" onClick={onClose} className="grid h-11 w-11 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft">✕</button>
+          <button type="button" data-autofocus aria-label="Close" onClick={onClose} className="grid h-11 w-11 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft">✕</button>
         </div>
         {status && <p role="status" className="m-0 mb-1 text-[13px] text-ink-2">{status}</p>}
         <ul className="m-0 flex list-none flex-col p-0">
@@ -230,7 +231,7 @@ function JobSheet({ found, runs, running, status, onRun, onJump, onClose }: Shee
           })}
         </ul>
       </div>
-    </div>
+    </Dialog>
   );
 }
 

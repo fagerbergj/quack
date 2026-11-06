@@ -15,7 +15,8 @@ export type ResearchConfig = {
   judgeModel?: ModelRef;
 };
 
-export type SourceRecord = { id: string; url: string; fetchedAt: number; hash: string };
+/** `chars` is the extracted text's full length, which the stored copy may fall short of; absent on records written before it existed. */
+export type SourceRecord = { id: string; url: string; fetchedAt: number; hash: string; chars?: number };
 
 /** Everything the session fetched, in order; reports cite these ids and the judge checks the citations against them. */
 export const SourcesDoc = defineDoc<{ sources: SourceRecord[] }>({
@@ -28,9 +29,13 @@ const sourcePath = (hash: string) => `sources/${hash}.txt`;
 
 /** The text kept for a fetched source, looked up by its id and keyed by the recorded hash; best-effort per session directory, so undefined when none was kept (a failed write, a fork with a fresh directory). */
 export async function sourceText(api: ToolExecutionApi, id: string, ctx: Context): Promise<string | undefined> {
+  return (await stored(api, id, ctx))?.text;
+}
+
+async function stored(api: ToolExecutionApi, id: string, ctx: Context) {
   const rec = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources.find((s) => s.id === id);
   const read = rec && (await api.env?.readTextFile(sourcePath(rec.hash), ctx));
-  return read?.ok ? read.value : undefined;
+  return rec && read?.ok ? { text: read.value, chars: rec.chars ?? read.value.length } : undefined;
 }
 
 const error = (text: string) => ({ output: [{ type: 'text' as const, text }], isError: true });
@@ -91,7 +96,8 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
     try {
       const got = await safeGet(url, { maxBytes: config.maxFetchBytes ?? 5_000_000, timeoutMs: 20_000, isPublic });
       if (got.status >= 400) return { failed: `${got.url} answered ${got.status}` };
-      return { text: await toText(got.body, got.contentType), record: { url: got.url, fetchedAt: 0, hash: createHash('sha256').update(got.body).digest('hex') } };
+      const text = await toText(got.body, got.contentType);
+      return { text, record: { url: got.url, fetchedAt: 0, hash: createHash('sha256').update(got.body).digest('hex'), chars: text.length } };
     } catch (err) {
       return { failed: `cannot fetch ${url}: ${(err as Error).message}` };
     }
@@ -119,7 +125,8 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
           doc.sources = [...doc.sources, { id: next, ...record }];
           return next;
         }, ctx);
-        const cut = page.text.length > cap ? `\n… cut at ${cap} of ${page.text.length} characters; read the rest with read_source id "${id}" offset ${cap}` : '';
+        const kept = page.text.length > MAX_STORED_CHARS ? ` (only the first ${MAX_STORED_CHARS} are kept)` : '';
+        const cut = page.text.length > cap ? `\n… cut at ${cap} of ${page.text.length} characters; read the rest with read_source id "${id}" offset ${cap}${kept}` : '';
         parts.push(`[${id}] ${record.url}\n\n${page.text.slice(0, cap)}${cut}`);
       }
       const text = parts.join('\n\n---\n\n');
@@ -136,11 +143,13 @@ export function readSourceTool() {
     replay: 'safe',
     async execute(args, api, ctx) {
       const id = args.id.replace(/^\[|\]$/g, '');
-      const text = await sourceText(api, id, ctx);
-      if (text === undefined) return error(`no stored text for source ${id}; ids come from web_fetch results in this session`);
+      const source = await stored(api, id, ctx);
+      if (source === undefined) return error(`no stored text for source ${id}; ids come from web_fetch results in this session`);
+      const { text, chars } = source;
       const end = args.offset + MAX_CHARS;
       const body = text.slice(args.offset, end);
-      const next = end < text.length ? `\n… ${end} of ${text.length} characters; continue with read_source id "${id}" offset ${end}` : `\n… end of source ${id} (${text.length} characters)`;
+      const last = chars > text.length ? `\n… end of the stored text of source ${id}: only its first ${text.length} of ${chars} characters were kept, so the rest cannot be read` : `\n… end of source ${id} (${text.length} characters)`;
+      const next = end < text.length ? `\n… ${end} of ${chars} characters; continue with read_source id "${id}" offset ${end}` : last;
       return { output: [{ type: 'text', text: body + next }] };
     },
   });

@@ -3,7 +3,7 @@ import type { JsonValue } from '@earendil-works/chord';
 export type LangfuseConfig = { baseUrl: string; publicKey: string; secretKey: string };
 export type DatasetItem = { id: string; input: JsonValue; expectedOutput?: JsonValue; metadata?: JsonValue };
 
-/** The Langfuse public API calls eval needs (EV1), on the endpoints v0's client proved against this deployment. */
+/** The Langfuse public API calls eval needs, on the endpoints v0's client proved against this deployment. */
 export function langfuse(config: LangfuseConfig, fetchImpl: typeof fetch = fetch) {
   const auth = `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`;
   async function call(method: string, path: string, body?: unknown, ok404 = false) {

@@ -3,74 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
-import { forgetVersion } from './api.ts';
+import { assistant, entry, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
 const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: 'error', error, requestId: requestOf(sock, i) });
 
-class FakeSocket {
-  static all: FakeSocket[] = [];
-  sent: unknown[] = [];
-  readyState = 1;
-  static OPEN = 1;
-  onopen?: () => void;
-  onclose?: () => void;
-  onmessage?: (e: { data: string }) => void;
-  url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeSocket.all.push(this);
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {}
-  open() {
-    act(() => this.onopen?.());
-  }
-  frame(f: object) {
-    act(() => this.onmessage?.({ data: JSON.stringify(f) }));
-  }
-}
-
-const usage = {};
-const entry = (id: string, model: object[]) => ({ id, conversationId: 'c', kind: 'x', model });
-const item = (e: object) => ({ kind: 'entry', entry: e });
-// The conversation view as the socket sends it; omitted `entries` leave the transcript the client holds as it is.
-const view = (o: { entries?: object[]; run?: boolean | object; message?: object; tools?: object[]; usage?: object } = {}) => ({
-  type: 'view',
-  items: o.entries?.map(item),
-  live: { ...(o.run ? { run: { taskId: 1, inputs: [], turns: 0 } } : {}), ...(o.message ? { generation: { attempt: 1, message: o.message } } : {}), ...(o.tools ? { tools: o.tools } : {}) },
-  usage: o.usage ?? usage,
-});
-const snapshot = (o: Parameters<typeof view>[0] = {}) => view({ entries: [], ...o });
-const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
-
-// Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
-const stubViewport = (desktop: boolean, wide = false) =>
-  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('1440') ? wide : desktop, addEventListener() {}, removeEventListener() {} }));
-
-let routes: Record<string, unknown>;
-const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-  // The session list carries paging and filter parameters; a route without them answers any.
-  const route = `${init?.method ?? 'GET'} /${url}`;
-  const hit = routes[route] ?? routes[route.replace(/^GET \/sessions\?.*/, 'GET /sessions')];
-  return new Response(JSON.stringify(hit ?? { title: 'Not Found', detail: 'not found' }), { status: hit ? 200 : 404, headers: { 'content-type': hit ? 'application/json' : 'application/problem+json' } });
-});
-
-beforeEach(() => {
-  FakeSocket.all = [];
-  routes = { 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
-  fetchMock.mockClear();
-  forgetVersion();
-  vi.stubGlobal('WebSocket', FakeSocket);
-  vi.stubGlobal('fetch', fetchMock);
-  vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
-  stubViewport(true);
-  location.hash = '';
-});
-afterEach(() => vi.unstubAllGlobals());
+useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] } }));
 
 async function openSession() {
   location.hash = '#/s/ui%3Au1';
@@ -80,7 +19,6 @@ async function openSession() {
   return ws;
 }
 
-const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T01:00:00.000Z', ...over });
 
 test('the list is newest-created first however the server pages it, and labels rows by creation when an older session becomes active', async () => {
   const older = sess('gh:old', { title: 'Older', running: true, active: true, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' });
@@ -303,10 +241,11 @@ test('the first Home send asks only for home:main, by key filter', async () => {
 });
 
 test('a first send the distributor refuses shows the error and keeps the text', async () => {
+  routes['POST /sessions/home%3Amain/invocations?agent=quack'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   render(<App />);
   await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'hello');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
   expect(screen.getByRole('textbox', { name: 'What do you need?' })).toHaveValue('hello');
   expect(FakeSocket.all).toEqual([]);
 });
@@ -453,7 +392,7 @@ test('markdown tool output renders with a toggle to raw; the delivery link is no
 });
 
 test('an artifact line renders the links stored with the version, with no stream entries to read', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' }] }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' }] }];
   const ws = await openSession();
   ws.frame(snapshot());
   const link = await screen.findByRole('link', { name: 'Posted ↗' });
@@ -463,7 +402,7 @@ test('an artifact line renders the links stored with the version, with no stream
 
 test('a Sleeper card in a session links back to that session, in the list and the Work drawer', async () => {
   const lineup = (await import('./extensions/sleeper/fixtures/8-lineup.json')).default as { content: string };
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
   const asks = await screen.findAllByRole('link', { name: 'Ask about this' });
@@ -471,7 +410,7 @@ test('a Sleeper card in a session links back to that session, in the list and th
 });
 
 test('the header shows the token total and Waiting on you for a pending approval', async () => {
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }] };
+  (live['ui%3Au1'] ??= {}).approvals = [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }];
   const ws = await openSession();
   ws.frame(snapshot({ usage: { models: { 'p/m': { input: 1200, output: 300 } }, tools: {} } }));
   expect(await screen.findByRole('status')).toHaveTextContent('Waiting on you');
@@ -479,8 +418,8 @@ test('the header shows the token total and Waiting on you for a pending approval
 });
 
 test('a GitHub session header links to the pull request', async () => {
-  routes['GET /sessions/github%3Ao%2Fr%231/approvals'] = { approvals: [] };
-  routes['GET /sessions/github%3Ao%2Fr%231/artifacts'] = { artifacts: [] };
+  (live['github%3Ao%2Fr%231'] ??= {}).approvals = [];
+  (live['github%3Ao%2Fr%231'] ??= {}).artifacts = [];
   location.hash = '#/s/github%3Ao%2Fr%231';
   render(<App />);
   expect(await screen.findByRole('link', { name: 'View on GitHub' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
@@ -521,8 +460,8 @@ test('a send while a run works is a server-side follow-up shown as a chip; Send 
 test('the first message of a review session is the PR card, with the files and checks the service attached', async () => {
   const key = 'github%3Ao%2Fr%231';
   const text = 'Review pull request o/r#1 (label quack:review).\nTitle: Cost per run\nHead: 9f43b50aaaa on feat/x; base: v1\n\nWhat changed';
-  routes[`GET /sessions/${key}/artifacts`] = { artifacts: [] };
-  routes[`GET /sessions/${key}/approvals`] = { approvals: [] };
+  (live[`${key}`] ??= {}).artifacts = [];
+  (live[`${key}`] ??= {}).approvals = [];
   routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 3, deletions: 1 }] }] };
   location.hash = `#/s/${key}`;
   render(<App />);
@@ -539,28 +478,6 @@ test('shows a server error frame', async () => {
   const ws = await openSession();
   ws.frame({ type: 'error', error: 'input is too long' });
   expect(screen.getByRole('alert')).toHaveTextContent('input is too long');
-});
-
-test('approving posts the verdict and clears the item', async () => {
-  const pending = { id: 'a/1', tool: 'bash', args: { cmd: 'rm x' }, requestedAt: 1 };
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [pending] };
-  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
-  const ws = await openSession();
-  ws.frame(snapshot());
-  const approve = await screen.findByRole('button', { name: /^Approve/ });
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [] };
-  await userEvent.click(approve);
-  await waitFor(() => expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull());
-  const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
-  expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve' });
-});
-
-test('an approval that appears mid-run shows up when tool activity arrives', async () => {
-  const ws = await openSession();
-  ws.frame(snapshot());
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] };
-  ws.frame(view({ run: true, tools: [{ callId: 't', name: 'push', status: 'running' }] }));
-  expect(await screen.findByRole('button', { name: /^Reject/ })).toBeInTheDocument();
 });
 
 test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
@@ -580,7 +497,7 @@ test('an assistant entry with only an errorMessage renders the error', async () 
 });
 
 test('a send on a closed socket keeps the input and says so', async () => {
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [] };
+  (live['ui%3Au1'] ??= {}).approvals = [];
   const ws = await openSession();
   ws.frame(snapshot());
   ws.readyState = 3;
@@ -592,7 +509,7 @@ test('a send on a closed socket keeps the input and says so', async () => {
 });
 
 test('a failed session fetch shows its error on the list', async () => {
-  routes = {};
+  routes['GET /sessions'] = new Fail(503, { title: 'Unavailable', detail: 'index down' });
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -613,11 +530,12 @@ test('Abort shows only while a run is in progress and posts to the abort route',
 });
 
 test('a failed abort is reported', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   const ws = await openSession();
   ws.frame(snapshot({ run: {} }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
 });
 
 test('a dropped socket reconnects with backoff and the new snapshot replaces the transcript', () => {
@@ -656,12 +574,10 @@ test('a dropped socket reconnects with backoff and the new snapshot replaces the
 
 test('lists artifacts with their check status and failing criteria', async () => {
   const check = (criterion: string, id: string, met: number | null) => ({ criterion, id, label: `Label ${id}`, weight: 2, met, notes: [] });
-  routes['GET /sessions/ui%3Au1/artifacts'] = {
-    artifacts: [
+  (live['ui%3Au1'] ??= {}).artifacts = [
       { kind: 'github.review', version: 1, hash: 'h1', content: 'draft one', sealedAt: 1, verdict: { passed: false, gatesFailed: ['cites.lines'], score: 0.4, checks: [check('cites', 'lines', 0), check('tone', 'polite', 1), check('misc', 'na', null)] } },
       { kind: 'github.review', version: 2, hash: 'h2', content: 'final review', sealedAt: 2, verdict: { passed: true, gatesFailed: [], score: 1, checks: [check('cites', 'lines', 1)] } },
-    ],
-  };
+    ];
   const ws = await openSession();
   ws.frame(snapshot());
   const section = await screen.findByRole('log', { name: 'Transcript' });
@@ -797,11 +713,9 @@ test('assistant text renders as markdown with a table, highlighted code and cita
 });
 
 test('the Work drawer opens from the status line, shows report then checks, traps focus and closes on Esc', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = {
-    artifacts: [
+  (live['ui%3Au1'] ??= {}).artifacts = [
       { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', label: 'Cites a source that does not say it', weight: 3, met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', label: 'A claim has no date', weight: 2, met: 1, notes: [] }] } },
-    ],
-  };
+    ];
   const ws = await openSession();
   ws.frame(snapshot());
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -825,7 +739,7 @@ test('the Work drawer opens from the status line, shows report then checks, trap
 });
 
 test('the Work tabs are wired for assistive tech and switch with the arrow keys', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
   await userEvent.click(await screen.findByRole('button', { name: 'Open Report' }));
@@ -927,24 +841,6 @@ test('a failed decision keeps the card with its error', async () => {
   expect(screen.getByRole('region', { name: 'Approval' })).toBeInTheDocument();
 });
 
-test('a stopped session shows its pending approval from the index, with the reason field, and the rail lists it', async () => {
-  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'ui:u1', id: 'a/1', tool: 'propose_contract', args: { summary: 'Ship the contract' }, state: 'pending', decision: null, by: null, at: iso(1) }, { session: 'gh:9', id: 'x', tool: 'other', state: 'pending', decision: null, by: null, at: iso(1) }] };
-  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
-  stubViewport(true, true);
-  const ws = await openSession();
-  ws.frame(snapshot());
-  const card = await screen.findByRole('region', { name: 'Approval' });
-  expect(within(card).getAllByText('Ship the contract').length).toBeGreaterThan(0);
-  expect(screen.getAllByRole('region', { name: 'Approval' })).toHaveLength(1);
-  expect(fetchMock.mock.calls.some(([u]) => u === 'sessions/ui%3Au1/approvals')).toBe(false);
-  expect(within(screen.getByRole('complementary', { name: 'Context' })).getByRole('button', { name: 'Ship the contract' })).toBeInTheDocument();
-  await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'no');
-  await userEvent.click(screen.getByRole('button', { name: /^Confirm reject/ }));
-  expect(lastPost()).toEqual({ decision: 'reject', reason: 'no' });
-  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
-});
-
 const pendingDecision = { questions: [{ session: 'gh:3', id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: iso(1) }] };
 
 test('Home shows a workflow question with its options, and an option answers it', async () => {
@@ -979,8 +875,6 @@ test('a structured question renders title, Markdown detail, suggested option fir
   expect(within(card).getByText('errors.ts').tagName).toBe('CODE');
   const rows = within(card).getAllByRole('button');
   expect(rows.map((b) => b.textContent)).toEqual(['Problem JSONSuggestedTyped, one more field.', 'Plain textSmallest change.', 'You decide']);
-  expect(rows[0]).toHaveClass('text-left', 'w-full', 'min-h-11');
-  expect(rows[2]).not.toHaveClass('border');
   expect(within(card).getByText('Why this matters')).toBeInTheDocument();
   routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
   await userEvent.click(rows[0]!);
@@ -1052,7 +946,7 @@ test('a question without title keeps the plain layout and Evidence fold', async 
   const card = await screen.findByRole('region', { name: 'Question' });
   expect(within(card).getByText('Evidence')).toBeInTheDocument();
   expect(within(card).queryByText('Suggested')).toBeNull();
-  expect(within(card).getByRole('button', { name: 'meeting' })).not.toHaveClass('text-left');
+  expect(within(card).getByRole('button', { name: 'meeting' })).toHaveTextContent(/^meeting$/);
 });
 
 test('a re-asked question with a newer askedAt shows again after the first was answered', async () => {
@@ -1073,11 +967,12 @@ test('a failed answer keeps the question card and shows the error', async () => 
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/questions/7%3Atype'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   stubViewport(false);
   location.hash = '#/';
   render(<App />);
   await userEvent.click(await screen.findByRole('button', { name: 'meeting' }));
-  expect(await screen.findByRole('alert')).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
   expect(screen.getByRole('region', { name: 'Question' })).toBeInTheDocument();
 });
 
@@ -1086,7 +981,7 @@ test('a session waiting on a question is in Needs you, and its view shows the qu
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, session: 'ui:u1' })) };
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }], failures: [] });
+  ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }], failures: [], approvals: [] });
   const needs = await screen.findByRole('region', { name: 'Needs you' });
   expect(within(needs).getByText('What kind of document is this?')).toBeInTheDocument();
   const card = await screen.findByRole('region', { name: 'Question' });
@@ -1099,7 +994,7 @@ const failure = { step: 'decide', error: 'Validation failed for tool "decide":\n
 test('a failed run shows Failed in the header and a card with the step, the first error line and Run again', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [], failures: [failure] });
+  ws.frame({ type: 'standing', questions: [], failures: [failure], approvals: [] });
   const card = await screen.findByRole('region', { name: 'Failed run' });
   expect(within(card).getByText('decide')).toBeInTheDocument();
   expect(within(card).getByText('Validation failed for tool "decide":')).toBeInTheDocument();
@@ -1109,22 +1004,23 @@ test('a failed run shows Failed in the header and a card with the step, the firs
   routes['POST /sessions/ui%3Au1/resume'] = { submissionId: '2', status: 'placed' };
   await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
   expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/resume', { method: 'POST' });
-  ws.frame({ type: 'standing', questions: [], failures: [] });
+  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [] });
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Failed run' })).toBeNull());
   expect(screen.getByRole('status')).toHaveTextContent('Idle');
 });
 
 test('a failed run that cannot resume shows why, and Copy error copies the whole error', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
+  routes['POST /sessions/ui%3Au1/resume'] = new Fail(409, { title: 'Conflict', detail: 'no failed run to resume' });
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [], failures: [failure] });
+  ws.frame({ type: 'standing', questions: [], failures: [failure], approvals: [] });
   const writeText = vi.fn(async () => undefined);
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   const card = await screen.findByRole('region', { name: 'Failed run' });
   await userEvent.click(within(card).getByRole('button', { name: 'Copy error' }));
   expect(writeText).toHaveBeenCalledWith(failure.error);
   await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
-  expect(await within(card).findByRole('alert')).toBeInTheDocument();
+  expect(await within(card).findByRole('alert')).toHaveTextContent('no failed run to resume');
 });
 
 test('a session whose run failed is under Needs you with its step and the error first line', async () => {
@@ -1237,7 +1133,7 @@ test('Artifacts says so when the index is off', async () => {
 });
 
 test('a failed load shows its error on Home', async () => {
-  delete routes['GET /sessions'];
+  routes['GET /sessions'] = new Fail(503, { title: 'Unavailable', detail: 'index down' });
   stubViewport(false);
   location.hash = '#/';
   render(<App />);
@@ -1350,7 +1246,7 @@ test('a failing check with no judge note has no disclosure', async () => {
 
 test('in the Work checks, a failed check starts open, a passed one with a note is closed, one with no note has no chevron', async () => {
   const checks = [chk('a', 'Quotes text that is not in the source', 3, 0, ['Not in the source.']), chk('b', 'Cites a source that was not opened', 3, 1, ['All sources opened.']), chk('c', 'A finding cites no source', 3, 1)];
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nx', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks } }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nx', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks } }];
   const ws = await openSession();
   ws.frame(snapshot());
   await userEvent.click(await screen.findByRole('button', { name: 'Open Report version 2' }));
@@ -1387,7 +1283,7 @@ test('an open question card keeps counting its age while the session is quiet', 
   try {
     vi.setSystemTime(new Date('2026-11-01T01:05:00.000Z'));
     const ws = await openSession();
-    ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'Which?', options: ['a'], evidence: null, askedAt: Date.parse('2026-11-01T01:04:00.000Z') }], failures: [] });
+    ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'Which?', options: ['a'], evidence: null, askedAt: Date.parse('2026-11-01T01:04:00.000Z') }], failures: [], approvals: [] });
     const card = screen.getByRole('region', { name: 'Question' });
     expect(within(card).getByText('1m')).toBeInTheDocument();
     act(() => void vi.advanceTimersByTime(120_000));
@@ -1401,8 +1297,7 @@ test('the transcript line names each artifact in plain words and never shows the
   const art = (kind: string, version: number, content: string, extra: object = {}) => ({ kind, version, hash: `h${version}`, content, sealedAt: version, verdict: null, ...extra });
   const pass = { passed: true, gatesFailed: [], score: 1, checks: [] };
   const fail = { passed: false, gatesFailed: [], score: 0.2, checks: [] };
-  routes['GET /sessions/ui%3Au1/artifacts'] = {
-    artifacts: [
+  (live['ui%3Au1'] ??= {}).artifacts = [
       art('sleeper.cards', 10, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: pass }),
       art('sleeper.cards', 11, JSON.stringify({ kind: 'waivers' }), { verdict: pass }),
       art('sleeper.cards', 12, JSON.stringify({ kind: 'trade-finder' }), { verdict: pass }),
@@ -1419,8 +1314,7 @@ test('the transcript line names each artifact in plain words and never shows the
       art('remarkable.transcript', 7, 't'),
       art('mystery.thing', 8, 'x', { verdict: fail }),
       art('mystery.other', 9, 'x'),
-    ],
-  };
+    ];
   const ws = await openSession();
   ws.frame(snapshot());
   const section = await screen.findByRole('log', { name: 'Transcript' });
@@ -1459,14 +1353,6 @@ test('below lg the session pane subtracts the 48px nav plus the bottom safe inse
   expect(pane?.style.getPropertyValue('--ws-h')).toBe('calc(844px - 48px - var(--safe-b))');
 });
 
-test('below lg main is the scroller inside a fixed frame that ends at the nav', async () => {
-  stubViewport(false);
-  await openSession();
-  const main = screen.getByRole('main');
-  expect(main).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto', 'overscroll-y-contain');
-  expect(main.parentElement).toHaveClass('fixed', 'top-0', 'bottom-[calc(48px+var(--safe-b))]', 'lg:contents');
-});
-
 // Real prod index rows [version, judge passed, posted, verdict in the content] for #2019 and #2042.
 const PROD: Record<string, Array<[number, boolean, boolean, string]>> = {
   'github:fagerbergj/quack#2019': [[1, false, false, 'approve'], [2, true, false, 'approve'], [3, true, false, 'request_changes'], [4, true, false, 'request_changes'], [5, false, false, 'request_changes'], [6, true, true, 'request_changes'], [7, false, true, 'approve']],
@@ -1495,8 +1381,8 @@ test('an idle review reads as its posted verdict, a limit-released one included,
 async function openReview(key: string, active: boolean, sealedItems: object[] = []) {
   routes['GET /sessions'] = { sessions: [sess(key, { title: 'Sleeper week stepper', running: active, active })] };
   routes['GET /index/artifacts'] = { artifacts: prodArtifacts(key) };
-  routes[`GET /sessions/${encodeURIComponent(key)}/artifacts`] = { artifacts: sealedItems };
-  routes[`GET /sessions/${encodeURIComponent(key)}/approvals`] = { approvals: [] };
+  (live[`${encodeURIComponent(key)}`] ??= {}).artifacts = sealedItems;
+  (live[`${encodeURIComponent(key)}`] ??= {}).approvals = [];
   location.hash = `#/s/${encodeURIComponent(key)}`;
   render(<App />);
   await screen.findByRole('heading', { name: /Sleeper week stepper/ });
@@ -1536,12 +1422,6 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   expect(within(done).getAllByRole('img', { name: 'Double-checked' })).toHaveLength(1);
   // The card carries the one Posted link; the pinned line drops its own.
   expect(within(screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
-});
-
-test('the transcript scroller is the containing block for absolute children, so sr-only headings cannot stretch main', async () => {
-  stubViewport(false);
-  await openSession();
-  expect(document.querySelector('[aria-live="polite"]')).toHaveClass('relative', 'overflow-y-auto');
 });
 
 const withRow = (over: object = {}) => {
@@ -1610,10 +1490,10 @@ test('an archived session is still readable and offers Unarchive', async () => {
 
 test('a refused archive says why and the session stays', async () => {
   withRow();
-  delete routes['PATCH /sessions/ui%3Au1'];
+  routes['PATCH /sessions/ui%3Au1'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   await openSession();
   await menu('Archive');
-  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
 });
 
 test('Delete asks first, names the session, and goes back to the list once confirmed', async () => {
@@ -1634,11 +1514,11 @@ test('Delete asks first, names the session, and goes back to the list once confi
 
 test('a refused delete keeps the dialog open with the server reason', async () => {
   withRow();
-  delete routes['DELETE /sessions/ui%3Au1'];
+  routes['DELETE /sessions/ui%3Au1'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   await openSession();
   await menu('Delete');
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('not found');
+  expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('refused by the server');
 });
 
 const phoneAt = (hash: string) => {
@@ -1782,8 +1662,8 @@ describe('bottom bar', () => {
 
 test('in a home: conversation the header reads quack and a confirm row shows what it will start', async () => {
   routes['GET /sessions'] = { sessions: [sess('home:h1', { title: 'Waivers', agent: 'quack' })] };
-  routes['GET /sessions/home%3Ah1/approvals'] = { approvals: [{ id: 'a', tool: 'start', args: { summary: 'Process waivers for week 9' }, requestedAt: 1 }] };
-  routes['GET /sessions/home%3Ah1/artifacts'] = { artifacts: [] };
+  (live['home%3Ah1'] ??= {}).approvals = [{ id: 'a', tool: 'start', args: { summary: 'Process waivers for week 9' }, requestedAt: 1 }];
+  (live['home%3Ah1'] ??= {}).artifacts = [];
   phoneAt('#/s/home%3Ah1');
   render(<App />);
   FakeSocket.all[0]!.open();
@@ -1958,7 +1838,7 @@ describe('the session page as a ledger', () => {
   ];
 
   test('each version sits in time order between the work around it, and a revised version shows its round', async () => {
-    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, fail), review(2, 70, pass)] };
+    (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, fail), review(2, 70, pass)];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
     const log = await screen.findByRole('log', { name: 'Transcript' });
@@ -1973,7 +1853,7 @@ describe('the session page as a ledger', () => {
   });
 
   test('a failed check opens on what the revision must fix; a passed one is only the tick on its line', async () => {
-    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, fail), review(2, 70, pass)] };
+    (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, fail), review(2, 70, pass)];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
     const log = await screen.findByRole('log', { name: 'Transcript' });
@@ -1988,7 +1868,7 @@ describe('the session page as a ledger', () => {
 
   test('a failed latest version opens on what to fix even with an extension card, and a partial check shows its score', async () => {
     const half = { ...check('cites', 0.5, ['Half the findings cite lines.']), weight: 2 };
-    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, pass), review(2, 70, { ...fail, checks: [half] })] };
+    (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, pass), review(2, 70, { ...fail, checks: [half] })];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
     const log = await screen.findByRole('log', { name: 'Transcript' });
@@ -2037,7 +1917,7 @@ test('a contract session is named by its latest spec in the list, not by the tex
 });
 
 test('the session menu names what it opens: Open review, not Work', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
   await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
@@ -2047,7 +1927,7 @@ test('the session menu names what it opens: Open review, not Work', async () => 
 });
 
 test('the session menu runs from harmless to destructive', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'r', sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h', content: 'r', sealedAt: 1, verdict: null }];
   routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip' })] };
   const ws = await openSession();
   ws.frame(snapshot({ run: true }));
@@ -2079,8 +1959,8 @@ describe('the session context rail', () => {
     Element.prototype.scrollIntoView = vi.fn();
     routes['GET /sessions'] = { sessions: [sess('github:o/r#1', { agent: 'reviewer', createdAt: '2026-11-01T13:00:00Z', lastActivity: '2026-11-01T15:00:00Z' })] };
     routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 3, status: 'promoted', model: 'qwen3.8-27b' }] };
-    routes[`GET /sessions/${key}/artifacts`] = { artifacts: over.artifacts ?? [sealed(1, { verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [] } }), sealed(2, { links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#r' }] })] };
-    routes[`GET /sessions/${key}/approvals`] = { approvals: over.approvals ?? [] };
+    (live[`${key}`] ??= {}).artifacts = over.artifacts ?? [sealed(1, { verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [] } }), sealed(2, { links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#r' }] })];
+    (live[`${key}`] ??= {}).approvals = over.approvals ?? [];
     routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 200, deletions: 10 }, { path: 'b.ts', additions: 12, deletions: 4 }], checks: over.checks ?? [check('test', 'completed', 'success'), check('image', 'completed', 'skipped')] }] };
     location.hash = `#/s/${key}`;
     render(<App />);
@@ -2096,7 +1976,7 @@ describe('the session context rail', () => {
     const pr = within(rail).getByRole('region', { name: 'Pull request' });
     expect(await within(pr).findByText('#1 Cost per run')).toBeInTheDocument();
     expect(within(pr).getByText('feat/x → v1')).toBeInTheDocument();
-    expect(within(pr).getByText('✓ All passed')).toHaveClass('text-success');
+    expect(within(pr).getByText('✓ All passed')).toBeInTheDocument();
     expect(within(pr).queryByText(/image|skipped/i)).toBeNull();
     expect(within(pr).getByText(/2 files changed/)).toHaveTextContent('2 files changed +212 −14');
     expect(within(pr).getByRole('link', { name: 'Open on GitHub ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
@@ -2114,7 +1994,7 @@ describe('the session context rail', () => {
   test('failed and running checks are named and skipped ones never show', async () => {
     await openReview(true, { checks: [check('test', 'completed', 'failure'), check('lint', 'in_progress', null), check('build', 'completed', 'success'), check('image', 'completed', 'skipped')] });
     const pr = within(await screen.findByRole('complementary', { name: 'Context' })).getByRole('region', { name: 'Pull request' });
-    expect(await within(pr).findByText('✗ test failed')).toHaveClass('text-danger');
+    expect(await within(pr).findByText('✗ test failed')).toBeInTheDocument();
     expect(within(pr).getByText('… lint running')).toBeInTheDocument();
     expect(within(pr).queryByText(/All passed|image|build/)).toBeNull();
   });

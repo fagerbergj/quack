@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import { Thumbs, type Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
@@ -6,6 +6,7 @@ import { ledger, LedgerItem } from './Artifacts.tsx';
 import type { SealedArtifact } from './api.ts';
 import { Args } from './JsonView.tsx';
 import { Markdown } from './Markdown.tsx';
+import { same } from './same.ts';
 import type { View } from './view.ts';
 
 // Session view: user bubble, plain assistant prose, ONE collapsed activity line per run of work (thinking, tools),
@@ -167,12 +168,12 @@ function UserRow({ m, meta }: { m: Message; meta: Meta }) {
   );
 }
 
-type Ledger = { running: boolean; onOpen: (a: SealedArtifact) => void };
+type RowProps = { item: Item; meta: Meta; load: Load; running: boolean; onOpen: (a: SealedArtifact) => void };
 
-function Row({ item, meta, load, ledger: l }: { item: Item; meta: Meta; load: Load; ledger: Ledger }): ReactNode {
+function RowView({ item, meta, load, running, onOpen }: RowProps): ReactNode {
   switch (item.k) {
     case 'user': return <UserRow m={item.m} meta={meta} />;
-    case 'artifact': return <LedgerItem a={item.a} round={item.round} latest={item.latest} running={l.running} meta={meta} onOpen={l.onOpen} />;
+    case 'artifact': return <LedgerItem a={item.a} round={item.round} latest={item.latest} running={running} meta={meta} onOpen={onOpen} />;
     case 'compact': return <Compacted m={item.m} />;
     case 'prose': return <article aria-label="Assistant" className="min-w-0 text-[14.5px] leading-relaxed text-ink"><Markdown text={item.text} /></article>;
     case 'error': return <p className="m-0 text-[13px] text-danger">{`Error: ${item.text}`}</p>;
@@ -181,6 +182,9 @@ function Row({ item, meta, load, ledger: l }: { item: Item; meta: Meta; load: Lo
     case 'gap': return <button type="button" onClick={() => load({ type: 'gap', after: item.after, upTo: item.upTo })} className={`min-h-11 self-start lg:min-h-0 ${quiet}`}>Load missing messages</button>;
   }
 }
+
+// Every commit resends the transcript as fresh objects, so a row compares its item by value: only the streaming row and changed ones render.
+const Row = memo(RowView, (p, n) => same(p.meta, n.meta) && p.load === n.load && p.running === n.running && p.onOpen === n.onOpen && same(p.item, n.item));
 
 function blocks(m: AssistantMessage, key: string, results: Map<string, ToolResultMessage>): (Item | Step)[] {
   const out: (Item | Step)[] = m.content.flatMap((b, i): (Item | Step)[] => {
@@ -195,7 +199,11 @@ function blocks(m: AssistantMessage, key: string, results: Map<string, ToolResul
 type Msg = { key: string; m: Message; compaction: boolean };
 
 // Each sealed version goes in before the first message that came after it, ending any run of work it interrupts.
-function build(view: View, artifacts: SealedArtifact[]): Item[] {
+const NONE: Meta = [];
+const NO_ARTIFACTS: SealedArtifact[] = [];
+const ignore = () => undefined;
+
+function build(view: Pick<View, 'items' | 'partial'>, artifacts: SealedArtifact[]): Item[] {
   const seq = view.items.flatMap((it, i): (Msg | Item)[] => {
     if (it.kind === 'earlier') return [{ k: 'earlier', key: 'earlier' }];
     if (it.kind === 'gap') return [{ k: 'gap', key: `gap:${i}`, after: it.after, upTo: it.upTo }];
@@ -235,10 +243,12 @@ function build(view: View, artifacts: SealedArtifact[]): Item[] {
   return items;
 }
 
-export function Transcript({ view, meta = [], load, artifacts = [], running = false, onOpen = () => undefined }: { view: View; meta?: Meta; load: Load; artifacts?: SealedArtifact[]; running?: boolean; onOpen?: (a: SealedArtifact) => void }) {
+export function Transcript({ view, meta = NONE, load, artifacts = NO_ARTIFACTS, running = false, onOpen = ignore }: { view: View; meta?: Meta; load: Load; artifacts?: SealedArtifact[]; running?: boolean; onOpen?: (a: SealedArtifact) => void }) {
+  const items = useMemo(() => build(view, artifacts), [view.items, view.partial, artifacts]);
+  // Busy while a message streams, so a screen reader announces it once complete rather than each partial line.
   return (
-    <div role="log" aria-label="Transcript" className="flex min-w-0 flex-col gap-5">
-      {build(view, artifacts).map((item) => <Row key={item.key} item={item} meta={meta} load={load} ledger={{ running, onOpen }} />)}
+    <div role="log" aria-label="Transcript" aria-busy={view.partial !== undefined} className="flex min-w-0 flex-col gap-5">
+      {items.map((item) => <Row key={item.key} item={item} meta={meta} load={load} running={item.k === 'artifact' && running} onOpen={onOpen} />)}
     </div>
   );
 }

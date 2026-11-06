@@ -12,6 +12,7 @@ import sql from 'highlight.js/lib/languages/sql';
 import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
+import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -63,10 +64,11 @@ const components = {
   ),
 };
 
-export function Markdown({ text }: { text: string }) {
+// Memoized by text: a parse with highlighting is the costliest thing a row draws.
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="md min-w-0">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight, rehypeCitations]} components={components}>{text}</ReactMarkdown>
     </div>
   );
-}
+});

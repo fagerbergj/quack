@@ -1,8 +1,7 @@
-import { PrChip } from '../prState.tsx';
+import { PrChip } from './prState.tsx';
 import { checkState, parseOpening, type PrMeta } from './PrCard.tsx';
 
 const KEY = /^github:([^/]+\/[^#]+)#(\d+)$/;
-export const isPrSession = (key: string) => KEY.test(key);
 
 type Checks = NonNullable<PrMeta['checks']>;
 
@@ -30,8 +29,10 @@ function Changes({ files, url }: { files: NonNullable<PrMeta['files']>; url: str
 }
 
 /** The pull request a review session is about: state, title, branches, checks and size, from the opening message and the service's meta; a row with no data is left out. */
-export function PrSection({ sessionKey, opening, meta, fallbackTitle }: { sessionKey: string; opening?: string; meta: readonly Record<string, unknown>[]; fallbackTitle: string }) {
-  const [, repo, number] = KEY.exec(sessionKey)!;
+export function PrSection({ sessionKey, opening, meta, title }: { sessionKey: string; title: string; opening?: string; meta: readonly Record<string, unknown>[] }) {
+  const match = KEY.exec(sessionKey);
+  if (!match) return null;
+  const [, repo, number] = match;
   const o = opening ? parseOpening(opening) : undefined;
   const records = meta as readonly PrMeta[];
   const pr = o?.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head);
@@ -41,7 +42,7 @@ export function PrSection({ sessionKey, opening, meta, fallbackTitle }: { sessio
       <h2 id="rail-pr" className="m-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase">Pull request</h2>
       <div className="-mx-3 flex flex-col items-start gap-3 rounded-2xl bg-soft px-3 py-3.5">
         <PrChip sessionKey={sessionKey} />
-        <p className="m-0 text-[14.5px] leading-snug font-semibold [overflow-wrap:anywhere]">{`#${number} ${pr?.title ?? o?.title ?? fallbackTitle}`}</p>
+        <p className="m-0 text-[14.5px] leading-snug font-semibold [overflow-wrap:anywhere]">{`#${number} ${pr?.title ?? o?.title ?? title}`}</p>
         {(o?.headRef || o?.baseRef) && <code className="font-mono text-[12px] text-ink-2 [overflow-wrap:anywhere]">{[o.headRef, o.baseRef].filter(Boolean).join(' → ')}</code>}
         {(lines.length > 0 || pr?.files?.length) && (
           <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13px]">

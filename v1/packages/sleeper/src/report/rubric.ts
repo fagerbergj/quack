@@ -50,7 +50,7 @@ export function digestEvidence(f: DigestFacts) {
   };
 }
 
-// The audit's digest table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// Digest weights are unreplayed: replay them before any weight gates delivery.
 export const digestRubric: Rubric = {
   name: 'sleeper.digest',
   version: 2,
@@ -113,7 +113,7 @@ export function retroEvidence(f: RetroFacts) {
   };
 }
 
-// The audit's retro table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// Retro weights are unreplayed: replay them before any weight gates delivery.
 export const retroRubric: Rubric = {
   name: 'sleeper.retro',
   version: 2,

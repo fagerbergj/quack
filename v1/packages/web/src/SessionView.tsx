@@ -1,38 +1,42 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
-import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
+import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
-import { artifactName, useArtifacts } from './Artifacts.tsx';
+import { artifactName } from './Artifacts.tsx';
 import { CheckProgress, liveChecks, progressLabel } from './CheckResult.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { Work } from './Work.tsx';
 import { ContextRail, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
+import { useMenu } from './useMenu.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
-import { PrChip } from './prState.tsx';
+import { SessionChips } from './slots.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
+import { useLoad } from './useLoad.ts';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 
-type Standing = { questions: Question[]; failures: Failure[] };
+type Standing = { questions: Question[]; failures: Failure[]; approvals: Approval[] };
 type Queued = { id: string; text: string };
-type Frame = { type: 'queued'; items: Queued[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
+type Frame = { type: 'queued'; items: Queued[] } | { type: 'artifacts'; artifacts: SealedArtifact[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
 
 let nextRequest = 0;
+
+type SocketState = 'connecting' | 'open' | 'reconnecting';
 
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
   const held = useRef<View>(emptyView);
   const [view, setView] = useState<View>(emptyView);
-  const [state, setState] = useState<'connecting' | 'open' | 'reconnecting'>('connecting');
+  const [state, setState] = useState<SocketState>('connecting');
   const [error, setError] = useState('');
-  const [approvalTick, setTick] = useState(0);
-  const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
+  const [standing, setStanding] = useState<Standing>({ questions: [], failures: [], approvals: [] });
+  const [artifacts, setArtifacts] = useState<SealedArtifact[]>([]);
   const [queued, setQueued] = useState<Queued[]>([]);
   // One per input in flight, keyed by the requestId the server echoes on its `accepted` or `error`; it handles inputs concurrently, so answers can arrive out of order.
   const acks = useRef(new Map<string, (ok: boolean) => void>());
@@ -53,7 +57,6 @@ function useSocket(key: string, agent: string | undefined) {
         setState('open');
       };
       // Every connect starts with a full view that replaces the one held, so a reconnect cannot duplicate lines.
-      let activity: string | undefined;
       sock.onclose = () => {
         acks.current.forEach((done) => done(false));
         acks.current.clear();
@@ -72,9 +75,8 @@ function useSocket(key: string, agent: string | undefined) {
           const next = applyView(held.current, frame);
           held.current = next;
           setView(next);
-          if (activity !== undefined && activity !== next.activity) setTick((t) => t + 1);
-          activity = next.activity;
         } else if (frame.type === 'standing') setStanding(frame);
+        else if (frame.type === 'artifacts') setArtifacts(sealedFrom(frame.artifacts));
         else if (frame.type === 'queued') setQueued(frame.items);
         else if (frame.type === 'error') (setError(frame.error), settle(frame.requestId, false));
         else if (frame.type === 'accepted') settle(frame.requestId, true);
@@ -88,7 +90,7 @@ function useSocket(key: string, agent: string | undefined) {
     };
   }, [key, agent]);
   // Resolves true once the server accepts the input, false when it rejects it or the socket drops, so a composer clears only on true.
-  const send = (input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []): Promise<boolean> => {
+  const send = useCallback((input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []): Promise<boolean> => {
     if (ws.current?.readyState !== WebSocket.OPEN) {
       setError('Disconnected: reconnecting. Your message was not sent.');
       return Promise.resolve(false);
@@ -99,12 +101,12 @@ function useSocket(key: string, agent: string | undefined) {
     const done = new Promise<boolean>((resolve) => acks.current.set(requestId, resolve));
     ws.current.send(JSON.stringify({ type: 'input', requestId, input, images: images.length ? images : undefined, whenBusy }));
     return done;
-  };
+  }, []);
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
-  const unqueue = (type: 'withdraw' | 'steer', id: string) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }));
+  const unqueue = useCallback((type: 'withdraw' | 'steer', id: string) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }))), []);
   // An earlier or gap row asks the server for the entries the window does not hold.
-  const load = (req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req));
-  return { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load };
+  const load = useCallback((req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req))), []);
+  return { view, state, error, setError, standing, artifacts, queued, send, unqueue, load };
 }
 
 const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
@@ -125,7 +127,11 @@ function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void
 
 type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
 
-function Composer({ busy, disabled, send, input, setInput, queued, unqueue, attach }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue; attach: Attachments }) {
+type Send = (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>;
+
+// The composer owns its draft, so a keystroke re-renders it alone, never the transcript.
+const Composer = memo(function Composer({ sessionKey, state, busy, send, queued, unqueue }: { sessionKey: string; state: SocketState; busy: boolean; send: Send; queued: Queued[]; unqueue: Unqueue }) {
+  const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [sending, setSending] = useState(false);
   const submit = async (e: SubmitEvent) => {
     e.preventDefault();
@@ -144,13 +150,13 @@ function Composer({ busy, disabled, send, input, setInput, queued, unqueue, atta
         <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <button type="submit" disabled={disabled || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="submit" disabled={state !== 'open' || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
       </form>
     </>
   );
-}
+});
 
 type Tone = 'wait' | 'run' | 'idle' | 'fail';
 const TONES: Record<Tone, string> = {
@@ -191,8 +197,8 @@ type Entry = { label: string; run?: () => void; href?: string; danger?: boolean 
 function MenuEntry({ e, close }: { e: Entry; close: () => void }) {
   const cls = `flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] no-underline hover:bg-soft lg:min-h-8 ${e.danger ? 'text-danger' : 'text-ink'}`;
   return e.href
-    ? <a role="menuitem" href={e.href} download onClick={close} className={cls}>{e.label}</a>
-    : <button type="button" role="menuitem" onClick={() => { close(); e.run?.(); }} className={cls}>{e.label}</button>;
+    ? <a role="menuitem" tabIndex={-1} href={e.href} download onClick={() => close()} className={cls}>{e.label}</a>
+    : <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); e.run?.(); }} className={cls}>{e.label}</button>;
 }
 
 type MenuActions = { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void };
@@ -212,16 +218,15 @@ function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort:
 
 // Stopping the run, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
 function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions }) {
-  const [open, setOpen] = useState(false);
+  const menu = useMenu();
   if (!running && !latest && !manage) return null;
-  const close = () => setOpen(false);
   return (
-    <div className="relative">
-      <button type="button" aria-label="More actions" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
-      {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
+    <div ref={menu.root} onKeyDown={menu.keys} className="relative">
+      <button ref={menu.button} type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu.open} onClick={menu.toggle} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
+      {menu.open && (
+        <div role="menu" aria-label="More actions" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
           {groupsOf(running, latest, onAbort, onOpen, manage).map((g, i) => (
-            <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={close} />)}</div>
+            <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={menu.close} />)}</div>
           ))}
         </div>
       )}
@@ -255,7 +260,7 @@ function Header({ sessionKey, name, back, status, tone, spend, link, result, onD
           <StatusChip text={status} tone={tone} />
           {result && <Result result={result} />}
         </div>
-        <PrChip sessionKey={sessionKey} />
+        <SessionChips sessionKey={sessionKey} />
         <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
         {onDetails && <button type="button" onClick={onDetails} className="h-11 flex-none cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-link hover:bg-soft lg:h-9">Details</button>}
         {link && (
@@ -268,7 +273,7 @@ function Header({ sessionKey, name, back, status, tone, spend, link, result, onD
   );
 }
 
-function statusOf(state: 'connecting' | 'open' | 'reconnecting', waiting: number, running: boolean, failed?: Failure): [string, Tone] {
+function statusOf(state: SocketState, waiting: number, running: boolean, failed?: Failure): [string, Tone] {
   if (state !== 'open') return [state === 'reconnecting' ? 'Reconnecting' : 'Connecting', 'idle'];
   if (waiting) return ['Waiting on you', 'wait'];
   if (failed && !running) return [`Failed · ${failed.step}`, 'fail'];
@@ -285,7 +290,7 @@ function usePaneStyle(): CSSProperties | undefined {
 
 // The landing composer's text and images seed this composer; they are sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while
 // the composer still holds the untouched seed, so an edit or a failed connect leaves them to the user.
-function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>) {
+function useSeed(sessionKey: string, state: SocketState, send: Send) {
   const [seed] = useState(() => pendingInput.get(sessionKey));
   const [input, setInput] = useState(seed?.text ?? '');
   const attach = useAttachments(seed?.images);
@@ -310,23 +315,22 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
   );
 }
 
+const NO_META: Array<Record<string, unknown>> = [];
+
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
-  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load } = useSocket(sessionKey, agent);
-  const { input, setInput, attach } = useSeed(sessionKey, state, send);
+  const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
-  const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
-  const pending = useApprovals(sessionKey, approvalTick);
+  const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
   const details = useDetails();
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
-  const [meta, setMeta] = useState<Array<Record<string, unknown>>>([]);
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
-  useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
+  const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -338,10 +342,9 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <div className="flex min-h-0 flex-1">
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
+        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
-            {artifactsError && <p role="alert" className="m-0 text-[13px] text-danger">{artifactsError}</p>}
             <SessionKeyContext value={sessionKey}>
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             </SessionKeyContext>
@@ -354,7 +357,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
         {/* On a phone the keyboard leaves room for an open answer field or the composer, not both; focus would flicker it under a tap. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 max-lg:group-has-[[data-answer]]/pane:hidden bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[860px] flex-col gap-2">
-            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
+            <Composer sessionKey={sessionKey} state={state} busy={view.running} send={send} queued={queued} unqueue={unqueue} />
           </div>
         </div>
       </div>

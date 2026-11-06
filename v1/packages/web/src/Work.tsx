@@ -5,7 +5,7 @@ import { SessionKeyContext } from './extension.ts';
 import { delivered, versionOf } from './delivered.ts';
 import { CheckRow } from './CheckList.tsx';
 import { Content } from './JsonView.tsx';
-import { useModal } from './useModal.ts';
+import { Dialog } from './Dialog.tsx';
 
 const tab = (on: boolean) =>
   `h-11 lg:h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
@@ -23,7 +23,7 @@ function Checks({ a }: { a: SealedArtifact }) {
   );
 }
 
-// Modal drawer: Esc, the close button or the backdrop closes it, Tab stays inside, focus returns to the opener.
+// A drawer on the one Dialog: Esc, the close button or the backdrop closes it.
 export function Work({ artifact, versions, session, onClose }: { artifact: SealedArtifact; versions?: SealedArtifact[]; session?: string; onClose: () => void }) {
   const [picked, setPicked] = useState(versionOf(artifact));
   const seen = versions && delivered(versions);
@@ -38,18 +38,15 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
     setShown(next);
     document.getElementById(`${id}-tab-${next}`)?.focus();
   };
-  const { panel, closeBtn, keys } = useModal(onClose);
   return (
-    <>
-      <div aria-hidden="true" onClick={onClose} className="fixed inset-0 z-40 bg-ink/25 backdrop-blur-[2px]" />
-      <section ref={panel} role="dialog" aria-modal="true" aria-label="Work" onKeyDown={keys} className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-canvas shadow-lift sm:w-[min(560px,92vw)]">
+    <Dialog label="Work" onClose={onClose} className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-canvas shadow-lift sm:w-[min(560px,92vw)]">
         <div className="flex items-center gap-2 border-b border-line px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 sm:px-5">
           <div role="tablist" aria-label="Session detail" onKeyDown={arrows} className="inline-flex rounded-full border border-line bg-soft p-[3px]">
             {(['report', 'checks'] as const).map((t) => (
               <button key={t} id={`${id}-tab-${t}`} type="button" role="tab" aria-selected={shown === t} aria-controls={`${id}-panel`} tabIndex={shown === t ? 0 : -1} onClick={() => setShown(t)} className={tab(shown === t)}>{t === 'report' ? 'Report' : 'Checks'}</button>
             ))}
           </div>
-          <button ref={closeBtn} type="button" aria-label="Close" onClick={onClose} className="ml-auto grid h-11 w-11 cursor-pointer place-items-center rounded-full text-ink-2 hover:bg-soft hover:text-ink">
+          <button data-autofocus type="button" aria-label="Close" onClick={onClose} className="ml-auto grid h-11 w-11 cursor-pointer place-items-center rounded-full text-ink-2 hover:bg-soft hover:text-ink">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
@@ -75,7 +72,6 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
             )}
           </div>
         </div>
-      </section>
-    </>
+    </Dialog>
   );
 }

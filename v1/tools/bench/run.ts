@@ -1,4 +1,4 @@
-// D53: run the v1 reviewer on PRs v0 already reviewed, each at the head v0 first reviewed, posting nothing.
+// Runs the v1 reviewer on PRs v0 already reviewed, each at the head v0 first reviewed, posting nothing.
 // Usage: node tools/bench/run.ts <out-dir> <deployment.json> <agent.json> <owner/repo> <pr>...
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';

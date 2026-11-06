@@ -46,7 +46,7 @@ function factsPrompt(f: WaiverFacts): string {
   ].join('\n\n');
 }
 
-/** Waivers job (SL-1): facts, one model decision, a sealed card, then the judge's verdict on it. */
+/** Waivers job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function waiversWorkflow(deps: WaiversDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
   // close_call_news cannot be met without a news source, so it is scored only once one is wired; the verdict says so.

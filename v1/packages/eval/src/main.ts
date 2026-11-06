@@ -42,8 +42,8 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
 } else if (command === 'run' && dataset && rest.length >= 3) {
   const [runName, deployment, agent, ...only] = rest;
   const items = (await lf.items(dataset)).filter((i) => !only.length || only.includes(i.id));
-  // EV2: a benchmark that can promote an agent needs 20 real cases; a partial run still reports, it just cannot promote.
-  if (!only.length && items.length < MIN_CASES) console.log(`note: ${dataset} has ${items.length} items; a promotion needs ${MIN_CASES} (EV2)`);
+  // A benchmark that can promote an agent needs 20 real cases; a partial run still reports, it just cannot promote.
+  if (!only.length && items.length < MIN_CASES) console.log(`note: ${dataset} has ${items.length} items; a promotion needs ${MIN_CASES}`);
   const { results: rows, failures } = await eachItem(items, concurrency, async (item) => {
     const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, services);
     const extra = await adapterScores(adapters, r.record);

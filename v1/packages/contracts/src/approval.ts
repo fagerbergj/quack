@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
-import { Approvals, Artifacts, gated, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, gated, type Approval, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
@@ -40,7 +40,21 @@ async function reconcile(api: ToolExecutionApi, ctx: Context) {
   }, ctx);
 }
 
-type Versions = Record<string, { versions: SealedArtifact[] }>;
+type Versions = Record<string, { versions: SealedArtifact[] } | undefined>;
+const passed = (v: SealedArtifact) => (v.verdict as { passed?: boolean } | null)?.passed === true;
+
+/** The spec the newest approval before artifact `before` approved: a proposal puts up the newest sealed version, so it is
+ * the last passing one of the approved spec version sealed by the time the approval was requested. */
+export function approvedSpec(all: Versions, approvals: Record<string, Approval>, before = Infinity): SealedArtifact | undefined {
+  const specs = (all[CONTRACT_KIND]?.versions ?? []).filter((v) => v.version < before && passed(v));
+  for (const r of (all[APPROVED_KIND]?.versions ?? []).toReversed()) {
+    const { version, approval } = JSON.parse(r.content) as { version: number; approval?: string };
+    const asked = (approval && approvals[approval]?.requestedAt) || Infinity;
+    const hit = specs.findLast((v) => v.sealedAt <= asked && (parseSpec(v.content) as ContractSpec).version === version);
+    if (hit) return hit;
+  }
+  return undefined;
+}
 
 // The facts the approver reads are computed here in code, not taken from the agent's account of them.
 async function evidence(api: ToolExecutionApi, ctx: Context) {
@@ -48,11 +62,12 @@ async function evidence(api: ToolExecutionApi, ctx: Context) {
   const specs = (all[CONTRACT_KIND]?.versions ?? []).map((v) => ({ v, spec: parseSpec(v.content) }));
   // Only the newest version is proposed; an older pass would put up a spec the agent has since changed.
   const newest = specs.at(-1);
-  const latest = (newest?.v.verdict as { passed?: boolean } | null)?.passed ? newest!.spec : undefined;
+  const latest = newest && passed(newest.v) ? newest.spec : undefined;
   if (!latest || typeof latest === 'string') return undefined;
   const approved = all[APPROVED_KIND]?.versions.at(-1);
   const was = approved && (JSON.parse(approved.content) as { version: number }).version;
-  const prev = specs.map((s) => s.spec).find((s): s is ContractSpec => typeof s !== 'string' && s.version === was);
+  const base = approvedSpec(all, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {});
+  const prev = base && (parseSpec(base.content) as ContractSpec);
   const kind = kinds[latest.kind];
   return { spec: latest, approvedVersion: was, findings: await kind.check(latest.document), breaks: prev ? await kind.diff(prev.document, latest.document) : [] };
 }
