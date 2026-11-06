@@ -49,11 +49,11 @@ approve
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
 
-async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[], pr: Record<string, unknown> = {}) {
+async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[], pr: Record<string, unknown> = {}, faults: { loseFirstReview?: boolean } = {}) {
   process.env.QUACK_CLEF_KEY = 'none';
   const { base, head } = await remotes();
   const live: Record<string, unknown> = { headSha: head, ...pr };
-  const service = await fakeService(head, live);
+  const service = await fakeService(head, live, undefined, faults);
   // Pushes a second commit to the PR (a file the review does not touch) and makes it the live head.
   const advance = () => {
     const work = join(fileURLToPath(base), 'acme/widgets.git');
@@ -87,12 +87,13 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@5\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@6\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
   // The nit cites app.ts:1, which the PR changes: it goes inline and the body lists it by title.
-  assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: inlined, fallbackBody: review, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
+  assert.match(service.posted[0].deliveryId, /^.+\/v1$/, 'the post names its conversation and version');
+  assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: inlined, deliveryId: service.posted[0].deliveryId, fallbackBody: review, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
 
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   const verdict = doc!.kinds['github.review'].versions[0].verdict as any;
@@ -102,6 +103,18 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.deepEqual([...resolvers].sort(), ['clef', 'code']);
   assert.ok(clefUnits.includes('review+description+ci+linkedIssues+diff'), 'the change unit carries the diff and PR context');
   assert.ok(clefUnits.includes('finding+citedCode'), 'each finding is judged with its cited code');
+  await session.close();
+});
+
+test('a post whose answer was lost after GitHub took it is resubmitted under the same delivery id, so the service returns the first post', async () => {
+  const { done, seen, service, session } = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.'))];
+  }, {}, { loseFirstReview: true });
+  assert.equal(done.status === 'done' && done.answer, 'Posted.');
+  assert.match(seen[2], /Posting failed: 502 .*Call the submit tool again to retry\./);
+  assert.match(seen[3], /Posted as APPROVE/);
+  assert.deepEqual(service.posted.map((p) => p.deliveryId), [service.posted[0].deliveryId, service.posted[0].deliveryId]);
   await session.close();
 });
 

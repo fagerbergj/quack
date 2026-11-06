@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { checkedSettings, type App, type AppContext } from '@quack/sdk';
+import pg from 'pg';
+import { checkedSettings, storeFor, type App, type AppContext } from '@quack/sdk';
 import { githubApp } from './app.ts';
 import { startRedelivery } from './redeliver.ts';
 import { assertPromoted, createGithubService } from './service.ts';
 import { settingsProblems, type GithubSettings } from './settings.ts';
+import { importWaitingFile, postgresWaiting, sqliteWaiting } from './waiting-store.ts';
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
@@ -13,10 +15,12 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 /** The GitHub app; its webhook is /apps/github/webhook, which GitHub signs instead of presenting a credential. */
-export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext): App {
+export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetch, env }: AppContext): App {
   const { implementerAgent, issueBase } = checkedSettings<GithubSettings>('github', settings, settingsProblems) ?? {};
   const agent = env.QUACK_GH_AGENT || 'reviewer';
   const dataDir = env.QUACK_DATA_DIR ?? '.';
+  const store = storeFor(deployment, deployment.extensions?.github?.store, env);
+  const waiting = store.kind === 'postgres' ? postgresWaiting(new pg.Pool({ connectionString: store.url })) : sqliteWaiting(dbPath);
   const app = githubApp({ appId: required(env, 'QUACK_GH_APP_ID'), privateKey: readFileSync(required(env, 'QUACK_GH_PRIVATE_KEY_FILE'), 'utf8') });
   const service = createGithubService(app, {
     webhookSecret: required(env, 'QUACK_GH_WEBHOOK_SECRET'),
@@ -27,7 +31,7 @@ export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext
     implementerAgent,
     issueBase,
     statesFile: join(dataDir, 'github-pulls.json'),
-    queueFile: join(dataDir, 'github-fixes.json'),
+    waiting,
   });
   let stopRedelivery = () => {};
   return {
@@ -37,8 +41,9 @@ export function mountGithub({ settings, distributorUrl, fetch, env }: AppContext
       await assertPromoted(distributorUrl, agent, undefined, fetch);
       if (implementerAgent) await assertPromoted(distributorUrl, implementerAgent, undefined, fetch);
       stopRedelivery = startRedelivery(app, join(dataDir, 'github-redeliver.json'));
+      await importWaitingFile(waiting, join(dataDir, 'github-fixes.json'));
       service.resume();
     },
-    stop: () => { stopRedelivery(); service.stop(); },
+    stop: () => { stopRedelivery(); service.stop(); void waiting.close(); },
   };
 }

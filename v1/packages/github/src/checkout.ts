@@ -53,6 +53,13 @@ export async function findRecord(config: SessionConfig, owner: string, repo: str
   return res.json() as Promise<PullRequestRecord>;
 }
 
+/** The pull request's live head and description: one GitHub read, where a full record also reads its checks, reviews and issues. */
+export async function liveHead(config: SessionConfig, owner: string, repo: string, number: number): Promise<{ headSha: string; body: string }> {
+  const res = await fetch(`${config.serviceUrl}/pulls/${owner}/${repo}/${number}/head`, { headers: { authorization: `Bearer ${config.serviceToken}` } });
+  if (!res.ok) throw new Error(`cannot read the head of ${owner}/${repo}#${number}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return res.json() as Promise<{ headSha: string; body: string }>;
+}
+
 export async function fetchRecord(config: SessionConfig, owner: string, repo: string, number: number): Promise<PullRequestRecord> {
   const pr = await findRecord(config, owner, repo, number);
   if (!pr) throw new Error(`cannot read ${owner}/${repo}#${number}: 404 no such pull request`);
@@ -120,9 +127,11 @@ async function carryApproval(api: ToolExecutionApi, dir: string, pr: PullRequest
     const [was, now] = await Promise.all([approved.sha, pr.headSha].map((sha) => patchId(api, dir, pr.baseRef, sha, config, remote, ctx)));
     if (was !== now) return undefined;
     // Like postCleared, refuse to approve a head that moved while the patch-ids ran.
-    if ((await fetchRecord(config, pr.owner, pr.repo, pr.number)).headSha !== pr.headSha) return undefined;
+    if ((await liveHead(config, pr.owner, pr.repo, pr.number)).headSha !== pr.headSha) return undefined;
     const body = carriedBody(approved);
-    const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify({ owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: 'APPROVE', body }), headers: { authorization: `Bearer ${config.serviceToken}` } });
+    // The delivery id lets a rerun after a crash find this approval instead of posting it twice.
+    const post = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: 'APPROVE', body, deliveryId: `${api.conversationId}/carry/${pr.headSha}` };
+    const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify(post), headers: { authorization: `Bearer ${config.serviceToken}` } });
     if (!res.ok) return undefined;
     const url = ((await res.json()) as { url?: string }).url;
     await recordCarried(api, pr, body, url, approved, ctx);

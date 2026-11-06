@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
-import { conventions, fetchRecord, findRecord, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
+import { conventions, findRecord, liveHead, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
 import { sessionRuns, unbackedClaims } from './claims.ts';
 import { branchTaken, checkoutIssue, editPull, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
 import { renderFeedback } from './feedback.ts';
@@ -89,7 +89,7 @@ function pushTool(config: SessionConfig, dir: string): ToolRegistration {
       if (work) return openFromIssue(config, dir, work, args, api, ctx);
       const pr = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr;
       if (!pr) return reply('no pull request is checked out; call checkout_task first', true);
-      const live = await fetchRecord(config, pr.owner, pr.repo, pr.number);
+      const live = await liveHead(config, pr.owner, pr.repo, pr.number);
       if (live.headSha !== pr.headSha) return reply(`Nothing was pushed: ${pr.headRef} moved from ${pr.headSha} to ${live.headSha} since checkout; call checkout_task again and redo the change on the new head.`, true);
       const r = { api, config, remote: remoteFor(config, pr.owner, pr.repo), dir, ctx };
       const sha = await out(r, 'rev-parse', 'HEAD');

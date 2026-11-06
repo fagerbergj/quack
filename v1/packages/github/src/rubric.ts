@@ -24,15 +24,19 @@ function blockingNamesAnchor(artifact: string): CodeResult {
   return share(blocking.length - missing.length, blocking.length, `no anchor named in ${missing.join(', ')}`);
 }
 
-const CI_FAILED = /=(failure|timed_out|cancelled|action_required)\b/;
+// A check shows its conclusion once completed, its status until then (`name=conclusion ?? status`).
+const CI_FAILED = /=(failure|timed_out|cancelled|action_required|stale|startup_failure)\b/;
+const CI_PENDING = /=(queued|in_progress|waiting|requested|pending)\b/;
 
 function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
   const r = parseReview(artifact);
   // Without a blocking finding, an open question or a failing check calls for `comment`. A disclosed gap in verification
   // allows `comment` but does not demand it: "could not run -race here" beside green CI is still an approve.
-  const unsettled = r.findings.some((f) => f.label === 'question') || CI_FAILED.test(String(ev.change?.[0]?.state.ci ?? ''));
+  const ci = String(ev.change?.[0]?.state.ci ?? '');
+  const unsettled = r.findings.some((f) => f.label === 'question') || CI_FAILED.test(ci);
   const expected = r.findings.some((f) => f.label === 'blocking') ? 'request_changes' : unsettled ? 'comment' : 'approve';
-  const gapDisclosed = /could not|unable to|not verified/i.test(r.sections.verified ?? '');
+  // CI still running is not green: it allows `comment` the way a disclosed gap does, without demanding it.
+  const gapDisclosed = /could not|unable to|not verified/i.test(r.sections.verified ?? '') || CI_PENDING.test(ci);
   const ok = r.verdict === expected || (expected === 'approve' && r.verdict === 'comment' && gapDisclosed);
   return { met: ok ? 1 : 0, detail: ok ? undefined : `the findings call for ${expected}, the verdict says ${r.verdict ?? 'nothing'}` };
 }
@@ -40,7 +44,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks. Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 5,
+  version: 6,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
