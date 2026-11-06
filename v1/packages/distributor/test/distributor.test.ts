@@ -35,11 +35,11 @@ async function agentsDirAt(version: number, ...names: string[]) {
   return dir;
 }
 
-async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }) {
+async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }, retire?: NonNullable<Parameters<typeof createDistributor>[1]>['retire']) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
-  const server = createDistributor(driver, { idleMs }).listen(0);
+  const server = createDistributor(driver, { idleMs, retire }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   servers.push(async () => {
@@ -140,6 +140,25 @@ test('an unknown or deleted key answers 404 on every route and starts nothing; a
   assert.deepEqual(await readdir(dataDir), []);
   assert.equal((await invoke('research:ghost', { input: 'hi', wait: true })).status, 200);
   assert.equal((await fetch(`${base}/sessions/${key}/ping`)).status, 200);
+});
+
+test('a session open in a page is deleted from that page: its idle process is stopped and its socket ends', async () => {
+  const { driver, base, invoke, dataDir } = await startDistributor(60_000, { defaultAgent: '' }, { waiting: async () => false, forget: async () => {} });
+  const key = 'github:fagerbergj/quack#2208';
+  await invoke(key, { input: 'start', wait: true });
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
+  assert.equal((await nextFrame(ws, () => true)).type, 'view');
+  const closed = new Promise((r) => { ws.onclose = r; });
+  try {
+    const res = await fetch(`${base}/sessions/${encodeURIComponent(key)}`, { method: 'DELETE', headers: { 'x-authentik-username': 'jason' } });
+    assert.equal(res.status, 200);
+    await closed;
+    assert.deepEqual(driver.running(), []);
+    assert.deepEqual(await readdir(dataDir), []);
+  } finally {
+    // A failed delete must not leave the socket holding the session open past the test.
+    ws.close();
+  }
 });
 
 test('proxies the live stream and keeps a watched session from idling out', async () => {
