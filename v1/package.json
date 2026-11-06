@@ -9,7 +9,7 @@
     "node": ">=26.13"
   },
   "scripts": {
-    "test": "node --test --test-force-exit --test-timeout=30000 'packages/*/test/*.test.ts' 'tools/*.test.ts' && npm test -w @quack/web",
+    "test": "node --test --import ./tools/leak-check.ts --test-timeout=30000 'packages/*/test/*.test.ts' 'tools/*.test.ts' && npm test -w @quack/web",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/web/tsconfig.json",
     "sloplint": "node tools/sloplint.ts"
   },
