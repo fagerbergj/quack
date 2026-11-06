@@ -1,6 +1,6 @@
 {
   "name": "sleeper-trade-finder",
-  "version": 2,
+  "version": 3,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",

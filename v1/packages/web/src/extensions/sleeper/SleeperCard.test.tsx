@@ -33,6 +33,18 @@ test('waivers show ranked candidates, who to drop, the why and news links', () =
   expect(w.getAllByRole('link').length).toBeGreaterThan(0);
 });
 
+test('a starter drop and the picks a history note cites are drawn from the card fields', () => {
+  const w = JSON.parse(waivers8.content);
+  w.candidates[0].drop.role = 'starter';
+  drawer({ ...(waivers8 as unknown as SealedArtifact), content: JSON.stringify(w) });
+  expect(within(screen.getByRole('article', { name: 'Waivers' })).getByText('Starter')).toBeInTheDocument();
+  const h = JSON.parse(history8.content);
+  const season = h.seasons.find((s: { draft: unknown[] | null }) => s.draft?.length);
+  season.cited = [{ ...season.draft[0], pick: 54, drafted_as: 3, finished: 32, verdict: 'reach', player: { ...season.draft[0].player, pos: 'WR', name: 'Cooper Kupp' } }];
+  drawer({ ...(history8 as unknown as SealedArtifact), content: JSON.stringify(h) });
+  expect(screen.getByText('Pick 54 Cooper Kupp: WR3 drafted, WR32 finish, Reach')).toBeInTheDocument();
+});
+
 test('a card whose shape does not match falls back to the JSON tree, not text', () => {
   const bad = sealed(JSON.stringify({ kind: 'waivers', candidates: [{ rank: 1 }] }));
   render(<ArtifactBoundary artifact={bad}>{artifactCard(bad)}</ArtifactBoundary>);

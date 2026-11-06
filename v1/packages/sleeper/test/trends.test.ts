@@ -122,7 +122,7 @@ const gate = async (id: string, f: TrendsFacts, c: unknown) => {
 test('each code gate passes the good card', async () => {
   const f = await factsOf(async () => [item]);
   const c = buildTrendsCard(f, decision);
-  for (const id of ['item_shape', 'link_fetched', 'no_bare_ids']) assert.equal((await gate(id, f, c)).met, 1, id);
+  for (const id of ['item_shape', 'no_bare_ids']) assert.equal((await gate(id, f, c)).met, 1, id);
 });
 
 test('item_shape fails a time, source or sentence past its cap, an empty one, and an unknown kind', async () => {
@@ -159,19 +159,6 @@ test('the lookup tells apart two players who share name, position and team', asy
   const p = factsPrompt({ ...f, players: { ...f.players, '9102': twin } });
   assert.match(p, /- Rob Rowe \(.*\) #1: 102\n/);
   assert.match(p, /- Rob Rowe \(.*\) #2: 9102\n?/);
-});
-
-test('link_fetched fails a link the news search did not return for that player, and a host off the allowlist', async () => {
-  const f = await factsOf(async (p) => (p.name === 'Rob Rowe' ? [item] : []));
-  const c = buildTrendsCard(f, decision);
-  const link = async (url: string, player = c.items[0].player) => gate('link_fetched', f, { ...c, items: [{ ...c.items[0], link: url, player }, ...c.items.slice(1)] });
-  assert.equal((await link(item.url)).met, 1);
-  assert.match((await link('https://www.nfl.com/invented')).detail!, /invented/);
-  assert.ok((await link(item.url, c.items[1].player)).met < 1, 'one player\'s link is not another\'s');
-  const farm = { ...f, news: { '102': [{ ...item, url: 'https://content-farm.example/x' }] } };
-  const check = trendsRubric.criteria[0].checks[1];
-  const content = JSON.stringify({ ...c, items: [{ ...c.items[0], link: 'https://content-farm.example/x' }] });
-  assert.ok((await check.code!(content, await trendsEvidence(farm)(null, { content }))).met < 1);
 });
 
 test('the judge evidence pairs an item with its designation and news, and picks out the conflicts and sourced rows', async () => {
@@ -215,15 +202,15 @@ test('the workflow seals a trends card; with no news source the news checks are 
   const bare: TrendsDecision = { ...decision, items: decision.items.slice(1) };
   const { sealed, verdict } = await runTrends(bare);
   assert.deepEqual((JSON.parse(sealed.content) as TrendsCard).items.map((i) => i.player?.name), ['Will Wing', 'Fred Fresh']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@1', [], true, ['source conflicts and original sources not checked: no news source']]);
-  assert.deepEqual(verdict.checks.map((k) => k.id).filter((id) => !['item_shape', 'link_fetched', 'no_bare_ids'].includes(id)), []);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@2', [], true, ['source conflicts and original sources not checked: no news source']]);
+  assert.deepEqual(verdict.checks.map((k) => k.id).filter((id) => !['item_shape', 'no_bare_ids'].includes(id)), []);
 });
 
 test('with a news source the conflict, original-source and aggregator checks are scored', async () => {
   const { sealed, verdict, judged } = await runTrends(decision, async () => [item]);
   assert.equal((JSON.parse(sealed.content) as TrendsCard).items[0].link, item.url);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@1', [], true, []]);
-  assert.deepEqual(verdict.checks.map((k) => k.id).sort(), ['aggregator_only', 'conflict_stated', 'item_shape', 'link_fetched', 'no_bare_ids', 'original_source_named']);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@2', [], true, []]);
+  assert.deepEqual(verdict.checks.map((k) => k.id).sort(), ['aggregator_only', 'conflict_stated', 'item_shape', 'no_bare_ids', 'original_source_named']);
   assert.ok(judged.some((q) => /disagree, does the item say so/.test(q)));
 });
 
@@ -280,6 +267,7 @@ test('the trends workflow keeps reading the service after the session process dr
     const { host, pathname } = new URL(u);
     if (host === 'api.sleeper.app') return new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[pathname] ?? null));
     seen.push(`${init?.method ?? 'GET'} ${u} ${new Headers(init?.headers).get('authorization')}`);
+    if (pathname.endsWith('/players')) return new Response(JSON.stringify(lineup['/v1/players/nfl']));
     return new Response(JSON.stringify(init?.method === 'POST' ? snap : { snapshots: [] }));
   });
   // The client binds global fetch when built, so build the workflow after the mock or it reaches the real API.
@@ -288,7 +276,8 @@ test('the trends workflow keeps reading the service after the session process dr
   delete env.QUACK_INDEX_TOKEN;
   const facts = await (workflow.steps[0] as { run(c: never): unknown }).run({ input: JSON.stringify(INPUT), api: { now: () => AT } } as never);
   assert.equal((facts as { date: string }).date, TODAY);
-  assert.deepEqual(seen, ['POST http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots Bearer tok']);
+  // The players dump comes from the Sleeper app's day-long copy, not from Sleeper.
+  assert.deepEqual(seen, ['POST http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/players Bearer tok']);
 });
 
 test('the page routes answer the configured league and start its lineup job', async () => {

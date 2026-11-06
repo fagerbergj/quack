@@ -104,11 +104,21 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
     // Explicit times have no backlog to bound, and a registrar's clock runs behind `created`, so a time registered late must still count; a cron starts at `created`.
     const after = last.o ? new Date(last.o) : s.times ? new Date(0) : new Date(row.created);
     const [newest, ...older] = between(s, after, at);
-    if (!newest) return;
-    const useful = +at < expiry(s, newest);
-    if (useful && !(await submit(s, newest))) return;
-    record.run(row.id, newest.toISOString(), useful ? 'fired' : 'missed', at.toISOString());
-    for (const o of older) record.run(row.id, o.toISOString(), 'missed', at.toISOString());
+    if (newest) {
+      const useful = +at < expiry(s, newest);
+      if (useful && !(await submit(s, newest))) return;
+      record.run(row.id, newest.toISOString(), useful ? 'fired' : 'missed', at.toISOString());
+      for (const o of older) record.run(row.id, o.toISOString(), 'missed', at.toISOString());
+    }
+    dropIfFinished(row, s);
+  }
+
+  // Each tick reads every row, so a registered one-shot whose last time is recorded goes; its runs stay, so registering that time again never refires it.
+  function dropIfFinished(row: Row, s: Schedule) {
+    if (row.source !== 'api' || !s.times?.length) return;
+    const final = new Date(Math.max(...s.times.map((t) => Date.parse(t)))).toISOString();
+    const last = db.prepare(`SELECT MAX(occurrence) AS o FROM runs WHERE schedule = ?`).get(row.id) as { o: string | null };
+    if (last.o !== null && last.o >= final) db.prepare(`DELETE FROM schedules WHERE id = ? AND source = 'api'`).run(row.id);
   }
 
   // Retention: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.

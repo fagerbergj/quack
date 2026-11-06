@@ -68,6 +68,8 @@ export function createSleeperService(config: ServiceConfig): App & { stop(): voi
     const job = /^\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/.exec(url.pathname)?.[1];
     if (job) return startOnDemand(PAGE_JOBS[job as keyof typeof PAGE_JOBS], method, config.league, url.searchParams.get('week'), job === 'history' ? historyParams(url.searchParams) : {});
     if (url.pathname === '/schedule' && method === 'GET') return upcomingRuns();
+    // Sessions read the players dump here: this process holds Sleeper's copy for a day.
+    if (url.pathname === '/players' && method === 'GET') return config.client.players().then((p): [number, unknown] => [200, p]);
     if (url.pathname !== '/' || method !== 'GET') return undefined;
     return Promise.resolve(config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }]);
   }

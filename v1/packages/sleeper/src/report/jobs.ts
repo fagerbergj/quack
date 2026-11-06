@@ -2,7 +2,8 @@ import type { SleeperClient } from '../client.ts';
 import { startJob, type StartConfig } from '../jobs.ts';
 import { MARGIN_MS } from '../lineup/jobs.ts';
 import type { LineupInput } from '../lineup/facts.ts';
-import type { ScheduleConfig } from '../schedules.ts';
+import { kickoffTimes } from '../games.ts';
+import { registerSchedule, type ScheduleConfig } from '../schedules.ts';
 
 export const DIGEST_AGENT = 'sleeper-digest';
 export const RETRO_AGENT = 'sleeper-retro';
@@ -33,18 +34,9 @@ export function reportRuns(kickoffs: number[], league: string, week: number) {
 export async function registerReportSchedules(config: ScheduleConfig, client: SleeperClient, league: string, owner: string): Promise<string[]> {
   const state = await client.state();
   if (state.season_type !== 'regular') return [];
-  const scores = await client.scores(state.season, state.week);
-  const starts = scores.filter((s: any) => s.start_time > 0 && !['flex-schedule', 'postponed', 'cancelled'].includes(s.metadata?.status)).map((s: any) => s.start_time as number);
-  const input = JSON.stringify({ league, week: state.week, owner } satisfies LineupInput);
+  const input: LineupInput = { league, week: state.week, owner };
   const ids: string[] = [];
-  for (const run of reportRuns(starts, league, state.week)) {
-    const res = await (config.fetch ?? fetch)(config.url, {
-      method: 'POST',
-        body: JSON.stringify({ id: run.id, agent: run.agent, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: run.sessionKey, input }),
-    });
-    if (!res.ok) throw new Error(`schedules: registering ${run.id} returned ${res.status}`);
-    ids.push(run.id);
-  }
+  for (const run of reportRuns(kickoffTimes(await client.scores(state.season, state.week)), league, state.week)) ids.push(await registerSchedule(config, { ...run, input }));
   return ids;
 }
 

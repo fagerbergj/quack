@@ -1,6 +1,7 @@
 import type { SleeperClient } from '../client.ts';
 import { startJob, type StartConfig } from '../jobs.ts';
-import type { ScheduleConfig } from '../schedules.ts';
+import { kickoffTimes } from '../games.ts';
+import { registerSchedule, type ScheduleConfig } from '../schedules.ts';
 import type { LineupInput } from './facts.ts';
 
 export const LINEUP_AGENT = 'sleeper-lineup';
@@ -37,23 +38,14 @@ export function lineupRuns(kickoffs: number[]): Array<{ id: 'wed' | 'sun'; at: n
   return runs.filter((r) => r.at < r.deadline);
 }
 
-const inputOf = (i: LineupInput) => JSON.stringify(i);
-
 /** Registers this week's two lineup runs with the schedules service; re-registering an id replaces it, so it is safe to repeat. */
 export async function registerLineupSchedules(config: ScheduleConfig, client: SleeperClient, league: string, owner: string): Promise<string[]> {
   const state = await client.state();
   if (state.season_type !== 'regular') return [];
-  const scores = await client.scores(state.season, state.week);
-  const kickoffs = scores.filter((s: any) => s.start_time > 0 && !['flex-schedule', 'postponed', 'cancelled'].includes(s.metadata?.status)).map((s: any) => s.start_time as number);
+  const input: LineupInput = { league, week: state.week, owner };
   const ids: string[] = [];
-  for (const run of lineupRuns(kickoffs)) {
-    const id = `sleeper/lineup/${league}/${state.week}/${run.id}`;
-    const res = await (config.fetch ?? fetch)(config.url, {
-      method: 'POST',
-        body: JSON.stringify({ id, agent: LINEUP_AGENT, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: lineupKey(league, state.week), input: inputOf({ league, week: state.week, owner }) }),
-    });
-    if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);
-    ids.push(id);
+  for (const run of lineupRuns(kickoffTimes(await client.scores(state.season, state.week)))) {
+    ids.push(await registerSchedule(config, { id: `sleeper/lineup/${league}/${state.week}/${run.id}`, agent: LINEUP_AGENT, at: run.at, deadline: run.deadline, sessionKey: lineupKey(league, state.week), input }));
   }
   return ids;
 }

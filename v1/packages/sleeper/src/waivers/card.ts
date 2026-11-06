@@ -37,7 +37,10 @@ export type WaiverDecision = { claims: Array<{ add: string; drop: string; bid?: 
 const ref = (p: WPlayer): PlayerRef => ({ id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj });
 
 function sizeOf(f: WaiverFacts, bid: number | null | undefined, add: string): Size {
-  if (f.waiverType !== 'faab') return { kind: 'priority', position: f.myPriority, of: f.teams };
+  if (f.waiverType !== 'faab') {
+    if (bid !== undefined && bid !== null) throw new Error(`the model bid ${bid} for ${add} in a ${f.waiverType} league, which has no bids`);
+    return { kind: 'priority', position: f.myPriority, of: f.teams };
+  }
   const left = f.faabLeft ?? 0;
   if (!Number.isInteger(bid) || bid! < 0 || bid! > left) throw new Error(`the model bid ${bid} for ${add} in a FAAB league with ${left} left`);
   return { kind: 'faab', bid: bid!, left, pct: left ? Math.round((bid! / left) * 100) : 0 };

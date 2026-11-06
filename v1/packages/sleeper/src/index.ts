@@ -1,8 +1,10 @@
 export { createSleeperClient, NotFound, type SleeperClient } from './client.ts';
 export { createSleeperService, type ServiceConfig } from './service.ts';
-export { buildSnapshot, leagueDate, takeSnapshot } from './snapshot.ts';
+export { buildSnapshot, leagueDate, liveLeague, takeSnapshot } from './snapshot.ts';
 export { openStore, type Store, type SnapshotRow } from './store.ts';
-export { removeLegacySnapshotSchedule, removeLegacyUntilDone } from './schedules.ts';
+export { registerSchedule, removeSchedule, type ScheduleConfig } from './schedules.ts';
+export { sessionClient } from './deps.ts';
+export type { NewsSearch, Searchable } from './ports.ts';
 export * from './lineup/index.ts';
 export * from './waivers/index.ts';
 export * from './trades/index.ts';

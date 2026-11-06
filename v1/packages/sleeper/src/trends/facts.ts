@@ -1,6 +1,6 @@
 import type { Json, SleeperClient } from '../client.ts';
 import type { LineupInput, NewsItem } from '../lineup/facts.ts';
-import type { Searchable } from '../lineup/news.ts';
+import { newsFor, type Searchable } from '../lineup/news.ts';
 
 /** A player as the trends job names him; `depth` is Sleeper's depth_chart_order. */
 export type TrendPlayer = { id: string; name: string; pos: string | null; team: string | null; inj: string | null; depth: number | null };
@@ -72,6 +72,6 @@ export async function buildTrendsFacts(deps: TrendsFactsDeps, snap: Json, input:
   for (const c of changes) add(c.playerId, snap.data.players[c.playerId]);
   for (const t of rising) add(t.playerId, { ...dump[t.playerId], name: named(dump[t.playerId]), injury: dump[t.playerId].injury_status, depth: dump[t.playerId].depth_chart_order });
   const facts: TrendsFacts = { league: input.league, week: input.week, date: snap.date, since: earlier?.date ?? null, changes, trending: rising, players, news: {} };
-  if (deps.news) for (const id of [...new Set(changes.map((c) => c.playerId))].slice(0, MAX_SEARCHED)) facts.news[id] = await deps.news({ name: players[id].name, team: players[id].team, pos: players[id].pos ?? '' }, at);
+  facts.news = await newsFor(deps.news, [...new Set(changes.map((c) => c.playerId))].slice(0, MAX_SEARCHED).map((id) => ({ ...players[id], pos: players[id].pos ?? '' })), at);
   return facts;
 }

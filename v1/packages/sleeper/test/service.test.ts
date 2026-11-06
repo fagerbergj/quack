@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { createSchedulesService } from '@quack/schedules';
 import { serveApp } from '@quack/sdk';
-import { NotFound, createSleeperClient, createSleeperService, leagueDate, removeLegacySnapshotSchedule, removeLegacyUntilDone } from '../src/index.ts';
+import { NotFound, createSleeperClient, createSleeperService, leagueDate, sessionClient } from '../src/index.ts';
+import { ATTEMPTS, CONCURRENCY, TIMEOUT_MS } from '../src/client.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/league.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 
@@ -122,39 +123,73 @@ test('a null body is not found and is never cached', async () => {
   assert.equal(api.calls.length, 2);
 });
 
-test('the legacy snapshot delete retries with backoff until the schedules service is up, then deletes once', async (t) => {
-  t.mock.method(console, 'error', () => {});
-  let attempts = 0;
-  const sent: Array<{ url: string; method?: string }> = [];
-  const doFetch = (async (url: string, init: RequestInit) => {
-    if (++attempts < 3) throw new Error('connection refused');
-    sent.push({ url, method: init.method });
-    return new Response('{}', { status: 200 });
+const reply = (status: number, body: unknown = {}, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers });
+
+test('a 429 waits its Retry-After, a 5xx backs off doubling, and the call gives up after ATTEMPTS', async () => {
+  const waits: number[] = [];
+  const queue = [reply(429, {}, { 'retry-after': '7' }), reply(503), reply(200, { week: 9 })];
+  const client = createSleeperClient({ fetch: (async () => queue.shift()!) as unknown as typeof fetch, sleep: async (ms) => void waits.push(ms) });
+  assert.deepEqual(await client.state(), { week: 9 });
+  assert.deepEqual(waits, [7000, 2000]);
+  waits.length = 0;
+  let calls = 0;
+  const busy = createSleeperClient({ fetch: (async () => (calls++, reply(429))) as unknown as typeof fetch, sleep: async (ms) => void waits.push(ms) });
+  await assert.rejects(busy.state(), new RegExp(`returned 429 after ${ATTEMPTS} attempts`));
+  assert.deepEqual([calls, waits], [ATTEMPTS, [1000, 2000, 4000]]);
+  calls = 0;
+  const missing = createSleeperClient({ fetch: (async () => (calls++, reply(404))) as unknown as typeof fetch, sleep: async () => {} });
+  await assert.rejects(missing.league('x'), NotFound);
+  assert.equal(calls, 1, 'a 404 is an answer, not retried');
+});
+
+test('a request that hangs past the timeout is aborted and retried', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const doFetch = ((_u: string, init: RequestInit) => {
+    if (++calls > 1) return Promise.resolve(reply(200, { week: 9 }));
+    return new Promise((_, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason)));
   }) as unknown as typeof fetch;
-  const delays: number[] = [];
-  await removeLegacyUntilDone({ url: 'http://schedules', fetch: doFetch }, 'L1', async (ms) => void delays.push(ms));
-  assert.deepEqual(delays, [1000, 2000]);
-  assert.deepEqual(sent, [{ url: 'http://schedules/sleeper%2Fsnapshot%2FL1', method: 'DELETE' }]);
+  const client = createSleeperClient({ fetch: doFetch, sleep: async () => {} });
+  const state = client.state();
+  await new Promise(setImmediate);
+  t.mock.timers.tick(TIMEOUT_MS);
+  assert.deepEqual(await state, { week: 9 });
+  assert.equal(calls, 2);
 });
 
-test('the legacy snapshot delete treats 404 as done and any other failure as an error', async () => {
-  const status = (code: number) => ({ url: 'http://schedules', fetch: (async () => new Response('', { status: code })) as unknown as typeof fetch });
-  await removeLegacySnapshotSchedule(status(404), 'L1');
-  await assert.rejects(removeLegacySnapshotSchedule(status(500), 'L1'));
+test('at most CONCURRENCY requests are in flight, and concurrent callers of one path share one request', async () => {
+  let inflight = 0;
+  let peak = 0;
+  const paths: string[] = [];
+  const doFetch = (async (u: string) => {
+    paths.push(new URL(u).pathname);
+    peak = Math.max(peak, ++inflight);
+    await new Promise(setImmediate);
+    inflight--;
+    return reply(200, []);
+  }) as unknown as typeof fetch;
+  const client = createSleeperClient({ fetch: doFetch });
+  await Promise.all([...Array.from({ length: 30 }, (_, i) => client.matchups('L1', i + 1)), ...Array.from({ length: 5 }, () => client.rosters('L1'))]);
+  assert.equal(peak, CONCURRENCY);
+  assert.equal(paths.filter((p) => p === '/v1/league/L1/rosters').length, 1);
+  assert.equal(paths.length, 31);
 });
 
-test('the real schedules service drops a stored legacy snapshot schedule on start', async () => {
-  const schedules = createSchedulesService({ distributorUrl: 'http://unused', dbPath: ':memory:' });
-  const schedulesServer = serveApp(schedules).listen(0);
-  await new Promise((r) => schedulesServer.once('listening', r));
-  const url = `http://127.0.0.1:${(schedulesServer.address() as AddressInfo).port}`;
+test('the app serves its players dump from its day-long copy, and a session client reads it there instead of from Sleeper', async (t) => {
+  const { api, service, call } = await setup({ at: new Date('2026-11-01T15:00:00Z') });
   try {
-    await fetch(url, { method: 'POST', body: JSON.stringify({ id: 'sleeper/snapshot/L1', agent: 'a', cron: '0 4 * * *', sessionKey: 'k', input: 'x' }) });
-    await removeLegacyUntilDone({ url }, 'L1');
-    await removeLegacyUntilDone({ url }, 'L1');
-    assert.deepEqual((await (await fetch(url)).json()).schedules, []);
+    const first = await (await call('GET', '/players')).json();
+    await call('GET', '/players');
+    assert.equal(first['4034'].injury_status, 'Questionable');
+    assert.equal(api.calls.filter((c) => c.path === '/v1/players/nfl').length, 1);
   } finally {
-    schedulesServer.close();
-    schedules.stop();
+    service.stop();
   }
+  const seen: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (u: string, init?: RequestInit) => (seen.push(`${u} ${new Headers(init?.headers).get('authorization')}`), reply(200, { '1': { first_name: 'A' } })));
+  const client = sessionClient({ QUACK_INDEX_URL: 'http://index', QUACK_INDEX_TOKEN: 'tok' });
+  assert.deepEqual(await client.players(), { '1': { first_name: 'A' } });
+  await client.players();
+  assert.deepEqual(seen, ['http://index/apps/sleeper/players Bearer tok']);
+  assert.equal(sessionClient({ QUACK_INDEX_URL: 'http://index', QUACK_INDEX_TOKEN: 'tok' }), client, 'one client, and one cache, per session process');
 });

@@ -1,10 +1,10 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
+import { factsOf as factsIn, parseCard, share } from '../rubric-kit.ts';
 import { closeCalls, type Facts } from './facts.ts';
 import type { LineupCard, Row } from './card.ts';
 
-const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
-const parse = (artifact: string) => JSON.parse(artifact) as LineupCard;
-const factsOf = (ev: Evidence) => ev.facts[0].state as unknown as Facts;
+const parse = (artifact: string) => parseCard<LineupCard>(artifact);
+const factsOf = (ev: Evidence) => factsIn<Facts>(ev);
 const changed = (r: Row, f: Facts) => r.player.id !== f.current[r.slot];
 
 function everySlotDecided(artifact: string, ev: Evidence): CodeResult {
@@ -13,36 +13,11 @@ function everySlotDecided(artifact: string, ev: Evidence): CodeResult {
   return share(factsOf(ev).slots.length - missing.length, factsOf(ev).slots.length, `no verdict for ${missing.join(', ')}`);
 }
 
-// Change is judged against Sleeper's own lineup, not the row's `action`: the card's bookkeeping proves nothing.
-function onePlayerPerSlot(artifact: string): CodeResult {
-  const ids = parse(artifact).starters.map((r) => r.player.id);
-  const dup = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
-  return share(ids.length - dup.length, ids.length, `started in more than one slot: ${dup.join(', ')}`);
-}
-
 function noLockedSwap(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf(ev);
   const rows = parse(artifact).starters.filter((r) => changed(r, f));
   const bad = rows.filter((r) => f.players[r.player.id]?.game?.locked || (f.current[r.slot] && f.players[f.current[r.slot]!]?.game?.locked));
   return share(rows.length - bad.length, rows.length, `${bad.map((r) => r.slot).join(', ')} swap a player whose game has locked`);
-}
-
-function figuresMatchTools(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
-  const card = parse(artifact);
-  const rows = [...card.starters.map((r) => ({ at: r.slot, id: r.player.id, proj: r.proj, game: r.game })), ...card.bench.map((b) => ({ at: `bench ${b.player.name}`, id: b.player.id, proj: b.proj, game: b.game }))];
-  const wrong = rows.filter((r) => !f.players[r.id] || f.players[r.id].proj !== r.proj || JSON.stringify(f.players[r.id].game) !== JSON.stringify(r.game));
-  return share(rows.length - wrong.length, rows.length, `proj, opponent or kickoff differ from the tools for ${wrong.map((r) => r.at).join(', ')}`);
-}
-
-function summaryNamesChanges(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
-  const card = parse(artifact);
-  const rows = card.starters.filter((r) => changed(r, f));
-  const text = card.summary.toLowerCase();
-  if (!rows.length) return { met: /no change/.test(text) ? 1 : 0, detail: 'there are no changes and the summary does not say so' };
-  const missed = rows.filter((r) => ![r.player.name, f.current[r.slot] ? f.players[f.current[r.slot]!].name : ''].every((n) => text.includes(n.toLowerCase())));
-  return share(rows.length - missed.length, rows.length, `the summary does not name both players of the ${missed.map((r) => r.slot).join(', ')} change`);
 }
 
 /** Sleeper's designation by player name, so a check never pins one player's injury on another. */
@@ -74,18 +49,16 @@ export function lineupEvidence(f: Facts) {
   };
 }
 
+// The card builder seats one player per slot, copies every figure and writes the summary from the changes, so only what the model can get wrong is gated.
 // Lineup weights are unreplayed: replay them before any weight gates delivery.
 export const lineupRubric: Rubric = {
   name: 'sleeper.lineup',
-  version: 4,
+  version: 5,
   threshold: 0.8,
   criteria: [
     { id: 'legal_and_complete', checks: [
       { id: 'every_slot_decided', label: "A lineup slot is left unset", weight: 'gate', code: everySlotDecided },
-      { id: 'one_player_per_slot', label: "A slot has the wrong number of players", weight: 'gate', code: onePlayerPerSlot },
       { id: 'no_locked_swap', label: "Swaps a player who is already locked", weight: 'gate', code: noLockedSwap },
-      { id: 'figures_match_tools', label: "Numbers differ from the league data", weight: 'gate', code: figuresMatchTools },
-      { id: 'summary_names_changes', label: "Summary skips a lineup change", weight: 'gate', code: summaryNamesChanges },
     ] },
     { id: 'calls_are_reasoned', checks: [
       { id: 'names_baseline_it_beats', label: "Doesn't say who the swap beats", weight: 3, scope: 'differs', question: 'This change starts a player the best-by-projection baseline does not. Does `why` name the baseline player and what changed the call?' },

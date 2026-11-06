@@ -13,7 +13,7 @@ import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { outcomeOf, runWorkflow, startWorkflow, workflowExtension, type Workflow } from '@quack/workflows';
 import {
-  buildDigestCard, buildDigestFacts, buildRetroCard, buildRetroFacts, buildSnapshot, createSleeperClient, createSleeperService, digestEvidence, digestKey, digestRubric, digestWorkflow, registerReportSchedules,
+  buildDigestCard, buildDigestFacts, buildRetroCard, buildRetroFacts, liveLeague, createSleeperClient, createSleeperService, digestEvidence, digestKey, digestRubric, digestWorkflow, registerReportSchedules,
   reportRuns, retroEvidence, retroKey, retroRubric, retroWorkflow, type DigestCard, type DigestFacts, type RetroCard, type RetroFacts,
 } from '../src/index.ts';
 import type { DigestDecision } from '../src/report/digest.ts';
@@ -32,7 +32,7 @@ const fetchOf = (fx: Record<string, any>, seen: string[] = []) => (async (input:
   return path in fx ? new Response(JSON.stringify(fx[path])) : new Response('null');
 }) as unknown as typeof fetch;
 const clientOf = (fx: Record<string, any>, seen: string[] = []) => createSleeperClient({ fetch: fetchOf(fx, seen), now: () => AT });
-const snapshotOf = (fx: Record<string, any>) => async (league: string) => ({ data: await buildSnapshot(clientOf(fx), league) });
+const snapshotOf = (fx: Record<string, any>) => (league: string) => liveLeague(clientOf(fx), league);
 type News = NonNullable<Parameters<typeof buildDigestFacts>[0]['news']>;
 // Dated six hours before the cutoff asked for, so it always precedes the row it is attached to.
 const newsStub: News = async (p, at) => [{ title: `${p.name} report`, url: `https://www.nfl.com/${p.name.replace(' ', '-')}`, date: new Date(at - 6 * 3_600_000).toISOString() }];
@@ -48,16 +48,6 @@ const previewDecision: DigestDecision = {
   summary: 'Early look: Pintail Pride is the form team; the first game turns on Wade Wide\'s Questionable tag.',
   notes: [{ matchup: 1, note: 'Wade Wide is Questionable, per [report](https://www.nfl.com/Wade-Wide).' }, { matchup: 2, note: 'Penny Pin averages 50 against a 30 side.' }],
 };
-
-const gate = async <F, C>(rubric: typeof digestRubric, evidence: (f: F) => (a: null, s: { content: string }) => Promise<any>, id: string, f: F, card: C) => {
-  const check = rubric.criteria.flatMap((c) => c.checks).find((c) => c.id === id)!;
-  const content = JSON.stringify(card);
-  return check.code!(content, await evidence(f)(null, { content }));
-};
-const digestGate = (id: string, f: DigestFacts, card: unknown) => gate(digestRubric, digestEvidence, id, f, card);
-const retroGate = (id: string, f: RetroFacts, card: unknown) => gate(retroRubric, retroEvidence, id, f, card);
-const DIGEST_GATES = ['every_game_covered', 'numbers_match_tools', 'no_projection_source'];
-const RETRO_GATES = ['tool_figures_copied', 'knowable_dated_before_kickoff'];
 
 test('a recap holds every game with final points, margin, top scorers, the owner\'s game and the playoff line from the standings', async () => {
   const seen: string[] = [];
@@ -99,35 +89,17 @@ test('news is searched only for a preview\'s top scorers and designated starters
   assert.deepEqual(recap.news, {}, 'a recap needs no pre-game news');
 });
 
-test('the digest card carries the facts\' figures and each code gate passes it, in a recap and a preview', async () => {
+test('the digest card carries the facts\' figures, one row per game, in a recap and a preview', async () => {
   for (const [input, decision] of [[RECAP, digestDecision], [PREVIEW, previewDecision]] as const) {
     const f = await digestFacts(input, fixtures, newsStub);
     const card = buildDigestCard(f, decision);
     assert.equal(card.past, f.mode === 'recap');
     assert.deepEqual(card.games.map((g) => [g.home.team, g.home.pts, g.away.pts]), f.games.map((g) => [g.sides[0].team, g.sides[0].pts, g.sides[1].pts]));
-    for (const id of DIGEST_GATES) assert.equal((await digestGate(id, f, card)).met, 1, id);
   }
 });
 
 test('a digest note for a game that is not in the week fails the card step', async () => {
   assert.throws(() => buildDigestCard({ ...({} as DigestFacts), games: [], week: 9 }, { summary: 'x', notes: [{ matchup: 7, note: 'x' }] }), /matchups that are not in week 9: 7/);
-});
-
-test('every_game_covered, numbers_match_tools and no_projection_source each fail a card that breaks them', async () => {
-  const f = await digestFacts();
-  const card = buildDigestCard(f, digestDecision);
-  assert.match((await digestGate('every_game_covered', f, { ...card, games: card.games.slice(0, 1) })).detail!, /Pintail Pride v wigeon/);
-  const wrongScore = { ...card, games: card.games.map((g, i) => (i ? g : { ...g, home: { ...g.home, pts: 44 } })) };
-  assert.match((await digestGate('numbers_match_tools', f, wrongScore)).detail!, /Mallard Mayhem v teal/);
-  const wrongTop = { ...card, games: card.games.map((g, i) => (i ? g : { ...g, away: { ...g.away, top_scorers: [{ name: 'Tara Teal', pts: 39 }] } })) };
-  assert.ok((await digestGate('numbers_match_tools', f, wrongTop)).met < 1);
-  for (const text of ['Mallard is projected to win.', 'Teal is the projected winner.', 'The chances of making the playoffs are thin.', 'Probability of making the playoffs is 61%.', 'Their projected points favor Mallard.', 'Per the projections Mallard wins.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
-    const r = await digestGate('no_projection_source', f, { ...card, summary: text });
-    assert.equal(r.met, 0, text);
-  }
-  // The plain verb is ordinary prose, not a projection.
-  assert.equal((await digestGate('no_projection_source', f, { ...card, summary: 'Quinn Quill projects as the top scorer, and Wade Wide is projected to start.' })).met, 1);
-  assert.equal((await digestGate('no_projection_source', f, { ...card, games: card.games.map((g) => ({ ...g, note: 'Projected 130 points.' })) })).met, 0);
 });
 
 test('the retro holds the best lineup, the legal swap, the free-agent hit and the cutoffs, all from the final week', async () => {
@@ -157,20 +129,9 @@ test('a row is knowable only when the model cites a link the code attached that 
   assert.equal(buildRetroCard(f, { ...decision, waiverMisses: [{ index: 0, why: 'x', knowable: true, signalUrl: free.url }] }).waiver_misses[0].knowable, true);
   assert.equal(buildRetroCard(f, { ...decision, misses: [], waiverMisses: [] }).misses[0].why, 'No pre-kickoff signal was found.');
   assert.throws(() => buildRetroCard(f, { ...decision, misses: [{ index: 4, why: 'x', knowable: false }] }), /miss 4/);
-  for (const id of RETRO_GATES) assert.equal((await retroGate(id, f, card)).met, 1, id);
-});
-
-test('tool_figures_copied and knowable_dated_before_kickoff each fail a card that breaks them', async () => {
-  const f = await retroFacts(fixtures, newsStub);
-  const url = f.misses[0].news[0].url;
-  const card = buildRetroCard(f, { misses: [{ index: 0, why: 'x', knowable: true, signalUrl: url }], waiverMisses: [], lessons: [], summary: 's' });
-  for (const [field, wrong] of [['left', 13], ['best', 54], ['won', false], ['opp', 41]] as const) assert.match((await retroGate('tool_figures_copied', f, { ...card, [field]: wrong })).detail!, new RegExp(field === 'won' ? 'won' : field));
-  const swung: RetroCard = { ...card, misses: [{ ...card.misses[0], swing: 99 }] };
-  assert.match((await retroGate('tool_figures_copied', f, swung)).detail!, /misses/);
-  assert.match((await retroGate('tool_figures_copied', f, { ...card, waiver_misses: [] })).detail!, /waiver_misses/);
-  const late = { ...card, misses: [{ ...card.misses[0], signal: { ...card.misses[0].signal!, date: '2026-11-08T19:00:00.000Z' } }] };
-  assert.match((await retroGate('knowable_dated_before_kickoff', f, late)).detail!, /1 knowable row/);
-  assert.match((await retroGate('knowable_dated_before_kickoff', f, { ...card, misses: [{ ...card.misses[0], signal: null }] })).detail!, /1 knowable row/);
+  // A cited link dated at or after the cutoff is hindsight, so the row is not knowable.
+  const late = { ...f, misses: [{ ...f.misses[0], news: [{ ...dash, date: f.misses[0].before }] }] };
+  assert.equal(buildRetroCard(late, decision).misses[0].knowable, false);
 });
 
 test('a row\'s judge evidence carries its news, and only knowable rows are asked for a signal', async () => {
@@ -196,7 +157,8 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
       const asked = String(c.messages.at(-1)!.content);
       if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(decision));
       judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /lucky without the point margin|go unlabeled as early|comeback, collapse|blamed on the manager/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+      const pitfall = /lucky without the point margin|go unlabeled as early|comeback, collapse|blamed on the manager/.test(asked);
+      return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -206,7 +168,7 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
   const dir = await mkdtemp(join(tmpdir(), 'quack-report-'));
   const fx = sim.fx ?? fixtures;
   const clock = sim.now ?? (() => AT);
-  const workflow = make({ client: createSleeperClient({ fetch: fetchOf(fx), now: clock }), snapshot: snapshotOf(fx), now: clock, news });
+  const workflow = make({ client: createSleeperClient({ fetch: fetchOf(fx), now: clock }), now: clock, news });
   const m = faux.getModel();
   const s = await openSession({ dir, models, now: sim.now && (() => new Date(sim.now!())), setTimer: sim.setTimer, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the league reporter.', extensions: [workflowExtension([workflow])] } });
   try {
@@ -228,7 +190,7 @@ async function run(make: Make, input: object, decision: object, news?: News) {
 
 test('the digest workflow seals a recap and a preview card and the judge passes them, saying what was not checked', async () => {
   const recap = await run(digestWorkflow, RECAP, digestDecision);
-  assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed], ['digest', 'sleeper.digest@2', [], true]);
+  assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed], ['digest', 'sleeper.digest@3', [], true]);
   assert.ok(recap.judged.some((q) => /real story/.test(q)));
   assert.ok(!recap.verdict.checks.some((k) => k.id === 'preview_news_decides'));
   assert.deepEqual(recap.verdict.notes, ['preview_news_decides not checked: no news source']);
@@ -237,17 +199,12 @@ test('the digest workflow seals a recap and a preview card and the judge passes 
   assert.ok(preview.judged.some((q) => /swings it/.test(q)));
 });
 
-test('a digest that states a projection fails its gate in the workflow', async () => {
-  const { verdict } = await run(digestWorkflow, RECAP, { ...digestDecision, summary: 'Teal had a 70% chance to win.' });
-  assert.deepEqual([verdict.passed, verdict.gatesFailed], [false, ['faithful_to_tools.no_projection_source']]);
-});
-
 test('the retro workflow seals a card whose figures are the facts\' and the judge passes it', async () => {
   const f = await retroFacts(fixtures, newsStub);
   const decision: RetroDecision = { misses: [{ index: 0, why: 'Dash had the flex role.', knowable: true, signalUrl: f.misses[0].news[0].url }], waiverMisses: [{ index: 0, why: 'No signal before the run.', knowable: false }], lessons: ['Check Saturday\'s report.'], summary: 'Dan Dash over Ned Nope cost 12.' };
   const { sealed, verdict, judged } = await run(retroWorkflow, RECAP, decision, newsStub);
   const card = JSON.parse(sealed.content) as RetroCard;
-  assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['retro', 12, true, 'sleeper.retro@2', [], true, []]);
+  assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['retro', 12, true, 'sleeper.retro@3', [], true, []]);
   assert.ok(judged.some((q) => /not the same injury designation restated/.test(q)));
   const bare = await run(retroWorkflow, RECAP, { ...decision, misses: [{ index: 0, why: 'x', knowable: false }] });
   assert.deepEqual(bare.verdict.notes, ['signal_is_evidence not checked: no news source']);
@@ -381,8 +338,7 @@ test('a retro for an owner on bye has no opponent and says so, even with another
   assert.match(prompt, /retro for Mallard Mayhem: was on bye\./);
   assert.doesNotMatch(prompt, /lost|against/);
   const card = buildRetroCard(f, { misses: [], waiverMisses: [], lessons: [], summary: 's' });
-  assert.deepEqual([card.bye, card.opponent], [true, null]);
-  assert.equal((await retroGate('tool_figures_copied', f, card)).met, 1);
+  assert.deepEqual([card.bye, card.opponent, card.opp, card.won], [true, null, null, false]);
   assert.match(retroPrompt(await retroFacts()), /started 43 against teal 40, won/);
 });
 
