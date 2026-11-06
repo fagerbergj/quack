@@ -35,7 +35,7 @@ export type ContractsConfig ={ maxRevisions?: number; classifier?: ClassifierRef
 /** The contracts extension's session half: the question tool, the spec artifact and the judge that checks it against the kind's guide. */
 export function contractsSessionExtensions(config: ContractsConfig = {}): Extension[] {
   return [
-    defineExtension({ name: 'contracts', tools: contractTools, hooks: [awaitingApproval] }),
+    defineExtension({ name: 'contracts', tools: contractTools, hooks: [awaitingApproval()] }),
     artifactsExtension([specKind]),
     judge({ kind: specKind, rubric: contractRubric, evidence: specEvidence(), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_contract', onCleared }),
   ];

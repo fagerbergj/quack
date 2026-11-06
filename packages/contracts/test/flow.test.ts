@@ -251,6 +251,19 @@ for (const decision of ['approve', 'reject'] as const) {
   });
 }
 
+test('after a rejection, an agent that keeps answering without putting the version up again is asked once, then the run ends', async () => {
+  const asked: string[] = [];
+  const reply = (c: Msgs) => ((asked.push(text(c)), fauxAssistantMessage('I would rather discuss it first.')));
+  const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...Array.from({ length: 6 }, () => reply)]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  await resolveApproval(s.root, (await nextProposal(s)).id, { decision: 'reject', reason: 'Why a string?', by: jf }, ctx);
+  const done = await run;
+  assert.equal(done.status === 'done' && done.answer, 'I would rather discuss it first.');
+  assert.equal(asked.length, 2, `one answer to the rejection, one to the reminder: ${JSON.stringify(asked)}`);
+  assert.match(asked[1], /passed its checks but is not approved/);
+  await s.close();
+});
+
 test('a decision whose record was lost in a crash is written once when the proposal next runs', async () => {
   let seen = '';
   const s = await open([...v1Script.slice(0, -1), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Done.'))]);
