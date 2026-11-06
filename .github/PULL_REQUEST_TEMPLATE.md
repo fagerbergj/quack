@@ -6,19 +6,13 @@
 
 Closes #
 
-## Spec (non-trivial changes)
+## Evidence
 
-<!-- Skip for a trivial fix. Otherwise summarize, or link the issue's spec:
-- **Scope / out of scope** -
-- **Forbidden actions** -
-- **Output contract** -
-- **Test cases** - the 2–3 concrete cases now covered by tests -->
+<!-- What docs/README.md asks for this kind of change: a smoke test for the model path, a judge replay for a rubric, a QA rig run for the UI. -->
 
 ## Checklist
 
-- [ ] `go test ./...` passes (`-race` for concurrency changes)
-- [ ] `make vet && make fmt` clean
-- [ ] Frontend (if touched): `cd frontend && npm test && npx tsc --noEmit && npx eslint src/`
-- [ ] Changed `openapi.yaml`? Ran `make generate` and committed the regenerated files in this PR
-- [ ] No hand-edits to generated files (`internal/schema/quack.gen.go`, `frontend/src/generated/`)
+- [ ] `npm run typecheck` and `npm test` pass
+- [ ] `npm run sloplint -- diff origin/<base>` is clean (run after committing)
+- [ ] A changed agent bundle has a version bump and a rewritten `version.lock`
 - [ ] Comments say what the code *can't* - no narration or change history

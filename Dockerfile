@@ -1,153 +1,53 @@
-# syntax=docker/dockerfile:1
+# The v1 image: one build serves the distributor (with its session processes), the GitHub, schedules, Sleeper and reMarkable services; compose picks
+# the entrypoint. Session processes review code, so the image carries git and Go.
+# oasdiff checks contract versions for breaking changes (packages/contracts); pinned to a release.
+FROM golang:1.27.3-trixie AS oasdiff
+RUN go install github.com/oasdiff/oasdiff@v1.34.0
 
-# 1) Build the SPA (the committed src/generated client is used as-is).
-# bookworm (glibc), NOT alpine (musl): the runtime stage copies node out of this
-# stage, and a musl-linked node cannot run on the debian runtime base.
-FROM node:24-bookworm-slim AS frontend
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-# Cache mount: npm's download cache persists across builds, never lands in a layer.
-RUN --mount=type=cache,target=/root/.npm npm ci
-# Tests and stories never reach the bundle; CI's `npm run build` still type-checks them.
-COPY --exclude=**/*.test.ts --exclude=**/*.test.tsx --exclude=**/*.stories.tsx frontend/ ./
-RUN npm run build
-
-# 2) Build the Go server with the SPA embedded.
-# bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
-# runtime copies /usr/local/go from here and must be able to execute it.
-FROM golang:1.26-bookworm AS backend
-# The runtime ships this GOROOT. Only `go test std` and `go tool dist test` read
-# these; src/cmd stays because go builds tools absent from pkg/tool on demand.
-RUN cd /usr/local/go && rm -rf test api doc \
-    && find src \( -name testdata -type d -prune -o -name '*_test.go' \) -exec rm -rf {} +
+FROM node:26.13-trixie-slim AS deps
 WORKDIR /app
-COPY go.mod go.sum ./
-# go.mod replaces the sdk module with this dir, so resolving the graph needs its go.mod.
-COPY extensions/sdk/go.mod extensions/sdk/go.sum ./extensions/sdk/
-# The runtime ships /go/pkg/mod (#936), so it is filled offline from the cache mount.
-# Zips go: go build/test and go mod verify read the extracted tree plus .ziphash.
-RUN --mount=type=cache,target=/root/gomod-dl \
-    GOMODCACHE=/root/gomod-dl go mod download \
-    && GOPROXY=file:///root/gomod-dl/cache/download go mod download \
-    && find /go/pkg/mod/cache/download -name '*.zip' -delete
-# Not build inputs, so editing them leaves the go build cached: the SPA comes
-# from the frontend stage and the runtime COPYs config from the context.
-# Extension plugin/ dirs are fetched at runtime from a plugin/* tag, never embedded.
-COPY --exclude=docs --exclude=frontend --exclude=scripts --exclude=testdata --exclude=tools \
-     --exclude=extensions/*/plugin --exclude=extensions/sleeper/ui/storybook \
-     --exclude=Dockerfile --exclude=*.md --exclude=**/*_test.go --exclude=**/testdata . .
-COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
+COPY package.json package-lock.json ./
+COPY packages/cli/package.json packages/cli/
+COPY packages/contracts/package.json packages/contracts/
+COPY packages/distributor/package.json packages/distributor/
+COPY packages/github/package.json packages/github/
+COPY packages/home/package.json packages/home/
+COPY packages/judge/package.json packages/judge/
+COPY packages/research/package.json packages/research/
+COPY packages/runtime/package.json packages/runtime/
+COPY packages/remarkable/package.json packages/remarkable/
+COPY packages/schedules/package.json packages/schedules/
+COPY packages/slots/package.json packages/slots/
+COPY packages/sleeper/package.json packages/sleeper/
+COPY packages/sdk/package.json packages/sdk/
+COPY packages/session/package.json packages/session/
+COPY packages/web/package.json packages/web/
+COPY packages/workflows/package.json packages/workflows/
+# typescript is a dev dependency the sessions run, so nothing is omitted.
+RUN --mount=type=cache,target=/root/.npm npm ci
 
-# VERSION stamps main.version (cmd/quack/main.go); cd.yaml passes the release
-# tag, defaults to "dev" so a plain `docker build` / `make build` still works.
-ARG VERSION=dev
-# -trimpath + -ldflags="-s -w": strip local paths and the symbol/DWARF tables
-# (smaller, reproducible binary). Build cache is mounted (pure speed, discarded);
-# /go/pkg/mod is not - see the go mod download comment above.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /quack ./cmd/quack
-# Landlock self-exec target, built separately so a sandboxed child re-execs a
-# few MB instead of the full server binary on every spawn.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-sandbox ./cmd/quack-sandbox
-# The ACP agent quack spawns for its coding agents, a few MB rather than the server, like quack-sandbox.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-acp ./cmd/quack-acp
-# Extensions as child processes, run when quack.yaml sets extensions.<name>.exec: /quack-ext-<name>.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o / ./extensions/usage/cmd/quack-ext-usage ./extensions/remarkable/cmd/quack-ext-remarkable \
-        ./extensions/sleeper/cmd/quack-ext-sleeper ./extensions/github/cmd/quack-ext-github
+FROM deps AS web
+COPY packages/web packages/web
+RUN npm run build -w packages/web
 
-# 2b) The ACP coding agent's engine: PIG with tools/pi-acp/pig/quackgate fused in, one static ~64MB binary.
-# PINNED: bump all three values together and rerun tools/pi-acp/test.mjs, the real-engine suite.
-FROM golang:1.26-bookworm AS piglet
-# The release's SHA256SUMS entry for the linux-amd64 tarball (the image is amd64-only, see cd.yaml).
-ADD --checksum=sha256:3b4de3587cbfb617def483ec62dddcf35827acc3436b1454cc5694c22dcdaf3f \
-    https://github.com/MichaelKinsy/PiG/releases/download/v0.4.1/pig-0.4.1-linux-amd64.tar.gz /tmp/pig.tgz
-WORKDIR /src
-COPY tools/pi-acp/pig/ ./
-# `piglet build` compiles PIG's own v0.4.1 module source, fetched through GOPROXY and checked by GOSUMDB;
-# pinning its go.sum hash here also catches a retagged release. Network is needed only in this stage.
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    tar -xzf /tmp/pig.tgz -C /tmp \
-    && sum="$(go mod download -json github.com/MichaelKinsy/PiG@v0.4.1 | sed -n 's/^\t"Sum": "\(.*\)",$/\1/p')" \
-    && test "$sum" = "h1:1W63pubkCe4ZuueDtsKkiISli4vqO2fNTEBuI9jVpdE=" \
-    && /tmp/pig-0.4.1-linux-amd64/pig piglet build quack.yaml --format binary --out /pig-quack \
-    && /pig-quack --version
-
-# 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
-# binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those
-# don't exist in distroless/static (no libc at all) and hand-copying git's
-# shared-library closure into distroless/base is fragile and unmaintainable
-# (ponytail: wrap the OS's own package manager, don't reimplement it). So the
-# runtime base is debian:bookworm-slim with git installed via apt, still
-# non-root via an explicit UID (65532, matching the prior distroless:nonroot
-# convention) - a deliberate size/attack-surface tradeoff for a real userland,
-# not a downgrade in the properties that actually matter here (non-root,
-# unprivileged port, no runtime writes outside the workspace volume).
-#
-# bubblewrap is the OS boundary agent child processes (run_command, the trust
-# gate's derived checks) run inside - workspace.sandbox: bwrap, the default, and
-# the server REFUSES TO START without it. It needs no root and no daemon, but it
-# does need the container runtime to permit unprivileged user namespaces (Docker's
-# default seccomp profile does; a hardened runtime may not - see
-# docs/configuration.md). util-linux carries prlimit(1), which applies the
-# per-child rlimits (workspace.limits). poppler-utils carries pdftoppm/pdfinfo,
-# used to render PDF attachments to images for vision models (#829).
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates bubblewrap util-linux make poppler-utils tini \
-      python3 python3-venv python3-pip \
-      gcc libc6-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
-# Symlinks dangle until the COPYs land. No RUN follows the COPYs, and --link
-# caches each COPY on its own content, so a change re-copies only its layer.
-RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-ENV PATH=/usr/local/go/bin:$PATH
-WORKDIR /
-# Build toolchains for the coding agents (#283): the code-implementer must be
-# able to `go build/test` and `npx tsc`/`npm test` what it writes - without them
-# every check fails with "not found" and the worker grinds hunting a toolchain
-# that isn't there. Copied from the build stages, so runtime versions exactly
-# match what CI builds with (~+500MB, a deliberate size tradeoff). Go's
-# per-user caches (GOPATH/GOCACHE) default under $HOME, which quack points at
-# the writable workspace volume - nothing writes outside it.
-COPY --link --from=backend /usr/local/go /usr/local/go
-# go.sum's module cache (#936), under GOROOT rather than $HOME: the sandbox
-# ro-binds /usr whole but never /home, and workspace.env's GOMODCACHE default
-# points here. Extracted read-only (0444/0555) by go mod download itself, so
-# uid 65532 can read it with no chown - and Go still fails loudly, not
-# silently online, on any module go.sum doesn't already cover.
-COPY --link --from=backend /go/pkg/mod /usr/local/go/pkg/mod
-COPY --link --from=frontend /usr/local/bin/node /usr/local/bin/node
-COPY --link --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
-# Under /usr (not /opt): the bwrap jail ro-binds /usr whole; /opt is invisible
-# to worker subprocesses (EACCES at spawn).
-# The engine quack-acp drives; quack-acp itself is copied last with the other Go binaries.
-COPY --link --from=piglet /pig-quack /usr/local/bin/pig-quack
-# The config directory: quack.yaml plus files it references by relative path
-# (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
-COPY --link config/ /config/
-# Declarative agent bundles (agent-card.json + prompt.md), read at startup. The
-# config references them by the relative path `agents/...` (CWD is /), so keep
-# that layout.
-COPY --link agents/ /agents/
-# Orchestrator skill bundles (SKILL.md directories), read at startup.
-COPY --link skills/ /skills/
-# Last: they change on every code edit, so the layers above stay pullable from cache.
-COPY --link --from=backend /quack-sandbox /quack-sandbox
-# Under /usr so the jail can exec it (agents.<name>.acp.command).
-COPY --link --from=backend /quack-acp /usr/local/bin/quack-acp
-COPY --link --from=backend /quack-ext-usage /quack-ext-usage
-COPY --link --from=backend /quack-ext-remarkable /quack-ext-remarkable
-COPY --link --from=backend /quack-ext-sleeper /quack-ext-sleeper
-COPY --link --from=backend /quack-ext-github /quack-ext-github
-COPY --link --from=backend /quack /quack
-ENV QUACK_CONFIG=/config/quack.yaml
-USER nonroot
-EXPOSE 8080
-# tini reaps children orphaned onto PID 1 (pig-quack, sh, git from agent sandboxes);
-# a wait(-1) loop inside quack would race os/exec.Cmd.Wait for exit statuses.
-ENTRYPOINT ["/usr/bin/tini", "--", "/quack"]
+FROM node:26.13-trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 python3-venv && rm -rf /var/lib/apt/lists/*
+# rmc draws reMarkable notebooks (packages/remarkable); its venv comes first on PATH so python3 finds it.
+COPY packages/remarkable/requirements.txt /tmp/rm-requirements.txt
+RUN python3 -m venv /opt/rmc && /opt/rmc/bin/pip install --no-cache-dir --no-deps -r /tmp/rm-requirements.txt && rm /tmp/rm-requirements.txt
+COPY --from=golang:1.27.3-trixie /usr/local/go /usr/local/go
+COPY --from=oasdiff /go/bin/oasdiff /usr/local/bin/oasdiff
+ENV PATH=/opt/rmc/bin:/usr/local/go/bin:/app/node_modules/.bin:$PATH
+WORKDIR /app
+COPY --from=deps /app/node_modules node_modules
+COPY . .
+COPY --from=web /app/packages/web/dist /app/web
+# npm ci runs before the sources exist, so it links no bin for the workspace CLI.
+RUN printf '#!/bin/sh\nexec node /app/packages/cli/src/main.ts "$@"\n' > /usr/local/bin/quack && chmod +x /usr/local/bin/quack
+ENV QUACK_WEB_DIR=/app/web
+# Declared last so a new commit invalidates no earlier layer; unset in local builds.
+ARG QUACK_COMMIT
+ARG QUACK_BUILT_AT
+ENV QUACK_COMMIT=$QUACK_COMMIT QUACK_BUILT_AT=$QUACK_BUILT_AT
+LABEL org.opencontainers.image.revision=$QUACK_COMMIT
+USER node

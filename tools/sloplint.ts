@@ -1,0 +1,153 @@
+// sloplint for TypeScript: comment runs, cyclomatic complexity and duplicated code on diff-touched lines.
+// Usage: node tools/sloplint.ts diff <git-ref> | repo
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import ts from 'typescript';
+import { clones, MIN_TOKENS } from './dupl.ts';
+
+export const MAX_COMMENT_RUN = 2;
+export const MAX_CC = 15;
+const ALLOW = 'sloplint: cc-allow';
+
+type Range = [number, number];
+export type Finding = { line: number; message: string };
+
+const overlaps = (s: number, e: number, rs: Range[] | 'all') => rs === 'all' || rs.some(([a, b]) => s <= b && e >= a);
+
+/** Changed line ranges per file (new-file numbers) from `git diff -U0` output. */
+export function changedRanges(diff: string): Map<string, Range[]> {
+  const out = new Map<string, Range[]>();
+  let file = '';
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++ ')) file = line === '+++ /dev/null' ? '' : line.slice(6);
+    const hunk = /^@@ -\S+ \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!hunk || !file) continue;
+    const start = Number(hunk[1]) || 1;
+    const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    if (count > 0) out.set(file, [...(out.get(file) ?? []), [start, start + count - 1]]);
+  }
+  return out;
+}
+
+/** Lines changed since `ref` in the repo at `root`; a moved file counts only its edited lines, whatever diff.renames is set to. */
+export const changedSince = (root: string, ref: string) =>
+  changedRanges(execFileSync('git', ['diff', '-U0', '--find-renames', '-l0', `${ref}...HEAD`], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 }));
+
+/** Every comment's range, from the trivia around each token, so one before a closing brace or at the end of the file counts. */
+function commentRanges(sf: ts.SourceFile): ts.CommentRange[] {
+  const byPos = new Map<number, ts.CommentRange>();
+  const jsxText: Range[] = [];
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) jsxText.push([node.pos, node.end]);
+    for (const r of [...(ts.getLeadingCommentRanges(sf.text, node.getFullStart()) ?? []), ...(ts.getTrailingCommentRanges(sf.text, node.getEnd()) ?? [])]) byPos.set(r.pos, r);
+    for (const child of node.getChildren(sf)) visit(child);
+  };
+  visit(sf);
+  // Slashes in JSX text are text the page shows, not comments.
+  return [...byPos.values()].filter((r) => !jsxText.some(([a, b]) => r.pos >= a && r.pos < b));
+}
+
+/** Lines whose last non-blank character sits in a comment: comment-only lines and code with a trailing comment, not a comment inside code. */
+function commentLines(sf: ts.SourceFile): boolean[] {
+  const inComment = new Uint8Array(sf.text.length);
+  for (const r of commentRanges(sf)) inComment.fill(1, r.pos, r.end);
+  let next = 0;
+  return sf.text.split('\n').map((line) => {
+    const [start, used] = [next, line.trimEnd().length];
+    next += line.length + 1;
+    return used > 0 && inComment[start + used - 1] === 1;
+  });
+}
+
+/** Runs of consecutive comment lines (a block comment counts each of its lines) longer than the limit. */
+function commentRuns(sf: ts.SourceFile, rs: Range[] | 'all'): Finding[] {
+  const isComment = commentLines(sf);
+  const findings: Finding[] = [];
+  for (let l = 0; l < isComment.length; l++) {
+    if (!isComment[l] || (l > 0 && isComment[l - 1])) continue;
+    let end = l;
+    while (end + 1 < isComment.length && isComment[end + 1]) end++;
+    const n = end - l + 1;
+    if (n > MAX_COMMENT_RUN && overlaps(l + 1, end + 1, rs)) findings.push({ line: l + 1, message: `${n}-line comment run touches changed lines` });
+  }
+  return findings;
+}
+
+const DECISIONS = new Set([
+  ts.SyntaxKind.IfStatement, ts.SyntaxKind.ConditionalExpression, ts.SyntaxKind.ForStatement, ts.SyntaxKind.ForInStatement,
+  ts.SyntaxKind.ForOfStatement, ts.SyntaxKind.WhileStatement, ts.SyntaxKind.DoStatement, ts.SyntaxKind.CaseClause, ts.SyntaxKind.CatchClause,
+]);
+const LOGICAL = new Set([ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken]);
+
+/** Cyclomatic complexity of one function body, not counting nested functions. */
+export function complexity(fn: ts.FunctionLikeDeclaration): number {
+  let cc = 1;
+  const visit = (node: ts.Node): void => {
+    if (node !== fn && ts.isFunctionLike(node)) return;
+    if (DECISIONS.has(node.kind)) cc++;
+    if (ts.isBinaryExpression(node) && LOGICAL.has(node.operatorToken.kind)) cc++;
+    ts.forEachChild(node, visit);
+  };
+  if (fn.body) ts.forEachChild(fn.body, visit);
+  return cc;
+}
+
+function allowed(sf: ts.SourceFile, fn: ts.Node): boolean {
+  const top = sf.getLineAndCharacterOfPosition(fn.getStart(sf)).line;
+  const lines = sf.text.split('\n').slice(Math.max(0, top - 3), top);
+  return lines.some((l) => {
+    const i = l.indexOf(ALLOW);
+    return l.trim().startsWith('//') && i >= 0 && l.slice(i + ALLOW.length).trim().length > 0;
+  });
+}
+
+const fnName = (fn: ts.FunctionLikeDeclaration) => (fn.name && ts.isIdentifier(fn.name) ? fn.name.text : '<anonymous>');
+
+function complexFunctions(sf: ts.SourceFile, rs: Range[] | 'all'): Finding[] {
+  const findings: Finding[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) && 'body' in node && node.body) {
+      const fn = node as ts.FunctionLikeDeclaration;
+      const s = sf.getLineAndCharacterOfPosition(fn.body!.getStart(sf)).line + 1;
+      const e = sf.getLineAndCharacterOfPosition(fn.end).line + 1;
+      const cc = complexity(fn);
+      if (cc > MAX_CC && overlaps(s, e, rs) && !allowed(sf, fn)) findings.push({ line: s, message: `${fnName(fn)} CC ${cc} > ${MAX_CC} (changed)` });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return findings;
+}
+
+export function lintSource(path: string, text: string, rs: Range[] | 'all'): Finding[] {
+  const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+  return [...commentRuns(sf, rs), ...complexFunctions(sf, rs)];
+}
+
+const linted = (rel: string) => /\.tsx?$/.test(rel) && !/\.test\.tsx?$|\/test\/|\/fixtures\/|\.d\.ts$|node_modules\//.test(rel);
+
+function run(mode: string, ref: string | undefined): number {
+  const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  // A file the diff names but the working tree no longer has (moved or deleted) has nothing left to lint.
+  const tree = new Map(execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' }).split('\n')
+    .filter((f) => linted(f) && existsSync(join(root, f))).map((f) => [f, readFileSync(join(root, f), 'utf8')]));
+  const touched: Map<string, Range[] | 'all'> = mode === 'repo'
+    ? new Map([...tree.keys()].map((f) => [f, 'all' as const]))
+    : changedSince(root, ref!);
+  const files = new Map([...touched].filter(([f]) => tree.has(f)));
+  const findings = [...files].flatMap(([rel, rs]) => lintSource(rel, tree.get(rel)!, rs).map((f) => ({ rel, ...f })));
+  for (const c of clones(tree, files)) findings.push({ rel: c.file, line: c.line, message: `lines ${c.line}-${c.endLine} duplicate ${relative(process.cwd(), join(root, c.other))}:${c.otherLine} (${MIN_TOKENS}+ tokens)` });
+  for (const f of findings) console.log(`${relative(process.cwd(), join(root, f.rel))}:${f.line}: ${f.message}`);
+  if (findings.length === 0) console.log('sloplint: ok');
+  return mode === 'repo' ? 0 : Math.min(findings.length, 1);
+}
+
+if (import.meta.main) {
+  const [mode, ref] = process.argv.slice(2);
+  if (mode !== 'repo' && !(mode === 'diff' && ref)) {
+    console.error('usage: sloplint <diff <git-ref> | repo>');
+    process.exit(2);
+  }
+  process.exit(run(mode, ref));
+}

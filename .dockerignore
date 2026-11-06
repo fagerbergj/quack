@@ -1,25 +1,19 @@
-# Trims the build context. Do NOT add `*.md`, `docs/`, or `config/` here: the
-# runtime image COPYs config/ and agents/ (prompt.md, agent-card.json,
-# rubric.yaml/rubric.md, SKILL.md, ...) wholesale from the context - excluding
-# any of those paths would silently ship a broken image.
+**/node_modules
+**/test
+tools
+Dockerfile
+# Repo-only files; the main checkout's .claude holds agent worktrees, over 1GB of context.
 .git
 .github
-# Main checkout: agent worktrees live here, over 1GB of build context.
 .claude
+.agents
 .quack
-.vscode
-.idea
-**/node_modules
-frontend/dist
-internal/serve/web/dist/assets
-/quack
-/quack-sandbox
-/server
-go.work
-go.work.sum
-*.test
-*.out
+.pi-glla
+docs
+README.md
+AGENTS.md
+AGENTS.md.local
+CLAUDE.md
+packages/web/dist
 .env
 *.log
-.DS_Store
-Thumbs.db

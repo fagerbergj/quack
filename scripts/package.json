@@ -1,8 +1,0 @@
-{
-  "name": "quack-scripts",
-  "private": true,
-  "type": "module",
-  "devDependencies": {
-    "markdownlint-cli2": "^0.23.2"
-  }
-}

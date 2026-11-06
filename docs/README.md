@@ -1,23 +1,27 @@
-# Documentation
+# Quack docs
 
-Setup and configuration guides for humans to use quack. For how the code itself is put together, see [`AGENTS.md`](../AGENTS.md).
+The operator CLI is described in [cli.md](cli.md) and the QA rig in [qa.md](qa.md).
 
-- [`cli.md`](cli.md) - the CLI: the main command tree, `-p`, exit codes (recording/eval/validate have no prose yet).
-- [`ui.md`](ui.md) - the web SPA: what it does, running it, contributing to it.
-- [`api.md`](api.md) - the REST/MCP/A2A surface and streaming.
-- [`configuration/`](configuration/) - models, prompts, agents, the trust gate, stores, auth, workspace sandboxing, deployment shapes, observability.
-- [`agent-plugins.md`](agent-plugins.md) - the Agent Plugins standard: how a plugin ships skills, MCP servers, and quack extension declarations.
-- [`extensions/github.md`](extensions/github.md) - the GitHub App.
-- [`extensions/remarkable.md`](extensions/remarkable.md) - the reMarkable document-ingest trigger.
-- [`extensions/sleeper.md`](extensions/sleeper.md) - the Sleeper fantasy-football tools, page and weekly jobs.
-- [`extensions/usage.md`](extensions/usage.md) - the in-app Prometheus usage dashboard.
-- [`extensions/ui-kit.md`](extensions/ui-kit.md) - the CSS kit an extension's own HTML pages link to look native to the SPA.
-- [`extensions/dev-loop.md`](extensions/dev-loop.md) - developing an extension under `extensions/`, shipping a plugin change with a `plugin/<name>/vX.Y.Z` tag, and adding a new extension.
-- [`promptlint.md`](promptlint.md) - the prompt and tool-definition lint: token budgets, broken references, overlapping tools.
-- [`sandbox-cli.md`](sandbox-cli.md) - `quack sandbox`: entering or probing the real agent jail.
-- [`memory-lifecycle.md`](memory-lifecycle.md) - the memory lifecycle design: how a memory is committed, recalled, and forgotten.
-- [`qa-mocks.md`](qa-mocks.md) - exercising the GitHub and reMarkable flows against a QA server, no real credentials.
-- [`frontend-testing.md`](frontend-testing.md) - the frontend test setup: Vitest, render-checks, Storybook.
-- [`faq.md`](faq.md) - the *why* behind a few choices that look surprising from outside.
+## Evidence for pull requests
 
-For the contribution workflow (issue → plan → implement → review → merge) see [`../CONTRIBUTING.md`](../CONTRIBUTING.md); for the agent operating rules see [`../AGENTS.md`](../AGENTS.md).
+A pull request into the trunk shows green CI (typecheck, tests, sloplint) and, for any change on the model path, a 1-3 item smoke test against local llm-swap, with the commands and output in the PR.
+
+### Evidence for a judge or rubric change
+
+Replay the same recorded cases under the baseline and the candidate, three times each, on local models, the same day:
+
+```
+QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --classifier clef/clef --arm base=<trunk ref> --arm cand=. --repeat 3 --concurrency 2
+```
+
+`cases.json` is an array of `{ case, kind, checks?, session?, version?, content?, evidence? }`. `kind` picks the extension's eval adapter (its rubric and evidence builder). `session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter; `content` and `evidence` (scope to units) give both inline for a kind whose adapter cannot rebuild evidence, such as `github.review`. `checks` (`id` or `criterion.id`) limits the run to the checks being watched. An arm is `label=ref`: `.` is this tree, any other value is a git ref whose rubrics and evidence code are used while the judge engine stays this tree's, so a change to `packages/judge` itself is not visible to a baseline arm. Without `--arm` it runs one arm, `current=.`.
+
+It prints a markdown table of per-repeat `met` (null: no unit, the check does not count) and classifier/escalation counts per case and check for each arm, then median judge seconds per case. Paste it into the PR with the cases' provenance. Cases that are only rubric-level (digest, trade, retro) need their kind's adapter to carry the rubric first.
+
+## Checking a rollout
+
+Before `compose up` with a new image, run its validator against the prod config, agents and data volume, mounted read-only. It loads every bundle and every session's pinned `agent-def/agent.json` with the deployment-level extensions (unset extension env gets placeholders, nothing is contacted), prints `FAIL <path>: <error>` per failure and `N loaded, M failed`, and exits non-zero on any failure:
+
+```
+docker run --rm -v <data>:/data:ro -v <config>:/config/deployment.json:ro -e QUACK_CONFIG=/config/deployment.json -e QUACK_AGENTS_DIR=/app/agents -e QUACK_DATA_DIR=/data <new-image> node packages/runtime/src/validate.ts
+```

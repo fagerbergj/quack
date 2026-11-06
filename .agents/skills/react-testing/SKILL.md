@@ -9,7 +9,7 @@ description: |
   to reach for axe-core, Chromatic/Playwright CT, or the Profiler.
   Use when writing or reviewing React component/hook tests, picking a query or interaction API,
   setting up Vitest/Jest config or coverage gates, or deciding on visual/a11y/perf testing.
-  Do NOT use for non-React testing, Go backend tests, or E2E flow design unrelated to components.
+  Do NOT use for non-React testing or E2E flow design unrelated to components.
 license: MIT
 ---
 
@@ -21,7 +21,7 @@ Decision-level guidance for testing React the way users actually use it. The gui
 
 Code templates and the full tables live in `references/recipes.md`. Config, parallelism, and coverage live in `references/ci-and-tooling.md`. Visual/a11y/perf live in `references/advanced.md`.
 
-quack's frontend already uses **Vitest + RTL + MSW** - match that grain before adding deps.
+quack's web package (`packages/web`) uses **Vitest + RTL + user-event** - match that grain before adding deps.
 
 ## When to use
 
@@ -32,7 +32,7 @@ quack's frontend already uses **Vitest + RTL + MSW** - match that grain before a
 
 ## When NOT to use
 
-- Non-React code, Go backend tests, or pure E2E user-journey design.
+- Non-React code or pure E2E user-journey design.
 - A question already answered by the repo's existing test setup - read those first.
 
 ## Core rules (the reflexes)

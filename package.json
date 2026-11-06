@@ -1,29 +1,28 @@
 {
-  "name": "web-researcher",
+  "name": "quack",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "generate": "openapi-ts"
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=26.13"
   },
-  "dependencies": {
-    "@tanstack/react-query": "^5.100.14",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "react-router-dom": "^7.16.0"
+  "scripts": {
+    "test": "node --test --import ./tools/leak-check.ts --test-timeout=30000 'packages/*/test/*.test.ts' 'tools/*.test.ts' && npm test -w @quack/web",
+    "typecheck": "tsc -p tsconfig.json && tsc -p packages/web/tsconfig.json",
+    "sloplint": "node tools/sloplint.ts"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.0.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
-    "autoprefixer": "^10.5.0",
-    "postcss": "^8.5.10",
-    "tailwindcss": "^3.4.17",
-    "typescript": "^5.6.3",
-    "vite": "^8.0.8"
+    "@types/node": "^24.19.2",
+    "@types/ws": "^8.18.2",
+    "playwright": "1.64.1",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-durable": "1.5.0",
+    "@earendil-works/pi-schema": "1.5.0"
   }
 }
