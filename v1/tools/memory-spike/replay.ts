@@ -1,6 +1,6 @@
 // Usage: node tools/memory-spike/replay.ts <off|episodes> <deployment.json>
 // Replays the target run's first request on a copy of the reviewer bundle; a memory arm's snapshot is a pinned prompt section.
-// shortcut: no memory_recall tool, since that needs the extension; the section is recalled once, on the task text.
+
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -22,6 +22,7 @@ const task = (item.input as { inputs: string[] }).inputs[0];
 const bundle = `${HERE}data/agents/reviewer-${arm}`;
 await mkdir(bundle, { recursive: true });
 await cp(`${HERE}../../agents/reviewer`, bundle, { recursive: true });
+// shortcut: no memory_recall tool, since that needs the extension; the section is recalled once, on the task text.
 let pinned = '';
 if (arm === 'episodes') {
   const all = (await readFile(`${HERE}data/episodes-all.jsonl`, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as Episode);
