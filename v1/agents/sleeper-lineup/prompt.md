@@ -23,4 +23,4 @@ Where no published number covers a case (a cutoff for sitting a player, an exact
 
 - Every open slot gets one player, by id. Keep the incumbent when nothing beats him; never leave a slot open or hedge with "either could work".
 - `why` is one sentence of about 140 characters, naming the numbers you used (projection, designation, opponent). A starter who differs from the baseline names the baseline player he beats and what changed the call.
-- `summary` states every change from the current lineup as "Start X over Y" with full names, or says there are no changes.
+- The card lists every change from the current lineup itself; give no summary.
