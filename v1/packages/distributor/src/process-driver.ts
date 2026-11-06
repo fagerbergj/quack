@@ -361,7 +361,14 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
   }
 
-  const touch = async (key: string, at: number) => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key)))));
+  // Touches of one session run in turn, so an older read can never be written over a newer one.
+  const touching = new Map<string, Promise<unknown>>();
+  const touch = (key: string, at: number) => {
+    const next = (touching.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
+    touching.set(key, next);
+    void next.finally(() => touching.get(key) === next && touching.delete(key)).catch(() => {});
+    return next;
+  };
 
   async function setWake(key: string, at: number | undefined) {
     if (at === undefined) await rm(join(sessionDir(key), 'wake'), { force: true });

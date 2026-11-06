@@ -366,7 +366,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return sendProblem(res, 409, "Can't archive a session that is running or waiting on you.");
     const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
     if (done.includes(false)) return sendProblem(res, 404, 'no such session');
-    send(res, 200, (await decorate((await driver.sessions()).filter((x) => x.key === key)))[0]);
+    const [row] = await decorate((await driver.sessions()).filter((x) => x.key === key));
+    return row ? send(res, 200, row) : sendProblem(res, 404, 'no such session');
   }
 
   // Why a housekeeping request is refused before it runs, if it is: it needs the admin token or the proxy's identity (the legacy route only the identity), and a body must be JSON (a cross-site form cannot send it).

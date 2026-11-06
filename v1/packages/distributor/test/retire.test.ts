@@ -110,5 +110,7 @@ test('a touch moves the stored last activity forward and never back', async () =
   await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
   assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');
   await driver.touch('job', Date.parse('2026-11-01T18:00:00Z'));
-  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');  // Overlapping touches, newer first: the older one must not land over it.
+  await Promise.all([driver.touch('job', Date.parse('2026-11-04T12:00:00Z')), driver.touch('job', Date.parse('2026-11-03T12:00:00Z'))]);
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-04T12:00:00.000Z');
 });
