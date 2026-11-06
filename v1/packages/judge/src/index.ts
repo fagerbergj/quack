@@ -129,7 +129,7 @@ export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: Seale
 
 /** What a caller is told when the judge model could not answer some checks. */
 export function undecidedMessage(ids: string[], toolName: string): string {
-  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again; checks already answered are kept.`;
+  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again.`;
 }
 
 function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
@@ -168,7 +168,7 @@ export function judge(opts: JudgeOptions) {
       // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
       if ((await judgedInRun(api, opts.kind.kind, ctx)) > opts.maxRevisions) return terminal(`${opts.kind.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.`);
       const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, (p) => api.details(p, ctx));
-      // A verdict missing checks would pass or fail on a model outage; the decided answers are memoized, so calling again asks only the rest.
+      // A verdict missing checks would pass or fail on a model outage; answers are memoized per call, so another submit asks again.
       if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };
       await attachVerdict(api, opts.kind.kind, sealed.version, verdict as never, ctx);
       return finish(sealed, verdict, api, ctx);
