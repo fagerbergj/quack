@@ -35,7 +35,7 @@ async function agentsDirAt(version: number, ...names: string[]) {
   return dir;
 }
 
-async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }, retire?: Parameters<typeof createDistributor>[1]['retire']) {
+async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }, retire?: NonNullable<Parameters<typeof createDistributor>[1]>['retire']) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
