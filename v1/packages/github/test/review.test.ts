@@ -54,6 +54,12 @@ test('the verdict must match the findings labels', () => {
   assert.equal(verdict(green, ci('go-test=success')).met, 1);
   assert.equal(verdict(green, ci('go-test=success, lint=failure')).met, 0, 'a failing check is never approved past');
   assert.equal(verdict(green.replace('approve', 'comment'), ci('lint=failure')).met, 1);
+  for (const failed of ['stale', 'startup_failure', 'timed_out']) assert.equal(verdict(green, ci(`go-test=${failed}`)).met, 0, `${failed} is a failed check`);
+  for (const running of ['queued', 'in_progress', 'waiting']) {
+    assert.equal(verdict(green, ci(`go-test=${running}`)).met, 1, `approve while ${running} is allowed`);
+    assert.equal(verdict(green.replace('approve', 'comment'), ci(`go-test=${running}`)).met, 1, `${running} CI is not green, so comment is allowed too`);
+  }
+  assert.equal(verdict(green.replace('approve', 'comment'), ci('go-test=success')).met, 0, 'green CI with nothing open still calls for approve');
 });
 
 test('blocking findings must name an anchor, and findings must cite lines that exist', () => {
