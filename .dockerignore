@@ -1,6 +1,7 @@
 **/node_modules
 **/test
 tools
+!tools/patch-liqe.ts
 Dockerfile
 # Repo-only files; the main checkout's .claude holds agent worktrees, over 1GB of context.
 .git

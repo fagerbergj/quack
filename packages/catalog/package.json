@@ -1,0 +1,16 @@
+{
+  "name": "@quack/catalog",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@quack/sdk": "*",
+    "liqe": "3.8.8",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
