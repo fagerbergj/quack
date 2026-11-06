@@ -81,7 +81,7 @@ function Waivers({ c }: { c: Card }) {
               <span className="flex-none text-[14px] font-semibold tabular-nums">{x.proj.toFixed(1)}</span>
             </div>
             <p className="m-0 pl-7 text-[12px] text-muted">{`${x.player.pos} · ${x.player.team} · ${x.owned_pct}% owned · bye ${x.bye}`}</p>
-            {x.drop && <p className="m-0 pl-7 text-[13px] text-ink-2">{`− ${x.drop.player.name}`}{x.drop.player.inj && <> <Chip>{x.drop.player.inj}</Chip></>}</p>}
+            {x.drop && <p className="m-0 pl-7 text-[13px] text-ink-2">{`− ${x.drop.player.name}`}{x.drop.role === 'starter' && <> <Chip>Starter</Chip></>}{x.drop.player.inj && <> <Chip>{x.drop.player.inj}</Chip></>}</p>}
             <div className="pl-7"><Blurb text={x.why} /><NewsList items={x.news ?? []} /></div>
           </Row>
         ))}
@@ -207,6 +207,7 @@ function Season({ s }: { s: any }) {
       <div className="flex min-w-0 items-baseline gap-2"><span className="text-[15px] font-semibold">{s.season}</span><span className="tabular-nums text-ink-2">{record(s)}</span>{s.in_progress ? <Chip>In progress</Chip> : s.champion && <span className="min-w-0 break-words text-[12px] text-muted">{`Champion ${s.champion}`}</span>}</div>
       <p className="m-0 text-[12px] text-muted">{facts.join(' · ')}</p>
       {s.note && <Blurb text={s.note} />}
+      {(s.cited ?? []).map((p: any) => <p key={p.pick} className="m-0 text-[12px] text-muted">{`Pick ${p.pick} ${p.player.name}: ${p.player.pos}${p.drafted_as} drafted, ${p.player.pos}${p.finished} finish, ${sentence(String(p.verdict).replace(/_/g, ' '))}`}</p>)}
     </Row>
   );
 }
