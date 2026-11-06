@@ -11,6 +11,7 @@ import { SessionKeyContext } from './extension.ts';
 import { Work } from './Work.tsx';
 import { ContextRail, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
+import { useMenu } from './useMenu.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
@@ -196,8 +197,8 @@ type Entry = { label: string; run?: () => void; href?: string; danger?: boolean 
 function MenuEntry({ e, close }: { e: Entry; close: () => void }) {
   const cls = `flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] no-underline hover:bg-soft lg:min-h-8 ${e.danger ? 'text-danger' : 'text-ink'}`;
   return e.href
-    ? <a role="menuitem" href={e.href} download onClick={close} className={cls}>{e.label}</a>
-    : <button type="button" role="menuitem" onClick={() => { close(); e.run?.(); }} className={cls}>{e.label}</button>;
+    ? <a role="menuitem" tabIndex={-1} href={e.href} download onClick={() => close()} className={cls}>{e.label}</a>
+    : <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); e.run?.(); }} className={cls}>{e.label}</button>;
 }
 
 type MenuActions = { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void };
@@ -217,16 +218,15 @@ function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort:
 
 // Stopping the run, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
 function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions }) {
-  const [open, setOpen] = useState(false);
+  const menu = useMenu();
   if (!running && !latest && !manage) return null;
-  const close = () => setOpen(false);
   return (
-    <div className="relative">
-      <button type="button" aria-label="More actions" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => e.key === 'Escape' && setOpen(false)} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
-      {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
+    <div ref={menu.root} onKeyDown={menu.keys} className="relative">
+      <button ref={menu.button} type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu.open} onClick={menu.toggle} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
+      {menu.open && (
+        <div role="menu" aria-label="More actions" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
           {groupsOf(running, latest, onAbort, onOpen, manage).map((g, i) => (
-            <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={close} />)}</div>
+            <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={menu.close} />)}</div>
           ))}
         </div>
       )}
