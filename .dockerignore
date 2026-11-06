@@ -1,25 +1,4 @@
-# Trims the build context. Do NOT add `*.md`, `docs/`, or `config/` here: the
-# runtime image COPYs config/ and agents/ (prompt.md, agent-card.json,
-# rubric.yaml/rubric.md, SKILL.md, ...) wholesale from the context - excluding
-# any of those paths would silently ship a broken image.
-.git
-.github
-# Main checkout: agent worktrees live here, over 1GB of build context.
-.claude
-.quack
-.vscode
-.idea
 **/node_modules
-frontend/dist
-internal/serve/web/dist/assets
-/quack
-/quack-sandbox
-/server
-go.work
-go.work.sum
-*.test
-*.out
-.env
-*.log
-.DS_Store
-Thumbs.db
+**/test
+tools
+Dockerfile
