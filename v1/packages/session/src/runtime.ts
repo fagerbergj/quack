@@ -100,8 +100,9 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     // A test drives sleeps on a fake clock: the Harness reads the same `now` and arms its timers through `setTimer`.
     ...(opts.now && { now: () => +opts.now!() }),
     ...(opts.setTimer && { setTimer: opts.setTimer }),
-    // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them.
-    settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue' },
+    // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them;
+    // queued steers and follow-ups reach the model together in one turn, not one per turn.
+    settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue', steeringMode: 'all', followUpMode: 'all' },
   }, ctx);
   open = harness;
   const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
