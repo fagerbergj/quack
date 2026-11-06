@@ -1,0 +1,2564 @@
+[
+  {
+    "id": "02a990f0-b8df-4f48-b063-e5f0a067f897",
+    "memory": "User verified that in fagerbergj/quack#2176, the serviceToken function in sdk/src/services.ts now distinguishes between a missing tokenEnv variable and a named-but-unset variable, providing specific error messages for each case",
+    "hash": "8599bd22226058ef25a4f79a2dd6c176",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:51.739394+00:00",
+    "updated_at": "2026-11-06T11:28:51.739394+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "0503dabc-d985-4856-854b-8e7bd25e9684",
+    "memory": "In fagerbergj/quack#2185, the user noted a nit that the pointer regex in v1/packages/contracts/src/rubric.ts:16 covers type|interface|function|const|class|enum but omits namespace and var, causing choice pointers into export declare namespace to report as not in the document",
+    "hash": "effb9390dc561af8718da7041e5e6bec",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:02.462044+00:00",
+    "updated_at": "2026-11-06T11:33:02.462044+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "0525fb09-6eda-4876-9d04-9c1320df8dfc",
+    "memory": "User reviewed fagerbergj/quack#2198 on November 5, 2026, which fixes the judge so that pitfall feedback quotes the reason from units where the pitfall is present (a 'yes' answer) rather than where it is absent, by keeping reasons on all escalated answers in resolve.ts and recording notes for the defect answer in index.ts",
+    "hash": "f4beb943fc32709f2803980ef09a86df",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2198",
+      "run_created": "2026-11-05T15:00:52.027Z"
+    },
+    "created_at": "2026-11-06T11:37:27.216428+00:00",
+    "updated_at": "2026-11-06T11:37:27.216428+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "0616ce9b-934d-4863-997d-f7133077efd6",
+    "memory": "In fagerbergj/quack#2177, service-to-service calls from an app back to the distributor and from sleeper to schedules go over loopback (http://127.0.0.1:<port>) without tokens, rather than using direct in-process calls, to keep sleeper registration code and tests unchanged",
+    "hash": "dbe130e73f5e93de5e1bb67cfda73385",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.973844+00:00",
+    "updated_at": "2026-11-06T11:29:47.973844+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "076d040b-9a9c-4f57-be63-05f474b5512b",
+    "memory": "In fagerbergj/quack#2175, 'providers.<id>.models' is no longer the registry; 'resolveDeployment' merges discovered models from 'GET {baseUrl}/models' with hand-written entries, where hand-written fields win, and models without 'contextWindow' are listed but not selectable.",
+    "hash": "7a89c9bb26e7bb9231d384a18d2fed93",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.316611+00:00",
+    "updated_at": "2026-11-06T11:27:26.316611+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "assistant"
+  },
+  {
+    "id": "07e08ee0-2f4d-4806-991b-c6b11c061517",
+    "memory": "User approved fagerbergj/quack#2191 on November 5, 2026 after verifying the incremental diff fixed all four initial findings (GraphQL header, pagination, stored meta, explicit sorting), with 108/108 tests passing and CI status success",
+    "hash": "a86b6f92a0b4efe9d03e706a4e9250e9",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:35:10.598271+00:00",
+    "updated_at": "2026-11-06T11:35:10.598271+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "09329023-c842-4c22-bec3-24bc06346975",
+    "memory": "In fagerbergj/quack#2176, services like slots, schedules, sleeper, remarkable, and github read their token, database, and settings from their deployment entry using @quack/sdk helpers (readDeploymentFile, serviceToken, serviceDbPath, checkedSettings), and sqlite services store data as <name>.db in QUACK_DATA_DIR.",
+    "hash": "5bf1a7bab3552132ecfc009421b38b24",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.320485+00:00",
+    "updated_at": "2026-11-06T11:28:10.320485+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "0a00e182-1f1a-4a82-807b-434b563b8698",
+    "memory": "User noted a nit in fagerbergj/quack#2184 that the `checkout_task` tool description at task.ts:43 still says \"the base branch (the repository's default unless the deployment sets one)\" while issue.ts:28 was updated to per-repo phrasing, creating a mismatch in the text seen by implementers",
+    "hash": "23474a45a0d8cdaa4976bdc3670b0555",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2184",
+      "run_created": "2026-11-05T01:36:43.201Z"
+    },
+    "created_at": "2026-11-06T11:32:41.938659+00:00",
+    "updated_at": "2026-11-06T11:32:41.938659+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "1199b1fb-cec5-44c1-a3c6-a6cc6fe5d99b",
+    "memory": "In fagerbergj/quack#2177, the user observed that inProcessFetch's abort listener is added per call for the lifetime of the caller's signal, which is standard practice but could be optimized with AbortSignal.any if call volume becomes hot.",
+    "hash": "c55cb1294d11cd6d834d45288a78a2cc",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.336502+00:00",
+    "updated_at": "2026-11-06T11:30:19.336502+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "119e1296-f76e-4a49-893a-230a312f6968",
+    "memory": "User ran local verification for fagerbergj/quack#2175 at head 500567cd, achieving 707 passing tests in packages, 13 passing tests in tools, clean tsc output, and successful sloplint, with 5 environment-dependent skips.",
+    "hash": "c8a741e1ecff01b637bc3a81ae7bb0b8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:36.404459+00:00",
+    "updated_at": "2026-11-06T11:27:36.404459+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "11ba1280-45c4-44ed-88f2-209b14062f02",
+    "memory": "User verified fagerbergj/quack#2196 at head 23fa5fc4 by reading the delta from 8f10d810, confirming the `CLOSES` logic moved to `webhook.ts` as `closedIssues` with boundary-based deduplication, and validating that 114/114 `packages/github` tests pass with clean `tsc` and `sloplint` results",
+    "hash": "5403fe3c3ef9e243046bbb39c562441a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:58.475632+00:00",
+    "updated_at": "2026-11-06T11:36:58.475632+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "14e284d5-1224-4dea-8134-c10adde73e92",
+    "memory": "User reviewed fagerbergj/quack#2179 on November 4, 2026, which adds tests to pin the classifier concurrency cap and a late answer after abort, addressing review nits from PRs #2177 and #2178.",
+    "hash": "e5c08a24a121ec9d570f85872c7b6e1c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2179",
+      "run_created": "2026-11-04T23:51:21.170Z"
+    },
+    "created_at": "2026-11-06T11:31:01.465652+00:00",
+    "updated_at": "2026-11-06T11:31:01.465652+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "15949a1b-3129-4a8d-a139-b459ed098465",
+    "memory": "User verified in fagerbergj/quack#2173 that pi-ai 1.5.0 and pi-durable 1.5.0 sources confirm a provider's streamed message keeps its initial timestamp across partial events and the final commit, validating the stability of the new fold key strategy.",
+    "hash": "07663bd419b4a7a5eff19ad08da806de",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2173",
+      "run_created": "2026-11-04T13:14:40.124Z"
+    },
+    "created_at": "2026-11-06T11:27:00.364354+00:00",
+    "updated_at": "2026-11-06T11:27:00.364354+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "1607ea90-5fd7-446e-ad39-d5f0553116c5",
+    "memory": "User verified the delta c5366e18..500567cd for fagerbergj/quack#2175, confirming that non-ok /models responses now log 'listing models failed with ${res.status}' and fall back, while systemone providers return before any request, with both behaviors pinned by tests in definition.test.ts.",
+    "hash": "7a4b06046da784f751d2c5bdd6ff2b3d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:36.399447+00:00",
+    "updated_at": "2026-11-06T11:27:36.399447+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "17b7cdae-e904-444c-8200-304057357387",
+    "memory": "User identified a nit in fagerbergj/quack#2173 that the comma operator in Needs.tsx:100 for the done callback is hard to read and suggested using a block body with separate statements for clarity.",
+    "hash": "5c270705d9fdf186b9003ac9156fc982",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2173",
+      "run_created": "2026-11-04T13:14:40.124Z"
+    },
+    "created_at": "2026-11-06T11:27:00.361314+00:00",
+    "updated_at": "2026-11-06T11:27:00.361314+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "18f66893-0292-4101-9da3-24e6b81006b2",
+    "memory": "In fagerbergj/quack#2183, the user noted a nit that the module comment in v1/packages/github/src/eval.ts still says the double serves the pinned PR 'as recorded', which is now inaccurate for the state field, and verified that the only consumer of pr.state in the review path is skipReason at checkout.ts:63",
+    "hash": "8ac1ac0520c622c3fe70d8a6797125f1",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2183",
+      "run_created": "2026-11-05T01:21:49.264Z"
+    },
+    "created_at": "2026-11-06T11:32:15.122990+00:00",
+    "updated_at": "2026-11-06T11:32:15.122990+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "1c8bf945-7d25-4a3d-9dba-24728ed95346",
+    "memory": "User confirmed the regression test 'calls finishing out of order free their own slot, not the newest one' was added to v1/packages/slots/test/slots.test.ts:275 in fagerbergj/quack#2187, which would fail on the old LIFO code",
+    "hash": "52e4120708f1320c9ac3b1d37ef0a3f3",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:26.958942+00:00",
+    "updated_at": "2026-11-06T11:34:26.958942+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "1ed2b0ac-b3af-4927-bd06-82a3a55eed71",
+    "memory": "In fagerbergj/quack#2176, the distributor routes /apps/<name>/* from the services configuration, and the index service uses a store named 'index' if defined in the file, otherwise falling back to index.sqlite in the data directory, removing the QUACK_INDEX_DATABASE_URL environment variable.",
+    "hash": "9f76d01b4b62465d21ee02d11e81624e",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.316923+00:00",
+    "updated_at": "2026-11-06T11:28:10.316923+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "2017a566-453e-4158-9992-07f6e8b49487",
+    "memory": "User approved fagerbergj/quack#2195 after the author fixed the JSDoc to match the code's behavior and added a test for the reset branch, verifying all 82 packages/session tests pass and sloplint is clean",
+    "hash": "1dec4ecfceaee4f8338ff3675c559a6d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:35:58.921786+00:00",
+    "updated_at": "2026-11-06T11:35:58.921786+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "216dafe2-0a8c-486c-b54a-6adf9efc6064",
+    "memory": "User verified in fagerbergj/quack#2195 that the per-run key remains stable across continuations because pi-durable's `handOver` only changes `live.run.taskId` while `run.inputs[0]` stays unchanged, ensuring the count accumulates within a run and resets for new runs",
+    "hash": "e15d597a4bf375ca0483c2ebd87af742",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:36:12.497310+00:00",
+    "updated_at": "2026-11-06T11:36:12.497310+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "21c72bee-8a37-40d1-937e-7e66d34bcc2c",
+    "memory": "User noted that the production deployment file change for fagerbergj/quack#2184 (from `\"issueBase\": \"v1\"` to `{\"fagerbergj/quack\": \"v1\"}`) is outside the repository and cannot be verified locally, but the image and config must land atomically since the mount throws on the old string format",
+    "hash": "e5d96920647eba17149a63c8be986515",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2184",
+      "run_created": "2026-11-05T01:36:43.201Z"
+    },
+    "created_at": "2026-11-06T11:32:41.944726+00:00",
+    "updated_at": "2026-11-06T11:32:41.944726+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "23a4a03d-f98f-4e10-9702-ec7aa497f0ed",
+    "memory": "User suggested in fagerbergj/quack#2195 adding a test for the reset branch in cut-off.ts to ensure a non-length terminal reply clears the streak, as existing tests would not catch a regression in this logic",
+    "hash": "a854882c132c271db9259c241c620e55",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:35:58.917605+00:00",
+    "updated_at": "2026-11-06T11:35:58.917605+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "248fa166-2d0d-4c60-891e-c3ccfbeec833",
+    "memory": "User reviewed and approved fagerbergj/quack#2180 on November 5, 2026, which reverts the parallel classification from #2178 and #2179, returning the judge to classifying units one at a time after measurements showed Clef is compute-bound and parallel requests offered no speedup.",
+    "hash": "4c6c85e0ca79d7047d65d72338ba0e7d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2180",
+      "run_created": "2026-11-05T00:12:43.092Z"
+    },
+    "created_at": "2026-11-06T11:31:14.530202+00:00",
+    "updated_at": "2026-11-06T11:31:14.530202+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "25219323-252b-4e57-bee0-c07b28ac96b0",
+    "memory": "User confirmed that v1/tools/bench/replay.ts:18 now uses 'await resolveDeployment(...)' and that the change type-checks cleanly with tsc, resolving the previous concern about the bench tool missing discovered models.",
+    "hash": "d1d5750a063eac16be7e6c610664954c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:36.401998+00:00",
+    "updated_at": "2026-11-06T11:27:36.401998+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "25b3d32d-5680-44cc-95b2-1a09ca2e9c49",
+    "memory": "User approved fagerbergj/quack#2200 with 0 blocking issues and 1 nit, noting that the audit table in docs/v1/audits/sleeper.md:171 still quotes the pre-v2 question 'backed by a pattern across weeks', creating stale wording compared to the current rubric",
+    "hash": "bf5d230d96e73c1130ea5f213c2926cd",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2200",
+      "run_created": "2026-11-05T15:23:25.581Z"
+    },
+    "created_at": "2026-11-06T11:37:57.473075+00:00",
+    "updated_at": "2026-11-06T11:37:57.473075+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "29b03324-e6e5-41b2-b0cb-deecf303d37b",
+    "memory": "User verified that in fagerbergj/quack#2176, the QUACK_GITHUB_URL/_TOKEN rename is now consistent end-to-end, with checkout.ts passing the new names to the git child process and askpass.mjs reading them, including a test for wrong-token refusal",
+    "hash": "0fd67b684c55274fdeb2817079324768",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:51.735061+00:00",
+    "updated_at": "2026-11-06T11:28:51.735061+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "29bb2bf0-b148-42ee-baaa-7cd35e5593e3",
+    "memory": "User noted that the service's session-facing routes in fagerbergj/quack#2196 still do not check the bearer token because `serviceHttp`'s `authorized` is unused in `createGithubService`, and flagged this as a separate follow-up item",
+    "hash": "4b677b2a36a321659e50d9dab60dddd1",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:58.480701+00:00",
+    "updated_at": "2026-11-06T11:36:58.480701+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "2c29c12e-8491-4e57-b7b2-1990df2b264d",
+    "memory": "User praised the subagent tests in fagerbergj/quack#2187 for using a barrier that only opens with three children generating simultaneously to prove parallelism, and for asserting peakHeld slots under a 2-slot provider",
+    "hash": "106336a75a8e7879050c9681bbd613eb",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:26.963514+00:00",
+    "updated_at": "2026-11-06T11:34:26.963514+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "2e0eefb8-669a-4a1a-a9b3-8f9578abda3e",
+    "memory": "In fagerbergj/quack#2170, the judge cap in v1/packages/judge/src/index.ts was changed to count checks since the run's last pass rather than the entire run, allowing a fresh budget after a pass while preserving the loop guard for failing agents.",
+    "hash": "3e9288396620eb168a308ce05dd7f2ce",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.568580+00:00",
+    "updated_at": "2026-11-06T11:26:16.568580+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "2f1c8c28-3386-479f-9ccb-f6b40863a287",
+    "memory": "In fagerbergj/quack#2176, session environment variables (QUACK_<NAME>_URL and _TOKEN) are derived from the services configuration via sessionEnv for extensions that declare them, and the github pair is renamed to QUACK_GITHUB_URL and QUACK_GITHUB_TOKEN to match the service name.",
+    "hash": "9d4ea57c831d04dcc484c337ccd7453c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.328880+00:00",
+    "updated_at": "2026-11-06T11:28:10.328880+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "34933239-70b4-4b82-88ae-b5d1c1f6a503",
+    "memory": "User approved fagerbergj/quack#2186 with no findings, noting that the QA rig lacks GitHub App credentials for non-production testing but that prod already exercises the unlisted-repo path via games#40, making unit tests and CI sufficient verification for the two-line change",
+    "hash": "65f9e2698e7a0eccccbe06c1cd1c0a9b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2186",
+      "run_created": "2026-11-05T02:02:42.298Z"
+    },
+    "created_at": "2026-11-06T11:33:24.984983+00:00",
+    "updated_at": "2026-11-06T11:33:24.984983+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "349b53f2-f68f-4e3f-a5eb-0cee69906192",
+    "memory": "In fagerbergj/quack#2177, the appsGateway enforces per-app body size limits with 413 problem+json responses: github allows 5 MiB, slots allows 64 KiB, and other apps allow 1 MiB",
+    "hash": "65e1c5090486cd1f7e903a224eb75300",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.965328+00:00",
+    "updated_at": "2026-11-06T11:29:47.965328+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "34ff61c5-5510-486c-9b67-072c36d16ad9",
+    "memory": "fagerbergj/quack#2187 implements subagent concurrency caps via deployment keys `maxConcurrent` (default 4) and `maxTotal` (default 20), using a semaphore for waiting and a durable doc keyed by task id to prevent double-counting reruns",
+    "hash": "8719637b5b2379fca1fcdade39bcbd05",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:33:47.441941+00:00",
+    "updated_at": "2026-11-06T11:33:47.441941+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3613bd7a-02a9-4bfb-ad88-f2194de57697",
+    "memory": "The production migration for fagerbergj/quack#2176 involves updating v1-deployment.json in home-server-v1 to include providers (local with qwen3.8-27b and qwen3-omni-30b, clef with systemone api), defaultModel local/qwen3.8-27b, and services for github, remarkable, sleeper, schedules, and slots with specific URLs and token environment variables.",
+    "hash": "551b34099f4a2a0e349c9a7f45902e46",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.332447+00:00",
+    "updated_at": "2026-11-06T11:28:10.332447+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "363a1742-0b69-4f3c-8ac3-053a6605361b",
+    "memory": "User identified in fagerbergj/quack#2195 that the JSDoc and PR description claimed the run ends on the third cut-off, but the code (count > limit) actually allows three nudges and ends on the fourth cut-off, creating a documentation mismatch",
+    "hash": "136f4b7126f219420b0260c89510721f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:35:58.915525+00:00",
+    "updated_at": "2026-11-06T11:35:58.915525+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "37c19099-6617-4fba-a3e5-c05bb940400a",
+    "memory": "User approved fagerbergj/quack#2188 after the revision limit was reached, noting that the review was judged against base rubric v4 where the `no_silent_approval` gate flagged the review for documenting its own removal.",
+    "hash": "6b27e090f51c9b5e4b58df484cf02b45",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2188",
+      "run_created": "2026-11-05T10:05:11.303Z"
+    },
+    "created_at": "2026-11-06T11:36:26.921249+00:00",
+    "updated_at": "2026-11-06T11:36:26.921249+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "396d523a-22e1-49d6-9143-ee72e049c424",
+    "memory": "In fagerbergj/quack#2181, eval and bench sessions were fixed to set QUACK_SESSION_KEY (eval:<item id>:<8 hex> and bench:<repo>#<n>) because the runtime's index publisher requires it when QUACK_INDEX_URL/TOKEN are present, which caused eval replays to crash at startup since #2177",
+    "hash": "0cbc371aab5fd1fad82ba3113f14fccd",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2181",
+      "run_created": "2026-11-05T00:47:00.004Z"
+    },
+    "created_at": "2026-11-06T11:31:31.629133+00:00",
+    "updated_at": "2026-11-06T11:31:31.629133+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "39f1df7d-307a-4437-94f3-48016dee59d4",
+    "memory": "In fagerbergj/quack#2176, the deployment contract removes several environment variables including QUACK_SLOTS_DB, QUACK_SCHEDULES_DB, QUACK_SLEEPER_DB, QUACK_REMARKABLE_DB, QUACK_SCHEDULES_URL, QUACK_RETENTION_SWEEP, QUACK_GH_IMPLEMENTER_AGENT, QUACK_SLEEPER_OWNER, and QUACK_SLEEPER_LEAGUE.",
+    "hash": "0d02ae365fc7f41a8cda1a6c8e9e22da",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.322647+00:00",
+    "updated_at": "2026-11-06T11:28:10.322647+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3ae2105d-0fc5-4b0b-9733-76871a81e10c",
+    "memory": "In fagerbergj/quack#2191, the /fix queue is stored in github-fixes.json with a 15-second retry interval (queuePollMs) and a 6-hour timeout before posting a refusal comment, using the original delivery id as requestId to avoid double-starts per HAR-5",
+    "hash": "8e334d106ae3de6c88271cc07a85e53b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:34:48.671969+00:00",
+    "updated_at": "2026-11-06T11:34:48.671969+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3b207925-c4bb-4c1d-89d5-6c038594c816",
+    "memory": "In fagerbergj/quack#2177, the user verified that late write/end on a destroyed fake response is swallowed without uncaught errors on Node v26.13.0, and that pre-aborted AbortSignal.abort() rejects with AbortError without invoking dispatch.",
+    "hash": "897909cbd8a5b06fb2b98c44719a7eb8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.331894+00:00",
+    "updated_at": "2026-11-06T11:30:19.331894+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3b8918dd-d372-41cb-ad66-104cac9ca0f5",
+    "memory": "User noted in fagerbergj/quack#2195 that the PR body still incorrectly stated the run ends after three cut-offs, while the code and updated JSDoc correctly indicate it ends on the fourth cut-off after three nudges",
+    "hash": "369f69d554371ea34ce0258907327065",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:36:12.499724+00:00",
+    "updated_at": "2026-11-06T11:36:12.499724+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3bf6cc1b-3cf6-47e3-a78c-dab42100a70e",
+    "memory": "User reviewed fagerbergj/quack#2185 (feat(contracts): typescript contract kind) and issued a request_changes verdict, identifying a blocking defect where re-exports (export * from / export { } from) slip past both check and diff in v1/packages/contracts/src/typescript-rules.ts",
+    "hash": "50499f20f92b0168f0a1c90d44bde05d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:02.458939+00:00",
+    "updated_at": "2026-11-06T11:33:02.458939+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3c52c46d-9400-4cec-a476-205632e8cf9e",
+    "memory": "In fagerbergj/quack#2180, the reviewer bundle was bumped from v8 to v9 (not v7) because sessions were already pinned to v8; v9 drops the `classifier.concurrency` field and the lock hash was regenerated to f460df7a...5211.",
+    "hash": "758bafd4a71b279057aafeba7727b2d3",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2180",
+      "run_created": "2026-11-05T00:12:43.092Z"
+    },
+    "created_at": "2026-11-06T11:31:14.532761+00:00",
+    "updated_at": "2026-11-06T11:31:14.532761+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "3ccb2fbf-e52a-40e0-b0b6-b26d37847837",
+    "memory": "User verified in fagerbergj/quack#2170 that reverting the judge and approval changes causes the new tests to fail exactly as described in the PR, confirming the tests pin the production symptoms.",
+    "hash": "740563824715e3f661dc87b2a13cdfd2",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.586802+00:00",
+    "updated_at": "2026-11-06T11:26:16.586802+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3d524258-45e4-4fc9-ab88-9b1a7787819f",
+    "memory": "In fagerbergj/quack#2199, the user approved the PR with 0 blocking issues and 2 nits, noting that the PR description incorrectly claimed the excerpt ends in the sentence with the name (it is a fixed 280-char window) and that character-based slicing can result in truncated words at the edges",
+    "hash": "b0c668a981785dc3a03a16466c155fbe",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2199",
+      "run_created": "2026-11-05T15:02:56.116Z"
+    },
+    "created_at": "2026-11-06T11:37:38.927740+00:00",
+    "updated_at": "2026-11-06T11:37:38.927740+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3db07a3e-f1f3-46c8-a51f-756d2021cf0d",
+    "memory": "In fagerbergj/quack#2198, the user approved the PR with 0 blocking issues and 1 nit, noting that the new test at judge.test.ts:156 fails to assert that a 'no' answer on a pitfall records no note, which would catch a regression to the old met === false behavior",
+    "hash": "84fadfb8d8a251ccb9683191881f9efc",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2198",
+      "run_created": "2026-11-05T15:00:52.027Z"
+    },
+    "created_at": "2026-11-06T11:37:27.219487+00:00",
+    "updated_at": "2026-11-06T11:37:27.219487+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "3e5b8dd4-48a7-4a49-b553-874185b29e2d",
+    "memory": "In fagerbergj/quack#2177, the fix commit removed the unreachable POST /retention/sweep route, dryRun parameter, and dryRunOf from schedules service, as the route was blocked by gateway authz and the sweep already runs from tick().",
+    "hash": "3c1b17315848b8b79ef85b11daadf86b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.325995+00:00",
+    "updated_at": "2026-11-06T11:30:19.325995+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "4023c14d-861c-456b-83c0-51355317b8b5",
+    "memory": "In fagerbergj/quack#2171, the index push routes now return 413 for bodies exceeding the 16 KiB push cap, and unknown routes return 404 'not found' instead of the misleading 404 'this device is not subscribed' previously caused by fall-through logic.",
+    "hash": "3b8a03734865a9828a5872de006ed846",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2171",
+      "run_created": "2026-11-04T12:06:19.150Z"
+    },
+    "created_at": "2026-11-06T11:26:30.405854+00:00",
+    "updated_at": "2026-11-06T11:26:30.405854+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "40bc6239-d3fc-4dff-b027-283f50684c9c",
+    "memory": "In the fagerbergj/quack repository, the /svc/<name> broker intentionally forwards any path on the service without a dot-segment guard because sessions use it for git credentials, unlike the /apps proxy which enforces a strict boundary.",
+    "hash": "91d04159c95f0f1f2a9b010e87df28f7",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2172",
+      "run_created": "2026-11-04T12:45:23.877Z"
+    },
+    "created_at": "2026-11-06T11:26:43.507706+00:00",
+    "updated_at": "2026-11-06T11:26:43.507706+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "420529f4-64f1-433c-ad78-d1c3976cc2e0",
+    "memory": "User verified in fagerbergj/quack#2198 that the new test fails on the base v1 branch and passes on the PR head, and that the full v1 TS suite ran 767 tests with 762 passing and 5 skipped, confirming the three local rmc render failures did not reproduce in the sandbox",
+    "hash": "77a480b92bd2c0f3f0d0f6be9f29a2fb",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2198",
+      "run_created": "2026-11-05T15:00:52.027Z"
+    },
+    "created_at": "2026-11-06T11:37:27.222018+00:00",
+    "updated_at": "2026-11-06T11:37:27.222018+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "4274ba7e-e070-41fd-b813-7e33c2fe322d",
+    "memory": "User verified fagerbergj/quack#2187 by running 107 passing tests across slots, subagent, and session packages, confirming sloplint and boundary tests pass, and reproducing the slot gate defect with throwaway tests against the real SlotTable",
+    "hash": "7c25ecb9cab06cbcc07667eb0cf9c43a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:09.464983+00:00",
+    "updated_at": "2026-11-06T11:34:09.464983+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "4383c141-af1e-4340-bcde-2564ee1df813",
+    "memory": "In fagerbergj/quack#2175, 'imageModel' is removed and vision capabilities are now derived from the agent model's input modalities; text-only models given images are refused with a 'cannot see images' error, and the 'look_at_image' fallback tool is gone.",
+    "hash": "b32daf54762d5f749421503bfa8f0979",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.320423+00:00",
+    "updated_at": "2026-11-06T11:27:26.320423+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "assistant"
+  },
+  {
+    "id": "4384089a-ac34-488e-a7d5-47b72ac1bb4f",
+    "memory": "User reviewed and approved pull request fagerbergj/quack#2170 on November 4, 2026, which fixes two production bugs in the contract approval loop: change requests after a pass now get a fresh check budget, and propose_contract only proposes the newest sealed version rather than the newest passing one.",
+    "hash": "5c51e80edf6fbc7b0b39158d4201690e",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.565677+00:00",
+    "updated_at": "2026-11-06T11:26:16.565677+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "43c11479-25e9-47ff-8b08-fdaf6da59cb5",
+    "memory": "In fagerbergj/quack#2186, the user verified that the new `baseFor` function at service.ts:62-63 is the only `issueBase` lookup point and correctly falls back to the default branch when a repository is unlisted, with tests confirming case-mismatched keys resolve correctly and unlisted repos use the trunk fallback",
+    "hash": "9aa99c7f033f1e21ffd2255a6610a2a7",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2186",
+      "run_created": "2026-11-05T02:02:42.298Z"
+    },
+    "created_at": "2026-11-06T11:33:24.982060+00:00",
+    "updated_at": "2026-11-06T11:33:24.982060+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "453f22d6-6da4-49c1-870c-5724cae31398",
+    "memory": "In fagerbergj/quack#2177, the fix commit updated inProcessFetch to honor AbortSignal by rejecting pre-aborted signals and wiring later aborts to res.destroy(signal.reason), which unblocks remarkable's stop() and prevents the 20s SIGTERM crash exit.",
+    "hash": "ddc112c83bd89ee898714ca3fa448c6d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.319737+00:00",
+    "updated_at": "2026-11-06T11:30:19.319737+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "46c6dd53-83f4-4d87-9512-ee7c02f63af9",
+    "memory": "In fagerbergj/quack#2191, checkout_task renders review feedback within a 6,000 character budget (1,500 per item) and states how many items were cut, while lastReview was removed because posted quack reviews are already in the record and unposted ones are not open feedback",
+    "hash": "109e40f342c0945796306e35e99068a1",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:34:48.675713+00:00",
+    "updated_at": "2026-11-06T11:34:48.675713+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "478c9495-ef26-4de2-a922-2085b3094824",
+    "memory": "In the initial review of fagerbergj/quack#2196, the user identified a blocking defect where the closing-line preservation regex in issue.ts:70 was anchored to whole lines, causing re-deliveries to silently drop closings like 'This fixes #41.' or 'Closes #3, fixes #4' that GitHub recognizes anywhere in the body",
+    "hash": "e27a929211a11b94ecaabb491ca4af3f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:47.431763+00:00",
+    "updated_at": "2026-11-06T11:36:47.431763+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "4b942b4d-390b-4290-ba82-c3b5ea88d73c",
+    "memory": "In fagerbergj/quack#2197, the user approved the PR with 0 blocking issues, 1 suggestion, and 2 nits, noting that the writer prompt still asks for 'pattern across weeks' while the judge now only requires figure-citing, and that the test suite does not assert the new `pts` field in row evidence.",
+    "hash": "c37c8dfe783433fe31573114fa61b12f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2197",
+      "run_created": "2026-11-05T14:55:18.095Z"
+    },
+    "created_at": "2026-11-06T11:37:13.982361+00:00",
+    "updated_at": "2026-11-06T11:37:13.982361+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "4c64178a-3840-49b1-bba8-517ffa80fee7",
+    "memory": "User reviewed fagerbergj/quack#2182 on November 5, 2026, which adds GithubSettings.issueBase to allow the /implement route to cut branches from a configured base (e.g., 'v1') instead of the repository's default branch, addressing the mismatch between v0 main and v1 trunk during dogfooding",
+    "hash": "e8d972227d4a48b5a3917e8850c12397",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2182",
+      "run_created": "2026-11-05T00:50:04.138Z"
+    },
+    "created_at": "2026-11-06T11:31:53.830524+00:00",
+    "updated_at": "2026-11-06T11:31:53.830524+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "5211705a-5881-40b7-a40e-5ed9cacebe74",
+    "memory": "In fagerbergj/quack#2177, the GitHub webhook at POST /apps/github/webhook remains credential-free but the app verifies GitHub's HMAC signature and returns 401 bad signature if invalid",
+    "hash": "3e439df553f0cd99eeb1657e6a7a491a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.978365+00:00",
+    "updated_at": "2026-11-06T11:29:47.978365+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "53250604-8e8b-4fc6-a3ec-252f42c21fb9",
+    "memory": "User noted that model discovery in fagerbergj/quack#2175 still runs at every session boot with a 10-second timeout per non-classifier provider in parallel, intentionally adding latency to each boot for llm-swap.",
+    "hash": "46feeae1fb5fe63f65472c2f6522e1fa",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:36.406496+00:00",
+    "updated_at": "2026-11-06T11:27:36.406496+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "543d310d-eabd-4fcf-98ad-e2d5fe0545ec",
+    "memory": "In the fagerbergj/quack#2176 production migration, docker-compose.yml changes remove various URL and DB environment variables from containers like quack-v1, quack-v1-github, and quack-v1-sleeper, and add QUACK_CONFIG pointing to /config/deployment.json with a read-only mount of v1-deployment.json.",
+    "hash": "4a56e0cc8c62dcab6dfe46532aea2a0d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.335108+00:00",
+    "updated_at": "2026-11-06T11:28:10.335108+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "55d53d65-a956-42c6-b8e5-a34ddfbea11a",
+    "memory": "In fagerbergj/quack#2177, credentials no longer expire and remain valid until revoked at exit or launch failure, or when the distributor restarts, for both process and Docker drivers",
+    "hash": "d816ecbbf1d54b4b4cca2083a51ab9e5",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.960912+00:00",
+    "updated_at": "2026-11-06T11:29:47.960912+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "587651ed-a6f3-423c-99f3-0b3c53ba28b9",
+    "memory": "In fagerbergj/quack#2178, the judge's `probabilitiesOf` function in v1/packages/judge/src/resolve.ts was extracted to store Clef answers in a memo, allowing `answerUnit` to read them for free, while escalations to the judge model remain serial to respect provider slot limits.",
+    "hash": "82d90a67135f899b729c253f1e45b50f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2178",
+      "run_created": "2026-11-04T23:31:03.074Z"
+    },
+    "created_at": "2026-11-06T11:30:50.703067+00:00",
+    "updated_at": "2026-11-06T11:30:50.703067+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "594898ee-2a4c-458b-9e9e-9e5ccc7a07ec",
+    "memory": "User reviewed fagerbergj/quack#2196 on November 5, 2026, which fixes a bug where `deliver` pushes commits but leaves the PR description stale by adding a PATCH route to update the title and body with the pr.md content",
+    "hash": "78c6e4e2483de80af1d707227f380fcd",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:47.427791+00:00",
+    "updated_at": "2026-11-06T11:36:47.427791+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "5c1dd928-bb3f-4f46-b2d2-add3c7f23cb3",
+    "memory": "The Clef server on the media box currently runs `llama-server -np 1` and is planned to move to `-np 4 -c 32768` on home-server, a change deferred until quack is idle to enable the parallel classification speedup.",
+    "hash": "a36e8586e4f33caf86bc8883a1563833",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2178",
+      "run_created": "2026-11-04T23:31:03.074Z"
+    },
+    "created_at": "2026-11-06T11:30:50.710531+00:00",
+    "updated_at": "2026-11-06T11:30:50.710531+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "5da57157-c9e2-45ed-bef6-8cd168d3a7e0",
+    "memory": "The user noted in fagerbergj/quack#2197 that a residual gap exists where numbers quoted in a note's free text (e.g., Flowers at pick 54 vs 57) are not verified by any check because `figures_from_tools` compares only structured fields, and deferred this as a separate finding.",
+    "hash": "97964b627d68baec4b017ba38affce02",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2197",
+      "run_created": "2026-11-05T14:55:18.095Z"
+    },
+    "created_at": "2026-11-06T11:37:13.988332+00:00",
+    "updated_at": "2026-11-06T11:37:13.988332+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "5e18702f-4de1-433e-93e6-00d3473980e4",
+    "memory": "In fagerbergj/quack#2177, the egress proxy route /svc/{name} was renamed to /proxy/{name} with no alias, and only third-party upstreams (PROVIDER_<id>, QUACK_EXA, LANGFUSE) are registered; request bodies stream to upstream with no proxy-level cap.",
+    "hash": "6a4cf7d20f9b5c04b9dd4dd3b8e26b9f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.561189+00:00",
+    "updated_at": "2026-11-06T11:29:18.561189+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "5e7f02ad-882c-4800-942e-686a9e10b64a",
+    "memory": "In fagerbergj/quack#2172, the user identified a nit in v1/packages/distributor/src/apps.ts:49 where the guard compares the raw app name against the percent-encoded target.pathname, which could cause a 404 for unencoded app names containing characters like spaces, though this does not affect the web app.",
+    "hash": "d485700b68a86e3ea94ef8734d95fa53",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2172",
+      "run_created": "2026-11-04T12:45:23.877Z"
+    },
+    "created_at": "2026-11-06T11:26:43.502606+00:00",
+    "updated_at": "2026-11-06T11:26:43.502606+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "609ff765-8cff-49e6-b65c-f05635e24643",
+    "memory": "In fagerbergj/quack#2176, the 'stores' configuration supports named sqlite or postgres entries with urlEnv, and 'services' maps names to objects containing url, optional tokenEnv, store, and settings; the loader validates that a service's store references an existing stores entry.",
+    "hash": "547d800fec4ca1ca57eef96bfcb30517",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.313911+00:00",
+    "updated_at": "2026-11-06T11:28:10.313911+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "61217ec7-0238-48ad-a9c1-5dc263f88a3a",
+    "memory": "User is reviewing pull request fagerbergj/quack#2177 on November 4, 2026, which implements deployment contract v6 and apps contract v3 by mounting extensions (github, sleeper, remarkable, schedules, slots) in-process under /apps/<name> and removing separate service processes and service tokens.",
+    "hash": "1ff451377cf42b1f1ebe590e5898b947",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.553088+00:00",
+    "updated_at": "2026-11-06T11:29:18.553088+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "617c17ed-0a11-43d4-8004-ee0d9bca1f7f",
+    "memory": "In the fagerbergj/quack repository, the session process now uses a single reply function in server.ts to convert any status of 400 or higher into an RFC 9457 problem+json response, allowing routes to continue returning [status, { error }] without modification.",
+    "hash": "202fe36adc8d29762ec26d6be87b0a50",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2169",
+      "run_created": "2026-11-04T09:56:17.386Z"
+    },
+    "created_at": "2026-11-06T11:25:51.864827+00:00",
+    "updated_at": "2026-11-06T11:25:51.864827+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "61e02764-9ffd-406c-bbd4-c737d88bfeb9",
+    "memory": "User approved fagerbergj/quack#2201 after a follow-up commit fixed two stale labels in rubric.ts to match the reworded questions, with 140/140 sleeper tests passing and the rubric version updated to sleeper.waivers@5",
+    "hash": "f4d5aa6c6a64bcc8110ae8725874a9ab",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2201",
+      "run_created": "2026-11-05T15:31:34.789Z"
+    },
+    "created_at": "2026-11-06T11:38:15.849993+00:00",
+    "updated_at": "2026-11-06T11:38:15.849993+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "6203fe4a-8118-407d-bc41-076128bc68eb",
+    "memory": "In fagerbergj/quack#2200, the sleeper-history agent bundle was bumped to version 3 with a recomputed version.lock hash (fb683b5e\u202684d7) to reflect the prompt changes, verified by independently replicating the digest calculation from process-driver.ts",
+    "hash": "f409f3b9b440572724c54e1509e022fa",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2200",
+      "run_created": "2026-11-05T15:23:25.581Z"
+    },
+    "created_at": "2026-11-06T11:37:57.475497+00:00",
+    "updated_at": "2026-11-06T11:37:57.475497+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "6316ebde-527d-4e6c-b630-b6481f1153a8",
+    "memory": "In fagerbergj/quack#2177, the user noted that the PR description initially had a typo saying 'apps contract v3' in the intro while the rework section said v5, which was corrected in a subsequent commit.",
+    "hash": "f7671d32ca13aacfa775bb7b9d430c2a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.334089+00:00",
+    "updated_at": "2026-11-06T11:30:19.334089+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "643eee72-7910-440b-97f6-27b14c46e203",
+    "memory": "User reviewed fagerbergj/quack#2184 on November 5, 2026, which converts the `issueBase` setting from a single string to a per-repository map (`{ \"owner/repo\": \"branch\" }`) so that `/implement` on repositories without a `v1` branch (e.g., `fagerbergj/games`) correctly falls back to their default branch",
+    "hash": "be580865c66c6719c149002d0c2d759b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2184",
+      "run_created": "2026-11-05T01:36:43.201Z"
+    },
+    "created_at": "2026-11-06T11:32:41.929835+00:00",
+    "updated_at": "2026-11-06T11:32:41.929835+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "64772097-88e6-4b93-bef2-81097287b584",
+    "memory": "User reviewed fagerbergj/quack#2192 on November 5, 2026, which fixes a flake where /fix and /implement agents copied reviewer tool calls (like checkout_pr) instead of using checkout_task, by adding trigger text to start with checkout_task and a generic hook that lists available tools when a tool is unavailable",
+    "hash": "03debe16c943e0a7a5db31d9ecf94a62",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2192",
+      "run_created": "2026-11-05T05:09:05.387Z"
+    },
+    "created_at": "2026-11-06T11:35:23.494150+00:00",
+    "updated_at": "2026-11-06T11:35:23.494150+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "64e74277-c8ef-45ff-bdcf-a05a2655d899",
+    "memory": "User approved fagerbergj/quack#2185 (feat(contracts): typescript contract kind) on head 62b8ff60 after verifying that all three previous findings were fixed: re-export handling now flags foreign packages and refuses export *, the pointer regex in rubric.ts:16 includes var and namespace, and the guide wording for optional-field removal was corrected",
+    "hash": "642ae25135f0e3b8623df71216739b5b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:15.223570+00:00",
+    "updated_at": "2026-11-06T11:33:15.223570+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "66c8b688-e293-4e29-a589-3356b3b248c2",
+    "memory": "User reviewed fagerbergj/quack#2186 on November 5, 2026, which fixes the `issueBase` lookup to be case-insensitive by lowercasing both the configured key and the requested `owner/repo` before comparing, mirroring the existing `prKey` logic in service.ts",
+    "hash": "90eab5446ace7b78b3d2b30dad618621",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2186",
+      "run_created": "2026-11-05T02:02:42.298Z"
+    },
+    "created_at": "2026-11-06T11:33:24.979036+00:00",
+    "updated_at": "2026-11-06T11:33:24.979036+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "69183e37-7e1e-4677-b1d0-76e8f6afb482",
+    "memory": "User noted in fagerbergj/quack#2187 that the `end()` fallback for untokened calls uses Set insertion order to target the newest open call, and that ending an already-cleared call is a no-op to prevent double-free during aborts or cap clears",
+    "hash": "3798a167ce7058cd5edc83f9524b2a52",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:26.961404+00:00",
+    "updated_at": "2026-11-06T11:34:26.961404+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "6ec715ec-33c6-4479-bdb7-37a2160f5c29",
+    "memory": "User verified fagerbergj/quack#2178 locally with 728 passing tests, 0 failures, 5 skipped, clean tsc output, and successful sloplint, confirming the v8 bundle digest `bb7d7c05\u2026` matches version.lock.",
+    "hash": "2b1117568b1877be01ea36911758153d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2178",
+      "run_created": "2026-11-04T23:31:03.074Z"
+    },
+    "created_at": "2026-11-06T11:30:50.707937+00:00",
+    "updated_at": "2026-11-06T11:30:50.707937+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "6f514ba1-b438-42b8-a3a4-c35d84d7fa03",
+    "memory": "User reviewed fagerbergj/quack#2195, which fixes a session stall where a reply cut off at the 16,384-token output cap (stopReason: length) was treated as a final answer by pi-durable, causing the run to end without a tool call",
+    "hash": "12c2fbd4cdda9341bbef5664c854621a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:35:58.910433+00:00",
+    "updated_at": "2026-11-06T11:35:58.910433+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "6f8664da-e7ca-4fec-babf-a185fdb1c130",
+    "memory": "User approved fagerbergj/quack#2196 on November 6, 2026, after CI turned green, maintaining the verdict of 0 blocking issues and 2 nits regarding the `notEqual` assertion at `service.test.ts:364` and doc-comment grammar at `issue.ts:68`",
+    "hash": "177841c264038d456031145ef0340773",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:58.483073+00:00",
+    "updated_at": "2026-11-06T11:36:58.483073+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "705ecc99-9a67-461a-a7c9-4e77bbdff35a",
+    "memory": "In fagerbergj/quack#2177, the user noted that schedules stop() closes its SQLite db without awaiting an in-flight tick, a pre-existing pattern unchanged by the diff, worth a follow-up if tick durations grow.",
+    "hash": "a64b109fda2d03d5d6a1bfb5097e1631",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.339079+00:00",
+    "updated_at": "2026-11-06T11:30:19.339079+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "7062fb3a-7064-4904-b3e6-d3c59f535988",
+    "memory": "User suggested adding an out-of-order completion test to v1/packages/slots/test/slots.test.ts in fagerbergj/quack#2187 to verify that ending the first-begun call keeps the second call's lease held, as existing tests only cover in-order finishes",
+    "hash": "dbd51f9c5faff54b60b4cb681d413f52",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:09.460433+00:00",
+    "updated_at": "2026-11-06T11:34:09.460433+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "7096205a-e443-46ef-8149-3b0b82645854",
+    "memory": "User is reviewing fagerbergj/quack#2187, which introduces a `subagent` tool to every v1 session as a deployment-level extension, replacing the earlier plans-extension plan with no allow-list or child sessions",
+    "hash": "465e8b8b8a6bc241ab3a2484529775cd",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:33:47.436405+00:00",
+    "updated_at": "2026-11-06T11:33:47.436405+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "710ffb8d-f034-4d8c-b02b-f0d88680a9a2",
+    "memory": "In fagerbergj/quack#2177, the user noted a nit that the abort test in http.test.ts:56 uses a handler that never touches the response, failing to pin the case where a handler ends the response after abort destroys it, which could regress in future refactors.",
+    "hash": "bcae423b89190169173dfd8b1b859c58",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.328852+00:00",
+    "updated_at": "2026-11-06T11:30:19.328852+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "72112687-3ee2-4312-8a26-02ade9545f72",
+    "memory": "In fagerbergj/quack#2177, the user noted that pinnedDefinition in main.ts re-reads the agent snapshot from disk on every credentialed /apps request, which is cheap enough today but memoizable if the app matrix grows.",
+    "hash": "08a2ffe8b547b1d329f3f44d15074ece",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.341769+00:00",
+    "updated_at": "2026-11-06T11:30:19.341769+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "7284a199-7c1f-4b01-ba52-074114c3c669",
+    "memory": "Reviewer replay results for fagerbergj/quack#2188 showed that removing the unreliable checks reduced median wall time from 553s to 234s and false blocks from 1/11 to 0/11, with no significant drop in catch rate for bad PRs.",
+    "hash": "09dd3059def6f9f6de26eac569239f5f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2188",
+      "run_created": "2026-11-05T10:05:11.303Z"
+    },
+    "created_at": "2026-11-06T11:36:26.918964+00:00",
+    "updated_at": "2026-11-06T11:36:26.918964+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "757329bf-0e52-42f7-91bf-f22e055ea27d",
+    "memory": "In fagerbergj/quack#2173, work folds in Transcript.tsx are now keyed by their first message's timestamp rather than a 'partial' state or entry ID, preventing remounting and closing of open folds when a streamed message commits.",
+    "hash": "f2e1c5733236d12a6346d9664f083a59",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2173",
+      "run_created": "2026-11-04T13:14:40.124Z"
+    },
+    "created_at": "2026-11-06T11:27:00.355221+00:00",
+    "updated_at": "2026-11-06T11:27:00.355221+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "78137bf1-9c1e-44e7-84c9-bdaf33cce40b",
+    "memory": "User is reviewing pull request fagerbergj/quack#2176 on November 4, 2026, which implements deployment contract v4 part 2 by introducing 'stores' and 'services' to the closed root, replacing the QUACK_APPS environment variable and per-service environment variables.",
+    "hash": "a42389ac0892162c36dcec01684e080a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.308785+00:00",
+    "updated_at": "2026-11-06T11:28:10.308785+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "792d4642-3cd8-42dc-9bcc-95d24eaf8edd",
+    "memory": "In fagerbergj/quack#2177, the declaredApps logic in runtime/catalog.ts grants an app if the agent selects the extension by name, binds one of its workflows (e.g., sleeper.lineup), the app's manifest has deployment: true (slots), or the agent selects home and the app has actions (sleeper, github)",
+    "hash": "2aa27fd8e6397ce79f5fb8aad2ccadac",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.968954+00:00",
+    "updated_at": "2026-11-06T11:29:47.968954+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "79e0abf3-57b7-47f0-8f25-76fc1e50057e",
+    "memory": "User noted that v1/packages/distributor/src/server.ts:98 in the fagerbergj/quack repository still maps 'body too large' to 400, creating a cross-service inconsistency with the index and session services which correctly use 413.",
+    "hash": "1e907f09fdbab38cfd8efe45cebda179",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2169",
+      "run_created": "2026-11-04T09:56:17.386Z"
+    },
+    "created_at": "2026-11-06T11:25:51.871404+00:00",
+    "updated_at": "2026-11-06T11:25:51.871404+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "7b433fdd-8d3b-4347-9f81-9d89eb235803",
+    "memory": "In fagerbergj/quack#2187, subagent children can specify an `agent` name to inherit its model and prompt, but they do not inherit that agent's extensions because the harness registry is fixed at session start",
+    "hash": "8499fc0ea649dec47347ba2b17ba03f2",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:33:47.448382+00:00",
+    "updated_at": "2026-11-06T11:33:47.448382+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "7fa5c731-0f7c-4194-8c36-63f64c8671ed",
+    "memory": "User verified fagerbergj/quack#2199 by confirming 140/140 sleeper tests pass, validating that the excerpt flows from exaNews through cards to judge evidence, and testing live news fetches for Mason Taylor, Mike Gesicki, and Blake Corum to ensure correct attribution",
+    "hash": "e788c9de903b65440489766d8eccb550",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2199",
+      "run_created": "2026-11-05T15:02:56.116Z"
+    },
+    "created_at": "2026-11-06T11:37:38.930862+00:00",
+    "updated_at": "2026-11-06T11:37:38.930862+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "7faf5187-c89b-4a55-aca1-f05364138d5f",
+    "memory": "User observed that v1/packages/github/src/service.ts:268 and v1/packages/remarkable/src/service.ts:171 in the fagerbergj/quack repository still predate the RFC 9457 problem+json migration and have not yet been updated.",
+    "hash": "6f68b64759c7fe11e98bfd79ba19f779",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2169",
+      "run_created": "2026-11-04T09:56:17.386Z"
+    },
+    "created_at": "2026-11-06T11:25:51.873872+00:00",
+    "updated_at": "2026-11-06T11:25:51.873872+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "80ec809a-8c10-4b48-b1f9-3300664e5780",
+    "memory": "User verified fagerbergj/quack#2185 locally with 37 passing node tests (including 2 new re-export tests), 24 passing vitest tests, clean sloplint and promptlint diffs, and confirmed the bundle digest for agents/contracts matches version.lock for bundle v6",
+    "hash": "0df57f95c9148f35ab82ab40fc1fb19f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:15.226518+00:00",
+    "updated_at": "2026-11-06T11:33:15.226518+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "81ccbf58-efd1-44ab-9ee3-5c3495c4f88b",
+    "memory": "User approved fagerbergj/quack#2178 with a suggestion to add a test asserting the concurrency cap (e.g., `concurrency: 2` expecting `peak: 2`) and a nit to move the D16 comment from `probabilitiesOf` to `answerUnit` in v1/packages/judge/src/resolve.ts.",
+    "hash": "5c39e64a57625aebbb7ec33d36d2d5d3",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2178",
+      "run_created": "2026-11-04T23:31:03.074Z"
+    },
+    "created_at": "2026-11-06T11:30:50.705926+00:00",
+    "updated_at": "2026-11-06T11:30:50.705926+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "8375599e-06f2-4e28-baae-c71829a66920",
+    "memory": "In fagerbergj/quack#2187, the subagent tool follows pi-durable's foreground pattern, creates a child conversation owned by the call's task with `replay: 'safe'`, and prevents recursion by removing the subagent extension from the child",
+    "hash": "5d8f373e11fd74b764930fac3119c7f8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:33:47.439178+00:00",
+    "updated_at": "2026-11-06T11:33:47.439178+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "8508a9c6-efcc-4e9c-ae5d-9844cb95b514",
+    "memory": "In fagerbergj/quack#2177, the deployment config key 'services' was renamed to 'extensions'; entries now contain only 'store' and 'settings' (no url or tokenEnv), and old files with 'services' are rejected with an error message.",
+    "hash": "b5c75a3f323a33567dbfdcc45c726d0a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.555832+00:00",
+    "updated_at": "2026-11-06T11:29:18.555832+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "897f864a-95bf-4728-a659-183e1c48857f",
+    "memory": "User reviewed and approved pull request fagerbergj/quack#2173 on November 4, 2026, which fixes three production bugs in the web approval flow: home cards lingering after decisions, missing approvals in the session view, and collapsible folds snapping shut on commit.",
+    "hash": "664d4d8cda9d2c9e0c1566f32a594c67",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2173",
+      "run_created": "2026-11-04T13:14:40.124Z"
+    },
+    "created_at": "2026-11-06T11:27:00.349675+00:00",
+    "updated_at": "2026-11-06T11:27:00.349675+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "89ef7d02-5126-4424-8513-df19600eb7dc",
+    "memory": "User identified a suggestion in fagerbergj/quack#2175 that non-ok responses from 'GET {baseUrl}/models' (e.g., 401, 404, 5xx) fall back to hand-written lists without logging, making API key errors or endpoint removals invisible, and recommended adding a log line in the non-ok branch.",
+    "hash": "c474bc02e708b2f4188f798e7b62d739",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.326815+00:00",
+    "updated_at": "2026-11-06T11:27:26.326815+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "8c5b60cb-06a1-4b00-8d9a-7ac0779a9134",
+    "memory": "User identified a nit in fagerbergj/quack#2170 that the refusal message in v1/packages/contracts/src/approval.ts:76 gives the wrong instruction ('write artifacts/spec.json') when the newest version has already been submitted but failed checks, suggesting distinct messages for 'no sealed spec' vs 'newest not passed'.",
+    "hash": "6e662a043386a78204e94f677d7bf33f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.581148+00:00",
+    "updated_at": "2026-11-06T11:26:16.581148+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "905f37f3-fe93-4e4f-85bb-6e534eefde56",
+    "memory": "In fagerbergj/quack#2170, v1/packages/contracts/src/approval.ts was updated so propose_contract refuses to propose if the newest sealed version has not passed its checks, preventing the proposal of older versions that still contain rejected defects.",
+    "hash": "383a16c7cb30d37c9f5eebb9ee7dc7f5",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.572053+00:00",
+    "updated_at": "2026-11-06T11:26:16.572053+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "92058c3f-d333-431a-8b60-c52e80131447",
+    "memory": "User reviewed fagerbergj/quack#2176 on November 4, 2026 and approved it with three nits: (1) the QUACK_GITHUB_URL/_TOKEN rename stops at the session boundary while the git child process in checkout.ts still uses QUACK_GH_SERVICE_URL/_TOKEN read by askpass.mjs; (2) Number(process.env.PORT ?? 8092) in schedules, slots, and sleeper main.ts listens on ephemeral port 0 when PORT is an empty string; (3) serviceToken in sdk/src/services.ts reports a confusing error when tokenEnv is omitted for a public service",
+    "hash": "d75d2442b00e33bcdda50b3a7d241a07",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:37.904547+00:00",
+    "updated_at": "2026-11-06T11:28:37.904547+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "920a37e9-10d3-486c-8268-7f74b6b86ac8",
+    "memory": "In fagerbergj/quack#2177, the egress proxy /proxy/{name} streams request bodies to upstream with no proxy-level cap (no 413 from proxy), sends no body for GET/HEAD/DELETE, and only registers third-party upstreams (PROVIDER_<id>, QUACK_EXA, LANGFUSE)",
+    "hash": "a1a046315c53740cc6d95a89e6695897",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.981279+00:00",
+    "updated_at": "2026-11-06T11:29:47.981279+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "924eb3d2-75e0-43c3-be80-1251afb2b94e",
+    "memory": "User identified a nit in fagerbergj/quack#2173 that the work-fold key `work:${start}` in Transcript.tsx:214 is not unique when an assistant message interleaves prose between tool blocks, causing duplicate sibling keys and potential React reconciliation issues; suggested counting fold position for uniqueness.",
+    "hash": "4cf0d8ea37557f50d5acfb70cdf11d93",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2173",
+      "run_created": "2026-11-04T13:14:40.124Z"
+    },
+    "created_at": "2026-11-06T11:27:00.358894+00:00",
+    "updated_at": "2026-11-06T11:27:00.358894+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "932fb6c4-a0e1-442d-91c2-c23987fcefb0",
+    "memory": "User noted a minor documentation gap in fagerbergj/quack#2185 where the PR description's lint-rule list omits the new export-star rule, suggesting a line be added before merge",
+    "hash": "d323341dd36ce02e32c1dda9c255eef0",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:15.231220+00:00",
+    "updated_at": "2026-11-06T11:33:15.231220+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "939e95c8-b4ec-4746-b7c9-0ec78d65b598",
+    "memory": "In fagerbergj/quack#2173, the session view's approval list was changed to read from the index filtered by session key instead of the session's own route, because a stopped session answers empty by design; it falls back to the session's list only when the index is unavailable.",
+    "hash": "20eb25197ce3f6382ca34b8890383b44",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2173",
+      "run_created": "2026-11-04T13:14:40.124Z"
+    },
+    "created_at": "2026-11-06T11:27:00.352474+00:00",
+    "updated_at": "2026-11-06T11:27:00.352474+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "94caa1f2-7219-4f4c-9d5c-c1e0f45e33bd",
+    "memory": "In fagerbergj/quack#2179, the user verified that the D16 comment in resolve.ts was correctly moved above `answerUnit` to describe the escalating logic, and confirmed that 14 tests passed locally with a clean sloplint run.",
+    "hash": "4235117160bbb5f1febac8455fbc4e91",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2179",
+      "run_created": "2026-11-04T23:51:21.170Z"
+    },
+    "created_at": "2026-11-06T11:31:01.471120+00:00",
+    "updated_at": "2026-11-06T11:31:01.471120+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "950dd68d-ee9f-4221-8b65-a1956c8abc98",
+    "memory": "In fagerbergj/quack#2177, session credentials changed from per-service QUACK_<NAME>_URL/_TOKEN pairs to a single per-launch credential passed as QUACK_INDEX_TOKEN, minted by broker.mint and revoked on exit; the shared index token and QUACK_INDEX broker registration were removed.",
+    "hash": "57a25525c739450f46a814016201cefe",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.558437+00:00",
+    "updated_at": "2026-11-06T11:29:18.558437+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "95b13cfc-1902-4ba7-9548-016265c01004",
+    "memory": "Open points in fagerbergj/quack#2176 note that QUACK_DISTRIBUTOR_URL, QUACK_ADMIN_TOKEN, QUACK_GH_AGENT, QUACK_GH_LABEL, QUACK_REMARKABLE_AGENT, QUACK_SESSION_* driver settings, and VAPID keys are still read from the environment outside the contract's list, and the contract does not specify which store the index uses.",
+    "hash": "4eb6219540478309e752ea15cc7c3c00",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.338360+00:00",
+    "updated_at": "2026-11-06T11:28:10.338360+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "965bd920-14d7-4ead-8e54-06412d2744bf",
+    "memory": "In the final review of fagerbergj/quack#2196, the user noted two nits: the test at service.test.ts:364 uses `assert.notEqual` which allows 502s instead of pinning the 404 contract, and the doc comment at issue.ts:68 has poor grammar",
+    "hash": "a184447acb0390e920801cb89b346231",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:47.436455+00:00",
+    "updated_at": "2026-11-06T11:36:47.436455+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "96bfe495-6e00-4fe1-a2c8-840b7971b853",
+    "memory": "User identified a question in fagerbergj/quack#2175 regarding v1/tools/bench/replay.ts:18, which builds the model registry from the file alone without using 'resolveDeployment', potentially missing models that rely on /models discovery.",
+    "hash": "0a006f368de929645bd4c8601e3a086b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.329624+00:00",
+    "updated_at": "2026-11-06T11:27:26.329624+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "97e05a5a-9e1d-4017-95b9-c2ee8d9e6df1",
+    "memory": "In fagerbergj/quack#2177, the user's final review on November 6, 2026 included a nit noting that schedules' stop() closes its SQLite database without awaiting an in-flight tick, a pre-existing pattern that may warrant a follow-up if tick durations increase.",
+    "hash": "cba5b50033d0078c156e70800907f66c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:28.396389+00:00",
+    "updated_at": "2026-11-06T11:30:28.396389+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9a16e842-c249-4167-b598-380f20978e35",
+    "memory": "In fagerbergj/quack#2177, the remarkable /ingest endpoint was merged with the page route, and failed documents are retried unless the request body explicitly specifies retry: true",
+    "hash": "e7f098df41fd6c7df13ba36be76c86de",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.963172+00:00",
+    "updated_at": "2026-11-06T11:29:47.963172+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9a77408b-9b64-469b-8e8b-77606d72fd56",
+    "memory": "In fagerbergj/quack#2195, the fix adds an onYield hook in packages/session/src/cut-off.ts that continues the run with a nudge to keep reasoning short and make the next tool call, allowing up to three continuations before ending the run",
+    "hash": "0f36bf937dfe55ec5d005b22c76a3b0d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:35:58.912955+00:00",
+    "updated_at": "2026-11-06T11:35:58.912955+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9ceaece5-b6a6-4938-8ba4-163401ef37fb",
+    "memory": "User approved fagerbergj/quack#2182 on November 6, 2026, confirming the deploy sequencing is sound: code lands first, then prod deployment gains issueBase: 'v1' (illegal before the code lands due to manifest validation), followed by a live check on #2117 and dropping the setting at cutover, which is safe because sessions persist baseRef at checkout",
+    "hash": "0bc533631265b4a8f83a7b8d36e645c5",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2182",
+      "run_created": "2026-11-05T00:50:04.138Z"
+    },
+    "created_at": "2026-11-06T11:32:05.228484+00:00",
+    "updated_at": "2026-11-06T11:32:05.228484+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9d5b7b45-4491-484c-9eec-c8ccd94b4360",
+    "memory": "User approved fagerbergj/quack#2181 after the per-run key suffix was added to resolve Langfuse session grouping concerns, with 9/9 eval tests passing and sloplint clean",
+    "hash": "bc2dbe05cc8c66a72cc6afc811e7447f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2181",
+      "run_created": "2026-11-05T00:47:00.004Z"
+    },
+    "created_at": "2026-11-06T11:31:31.631365+00:00",
+    "updated_at": "2026-11-06T11:31:31.631365+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9e0484e7-7982-476c-8404-a08750ba36ff",
+    "memory": "User identified a nit in fagerbergj/quack#2171 where the PR description inaccurately claimed PUT /push/key fell through to the /push/test branch, whereas the base code's method filter rejected non-GET/POST requests before reaching the branches, causing them to fall through to downstream routers.",
+    "hash": "850403811d2a6f3377460164c4abf428",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2171",
+      "run_created": "2026-11-04T12:06:19.150Z"
+    },
+    "created_at": "2026-11-06T11:26:30.409466+00:00",
+    "updated_at": "2026-11-06T11:26:30.409466+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9e2ed9d9-e431-48fc-8b48-657208a22a19",
+    "memory": "User identified a nit in fagerbergj/quack#2170 that the doc comment in v1/packages/contracts/src/approval.ts:67 still describes the old behavior of proposing the 'latest passing' version, which is now incorrect.",
+    "hash": "c85d89ff8e42b72c7c7c41f9b8f0e860",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.583562+00:00",
+    "updated_at": "2026-11-06T11:26:16.583562+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "9ffd9efc-de03-4407-a717-807f46c2b87b",
+    "memory": "User reviewed fagerbergj/quack#2188 on November 5, 2026, which removes the unreliable reviewer checks `no_silent_approval` and `reports_every_defect` because they require open-ended searches for unknown defects, and drops `sibling_parts` due to poor discrimination.",
+    "hash": "e02afde223b7465f556c74163539b699",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2188",
+      "run_created": "2026-11-05T10:05:11.303Z"
+    },
+    "created_at": "2026-11-06T11:36:26.911018+00:00",
+    "updated_at": "2026-11-06T11:36:26.911018+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a18fbd99-0faf-4d96-b6ed-40d7f9b4d698",
+    "memory": "In fagerbergj/quack#2184, the user approved the PR with two suggestions: (1) the map-miss fallback path where a repository is not listed in `issueBase` is untested because the test config's `acme/other` entry is never queried, and (2) the map lookup at service.ts:266 is case-sensitive despite the file explicitly lowercasing repository keys elsewhere to handle webhook/session casing mismatches",
+    "hash": "266ca2e124043a7c12621a4d39b1f768",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2184",
+      "run_created": "2026-11-05T01:36:43.201Z"
+    },
+    "created_at": "2026-11-06T11:32:41.935464+00:00",
+    "updated_at": "2026-11-06T11:32:41.935464+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a1af3bd2-deff-481a-a5d3-e4b103216ff6",
+    "memory": "User approved fagerbergj/quack#2195 after the cut-off streak was changed to be per-run (keyed by `LiveDoc.run.inputs[0]`), which resolved the stale-streak hazard from the first review pass and matched the corrected PR description",
+    "hash": "908b0f3fa6df7e4c7238ffb2999d92a1",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:36:12.489143+00:00",
+    "updated_at": "2026-11-06T11:36:12.489143+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a207553c-6a44-4f63-940a-50a2e3f94ec2",
+    "memory": "User verified in fagerbergj/quack#2172 that the new raw-socket test fails against the base code and passes on the head, with local distributor tests showing 85 pass, 0 fail, and 1 skip.",
+    "hash": "f3ff8c5dc5fb6917280b8bf1ba87035e",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2172",
+      "run_created": "2026-11-04T12:45:23.877Z"
+    },
+    "created_at": "2026-11-06T11:26:43.504838+00:00",
+    "updated_at": "2026-11-06T11:26:43.504838+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a22bc619-dabd-47c1-ab11-c2d5fa017b5a",
+    "memory": "In fagerbergj/quack#2176, the distributor reads the deployment file raw via readDeploymentFile, so a malformed services.<name>.url is no longer refused at boot like the old parseApps; it surfaces per-request under /apps/* and at session launch via parseDeployment, with validate as the pre-rollout gate",
+    "hash": "97d52e8f756180d98a324b0eb4421e98",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:37.907635+00:00",
+    "updated_at": "2026-11-06T11:28:37.907635+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a3491b25-8cc9-4243-bd12-6a402bd60716",
+    "memory": "User approved pull request fagerbergj/quack#2175 on November 4, 2026 after the author resolved all five review points in commit 500567cd, including adding logs for discovery fallbacks, skipping classifier discovery, and updating the bench tool to use 'resolveDeployment'.",
+    "hash": "686c4c7f7b4ef157b812c61d31652ca6",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.335545+00:00",
+    "updated_at": "2026-11-06T11:27:26.335545+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a39cb6f6-5602-4636-9b78-69e95a4756ac",
+    "memory": "In fagerbergj/quack#2177, the user's review verdict was 'request_changes' due to a defect where inProcessFetch ignores the request's AbortSignal, causing remarkable's abort-based stop() to be a no-op in the distributor process and potentially exceeding the 20s SIGTERM force-exit timeout during an ingest run",
+    "hash": "f5b1a6d996a6e1b5536771f2617a4d4a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.958640+00:00",
+    "updated_at": "2026-11-06T11:29:47.958640+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a3c36cb8-635f-4bb7-b191-33474a9d2d4a",
+    "memory": "User reviewed fagerbergj/quack#2201 on November 5, 2026, which fixes sleeper waivers checks by narrowing `ranked_on_usage` to role/usage (or matchup for DEF/K) and `crowd_metric_as_value` to scoring evidence, resolving false positives where ownership was misread as scarcity",
+    "hash": "cd0605bd29948e9d18315ad09d2ba6b6",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2201",
+      "run_created": "2026-11-05T15:31:34.789Z"
+    },
+    "created_at": "2026-11-06T11:38:15.847056+00:00",
+    "updated_at": "2026-11-06T11:38:15.847056+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a414b4bb-25f4-4a89-a5b7-193f3a57c6be",
+    "memory": "In fagerbergj/quack#2177, the fix commit introduced ExtensionManifest.peers to declare dependencies, with sleeper declaring peers: ['schedules'] and mountApps refusing deployments that list an app without its declared peers, restoring loud boot failures for missing dependencies.",
+    "hash": "5b7d3f77b132712fe88113b727665dfc",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.323667+00:00",
+    "updated_at": "2026-11-06T11:30:19.323667+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a4656fa4-d881-4f00-857e-f4867d6c2e17",
+    "memory": "User identified in fagerbergj/quack#2182 that the checkout_task description, implementer prompt, and issue.ts comments still incorrectly state branches are cut from the 'default branch' rather than the 'base branch', and that the new issueBase validation logic lacked unit tests",
+    "hash": "2fc04bc27ecb90d8f391631b29f6a65e",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2182",
+      "run_created": "2026-11-05T00:50:04.138Z"
+    },
+    "created_at": "2026-11-06T11:31:53.836154+00:00",
+    "updated_at": "2026-11-06T11:31:53.836154+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a4de86f4-ff22-4f8a-a8d0-49eb1083b4bd",
+    "memory": "User verified in fagerbergj/quack#2182 that the QA rig cannot boot the github app because v1/tools/qa/stack.ts mounts apps with empty settings and placeholder env vars, while v1/packages/github/src/mount.ts hard-requires QUACK_GH_APP_ID and QUACK_GH_PRIVATE_KEY_FILE, confirming the PR's claim that no non-production check is possible",
+    "hash": "fd2f95ae1a113ef4469ddabc30c36b82",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2182",
+      "run_created": "2026-11-05T00:50:04.138Z"
+    },
+    "created_at": "2026-11-06T11:32:05.224232+00:00",
+    "updated_at": "2026-11-06T11:32:05.224232+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "a8c54754-e65d-445f-8da7-630b7c616cc8",
+    "memory": "User re-reviewed fagerbergj/quack#2176 at head 0af26bde on November 4, 2026 and approved it, confirming all three nits from the first review were fixed, the rest of the diff was unchanged, and all tests still passed",
+    "hash": "243b6d24ff16cb9974b49533545c0926",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:37.913582+00:00",
+    "updated_at": "2026-11-06T11:28:37.913582+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ae7400c8-a525-4b4c-a68b-4b65b080652e",
+    "memory": "User identified a nit in fagerbergj/quack#2169 where the reply function in v1/packages/session/src/server.ts:8 casts the body to { error: string }, which could silently drop detail and error fields if a future 4xx route omits the error key.",
+    "hash": "e0eb43c9f9c84e6858e8b5295ca2a394",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2169",
+      "run_created": "2026-11-04T09:56:17.386Z"
+    },
+    "created_at": "2026-11-06T11:25:51.868310+00:00",
+    "updated_at": "2026-11-06T11:25:51.868310+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ae85ccf8-40b4-4148-8541-8e786da01369",
+    "memory": "User verified fagerbergj/quack#2192 by reading pi-durable 1.5.0 source to confirm the afterTool hook fires on the tool_unavailable settle path, and ran the full v1 node suite (754/754 pass), web suite (263/263 pass), sloplint, promptlint, and typecheck all clean",
+    "hash": "dd7bacd01753f01b26ce152e8c887866",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2192",
+      "run_created": "2026-11-05T05:09:05.387Z"
+    },
+    "created_at": "2026-11-06T11:35:23.500434+00:00",
+    "updated_at": "2026-11-06T11:35:23.500434+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "af7d6beb-2b80-413b-85b7-92c543985692",
+    "memory": "User reviewed fagerbergj/quack#2199 on November 5, 2026, which fixes sleeper news items to retain a 280-character excerpt around the player's name when the article title does not name the player, preventing the judge from misattributing reports like the Rams press conference on Blake Corum",
+    "hash": "aa2343a9399ff699e42514aec75de21a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2199",
+      "run_created": "2026-11-05T15:02:56.116Z"
+    },
+    "created_at": "2026-11-06T11:37:38.924189+00:00",
+    "updated_at": "2026-11-06T11:37:38.924189+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b021f26a-f96f-4848-81c4-2aadc1493531",
+    "memory": "User verified the out-of-order slot completion fix in fagerbergj/quack#2187 by re-running their original reproduction against the real SlotTable, confirming that the live call's lease now stays held and rival calls are refused against the cap",
+    "hash": "517fc8c61db089f9b1fa36d4ab6f7718",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:26.956565+00:00",
+    "updated_at": "2026-11-06T11:34:26.956565+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b0afc661-bf15-4908-97cc-8e61facb6efe",
+    "memory": "fagerbergj/quack#2187 adds a generic `GET /transcript?conversation=<id>` endpoint to the session package and a `Subagent.tsx` component to the web package to display nested child transcripts",
+    "hash": "c947dcefde58d85893db0320c5681884",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:33:47.446398+00:00",
+    "updated_at": "2026-11-06T11:33:47.446398+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b1849842-58fa-4fc4-a178-174cfdc6ab75",
+    "memory": "User verified fagerbergj/quack#2117 with 740 total tests (735 pass, 5 skipped), clean tsc output for both root and web configs, and successful sloplint; the new deterministic test injects a slow copy to assert racing reads see the full version without retries or sleeps",
+    "hash": "9d83961ad8bc32a101fd4705962ba5a7",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2117",
+      "run_created": "2026-11-05T01:28:49.330Z"
+    },
+    "created_at": "2026-11-06T11:32:24.542127+00:00",
+    "updated_at": "2026-11-06T11:32:24.542127+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b3d5a952-6e4a-4cae-b2f9-fa76fc3d2d4d",
+    "memory": "User reviewed and approved fagerbergj/quack#2183 on November 5, 2026, which fixes the GitHub eval double to serve pinned PRs with state 'open' so replays review instead of skipping closed PRs, resolving a 0/22 scoring failure in production",
+    "hash": "3ecb06df0eb516bcb4b787194e402427",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2183",
+      "run_created": "2026-11-05T01:21:49.264Z"
+    },
+    "created_at": "2026-11-06T11:32:15.119512+00:00",
+    "updated_at": "2026-11-06T11:32:15.119512+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b593a05d-e477-4431-b8ea-07e73bba2b1e",
+    "memory": "In fagerbergj/quack#2187, the SlotGate was updated to hold one lease per model call in flight, allowing the parent session to release its slots via `whileWaiting` while child subagents run",
+    "hash": "03edc6af96d39c4778113e178d6f79d0",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:33:47.444118+00:00",
+    "updated_at": "2026-11-06T11:33:47.444118+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b6bc6d33-b733-4fe6-8838-5e9b40e97668",
+    "memory": "User reviewed and approved pull request fagerbergj/quack#2169 on November 4, 2026, which implements RFC 9457 problem+json error responses for the session process and changes oversized body errors from 400 to 413 to match the index service.",
+    "hash": "620d726b51d2632fe4792a679506663c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2169",
+      "run_created": "2026-11-04T09:56:17.386Z"
+    },
+    "created_at": "2026-11-06T11:25:51.861381+00:00",
+    "updated_at": "2026-11-06T11:25:51.861381+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b75f259d-e87f-45ab-9daf-4c13ab10823a",
+    "memory": "User identified nits in fagerbergj/quack#2175 including a stale 'as DeploymentConfig' cast in definition.ts:117, unnecessary model discovery for 'systemone' classifier providers in definition.ts:119, and a misleading comment in runtime/src/validate.ts:12 about provider fallback behavior.",
+    "hash": "8877baed6d9838e672a03d1ba55bc558",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.332280+00:00",
+    "updated_at": "2026-11-06T11:27:26.332280+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b76aabb7-44de-4d6e-8995-ff7c3e04a53d",
+    "memory": "User requested changes on fagerbergj/quack#2187 due to a blocking defect in v1/packages/slots/src/gate.ts where `end()` pops the most recently begun lease instead of the finished call's lease, causing out-of-order parallel completions to release live slots and violate provider concurrency limits",
+    "hash": "3e4fd0f195660c42a896f72be6e7f91e",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:09.454366+00:00",
+    "updated_at": "2026-11-06T11:34:09.454366+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "b8a84748-95e6-4daa-a71b-a9e3cb1aaeef",
+    "memory": "The decision-model token estimate in fagerbergj/quack#2188 was corrected from 4 bytes per token to 3 bytes per token after Clef's tokenizer rejected inputs that the old estimate incorrectly classified as under the 8,192 token cap.",
+    "hash": "7aed3bf4bd74e870b43b138fbe5d0cd1",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2188",
+      "run_created": "2026-11-05T10:05:11.303Z"
+    },
+    "created_at": "2026-11-06T11:36:26.916456+00:00",
+    "updated_at": "2026-11-06T11:36:26.916456+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "bbd16323-1698-498d-82d0-9d45fbf037a4",
+    "memory": "User identified a suggestion in fagerbergj/quack#2170 that the cap message in v1/packages/judge/src/index.ts:169 incorrectly states 'in this run' and understates the count after a pass, recommending a message update to reflect round-scoped counting.",
+    "hash": "a6a8aeefdea3ba2ab017899bd021bfd5",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.574938+00:00",
+    "updated_at": "2026-11-06T11:26:16.574938+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "bbea30bb-8d31-4536-854e-ec07282c14d2",
+    "memory": "User identified a nit in fagerbergj/quack#2171 that the new test in v1/packages/index/test/push.test.ts only asserts content-type and detail for the unknown-route case, while the 400 and 413 cases assert status only, missing an opportunity to verify the problem+json body structure.",
+    "hash": "e4feaf2c5946387bc5d9faf45de7140f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2171",
+      "run_created": "2026-11-04T12:06:19.150Z"
+    },
+    "created_at": "2026-11-06T11:26:30.412414+00:00",
+    "updated_at": "2026-11-06T11:26:30.412414+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "bfb14bd6-67f1-4198-a09a-7b74230569df",
+    "memory": "User reviewed and approved pull request fagerbergj/quack#2172 on November 4, 2026, which adds a guard to the distributor's /apps proxy to return 404 for paths that dot-segment out of the app boundary, preventing access to sensitive service routes.",
+    "hash": "1b94ebb16c5ac78d71e1e42d67c42bbd",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2172",
+      "run_created": "2026-11-04T12:45:23.877Z"
+    },
+    "created_at": "2026-11-06T11:26:43.498958+00:00",
+    "updated_at": "2026-11-06T11:26:43.498958+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "bfb83bba-34c2-4c89-80db-69b7f9797d31",
+    "memory": "User reviewed and approved fagerbergj/quack#2194 on November 5, 2026, which fixes a bug where GitHub refused APPROVE/REQUEST_CHANGES on the app's own PRs by posting a COMMENT review leading with the verdict instead",
+    "hash": "c6409d9fbb5f453c0518ed46837e1ce3",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2194",
+      "run_created": "2026-11-05T08:19:41.991Z"
+    },
+    "created_at": "2026-11-06T11:35:34.202472+00:00",
+    "updated_at": "2026-11-06T11:35:34.202472+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "c041b817-f75d-4281-a096-409a073453ef",
+    "memory": "In fagerbergj/quack#2185, the user noted a nit in v1/packages/contracts/skills/typescript.md:28 that 'a removed field' is listed as a breaking case, but removing an optional field produces no assignability break in either direction, risking spurious compatibility.breaking entries",
+    "hash": "d18377f696401a9a7e723932a16456d6",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:02.465433+00:00",
+    "updated_at": "2026-11-06T11:33:02.465433+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "c0d7f7bf-51d5-43d4-900b-7e90fa222daf",
+    "memory": "In fagerbergj/quack#2179, the user approved the PR with a nit that the `peak === 2` assertion in judge.test.ts:146 is susceptible to false reds if the machine stalls more than the 30ms hold between request arrivals, suggesting raising `holdMs` in `fakeClef` as a hardening measure.",
+    "hash": "0e3d0a0343dafec484e30b21d16771e8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2179",
+      "run_created": "2026-11-04T23:51:21.170Z"
+    },
+    "created_at": "2026-11-06T11:31:01.468928+00:00",
+    "updated_at": "2026-11-06T11:31:01.468928+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "c23ef4db-73f4-4fdf-a679-b9e9c2022d39",
+    "memory": "User implemented fagerbergj/quack#2117 to fix a race condition in agents.test.ts where GET /agents/:name returned incomplete data because the boot registry copy was unawaited; the fix serializes registry runs on a promise chain and uses atomic per-version writes (mkdtemp + rename) in agent-bundle.ts",
+    "hash": "d37b69a197f3da1f4cabcf5db959e718",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2117",
+      "run_created": "2026-11-05T01:28:49.330Z"
+    },
+    "created_at": "2026-11-06T11:32:24.537902+00:00",
+    "updated_at": "2026-11-06T11:32:24.537902+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "c7806e5a-f26d-4255-8ebb-5cec3ce75671",
+    "memory": "User identified a suggestion in fagerbergj/quack#2170 that the new budget test in v1/packages/contracts/test/flow.test.ts does not verify that the rejection feedback matches the expected change request, unlike its sibling test which pins the reject reason.",
+    "hash": "2000957141653322faebb0ed035ab16a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2170",
+      "run_created": "2026-11-04T11:30:15.636Z"
+    },
+    "created_at": "2026-11-06T11:26:16.577423+00:00",
+    "updated_at": "2026-11-06T11:26:16.577423+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "c9ed8373-3589-4041-af7c-2182fab0232b",
+    "memory": "In fagerbergj/quack#2177, the process driver mints a per-launch credential via broker.mint passed as QUACK_INDEX_TOKEN and revokes it on exit, while Docker sessions receive QUACK_INDEX_URL and their launch token directly; the shared index token and QUACK_INDEX broker registration were removed",
+    "hash": "d7bcb34a42b1f8492a9707c93be19bb8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.971507+00:00",
+    "updated_at": "2026-11-06T11:29:47.971507+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ca13d923-2b89-4a32-a00b-e3f6f3c4ccea",
+    "memory": "In fagerbergj/quack#2195, the `CUT_OFF_LIMIT` JSDoc was reworded to clarify that a run gets three continuation nudges and ends on the fourth cut-off, aligning the documentation with the `count > limit` code logic",
+    "hash": "e388fe0222079075168caebce2b753ae",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:36:12.494336+00:00",
+    "updated_at": "2026-11-06T11:36:12.494336+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ca8129a0-95f8-4ef3-bbb9-de052b2c1301",
+    "memory": "User noted that the re-export handling in fagerbergj/quack#2185 allows re-exports of @earendil-works/* packages with removal-checks only (not assignability), and that a removed export * is not reported by the diff but is prevented via the document_clean gate",
+    "hash": "25cce9c13addbfef2210d437f8ca6ed8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2185",
+      "run_created": "2026-11-05T01:53:53.703Z"
+    },
+    "created_at": "2026-11-06T11:33:15.229260+00:00",
+    "updated_at": "2026-11-06T11:33:15.229260+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "cb24bdb5-62d5-499e-af68-fa48930105c0",
+    "memory": "User re-verified and approved fagerbergj/quack#2177 on November 6, 2026, confirming the head 7dc22ad3 is byte-identical to the previously approved fix commit, with the PR description updated to 'deployment contract v6, apps contract v5 and egress proxy contract v4' and CI status green.",
+    "hash": "3924289037ec713a6e7244c42d6596af",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:28.393231+00:00",
+    "updated_at": "2026-11-06T11:30:28.393231+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ccb3d449-5202-4b2a-8249-50e0b8e4b389",
+    "memory": "In fagerbergj/quack#2191, the openComments function was updated to report GraphQL errors inside a 200 response as commentsError instead of silently treating them as no threads, ensuring visible degradation in the task text",
+    "hash": "19f7707deb134bb08449c86d91a9897f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:35:10.600966+00:00",
+    "updated_at": "2026-11-06T11:35:10.600966+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ce83d727-1eed-4ba3-8596-7f701609c988",
+    "memory": "In fagerbergj/quack#2177, apps contract v5 defines page routes per app that are accessible without credentials: github (GET /pulls, POST /webhook), sleeper (GET /, GET /schedule, POST endpoints), schedules (GET /, DELETE /<id>), remarkable (GET /, POST /ingest), and slots (none); other routes require a launch credential.",
+    "hash": "4f9d47d766b4842d2a012531c9ed15d8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.564689+00:00",
+    "updated_at": "2026-11-06T11:29:18.564689+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "d049583b-5dfa-4b1d-b851-ad8439472f94",
+    "memory": "The user identified in fagerbergj/quack#2197 that the audit table in docs/v1/audits/sleeper.md:171 still records the old rubric question, creating a one-sided divergence since the rubric comment points to that table as its source.",
+    "hash": "2ed458d4493ff4db995e666e6c095a77",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2197",
+      "run_created": "2026-11-05T14:55:18.095Z"
+    },
+    "created_at": "2026-11-06T11:37:13.984714+00:00",
+    "updated_at": "2026-11-06T11:37:13.984714+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "d32ff2a4-99a3-4209-b6c1-bc3ef86d450b",
+    "memory": "In fagerbergj/quack#2177, the user's final review verdict was 'approve' after the fix commit resolved the blocking abort defect, added peer dependency enforcement for sleeper/schedules, and removed the unreachable retention route.",
+    "hash": "4b7b61c2514580ca1dca6d1ab44834e8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:30:19.316933+00:00",
+    "updated_at": "2026-11-06T11:30:19.316933+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "d559a164-6f94-429f-9e98-6b3da5c076ef",
+    "memory": "User suggested in fagerbergj/quack#2195 adding a cross-run test for the per-run streak re-keying to ensure a regression to conversation-keyed counting (where an aborted run's streak poisons the next run) would be caught, noting the loop-guard sibling already covers this pattern",
+    "hash": "e344e14f0166fc8513ef0097508fa718",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:36:12.491985+00:00",
+    "updated_at": "2026-11-06T11:36:12.491985+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "d560a7a6-e5cf-4c47-811a-c0caa95ed7ab",
+    "memory": "User noted in fagerbergj/quack#2191 that openReviews derived the latest review per reviewer from list iteration order, which was fragile; the fix explicitly sorts by submitted_at to make the intent testable and robust against ordering changes",
+    "hash": "2bb682daf14d819baf842f2544bfd7de",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:35:10.596150+00:00",
+    "updated_at": "2026-11-06T11:35:10.596150+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "d5ee8bfc-fdf6-4890-a2fa-9b0c8f3f5391",
+    "memory": "User reviewed pull request fagerbergj/quack#2178 on November 4, 2026, which implements parallel classification in the judge by sending all unit requests to Clef up to `classifier.concurrency` at a time, defaulting to 1 for backward compatibility and 4 in the v8 reviewer bundle.",
+    "hash": "32bff3034d5c73acd3af4ed92a613fb2",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2178",
+      "run_created": "2026-11-04T23:31:03.074Z"
+    },
+    "created_at": "2026-11-06T11:30:50.699908+00:00",
+    "updated_at": "2026-11-06T11:30:50.699908+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "d8de37b2-396e-4f7c-89ec-7655f493d90d",
+    "memory": "User approved fagerbergj/quack#2192 with one suggestion to split the CHECKOUT_FIRST trigger text for /implement (which runs on issues) from /fix (which runs on PRs) because checkout_task returns different data for each, and one nit about the unknown-tool message listing agent.tools instead of the caller's callable set for nested calls",
+    "hash": "5bf3785b7791a9e24441cef981de432b",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2192",
+      "run_created": "2026-11-05T05:09:05.387Z"
+    },
+    "created_at": "2026-11-06T11:35:23.497752+00:00",
+    "updated_at": "2026-11-06T11:35:23.497752+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "da0a40cc-8596-45d4-b32f-3058c4f34760",
+    "memory": "User confirmed that the updated implementer test in fagerbergj/quack#2196 uses an inline multi-closing live body (`This fixes #3, and closes #4.`) to cover the case previously dropped, and that the no-duplicate test pins the other filter branch",
+    "hash": "fc0cf84a84f0c50a4ffbe1e2098c2ff2",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:58.478141+00:00",
+    "updated_at": "2026-11-06T11:36:58.478141+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "db6a51e8-ba50-4a29-9c2a-30165cc18f5f",
+    "memory": "In fagerbergj/quack#2177, the QA stack tools/qa/stack.ts --apps now names extensions to mount instead of using stubs, and schedules is seeded with two sample schedules through its API",
+    "hash": "ab33cb49c4b000607882441f762fa121",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.976203+00:00",
+    "updated_at": "2026-11-06T11:29:47.976203+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "dbfab333-19ab-453c-89ac-0bf379a844e4",
+    "memory": "User approved fagerbergj/quack#2187 after verifying the slot-gate defect was fixed by pairing `begin` and `end` via `SlotCall` tokens, with all local suites passing (108 slots/subagent/session tests, 263 web tests, 5 boundary tests) and CI green",
+    "hash": "2d486e8981dc7139cb3314e78945d7a9",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:26.954299+00:00",
+    "updated_at": "2026-11-06T11:34:26.954299+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "dce39375-d11a-4d74-8ad0-46ab6fcb4dbb",
+    "memory": "User recommended fixing the slot gate defect in fagerbergj/quack#2187 by pairing `begin` and `end` via a unique token (Symbol) returned by `begin` and passed to `end`, rather than relying on LIFO stack order",
+    "hash": "64f1830f5a7b3577afe9af4b5a55cf0c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:09.457042+00:00",
+    "updated_at": "2026-11-06T11:34:09.457042+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "dd706be2-84b3-48dd-8fd4-5beed3080416",
+    "memory": "User ran local verification for fagerbergj/quack#2176 at head 0af26bde, achieving 727 passing tests, 0 failures, 5 skipped tests, clean tsc output, and successful sloplint",
+    "hash": "7f32ae3765711c1a1f31847191f114e8",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:51.741316+00:00",
+    "updated_at": "2026-11-06T11:28:51.741316+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "de054a8b-195a-4277-9447-5a28d432ccb9",
+    "memory": "In fagerbergj/quack#2180, the user verified that the judge package is byte-identical to its pre-#2178 state at 675cbccc, that no references to `probabilitiesOf` or `classifier.concurrency` remain in v1/, and that Clef configuration reverts to `-np 1 -c 8192` in home-server.",
+    "hash": "794fe38a81a3e84fef22adc8992e8364",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2180",
+      "run_created": "2026-11-05T00:12:43.092Z"
+    },
+    "created_at": "2026-11-06T11:31:14.539448+00:00",
+    "updated_at": "2026-11-06T11:31:14.539448+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "de52eac0-815f-4af7-9496-70ab701e0835",
+    "memory": "User confirmed that in fagerbergj/quack#2176, the PORT environment variable handling in schedules, slots, and sleeper main.ts now uses `process.env.PORT || default` to prevent binding to an ephemeral port when PORT is an empty string",
+    "hash": "0a0cb09b74673151e55aedf95948191f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:51.737198+00:00",
+    "updated_at": "2026-11-06T11:28:51.737198+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "df7404a7-0936-4262-aadc-c02479e8a0f4",
+    "memory": "User reviewed a follow-up commit e91efb07 for fagerbergj/quack#2182 which fixed the stale 'default branch' text and added settings validation tests, but the question regarding non-production exercise of the feature remained open in the PR body",
+    "hash": "ed294302fd9dcdff5a03392a18164f5f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2182",
+      "run_created": "2026-11-05T00:50:04.138Z"
+    },
+    "created_at": "2026-11-06T11:31:53.838561+00:00",
+    "updated_at": "2026-11-06T11:31:53.838561+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "e0d4c935-8df9-4db0-a5bc-65319af32384",
+    "memory": "User noted in fagerbergj/quack#2195 that the cut-off streak count survives run ends other than exceeding the limit (e.g., abort, model_error), potentially causing the next run to start with a stale count and end early",
+    "hash": "f27fbcf88992ea6b0aa10f346512dbe4",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2195",
+      "run_created": "2026-11-05T09:04:10.292Z"
+    },
+    "created_at": "2026-11-06T11:35:58.919835+00:00",
+    "updated_at": "2026-11-06T11:35:58.919835+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "e3ed1c6d-d6a3-4c17-8d3a-10416ac90736",
+    "memory": "User noted a nit in fagerbergj/quack#2187 where v1/packages/web/src/Subagent.tsx introduces a duplicate `SessionKey` context that should reuse the existing `SessionKeyContext` from v1/packages/web/src/extension.ts to prevent drift",
+    "hash": "d56de2cb8f2ed0cb60682ade407ed50a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2187",
+      "run_created": "2026-11-05T02:29:06.012Z"
+    },
+    "created_at": "2026-11-06T11:34:09.462698+00:00",
+    "updated_at": "2026-11-06T11:34:09.462698+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "e443003a-d0bd-4e59-bb2a-0498ab5ccb73",
+    "memory": "In fagerbergj/quack#2175, the deployment root is closed with 'providers' and 'defaultModel' required, 'timeZone' and 'exec' optional, and any other top-level key (like the removed 'imageModel') is rejected and named.",
+    "hash": "b21e16f0a49d1df3860fc1afd3b9dff5",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.311849+00:00",
+    "updated_at": "2026-11-06T11:27:26.311849+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "assistant"
+  },
+  {
+    "id": "e6930f9c-4233-46f7-9601-64ca5f797c56",
+    "memory": "User reviewed fagerbergj/quack#2197 on November 5, 2026, which fixes the sleeper history criticism check by requiring each criticism to cite a number from the season's figures and passing each draft pick's points to the judge, resolving a failure where all 9 judged history cards were rejected.",
+    "hash": "2290394a3fe3114fe6ec37052755087a",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2197",
+      "run_created": "2026-11-05T14:55:18.095Z"
+    },
+    "created_at": "2026-11-06T11:37:13.978370+00:00",
+    "updated_at": "2026-11-06T11:37:13.978370+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "e76abca4-5a24-4146-92f1-0f71b20a7bae",
+    "memory": "User reviewed and approved pull request fagerbergj/quack#2171 on November 4, 2026, which updates the index's web-push routes to use RFC 9457 problem+json error responses and fixes a routing bug where unknown /push/* paths incorrectly fell through to the /push/test branch.",
+    "hash": "fdd39536e63eaf258d9bdb4ae38b7085",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2171",
+      "run_created": "2026-11-04T12:06:19.150Z"
+    },
+    "created_at": "2026-11-06T11:26:30.402824+00:00",
+    "updated_at": "2026-11-06T11:26:30.402824+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "e85953bd-7c99-40ce-96ed-bd376fc54fee",
+    "memory": "In fagerbergj/quack#2194, the user noted three nits: the new test only covers the APPROVE branch and misses the 'request changes' wording, the fake PR-14 routes don't verify the installation token auth, and the PR-author GET adds a serial dependency that could cause 502s on transient failures",
+    "hash": "659a223bfb6535186d6961e81e57f086",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2194",
+      "run_created": "2026-11-05T08:19:41.991Z"
+    },
+    "created_at": "2026-11-06T11:35:34.205949+00:00",
+    "updated_at": "2026-11-06T11:35:34.205949+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "e98d0cd9-4a54-43aa-b80b-a61e006341f1",
+    "memory": "User verified in fagerbergj/quack#2171 that the new test fails against the base code (which returns application/json 404 for /push/nope) and passes at head, confirming the test guards the problem+json change; local index tests showed 34 pass, 0 fail, 4 skipped.",
+    "hash": "b337463e33be7aa0312b58895607a82f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2171",
+      "run_created": "2026-11-04T12:06:19.150Z"
+    },
+    "created_at": "2026-11-06T11:26:30.415522+00:00",
+    "updated_at": "2026-11-06T11:26:30.415522+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ebc2e820-e246-4a08-a864-306a62669e6c",
+    "memory": "In fagerbergj/quack#2180, the user noted a nit that the kept abort test in http.test.ts:68 relies on Node treating writes to a destroyed Writable as a no-op, and that the `res.once('error', reject)` listener in http.ts:73 detaches after abort rejection, so a future Node emitting a second error for the late write would be unhandled rather than failing cleanly.",
+    "hash": "63aed2a705b54562c1d18aef4997cedd",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2180",
+      "run_created": "2026-11-05T00:12:43.092Z"
+    },
+    "created_at": "2026-11-06T11:31:14.536931+00:00",
+    "updated_at": "2026-11-06T11:31:14.536931+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "ed59a0cb-fc24-4bb5-95ab-f4fdd4a455be",
+    "memory": "In fagerbergj/quack#2188, the removed `no_silent_approval` check was replaced by `approval_grounded`, a positive check that verifies the review's Takeaway and Verified sections explain why the change is safe to merge rather than just praising it or asserting tests pass.",
+    "hash": "78e13808295d5fd22b9d77f77d6af92d",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2188",
+      "run_created": "2026-11-05T10:05:11.303Z"
+    },
+    "created_at": "2026-11-06T11:36:26.913964+00:00",
+    "updated_at": "2026-11-06T11:36:26.913964+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ed76f9d6-34f7-46c9-853a-bc86761fc46a",
+    "memory": "User reviewed pull request fagerbergj/quack#2175 on November 4, 2026, which implements deployment contract v4 part 1, introducing a closed root configuration, defaultModel validation, /models discovery, and provider slots.",
+    "hash": "770d85d0049fbbd433223b306cfbbe01",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.308592+00:00",
+    "updated_at": "2026-11-06T11:27:26.308592+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "eea98f57-f2c9-4e79-b229-7269b26bd035",
+    "memory": "In fagerbergj/quack#2175, 'providers.<id>.slots' replaces the 'QUACK_SLOTS_LIMITS' environment variable, and the slots service now reads 'QUACK_CONFIG' pointing to the deployment file.",
+    "hash": "773cb50a76b957cb9199a7502156a2c3",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2175",
+      "run_created": "2026-11-04T17:35:36.586Z"
+    },
+    "created_at": "2026-11-06T11:27:26.323226+00:00",
+    "updated_at": "2026-11-06T11:27:26.323226+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "assistant"
+  },
+  {
+    "id": "ef0fe866-a046-4f99-bd0b-86d54002639e",
+    "memory": "The bug in fagerbergj/quack#2194 was triggered by fagerbergj/games#41 where five approving review versions (v8-v12) failed to post because the implementer opens PRs as the GitHub app, causing the run to end without a review being posted",
+    "hash": "460ce93d2d099c6196442de127cdcc23",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2194",
+      "run_created": "2026-11-05T08:19:41.991Z"
+    },
+    "created_at": "2026-11-06T11:35:34.208552+00:00",
+    "updated_at": "2026-11-06T11:35:34.208552+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "ef29c7de-a3b1-4059-bf92-c7413ea3e456",
+    "memory": "User approved fagerbergj/quack#2176 on November 6, 2026, confirming the new head was a byte-identical rebase of the previously reviewed tree onto the merged base v1, with all checks passing",
+    "hash": "2c9fad15c77c37038f60fe6678faef85",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:51.743157+00:00",
+    "updated_at": "2026-11-06T11:28:51.743157+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "f145ddea-0829-439e-abe7-fc60710f89cc",
+    "memory": "User approved fagerbergj/quack#2196 after the author fixed the blocking defect by switching to a number-based `closedIssues` helper, handling vanished PRs with a 404, and adding tests for the no-duplicate branch",
+    "hash": "fde8a8172598a32f7de3a1984c992e3f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2196",
+      "run_created": "2026-11-05T12:51:39.880Z"
+    },
+    "created_at": "2026-11-06T11:36:47.434145+00:00",
+    "updated_at": "2026-11-06T11:36:47.434145+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "f4dacb9d-1b0d-4575-a9bf-e682cc1696fa",
+    "memory": "In fagerbergj/quack#2177, the appsGateway enforces that Bearer credentials must be current launch credentials (401 otherwise), sessions get 403 for undeclared apps, credential-free requests reach only declared page/ingress routes (401 on others, never 403), and dot-segment or %2e escapes return 404.",
+    "hash": "54f76afa26cb8f562b30da7bbfac529c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.570601+00:00",
+    "updated_at": "2026-11-06T11:29:18.570601+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "f54418f5-582c-4ffd-ba64-1cdb7ea30c48",
+    "memory": "In fagerbergj/quack#2177, the test suite showed 727 passing and 3 failing tests (rmc tests that fail locally regardless), and tsc was clean except for a missing playwright module in tools/qa/run.ts",
+    "hash": "e279c0c0c0a0e83d776c2502440e5b91",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:47.983789+00:00",
+    "updated_at": "2026-11-06T11:29:47.983789+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "f5f86b90-e33a-4f7d-9a11-b39c61ca4bf9",
+    "memory": "User reviewed fagerbergj/quack#2200 on November 5, 2026, which updates the sleeper history writer prompt and workflow to require each criticism to cite a number from the season's figures and name the player, pick, or week, aligning the writer's instructions with the judge's `aggregated_not_scolded` check introduced in #2197",
+    "hash": "0831186605773696bd70f449a85c7f7c",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2200",
+      "run_created": "2026-11-05T15:23:25.581Z"
+    },
+    "created_at": "2026-11-06T11:37:57.470537+00:00",
+    "updated_at": "2026-11-06T11:37:57.470537+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "f6a31a19-b1a6-46bc-8f15-70bd6b497f15",
+    "memory": "In fagerbergj/quack#2177, service-to-service calls (e.g., sleeper to schedules) go over loopback HTTP (http://127.0.0.1:<port>) without tokens rather than direct in-process calls, to keep sleeper registration code and tests unchanged.",
+    "hash": "f9736184c7a9b9f2948631969c4526fb",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2177",
+      "run_created": "2026-11-04T23:04:23.494Z"
+    },
+    "created_at": "2026-11-06T11:29:18.567098+00:00",
+    "updated_at": "2026-11-06T11:29:18.567098+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "fa260933-42d4-47a2-90e4-96b8eb60d55a",
+    "memory": "In fagerbergj/quack#2176, the manifest-published settings check run by both validate and the service at boot keeps core ignorant of service names, and rejecting a service that carries settings when no manifest publishes them closes the typo door; exact-env assertions in runtime/test/agents.test.ts guard session isolation so a reviewer session gets QUACK_GITHUB_* but not the sleeper token",
+    "hash": "3a942a4c5cee17194a180a3a6fa119f2",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:37.911209+00:00",
+    "updated_at": "2026-11-06T11:28:37.911209+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "fb5d2b5b-da8d-4a3b-8f3d-6490d6f1b376",
+    "memory": "User verified in fagerbergj/quack#2184 that 102 tests pass in packages/github, typecheck and sloplint are clean, and the old string format for `issueBase` is refused at mount time via `checkedSettings` throwing, confirming the new image requires the map format",
+    "hash": "23d973bf6586db2f3854ce0ebf15bc2f",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2184",
+      "run_created": "2026-11-05T01:36:43.201Z"
+    },
+    "created_at": "2026-11-06T11:32:41.941415+00:00",
+    "updated_at": "2026-11-06T11:32:41.941415+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "fc1bbf4a-39f0-4773-aec9-dfa3a5dceae9",
+    "memory": "In fagerbergj/quack#2182, the user verified that 100 tests pass in packages/github, sloplint is clean, and the issueBase value flows consistently to both branch creation and PR base, but noted that the PR defers live exercise of /implement to post-deploy despite AGENTS.md requiring non-production checks",
+    "hash": "0e9ed8e4d1ba32cccebe3e02c28c06be",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2182",
+      "run_created": "2026-11-05T00:50:04.138Z"
+    },
+    "created_at": "2026-11-06T11:31:53.833501+00:00",
+    "updated_at": "2026-11-06T11:31:53.833501+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "fc89c613-6c14-4f14-ae04-35930262fd3d",
+    "memory": "User reviewed fagerbergj/quack#2191 on November 5, 2026, identifying that the REST reviews list is oldest-first (verified via kubernetes/kubernetes#70001), so the initial single-page fetch of 100 reviews would miss the most recent open feedback; the fix pages through reviews with a 3,000 cap and sorts by submitted_at",
+    "hash": "6ca85309dd8246b59ee695083f8cd959",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:35:10.590228+00:00",
+    "updated_at": "2026-11-06T11:35:10.590228+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "fd521277-9008-419a-90b1-544306038a57",
+    "memory": "In fagerbergj/quack#2176, a manifest publishes a settings validation function, and the validate command runs this check for services matching the manifest name; services with settings that no manifest publishes are rejected, with specific settings defined for schedules (retentionSweep), github (implementerAgent), and sleeper (league, owner).",
+    "hash": "ccbaea19f02210d161a007cafae19588",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2176",
+      "run_created": "2026-11-04T17:35:36.848Z"
+    },
+    "created_at": "2026-11-06T11:28:10.326271+00:00",
+    "updated_at": "2026-11-06T11:28:10.326271+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  },
+  {
+    "id": "fe100072-ea4a-44bf-82c2-d94eaad2600c",
+    "memory": "User reviewed fagerbergj/quack#2191 on November 5, 2026, which adds open review feedback visibility to /fix and a queue for busy sessions, finding that the installation-token GraphQL call in feedback.ts:27 may fail because call() pins x-github-api-version 2022-11-28 which GitHub's GraphQL API may reject, and requested live verification or special-casing the header for /graphql",
+    "hash": "400698eb76364b0b89746134a6067523",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:34:48.668571+00:00",
+    "updated_at": "2026-11-06T11:34:48.668571+00:00",
+    "user_id": "github:fagerbergj/quack"
+  },
+  {
+    "id": "ffc4d07d-40ef-4298-bc71-65847ee73f15",
+    "memory": "User identified in fagerbergj/quack#2191 that startQueuedFix was recomputing invocationMeta (PR GET, check runs, linked issues, files) on every 15-second retry, causing hundreds of unnecessary API calls during long sessions; the fix stores the webhook's meta in the QueuedFix entry to reuse it",
+    "hash": "6a3e7aee17b3bb952cd2e825d76f35c9",
+    "metadata": {
+      "run": "github:fagerbergj/quack#2191",
+      "run_created": "2026-11-05T03:59:55.420Z"
+    },
+    "created_at": "2026-11-06T11:35:10.593652+00:00",
+    "updated_at": "2026-11-06T11:35:10.593652+00:00",
+    "user_id": "github:fagerbergj/quack",
+    "attributed_to": "user"
+  }
+]

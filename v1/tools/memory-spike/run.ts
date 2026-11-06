@@ -1,5 +1,5 @@
-// Usage: node tools/memory-spike/run.ts <off|episodes|graphiti>
-// Answers every probe with the same reader, prompt and cap; graphiti's recalled sections come from graphiti/ingest.py.
+// Usage: node tools/memory-spike/run.ts <off|episodes|graphiti|mem0>
+// Answers every probe with the same reader, prompt and cap; graphiti's and mem0's sections come from their ingest.py.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import type { Episode } from './episodes.ts';
 import { chat, usage, waitForSlots } from './llm.ts';
@@ -34,7 +34,7 @@ async function score(p: Probe, answer: string) {
 
 async function memoryFor(arm: string, probes: Probe[], prefix: Episode[]) {
   if (arm === 'off') return { sections: Object.fromEntries(probes.map((p) => [p.id, ''])), ingestSeconds: 0, rows: 0 };
-  if (arm === 'graphiti') return JSON.parse(await readFile(`${HERE}results/graphiti-recall.json`, 'utf8'));
+  if (arm === 'graphiti' || arm === 'mem0') return JSON.parse(await readFile(`${HERE}results/${arm}-recall.json`, 'utf8'));
   const t = Date.now();
   const { db, passages } = await build(prefix);
   const ingestSeconds = (Date.now() - t) / 1000;

@@ -1,5 +1,9 @@
-# Copied prod sessions and the Graphiti venv stay local.
+# Copied prod sessions and the Graphiti and Mem0 venvs and stores stay local.
 data/
 graphiti/.venv/
 graphiti/db/
+mem0/.venv/
+mem0/db/
+mem0/home/
+mem0/cache/
 __pycache__/

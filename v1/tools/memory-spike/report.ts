@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const HERE = new URL('.', import.meta.url).pathname;
 type Row = { id: string; type: string; q: string; ref: string; answer: string; correct: boolean; wrongFact: boolean; abstained: boolean; by: string };
-const arms = ['off', 'episodes', 'graphiti'].filter((a) => existsSync(`${HERE}results/${a}.json`));
+const arms = ['off', 'episodes', 'graphiti', 'mem0'].filter((a) => existsSync(`${HERE}results/${a}.json`));
 const res = Object.fromEntries(arms.map((a) => [a, JSON.parse(readFileSync(`${HERE}results/${a}.json`, 'utf8')) as { probes: Row[]; usage: Record<string, number>; seconds: number; ingestSeconds: number }]));
 const types = [...new Set(res[arms[0]].probes.map((p) => p.type))];
 const pct = (rows: Row[], f: (r: Row) => boolean) => `${rows.filter(f).length}/${rows.length}`;
