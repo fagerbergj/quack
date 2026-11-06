@@ -23,6 +23,8 @@ import { createStore, openStore, indexRoutes, postgresBackend, rebuild, sqliteBa
 const url = process.env.QUACK_TEST_DATABASE_URL;
 const ctx = BACKGROUND_CONTEXT;
 const TOKEN = 'test-token';
+// The launch credential check the distributor passes: TOKEN is the one session's.
+const tokenOf = (key: string) => (t: string) => (t === TOKEN ? key : undefined);
 const cleanups: Array<() => Promise<unknown>> = [];
 after(async () => { for (const c of cleanups.reverse()) await c(); });
 
@@ -93,7 +95,7 @@ const backends = [
 
 for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts survive the index being down, land once, and replaying the log rebuilds the same rows`, { skip }, async () => {
   const { store } = await freshStore();
-  const routes = indexRoutes(store, TOKEN);
+  const routes = indexRoutes(store, tokenOf('chat:1'));
   let down = true;
   const index = createServer(async (req, res) => {
     if (down) return void res.writeHead(503).end('{}');
@@ -167,6 +169,34 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   assert.deepEqual(await rows(fresh.store), live, 'replaying twice yields the same rows');
 });
 
+for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a session publishes only its own facts, and no rev pins an ask pending past its answer`, { skip }, async () => {
+  const { store } = await freshStore();
+  const credentials: Record<string, string> = { 'cred-a': 'chat:a', 'cred-b': 'chat:b' };
+  const told: string[] = [];
+  const routes = indexRoutes(store, (t) => credentials[t], async (session) => void told.push(session));
+  const server = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
+  const base = `http://127.0.0.1:${await listen(server)}`;
+  cleanups.push(() => new Promise((r) => server.close(r)));
+  const publish = (credential: string, session: string, facts: Fact[]) => fetch(`${base}/index/facts`, { method: 'POST', headers: { authorization: `Bearer ${credential}` }, body: JSON.stringify({ session, facts }) });
+  const ask = (state: string, rev: number): Fact => ({ id: 'approval:x', kind: 'approval', rev, at: 1, data: { tool: 'post', state, decision: null, by: null, args: { summary: 'wire $5000' } } });
+  const pending = async (session: string) => (await store.approvals('pending')).filter((a) => a.session === session).length;
+
+  assert.equal((await publish('cred-b', 'chat:a', [ask('pending', 1)])).status, 403, "b's credential cannot publish for a");
+  assert.equal((await publish('stale', 'chat:a', [ask('pending', 1)])).status, 401);
+  assert.deepEqual([await pending('chat:a'), told], [0, []], 'a refused publish stores nothing and pushes nothing');
+
+  for (const bad of [ask('pending', Number.MAX_SAFE_INTEGER), ask('pending', 2), ask('resolved', 1), ask('resolved', 3), ask('pending', 0), { id: 'session', kind: 'session' as const, rev: 2, at: 0, data: {} }, { id: 'status', kind: 'status' as const, rev: 0, at: 0, data: { state: 'idle' } }]) {
+    assert.equal((await publish('cred-a', 'chat:a', [bad])).status, 400, `rev ${bad.rev} for ${bad.kind} ${JSON.stringify(bad.data.state)}`);
+  }
+  assert.equal(await pending('chat:a'), 0);
+
+  assert.equal((await publish('cred-a', 'chat:a', [ask('pending', 1)])).status, 200);
+  assert.equal(await pending('chat:a'), 1);
+  assert.equal((await publish('cred-a', 'chat:a', [ask('resolved', 2)])).status, 200);
+  assert.equal((await publish('cred-a', 'chat:a', [ask('pending', 1)])).status, 200, 'a stale resend is accepted and ignored');
+  assert.deepEqual([await pending('chat:a'), told], [0, ['chat:a', 'chat:a', 'chat:a']]);
+});
+
 test('openStore defaults to the sqlite file in the data dir', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-index-open-'));
   const { store, close } = openStore({ dataDir: dir });
@@ -208,7 +238,7 @@ const ask = defineWorkflow({
 
 for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a question a workflow escalates is indexed, answered over the session route, and the workflow resumes`, { skip }, async () => {
   const { store } = await freshStore();
-  const routes = indexRoutes(store, TOKEN);
+  const routes = indexRoutes(store, tokenOf('chat:9'));
   const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
   const indexBase = `http://127.0.0.1:${await listen(index)}`;
   cleanups.push(() => new Promise((r) => index.close(r)));
@@ -264,7 +294,7 @@ const escalate = defineTool({
 
 for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decide() escalation outside a workflow is indexed, answered over the session route, and the tool resumes`, { skip }, async () => {
   const { store } = await freshStore();
-  const routes = indexRoutes(store, TOKEN);
+  const routes = indexRoutes(store, tokenOf('chat:7'));
   const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
   const indexBase = `http://127.0.0.1:${await listen(index)}`;
   cleanups.push(() => new Promise((r) => index.close(r)));
@@ -310,7 +340,7 @@ const boom = defineWorkflow({
 
 for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a run that throws in a code step is readable and indexed with the error and step, and a successful re-run clears it`, { skip }, async () => {
   const { store } = await freshStore();
-  const routes = indexRoutes(store, TOKEN);
+  const routes = indexRoutes(store, tokenOf('sleeper:L:8:history'));
   const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
   const indexBase = `http://127.0.0.1:${await listen(index)}`;
   cleanups.push(() => new Promise((r) => index.close(r)));
@@ -410,7 +440,7 @@ test('list routes page with an opaque token, clamp pageSize and refuse a forged 
   const { store } = await freshSqlite();
   const facts: Fact[] = [1, 2, 3, 4, 5].map((n) => ({ id: `approval:a${n}`, kind: 'approval', rev: 1, at: n, data: { tool: 't', state: 'pending', decision: null, by: null, args: null } }));
   await store.upsert('chat:1', facts);
-  const server = createServer(async (req, res) => { if (!(await indexRoutes(store, TOKEN)(req, res))) res.writeHead(404).end(); });
+  const server = createServer(async (req, res) => { if (!(await indexRoutes(store, tokenOf('chat:1'))(req, res))) res.writeHead(404).end(); });
   const base = `http://127.0.0.1:${await listen(server)}`;
   cleanups.push(() => new Promise((r) => server.close(r)));
   const page = async (q: string) => (await (await fetch(`${base}/index/approvals?${q}`)).json()) as { approvals: Array<{ id: string }>; nextPageToken?: string };

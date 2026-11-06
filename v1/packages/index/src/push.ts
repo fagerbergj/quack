@@ -123,7 +123,7 @@ export function openPush(opts: PushOptions) {
     reply(res, 200, { ok: true });
   }
 
-  // Like the index reads, relies on the proxy for auth.
+  // shortcut: like the index reads, takes no credential though sessions bypass the proxy; the Sessions API must authorize it.
   const routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = new URL(req.url ?? '', 'http://distributor').pathname;
     if (!path.startsWith('/push/')) return false;
