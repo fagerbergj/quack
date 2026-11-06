@@ -50,7 +50,7 @@ async function readWorkspace(api: ToolExecutionApi, path: string, ctx: Context):
   return read.value;
 }
 
-// Seals the file as an immutable version in the log (ART-3); an unchanged file keeps its version.
+// Seals the file as an immutable version in the log; an unchanged file keeps its version.
 // Throws with every schema problem when the file does not validate.
 export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Context): Promise<SealedArtifact> {
   const content = await readWorkspace(api, kind.path, ctx);
@@ -94,7 +94,7 @@ export async function attachLink(api: ToolExecutionApi, kind: string, version: n
   }, ctx);
 }
 
-/** A sealed version, read back for delivery by reference (ART-4): what goes out is exactly what was checked. */
+/** A sealed version, read back for delivery by reference: what goes out is exactly what was checked. */
 export async function sealedVersion(api: Pick<ToolExecutionApi, 'snapshot' | 'conversationId'>, kind: string, version: number, ctx: Context) {
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
   return doc?.kinds[kind]?.versions[version - 1];
@@ -115,7 +115,7 @@ function validateAfter(tool: ToolRegistration, kinds: ArtifactKind[]): ToolRegis
   };
 }
 
-// Writes to a declared artifact path report every schema problem at once (ART-2), without blocking the write.
+// Writes to a declared artifact path report every schema problem at once, without blocking the write.
 export function artifactsExtension(kinds: ArtifactKind[]) {
   return defineExtension({
     name: 'quack.artifacts',

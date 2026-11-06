@@ -50,7 +50,7 @@ A worker round that ends with `finish_reason: MAX_TOKENS` is never judged as-is 
 
 ## Judge replay
 
-`quack judge replay <chat-id-or-bundle.zip>` re-grades a recorded chat's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - the fast loop for proving a rubric or gate-code change against real traffic (see [`docs/design/judging.md`](../design/judging.md)). It loads the recording the same way `quack eval`/`quack ledger export` do, then calls the gate's own `computeDeterministicCriteria`/`mergeDeterministic`/`applyRubricSpecs` and (unless `--deterministic-only`) the judge model - never a reimplementation of judging.
+`quack judge replay <chat-id-or-bundle.zip>` re-grades a recorded chat's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - the fast loop for proving a rubric or gate-code change against real traffic. It loads the recording the same way `quack eval`/`quack ledger export` do, then calls the gate's own `computeDeterministicCriteria`/`mergeDeterministic`/`applyRubricSpecs` and (unless `--deterministic-only`) the judge model - never a reimplementation of judging.
 
 Replay feeds the judge the same CITED EVIDENCE section and hides the `web_page` artifacts the verifier read, as live does, but it knows neither the plan nor artifact lineage: sibling artifacts stay visible to the replayed judge, and the recorded worker turns decide which fetched pages count as the node's own, so a replay of a fan-out node can credit a citation live refuses.
 

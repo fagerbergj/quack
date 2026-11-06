@@ -9,7 +9,7 @@ export { citedIds };
 
 const SECTIONS = ['summary', 'assumptions', 'findings'];
 
-/** Structure problems, all at once (ART-2); whether the citations are real is the judge's gate, since it needs the session's fetch log. */
+/** Structure problems, all at once; whether the citations are real is the judge's gate, since it needs the session's fetch log. */
 export function validateReport(text: string): string[] {
   const headings = new Set([...text.matchAll(/^## (\w+)/gm)].map((m) => m[1].toLowerCase()));
   const problems = SECTIONS.filter((s) => !headings.has(s)).map((s) => `missing a "## ${s[0].toUpperCase()}${s.slice(1)}" section`);
