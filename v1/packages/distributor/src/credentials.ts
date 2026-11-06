@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { request, type IncomingMessage, type ServerResponse } from 'node:http';
 import { sendProblem } from '@quack/sdk';
 
-/** A12 for container sessions: third-party keys stay here; a session holds a per-launch token and reaches those services through /proxy/<name>, and the distributor's own routes with the same token. */
+/** For container sessions: third-party keys stay here; a session holds a per-launch token and reaches those services through /proxy/<name>, and the distributor's own routes with the same token. */
 /** The session's token as its client presents it: a bearer token, an x-api-key (Exa), or the password of Basic auth (Langfuse). */
 function sessionToken(req: IncomingMessage): string | undefined {
   const auth = req.headers.authorization ?? '';

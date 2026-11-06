@@ -40,7 +40,7 @@ async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined,
   return { met: d.choice === 'yes', resolver: d.resolver, note: d.reason };
 }
 
-// One decision-model request per unit; confident answers stand, the rest escalate one check at a time (D16).
+// One decision-model request per unit; confident answers stand, the rest escalate one check at a time.
 export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | undefined, judgeModel: ModelRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, Answer>> {
   const key = `${memo}:${unit.id}:classifier`;
   const stored = await api.memo<Record<string, number> | null>(key, ctx);

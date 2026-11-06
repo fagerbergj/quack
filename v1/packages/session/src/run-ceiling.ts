@@ -1,7 +1,7 @@
 import { defineExtension, GenerationTask, hook, LiveDoc, type ConversationId } from '@earendil-works/pi-durable';
 import { Failures } from '@quack/sdk';
 
-/** Model responses one run may take; a runaway guard that fails the run, not a tuning knob (D58 amended). */
+/** Model responses one run may take; a runaway guard that fails the run, not a tuning knob. */
 export const TURN_CEILING = 300;
 
 export type CeilingSink = {

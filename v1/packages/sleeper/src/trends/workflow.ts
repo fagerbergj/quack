@@ -49,7 +49,7 @@ export function factsPrompt(f: TrendsFacts): string {
   ].join('\n\n');
 }
 
-/** Trends job (SL-1): facts, one model step for prose, a sealed card, then the judge's verdict on it. */
+/** Trends job: facts, one model step for prose, a sealed card, then the judge's verdict on it. */
 export function trendsWorkflow(deps: TrendsDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
   // Without a news source no item can carry a link or a conflict, so those checks are not scored; the verdict says so.

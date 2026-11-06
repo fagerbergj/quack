@@ -49,7 +49,7 @@ const isSubscription = (s: unknown): s is Subscription => {
   return typeof x?.endpoint === 'string' && x.endpoint.length < 2048 && x.endpoint.startsWith('https://') && typeof x.keys?.p256dh === 'string' && typeof x.keys.auth === 'string';
 };
 
-/** Web push (D22): subscriptions and the record of what was already sent live beside the index, in the data dir. */
+/** Web push: subscriptions and the record of what was already sent live beside the index, in the data dir. */
 export function openPush(opts: PushOptions) {
   mkdirSync(opts.dataDir, { recursive: true });
   const now = opts.now ?? Date.now;

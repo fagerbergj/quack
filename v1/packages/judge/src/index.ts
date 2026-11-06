@@ -13,7 +13,7 @@ export type JudgeOptions = {
   rubric: Rubric;
   /** Builds the focused evidence units for a sealed version (the domain's job, e.g. diff excerpts per finding). */
   evidence: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Evidence>;
-  /** Revise-and-recheck rounds before a failing version may go out with its failures marked (J1). A round judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. A pass ends a round. */
+  /** Revise-and-recheck rounds before a failing version may go out with its failures marked. A round judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. A pass ends a round. */
   maxRevisions: number;
   /** Text when this run has nothing to submit (a checkout found no work); the submit is then refused and ends the run. */
   refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
@@ -140,7 +140,7 @@ function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers =
   return `${head}, failed:\n${lines}\nRevise the file to address each point, then call ${toolName} again.`;
 }
 
-// The judge as an extension (D3): a durable tool seals and checks the artifact; the yield hook only refuses to finish too early.
+// The judge as an extension: a durable tool seals and checks the artifact; the yield hook only refuses to finish too early.
 export function judge(opts: JudgeOptions) {
   const toolName = opts.toolName ?? 'submit_artifact';
   // A cleared version reaches onCleared on every submit, so a delivery that failed is retried; the hook must be idempotent.

@@ -1,6 +1,6 @@
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 
-// One process owns one session (A1), so these are module state. They are how session-half extensions
+// One process owns one session, so these are module state. They are how session-half extensions
 // see each other: a gate that waits on a person tells a resource gate (slots) the run is not generating.
 let note: string | null = null;
 /** A short status the session reports through /ping (for example "Waiting for a model slot (2 ahead)"); null clears it. */

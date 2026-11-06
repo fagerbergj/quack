@@ -4,7 +4,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, defineExtension, wrapTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
 
-/** An extension-declared artifact: a finished product at a workspace path, validated by its schema (D42). */
+/** An extension-declared artifact: a finished product at a workspace path, validated by its schema. */
 export type ArtifactKind = {
   kind: string; path: string; validate?: (text: string) => string[];
   /** A one-word reading of the sealed content (a review's verdict), stored on the version so lists need not fetch content. */

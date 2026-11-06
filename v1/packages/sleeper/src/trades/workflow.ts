@@ -89,7 +89,7 @@ const at = (deps: TradeJobDeps, c: StepContext) => (deps.now ? deps.now() : c.ap
 
 const named = (f: TradeFacts, ids: string[]) => ids.flatMap((id) => playerOf(f, id) ?? []);
 
-/** Trade analysis and trade talk (SL-1): facts for both rosters, news for each traded player, one verdict, a sealed card, then the judge. */
+/** Trade analysis and trade talk: facts for both rosters, news for each traded player, one verdict, a sealed card, then the judge. */
 export function tradeWorkflow(deps: TradeJobDeps) {
   const decide = { schema: tradeSchema, prompt: (c: StepContext) => tradePrompt(prior(c, 'facts'), prior(c, 'news')) };
   return defineWorkflow({
@@ -98,7 +98,7 @@ export function tradeWorkflow(deps: TradeJobDeps) {
   });
 }
 
-/** Trade finder (SL-1): the partner table is code; the model picks at most three deals; code searches news for the players it picked. */
+/** Trade finder: the partner table is code; the model picks at most three deals; code searches news for the players it picked. */
 export function finderWorkflow(deps: TradeJobDeps) {
   const decide = { schema: finderSchema, prompt: (c: StepContext) => finderPrompt(prior(c, 'facts')) };
   const card = async (c: StepContext, d: unknown) => {

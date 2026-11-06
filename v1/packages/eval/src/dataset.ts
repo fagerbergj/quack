@@ -5,7 +5,7 @@ import type { SessionRecord } from './record.ts';
 
 export type Label = 'good' | 'bad';
 
-/** A recorded session as a dataset item: its inputs and pinned outside-world docs in, its sealed artifacts and verdicts out (EV1). */
+/** A recorded session as a dataset item: its inputs and pinned outside-world docs in, its sealed artifacts and verdicts out. */
 export function itemFrom(record: SessionRecord, opts: { agent: string; label?: Label; note?: string }): DatasetItem {
   // Extension docs (the PR a review saw) are pinned so a replay reads the same world; harness and quack bookkeeping are not.
   const pins = Object.fromEntries(Object.entries(record.docs).filter(([kind]) => !/^(pi|quack)\./.test(kind)));

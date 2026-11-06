@@ -3,7 +3,7 @@
 @import '@fontsource/fredoka/600.css';
 @import '@fontsource/fredoka/700.css';
 
-/* Tokens and keyframes are lifted from docs/v1/mockups/whimsical.html (mallard palette). */
+/* Tokens and keyframes: the mallard palette. */
 :root { color-scheme: light dark; }
 :root[data-theme='light'] { color-scheme: light; }
 :root[data-theme='dark'] { color-scheme: dark; }
