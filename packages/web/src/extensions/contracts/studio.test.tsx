@@ -118,3 +118,17 @@ test('on a phone the contract and the chat are tabs, and the chat tab counts wai
   await userEvent.click(within(tabs).getByRole('tab', { name: 'Chat 1' }));
   expect(within(tabs).getByRole('tab', { name: 'Chat 1' })).toHaveAttribute('aria-selected', 'true');
 });
+
+test('on a phone a version counts as looked at only while the Contract tab shows it', async () => {
+  stubViewport(false);
+  const seen = () => localStorage.getItem('quack.contracts.seen.contracts:s1');
+  const { ws } = open([spec(1, v1)]);
+  expect(seen()).toBe('1');
+  const tabs = screen.getByRole('tablist', { name: 'Show' });
+  await userEvent.click(within(tabs).getByRole('tab', { name: 'Chat' }));
+  ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), spec(2, v2)] });
+  expect(seen(), 'version 2 sealed while the chat tab was shown').toBe('1');
+  await userEvent.click(within(tabs).getByRole('tab', { name: 'Contract' }));
+  expect(seen()).toBe('2');
+  expect(screen.getByRole('combobox', { name: 'Compare from' })).toHaveValue('1');
+});

@@ -12,6 +12,7 @@ import { Work } from './Work.tsx';
 import { ContextRail, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { useMenu } from './useMenu.ts';
+import { useDesktop } from './useDesktop.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
@@ -354,12 +355,14 @@ function StudioTabs({ live: { studio, tab, setTab }, waiting }: { live: Live; wa
 }
 
 // Beside the chat: the studio's pane when the session has one, else the context rail.
-function Side({ live, rail, ...props }: StudioProps & { live: Live; rail: ReactNode }) {
+function Side({ live, rail, ...props }: Omit<StudioProps, 'visible'> & { live: Live; rail: ReactNode }) {
   const Pane = live.studio?.Pane;
+  // From lg the pane sits beside the chat; below it, only its tab shows it.
+  const visible = useDesktop() || live.tab === 'pane';
   if (!Pane) return rail;
   return (
     <section aria-label={live.studio!.label} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
-      <Pane {...props} />
+      <Pane {...props} visible={visible} />
     </section>
   );
 }

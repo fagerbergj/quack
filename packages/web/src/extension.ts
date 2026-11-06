@@ -25,8 +25,9 @@ export type SessionKind = {
   delivered?: (r: Row) => Delivered | undefined;
 };
 
-/** What a studio pane is given: the session's live artifacts and pending approvals, whether a run works, and `decided` to drop an approval it settled. */
-export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void };
+/** What a studio pane is given: the session's live artifacts and pending approvals, whether a run works, `decided` to drop an approval it settled,
+ * and whether the person can see the pane now (a phone on the chat tab cannot). */
+export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void; visible: boolean };
 
 /** What an extension's web module hands the shell; every field is optional. */
 export type Extension = {

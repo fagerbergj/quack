@@ -47,17 +47,17 @@ function readSeen(key: string): number | undefined {
   }
 }
 
-/** The passed version this viewer looked at before the newest passed one, by artifact number. It is kept in this browser, so it is per viewer and
- * needs no server state; a lost store only means nothing is highlighted, and any two versions can still be compared. */
-export function useSeen(key: string, newest: number | undefined): number | undefined {
+/** The passed version this viewer looked at before the newest passed one, by artifact number; a version counts as looked at only while the pane is
+ * `visible`. Kept in this browser, so it is per viewer and needs no server state; a lost store only means nothing is highlighted. */
+export function useSeen(key: string, newest: number | undefined, visible: boolean): number | undefined {
   const [base, setBase] = useState(() => readSeen(key));
   const shown = useRef<number>(undefined);
   useEffect(() => {
-    if (newest === undefined) return;
+    if (newest === undefined || !visible) return;
     if (shown.current !== undefined && shown.current !== newest) setBase(shown.current);
     shown.current = newest;
     try { localStorage.setItem(SEEN(key), String(newest)); } catch { /* the highlight is a convenience */ }
-  }, [key, newest]);
+  }, [key, newest, visible]);
   return base === newest ? undefined : base;
 }
 
@@ -147,10 +147,10 @@ function Shown({ from, to }: { from?: Version; to: Version }) {
 
 /** The contract as it stands, live beside the conversation: the newest draft with what changed since this viewer last looked, any two
  * versions on request, and one approve action for the newest version once the judge has passed it and it is up for approval. */
-export function ContractStudio({ sessionKey, artifacts, approvals, running, decided }: StudioProps) {
+export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, visible }: StudioProps) {
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
   const newest = versions.at(-1);
-  const base = useSeen(sessionKey, versions.findLast((v) => passed(v.a))?.a.version);
+  const base = useSeen(sessionKey, versions.findLast((v) => passed(v.a))?.a.version, visible);
   const [picked, pick] = useState<{ from?: number; to: number }>();
   if (!newest) return <p className="m-0 p-5 text-sm text-muted">The contract shows here as soon as the agent writes its first version.</p>;
   const proposal = approvals.find((a) => a.tool === 'propose_contract' && (a.args as { artifact?: number } | null)?.artifact === newest.a.version);
