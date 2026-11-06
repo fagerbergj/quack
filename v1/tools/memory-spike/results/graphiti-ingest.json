@@ -1,0 +1,228 @@
+{
+  "episodes": [
+    {
+      "key": "github:fagerbergj/quack#2169",
+      "chars": 6038,
+      "seconds": 41.5,
+      "llm_calls": 3,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2170",
+      "chars": 9696,
+      "seconds": 26.3,
+      "llm_calls": 10,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2171",
+      "chars": 4890,
+      "seconds": 32.6,
+      "llm_calls": 11,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2172",
+      "chars": 5979,
+      "seconds": 27.9,
+      "llm_calls": 10,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2173",
+      "chars": 7074,
+      "seconds": 170.7,
+      "llm_calls": 2,
+      "error": "ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 16354 digits; use sys.set_int_max_str_digits() to increase the limit"
+    },
+    {
+      "key": "github:fagerbergj/quack#2175",
+      "chars": 13165,
+      "seconds": 33.7,
+      "llm_calls": 11,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2176",
+      "chars": 27935,
+      "seconds": 5.7,
+      "llm_calls": 2,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2177",
+      "chars": 37834,
+      "seconds": 207.0,
+      "llm_calls": 7,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2178",
+      "chars": 10859,
+      "seconds": 347.0,
+      "llm_calls": 21,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2179",
+      "chars": 4409,
+      "seconds": 44.8,
+      "llm_calls": 11,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2180",
+      "chars": 4516,
+      "seconds": 122.1,
+      "llm_calls": 41,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2181",
+      "chars": 9164,
+      "seconds": 5.6,
+      "llm_calls": 3,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2182",
+      "chars": 14768,
+      "seconds": 74.5,
+      "llm_calls": 16,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2183",
+      "chars": 3474,
+      "seconds": 23.8,
+      "llm_calls": 5,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2117",
+      "chars": 4915,
+      "seconds": 9.4,
+      "llm_calls": 2,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2184",
+      "chars": 6309,
+      "seconds": 74.0,
+      "llm_calls": 17,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2185",
+      "chars": 16878,
+      "seconds": 10.3,
+      "llm_calls": 2,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2186",
+      "chars": 3456,
+      "seconds": 7.9,
+      "llm_calls": 2,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2187",
+      "chars": 30770,
+      "seconds": 35.4,
+      "llm_calls": 9,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2191",
+      "chars": 21999,
+      "seconds": 20.4,
+      "llm_calls": 4,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2192",
+      "chars": 6181,
+      "seconds": 239.6,
+      "llm_calls": 23,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2194",
+      "chars": 5076,
+      "seconds": 59.8,
+      "llm_calls": 24,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2195",
+      "chars": 17769,
+      "seconds": 55.4,
+      "llm_calls": 12,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2188",
+      "chars": 5400,
+      "seconds": 131.8,
+      "llm_calls": 34,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2196",
+      "chars": 14761,
+      "seconds": 121.2,
+      "llm_calls": 22,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2197",
+      "chars": 6882,
+      "seconds": 272.7,
+      "llm_calls": 28,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2198",
+      "chars": 5749,
+      "seconds": 9.1,
+      "llm_calls": 2,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2199",
+      "chars": 5869,
+      "seconds": 29.8,
+      "llm_calls": 4,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2200",
+      "chars": 9184,
+      "seconds": 66.0,
+      "llm_calls": 17,
+      "error": null
+    },
+    {
+      "key": "github:fagerbergj/quack#2201",
+      "chars": 10020,
+      "seconds": 85.8,
+      "llm_calls": 40,
+      "error": null
+    }
+  ],
+  "stats": {
+    "llm_calls": 395,
+    "llm_seconds": 2235.481235265732,
+    "llm_errors": [
+      "malformed JSON (length, 16384 tokens, 166 s): '{\\n  \"entity_resolutions\":[{\"id\":0,\"name\":\"fagerbergj/quack#2173\",\"duplicate_candidate_id\":-17231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231723172317231'",
+      "malformed JSON (length, 16384 tokens, 171 s): '{\\n  \"edges\": [\\n    {\\n      \"source_entity_name\": \"Sleeper\",\\n      \"target_entity_name\": \"Schedules\",\\n      \"relation_type\": \"DEPENDS_ON\",\\n      \"fact\": \"The Sleeper extension registers its league jobs with the Schedules app, and this dependency is enforced at mount time.\",\\n      \"episode_indices\": ['",
+      "malformed JSON (length, 16384 tokens, 275 s): '{\\n  \"extracted_entities\": [\\n    {\\n      \"name\": \"fagerbergj/quack#2178\",\\n      \"entity_type_id\": 0,\\n      \"episode_indices\"\\n   \\n  \\t\\n\\n\\n\\n\\n   \\n\\n\\n    \\n\\t\\n\\n\\n\\n \\n\\n    \\n    \\n\\n   \\n\\n\\n \\n\\n    \\n\\t\\n\\n\\n\\n\\n  \\t\\n\\n \\n\\n  \\n\\n  \\t\\n\\n\\n\\n\\n\\t\\n\\n\\n\\n\\n\\t\\n\\n   \\n\\n\\n\\n\\n\\t\\n\\n\\n\\n\\t\\n\\n\\n\\t\\n\\n    \\n \\n\\t\\n\\n\\n\\n\\n   \\t\\n    \\n\\n\\t\\n\\t \\n\\t \\n\\t \\n\\t\\n\\t \\n\\t \\n\\n\\t \\n\\t \\n\\t\\n\\t\\n\\n\\n\\n\\n\\n\\n\\t\\n\\t \\n'",
+      "malformed JSON (length, 16384 tokens, 164 s): '{\\n  \"extracted_entities\": [\\n    {\\n      \"name\": \"fagerbergj/quack\",\\n      \"entity_type_id\": 0,\\n      \"episode_indices\"\\n   \\n   \\n \\n \\n  \\n \\n  \\n   \\n  \\n \\n  \\n   \\n \\n \\n  \\n \\n  \\n  \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n'",
+      "malformed JSON (length, 16384 tokens, 165 s): '{\\n  \"extracted_entities\": [\\n    {\\n      \"name\": \"fagerbergj/quack\",\\n      \"entity_type_id\": 0,\\n      \"episode_indices\"\\n   \\n    \\n \\n   \\n \\n \\n   \\n \\n  \\n \\n \\n \\n \\n \\n   \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n \\n '"
+    ],
+    "malformed_json": 5,
+    "embed_calls": 98,
+    "embed_seconds": 117.0297691822052
+  }
+}
