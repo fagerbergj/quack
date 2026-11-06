@@ -1,52 +1,20 @@
-# Build artifacts
 node_modules
-frontend/dist
-frontend/render-check/
-frontend/.vitest-attachments/
-frontend/.vitest/
-frontend/src/__screenshots__/
-/quack
-/quack-sandbox
-.test/
-# Embedded SPA is built into internal/serve/web/dist by `make build`. Ignore
-# the build output; only the .gitkeep placeholder is tracked so a fresh `go
-# build` (without building the frontend) still satisfies //go:embed.
-/internal/serve/web/dist/*
-!/internal/serve/web/dist/.gitkeep
+packages/web/dist/
 *.db
 *.log
 *.swp
 *~
 
-# A committed go.work would change every build.
-go.work
-go.work.sum
-
 # Local env (secrets)
 .env
-
-# quack init / quack -p output when run from the repo root (README quickstart)
-/quack.yaml
-/workspace/
 
 # Local-only scratch: design specs, notes, throwaway configs (never committed)
 .quack/
 
+# Personal, host-specific deployment notes - untracked by design.
+AGENTS.md.local
+.pi-glla/
+
 # IDE
 .idea
 .vscode
-
-# Note: generated code (internal/schema/*.gen.go, frontend/src/generated/) is
-# committed on purpose so the codegen-drift CI check can diff against it.
-
-# Storybook build output
-storybook-static
-
-# Local working docs (spec/spike notes) - not part of the repo
-.quack/
-
-# Personal, host-specific deployment notes - untracked by design.
-AGENTS.md.local
-testdata/qa/github/deliveries.jsonl
-.pi-glla/
-/v1/packages/web/dist/

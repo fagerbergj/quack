@@ -1,10 +1,10 @@
-# v1 QA rig
+# QA rig
 
-The "exercise it on a non-production server" check, made repeatable. `v1/tools/qa/` starts a throwaway distributor on free ports, drives the web UI with Playwright at desktop and phone widths in light and dark, and prints a pass/fail line per step with the screenshot paths. A v1 pull request that changes the UI or a page route cites a scenario run in its description (the scenarios run, the summary, and which screenshots you looked at).
+The "exercise it on a non-production server" check, made repeatable. `tools/qa/` starts a throwaway distributor on free ports, drives the web UI with Playwright at desktop and phone widths in light and dark, and prints a pass/fail line per step with the screenshot paths. A pull request that changes the UI or a page route cites a scenario run in its description (the scenarios run, the summary, and which screenshots you looked at).
 
 ## Run
 
-From `v1/`:
+From the repo root:
 
 ```
 npm ci
@@ -40,7 +40,7 @@ The demo session is a plain `quack` agent reply shaped like a review, not a GitH
 
 ## Add a scenario
 
-Add `v1/tools/qa/scenarios/<name>.ts` that default-exports a `Scenario`: the stack it needs and a `run(ctx)`. Wrap checks in `ctx.step` or `eachView` (which repeats a check at 1280/400 and light/dark), assert with `visible(locator)`, and save images with `ctx.shot(page, name)`.
+Add `tools/qa/scenarios/<name>.ts` that default-exports a `Scenario`: the stack it needs and a `run(ctx)`. Wrap checks in `ctx.step` or `eachView` (which repeats a check at 1280/400 and light/dark), assert with `visible(locator)`, and save images with `ctx.shot(page, name)`.
 
 ```ts
 import { eachView, visible, type Scenario } from '../scenario.ts';

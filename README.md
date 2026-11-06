@@ -1,102 +1,31 @@
 # Quack
 
-**Quack** is my own **local LLM helper** - able to handle day-to-day tasks without my constant involvement or hand-holding. The name fits the design: it's the rubber duck that *talks back* (it answers), and whose agents *talk back to each other* (adversarial vetting) before any answer is trusted.
+Quack is a self-hosted agent server for local LLMs. A distributor runs one session process per conversation, each driving an agent bundle on pi-durable, and every sealed artifact can pass an independent judge before it counts. Extensions add the GitHub reviewer and implementer, Sleeper fantasy-football jobs, reMarkable ingest, research, schedules and contracts. A React web UI and the `quack` CLI talk to the distributor over REST and WebSocket.
 
-## Philosophy
+## Layout
 
-Quack's bet: a handful of **minimally-scoped agents**, each narrow enough to reason about, **adversarially vetted** against each other, beats trusting one big model to get it right on the first try. A request is decomposed into a DAG of small, single-purpose agents; every agent's output has to survive an independent judge - genuinely different weights, scoring against concrete, per-task criteria - before it counts. The goal is a system that's greater than the sum of its (deliberately small) parts.
+- `packages/` - npm workspaces, TypeScript run directly by Node's type stripping. Core: `sdk` (the extension contract), `session`, `runtime`, `distributor`, `index`, `web`. Extensions: `judge`, `workflows`, `slots`, `traces`, `github`, `home`, `sleeper`, `remarkable`, `research`, `contracts`, `schedules`. Tools: `eval`, `cli`.
+- `agents/` - agent bundles (`agent.json`, `prompt.md`, `version.lock`).
+- `tools/` - repo gates (`boundary`, `sloplint`, `dupl`, `bundle-locks`, `leak-check`), the QA rig and the reviewer bench.
+- `docs/` - the CLI, the QA rig, PR evidence and rollout checks.
+- `Dockerfile` - the one image every service runs from.
 
-My motivation for building it this way: getting more real use out of smaller open-source models running locally, where no single model can be trusted by default. That constraint shaped the design, but it doesn't require open or local models. An API-backed model slots into the same provider config as anything self-hosted, worker or judge alike.
+## Build and test
 
-## Quickstart
-
-Needs Go 1.26+, Node 24+, and git.
-
-```bash
-make build      # compiles the frontend, embeds it and the dotagents skill snapshot, builds ./quack
-./quack init
-```
-
-CLI only, no web UI: `go build -o quack ./cmd/quack`.
-
-A fresh clone builds and boots with nothing vendored: `embed.go` embeds a tracked snapshot of dotagents' skills as the offline fallback. At boot, the plugin registry seeds and fetches dotagents and ponytail; offline, only the embedded dotagents snapshot serves skills until a fetch succeeds.
-
-`quack init` asks a short sequence of questions, in order:
-
-1. **How will you use quack?** → *Local - run quack on this machine* (Remote just registers someone else's server and skips everything below).
-2. **LLM provider** → an OpenAI-compatible endpoint + API key (a local llama-swap/Ollama/vLLM server, or a hosted API).
-3. **Model roles**, each pre-filled with a detected default and (except main) a "None - disable" option:
-   - **Main** - the model quack reasons and plans with.
-   - **Judge** - the trust gate; None disables adversarial vetting entirely.
-   - **Embedding** - semantic memory; None disables memory.
-   - **Vision** / **Audio** - the image-reader / media-reader agents.
-4. **Optional features** (multi-select) - web search, web fetch, coding agents.
-   - Picking "Coding agents" adds two more questions: a coder model and the workspace sandbox mode (`bwrap` or `none`). The coding agents run as external [PIG](https://github.com/MichaelKinsy/PiG) processes over ACP (through the `quack-acp` shim), so `quack-acp` and `pig-quack` have to be on the server's PATH; the image ships both under `/usr/local/bin`.
-5. **Stores** - session storage (sqlite by default), plus a memory store if you set an embedding model, and search/fetch backends for whichever features you picked. Defaults are sane; enter accepts them.
-6. **Review** - a summary of every answer above, then confirm to write `quack.yaml`.
+Needs Node 26.13 (`.node-version`). Everything runs from the repo root.
 
 ```bash
-./quack -p "Research the best time to visit Dublin" # one-shot prompt, print and exit
+npm ci
+npm run typecheck
+npm test                                  # node:test for packages and tools, then vitest for packages/web
+npm run sloplint -- diff origin/<trunk>   # after committing; reads commits only
+docker build .
 ```
 
-`-p` is the fastest way in: it prints the answer and exits with a pipeable status (`0` answered, `1` failed, `2` paused on a question). For anything longer-running, `quack chat new` starts a session, `quack chat send <id> "<msg>"` talks to it, and `quack chat show <id> -f` follows a run live. Full command reference: [`docs/cli.md`](docs/cli.md).
+Three reMarkable tests need the `rmc` Python module: `pip install --no-deps -r packages/remarkable/requirements.txt`. The Postgres index tests skip unless `QUACK_TEST_DATABASE_URL` is set. The contracts tests need `oasdiff` on `PATH` (the version the Dockerfile pins).
 
-This is the "fully local, no containers" shape (sqlite, no qdrant). For the Docker-stack and always-on remote-server shapes, see [`docs/configuration/deployment.md`](docs/configuration/deployment.md). For dev setup (frontend dev server, running the test suite) see [CONTRIBUTING.md](CONTRIBUTING.md).
+## Run
 
-## Architecture
+`node packages/distributor/src/main.ts` serves the API and the web UI on `PORT` (default 8080), reading `QUACK_CONFIG` (the deployment file), `QUACK_AGENTS_DIR` and `QUACK_DATA_DIR`. `node packages/runtime/src/validate.ts` checks a deployment file, the bundles and every session's pinned agent before a rollout; see [docs/README.md](docs/README.md). The CLI is [docs/cli.md](docs/cli.md) and the QA rig is [docs/qa.md](docs/qa.md).
 
-Quack is a Go monorepo built on **[Google ADK for Go][adk]**. Clients hand it a request through a gateway, and from there the **orchestrator** plans a DAG of agents that runs as one native ADK graph, every node wrapped in quack's own **trust gate** before its output counts. It all sits on pluggable model providers and data stores. Runs happen in the background, stream their progress, and survive a restart.
-
-```mermaid
-flowchart TB
-  subgraph Clients
-    OC["MCP client"]
-    CC["Claude Code"]
-    SPA["Web SPA"]
-    GH["GitHub App<br/>labels + /quack"]
-  end
-
-  subgraph GW["Gateway (OIDC)"]
-    FA["forward-auth · /api/v1/quack"]
-  end
-
-  OC -->|MCP| FA
-  CC -->|MCP| FA
-  SPA -->|REST + SSE| FA
-  GH -->|webhook| API
-
-  FA --> API["Quack API<br/>REST / MCP / A2A<br/>async + streaming"]
-  API --> ORCH["Orchestrator<br/>planner + executor"]
-  ORCH --> REG[("Agent registry<br/>A2A cards")]
-  ORCH --> EX["Native ADK graph<br/>per plan"]
-  EX --> NODE
-
-  subgraph NODE["Trust gate (RunGatedRefine)"]
-    CONT["continuation<br/>(mechanical completion)"] --> CHECK["deterministic checks<br/>(build/vet/test)"] --> JUDGE["independent judge<br/>(G-Eval, weakest-link)"]
-  end
-
-  NODE -->|ADK runner| LLM[("Model provider(s)<br/>pluggable")]
-  ORCH --> MEM["memory.Store<br/>only vetted findings"]
-  MEM --> QD[("qdrant<br/>semantic memory / RAG")]
-  API --> PG[("Postgres<br/>· sessions <br>· events<br/>· DAG state<br>· app tables<br/>· structured memory")]
-  MEM --> PG
-```
-
-- **Adversarial vetting** - continuation → deterministic checks → independent judge, cheapest-first, before a node's output flows downstream: [`docs/configuration/trust-gate.md`](docs/configuration/trust-gate.md).
-- **Orchestrator** - plan → execute → vet → synthesize, resumable after a crash: [`docs/api.md`](docs/api.md), `internal/dag`.
-- **Agents** - a declarative bundle (card + prompt), no code; native ADK agents or external ACP subprocesses for coding: [`docs/configuration/agents.md`](docs/configuration/agents.md).
-- **Memory** - only adversarially-vetted findings are committed durably (semantic + structured), so quack learns over time without trusting a worker's raw claim: [`docs/configuration/stores.md`](docs/configuration/stores.md).
-- **Models, tools, stores, auth, workspace sandboxing** - the full configuration reference: [`docs/configuration/`](docs/configuration/).
-- **API surface** - REST, MCP, A2A, and streaming: [`docs/api.md`](docs/api.md).
-- **Observability** - OTel traces and metrics, emission-only: [`docs/configuration/observability.md`](docs/configuration/observability.md).
-- **Clients** - the CLI ([`docs/cli.md`](docs/cli.md)) and the web SPA ([`docs/ui.md`](docs/ui.md)); Claude Code and other MCP clients talk to quack over MCP, the GitHub App over its own webhook ([`docs/extensions/github.md`](docs/extensions/github.md)).
-
-## Documentation
-
-For more information on how to work with and configure Quack, see:
-
-- [`docs/`](docs/) - human-written setup and configuration guides: the CLI, the web SPA, the API surface, configuration (models, agents, the trust gate, stores, auth, workspace, deployment shapes, observability), the GitHub App, and the FAQ.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) - the issue → plan → implement → review → merge loop, dev setup, CI/CD.
-- [`AGENTS.md`](AGENTS.md) - the agent operating rules.
-
-[adk]: https://github.com/google/adk-go
+CI (`.github/workflows/v1.yaml`) runs typecheck, tests, sloplint and a live session-isolation test on every pull request, and each trunk push publishes `ghcr.io/fagerbergj/quack:v1-<sha>`.

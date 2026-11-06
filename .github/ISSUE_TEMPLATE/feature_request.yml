@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        quack is **issue-driven and agent-executed**: a good issue is already half a spec. Fill the fields below and the `quack:plan` step (or a human planner) has what it needs. See [AGENTS.md → Spec-Driven Development](https://github.com/fagerbergj/quack/blob/main/AGENTS.md) and [CONTRIBUTING.md](https://github.com/fagerbergj/quack/blob/main/CONTRIBUTING.md).
+        quack is **issue-driven and agent-executed**: a good issue is already half a spec. Fill the fields below and the `quack:plan` step (or a human planner) has what it needs.
   - type: textarea
     id: problem
     attributes:
@@ -21,7 +21,7 @@ body:
       description: What this change should do. Prefer **reuse or extend** an existing seam over adding new machinery - name the code it should build on.
       placeholder: |
         - Add …
-        - Rides on the existing `MemoryScope` / `repo:` bucket (internal/memory/scope.go)
+        - Rides on the existing <seam> (packages/<name>/src/<file>.ts)
     validations:
       required: true
   - type: textarea
@@ -55,10 +55,11 @@ body:
     attributes:
       label: Area
       options:
-        - agents (agents, skills, memory, tools)
+        - agents (bundles, prompts, rubrics)
         - github (GitHub App / webhook)
-        - frontend (React / Vite)
-        - orchestrator / DAG / gate
+        - extensions (sleeper, remarkable, research, schedules, contracts)
+        - web UI (packages/web)
+        - session / distributor / judge
         - inference / models
         - other / not sure
     validations:

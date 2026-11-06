@@ -1,6 +1,6 @@
 # The quack CLI
 
-`v1/packages/cli`: operations and scripting against a distributor, no chat TUI. `quack --help` lists every command; `--json` prints the API's JSON unchanged. The URL is `--url`, else `$QUACK_URL`, else `http://localhost:8080`; `$QUACK_ADMIN_TOKEN` is sent when set. Exit codes: 0 ok, 1 error or failed run, 2 not found.
+`packages/cli`: operations and scripting against a distributor, no chat TUI. `quack --help` lists every command; `--json` prints the API's JSON unchanged. The URL is `--url`, else `$QUACK_URL`, else `http://localhost:8080`; `$QUACK_ADMIN_TOKEN` is sent when set. Exit codes: 0 ok, 1 error or failed run, 2 not found.
 
 | Command | Does |
 | --- | --- |

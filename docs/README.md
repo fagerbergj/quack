@@ -1,17 +1,17 @@
-# Quack v1
+# Quack docs
 
 The operator CLI is described in [cli.md](cli.md) and the QA rig in [qa.md](qa.md).
 
-## Evidence for v1 pull requests
+## Evidence for pull requests
 
-A v1 pull request into the `v1` trunk shows green v1 CI (typecheck, tests, sloplint) and, for any change on the model path, a 1-3 item smoke test against local llm-swap, with the commands and output in the PR. v0's QA rig in `AGENTS.md.local` covers v0 only.
+A pull request into the trunk shows green CI (typecheck, tests, sloplint) and, for any change on the model path, a 1-3 item smoke test against local llm-swap, with the commands and output in the PR.
 
 ### Evidence for a judge or rubric change
 
 Replay the same recorded cases under the baseline and the candidate, three times each, on local models, the same day:
 
 ```
-cd v1 && QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --classifier clef/clef --arm base=origin/v1 --arm cand=. --repeat 3 --concurrency 2
+QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --classifier clef/clef --arm base=<trunk ref> --arm cand=. --repeat 3 --concurrency 2
 ```
 
 `cases.json` is an array of `{ case, kind, checks?, session?, version?, content?, evidence? }`. `kind` picks the extension's eval adapter (its rubric and evidence builder). `session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter; `content` and `evidence` (scope to units) give both inline for a kind whose adapter cannot rebuild evidence, such as `github.review`. `checks` (`id` or `criterion.id`) limits the run to the checks being watched. An arm is `label=ref`: `.` is this tree, any other value is a git ref whose rubrics and evidence code are used while the judge engine stays this tree's, so a change to `packages/judge` itself is not visible to a baseline arm. Without `--arm` it runs one arm, `current=.`.
