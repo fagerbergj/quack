@@ -12,9 +12,7 @@
     "@quack/sdk": "*",
     "@quack/judge": "*",
     "@quack/runtime": "*",
-    "@quack/session": "*"
-  },
-  "devDependencies": {
+    "@quack/session": "*",
     "@earendil-works/pi-ai": "1.5.0"
   }
 }

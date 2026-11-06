@@ -1,13 +1,13 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type MutableModels } from '@earendil-works/pi-ai';
+import type { MutableModels } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import type { Context } from '@earendil-works/chord/context';
-import { defineExtension, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { rejudge, type ClassifierRef, type Evidence, type ModelRef, type Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
-import { openSession } from '@quack/session';
+import { driveTool } from './driver.ts';
 import { readSession } from './record.ts';
 
 /** A recorded artifact to judge: from a session directory, or with its content and evidence given inline (for a kind whose adapter cannot rebuild evidence). */
@@ -77,17 +77,9 @@ export async function replayJudge(o: Options): Promise<Row[]> {
       return { output: [{ type: 'text', text: 'done' }] };
     },
   });
-  // The judge's calls need a tool's api, so a scripted one-tool session hosts them.
-  const faux = fauxProvider({ models: [{ id: 'driver' }] });
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('replay_judge', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('replayed')]);
-  o.models.setProvider(faux.provider);
-  const m = faux.getModel();
   const dir = mkdtempSync(join(tmpdir(), 'quack-judge-replay-'));
   try {
-    const session = await openSession({ dir, models: o.models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'judge-replay', tools: [replay] })] } });
-    const result = await session.submit('Replay the judge.', 'judge-replay', true);
-    if (result.status !== 'done') throw new Error(`judge replay run ${result.status}${'reason' in result ? `: ${result.reason}` : ''}`);
-    await session.close();
+    await driveTool(o.models, dir, replay, 'judge-replay');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

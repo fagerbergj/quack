@@ -29,6 +29,21 @@ test('flags comment runs over two lines that touch changed lines', () => {
   assert.deepEqual(lintSource('a.ts', src, [[4, 7]]), []);
 });
 
+test('a comment run is flagged wherever it sits: before a closing brace, at the end of a file, or trailing code lines', () => {
+  const run = '  // a\n  // b\n  // c\n';
+  const at = (src: string, path = 'a.ts') => lintSource(path, src, 'all').map((f) => f.line);
+  assert.deepEqual(at(`function f() {\n  g();\n${run}}\n`), [3]);
+  assert.deepEqual(at(`const o = {\n  a: 1,\n${run}};\n`), [3]);
+  assert.deepEqual(at(`switch (x) {\n  case 1:\n${run}}\n`), [3]);
+  assert.deepEqual(at(`const a = 1;\n${run}`), [2]);
+  assert.deepEqual(at('const a = 1; // a\nconst b = 2; // b\nconst c = 3; // c\n'), [1]);
+});
+
+test('a comment inside code and slashes in JSX text are not comment lines', () => {
+  assert.deepEqual(lintSource('a.ts', 'type T = {\n  /** a */\n  x: { /** b */ y: 1 };\n  /** c */\n};\n', 'all'), []);
+  assert.deepEqual(lintSource('a.tsx', 'const x = <p>\n  // a\n  // b\n  // c\n</p>;\n', 'all'), []);
+});
+
 test('parses -U0 hunks, including pure deletions', () => {
   const diff = ['diff --git a/v1/x.ts b/v1/x.ts', '--- a/v1/x.ts', '+++ b/v1/x.ts', '@@ -1 +1,3 @@', '@@ -9,2 +11,0 @@', '@@ -20 +22 @@'].join('\n');
   assert.deepEqual(changedRanges(diff).get('v1/x.ts'), [[1, 3], [22, 22]]);

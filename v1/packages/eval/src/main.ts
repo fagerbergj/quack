@@ -7,7 +7,8 @@ import { itemFrom, type Label } from './dataset.ts';
 import { langfuse } from './langfuse.ts';
 import { readSession } from './record.ts';
 import { replay } from './replay.ts';
-import { publish, summarize } from './report.ts';
+import { eachItem } from './pool.ts';
+import { publish, scoresOf, summarize } from './report.ts';
 
 const adapters = adaptersOf(await loadManifests());
 const services = servicesOf(adapters);
@@ -43,17 +44,19 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
   const items = (await lf.items(dataset)).filter((i) => !only.length || only.includes(i.id));
   // A benchmark that can promote an agent needs 20 real cases; a partial run still reports, it just cannot promote.
   if (!only.length && items.length < MIN_CASES) console.log(`note: ${dataset} has ${items.length} items; a promotion needs ${MIN_CASES}`);
-  const queue = [...items];
-  const rows: Record<string, number>[] = [];
-  await Promise.all(Array.from({ length: concurrency }, async () => {
-    for (let item = queue.shift(); item; item = queue.shift()) {
-      const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, services);
-      const scores = await publish(lf, runName, r, blocks, await adapterScores(adapters, r.record));
-      rows.push(scores);
-      console.log(`${item.id} ${JSON.stringify(scores)}${r.error ? ` error: ${r.error}` : ''}`);
-    }
-  }));
-  console.log(`${runName}: ${summarize(rows)}`);
+  const { results: rows, failures } = await eachItem(items, concurrency, async (item) => {
+    const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, services);
+    const extra = await adapterScores(adapters, r.record);
+    // A replay can take half an hour; a failed publish still prints its scores so the result is not lost.
+    const scores = await publish(lf, runName, r, blocks, extra).catch((err: Error) => {
+      throw new Error(`publish failed: ${err.message}; scores ${JSON.stringify({ ...scoresOf(r, blocks), ...extra })}`);
+    });
+    console.log(`${item.id} ${JSON.stringify(scores)}${r.error ? ` error: ${r.error}` : ''}`);
+    return scores;
+  });
+  for (const f of failures) console.error(`${f.item.id} failed: ${f.error.message}`);
+  console.log(`${runName}: ${summarize(rows)}${failures.length ? `; ${failures.length} of ${items.length} items failed` : ''}`);
+  if (failures.length) process.exitCode = 1;
 } else {
   throw new Error('usage: main.ts dataset <dataset> <agent> <good|bad|-> <session-dir>... | run [--concurrency=N] <dataset> <run-name> <deployment.json> <agent.json> [item-id...]');
 }

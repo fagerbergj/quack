@@ -25,10 +25,40 @@ test('a manifest requires or marks optional only packages it depends on', async 
 });
 
 test('arrows point down only; runtime assembles everything and only core and leaves import it', () => {
-  const bad = [['github', 'sleeper'], ['judge', 'github'], ['workflows', 'sleeper'], ['sdk', 'judge'], ['index', 'workflows'], ['github', 'runtime'], ['judge', 'runtime'], ['github', 'eval'], ['github', 'nope']];
+  const bad = [['github', 'sleeper'], ['judge', 'github'], ['workflows', 'sleeper'], ['sdk', 'judge'], ['index', 'workflows'], ['github', 'runtime'], ['judge', 'runtime'], ['github', 'eval'], ['github', 'nope'],
+    ['github', 'distributor'], ['sleeper', 'session'], ['judge', 'index'], ['workflows', 'session'], ['research', 'web']];
   for (const [from, to] of bad) assert.ok(arrowProblem(from, to), `${from} -> ${to}`);
   const good = [['sleeper', 'workflows'], ['workflows', 'judge'], ['github', 'sdk'], ['runtime', 'github'], ['eval', 'runtime'], ['distributor', 'runtime'], ['eval', 'judge'], ['session', 'sdk']];
   for (const [from, to] of good) assert.equal(arrowProblem(from, to), undefined, `${from} -> ${to}`);
+});
+
+function github(src: string, deps: Record<string, string> = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-boundary-'));
+  for (const name of ['github', 'sleeper', 'sdk', 'judge']) {
+    mkdirSync(join(dir, name, 'src'), { recursive: true });
+    writeFileSync(join(dir, name, 'package.json'), JSON.stringify({ dependencies: name === 'github' ? deps : {} }));
+  }
+  writeFileSync(join(dir, 'github', 'src', 'a.tsx'), src);
+  return boundaryProblems(packageEdges(dir), {});
+}
+
+test('every import form is seen: quotes, side effects, re-exports, dynamic, type, require, relative and line breaks', () => {
+  const forms = [
+    'import { x } from "@quack/sleeper";', "import '@quack/sleeper';", "export * from '@quack/sleeper/x';", 'const m = await import(`@quack/sleeper`);',
+    'const m = await import("@quack/sleeper");', "const m = require('@quack/sleeper');", "import { x } from '../../sleeper/src/index.ts';",
+    "import {\n  x,\n} from\n  '@quack/sleeper';", "type T = import('@quack/sleeper').T;", "import type { T } from '@quack/sleeper';",
+  ];
+  for (const src of forms) assert.match(github(src).join('\n'), /github \(feature\) must not import sleeper/, src);
+  assert.match(github('const m = await import(name);').join('\n'), /computed name/);
+  assert.match(github("import x from '../../../elsewhere.ts';").join('\n'), /outside packages/);
+  const runtime = (to: string) => boundaryProblems([{ from: 'runtime', to, via: 'src/a.ts', declared: false }], {});
+  assert.deepEqual(runtime('<computed spec>'), [], 'the runtime loads extensions by computed specifier');
+  assert.match(runtime('<outside packages>').join('\n'), /runtime imports a file outside packages/);
+});
+
+test('an import of a package the importer does not declare is reported, even when its layer allows it', () => {
+  assert.deepEqual(github("import { x } from '@quack/sdk';"), ['github imports @quack/sdk without declaring it in package.json (src/a.tsx)']);
+  assert.deepEqual(github("import { x } from '@quack/sdk';\nimport { j } from './judge.ts';", { '@quack/sdk': '*' }), []);
 });
 
 test('a src import or dependency that breaks a layer is reported, and the allow list can excuse it once', () => {

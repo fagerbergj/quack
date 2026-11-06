@@ -323,6 +323,23 @@ describe('quack', () => {
     mute.close();
   });
 
+  it('an invoke retried after a dropped connection reuses its request id, and two invokes never share one', async () => {
+    const ids: string[] = [];
+    const flaky = createServer(async (req, res) => {
+      ids.push((await readBody(req)).requestId);
+      if (ids.length === 1) return res.destroy();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'done' }));
+    });
+    await new Promise<void>((r) => flaky.listen(0, '127.0.0.1', r));
+    const c = client(`http://127.0.0.1:${(flaky.address() as AddressInfo).port}`);
+    assert.equal((await c.invoke('ui:a', 'hi', { wait: true })).status, 'done');
+    await Promise.all([c.invoke('ui:a', 'x'), c.invoke('ui:a', 'y')]);
+    flaky.close();
+    assert.equal(ids[0], ids[1]);
+    assert.equal(new Set(ids).size, 3);
+  });
+
   it('exits 1 on usage errors and an unreachable server', async () => {
     assert.equal((await cli(['frobnicate'])).code, 1);
     assert.equal((await cli(['show'])).code, 1);

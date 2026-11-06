@@ -1,10 +1,11 @@
 // Runs the v1 reviewer on PRs v0 already reviewed, each at the head v0 first reviewed, posting nothing.
 // Usage: node tools/bench/run.ts <out-dir> <deployment.json> <agent.json> <owner/repo> <pr>...
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stopChild, untilSettled } from '@quack/eval';
 import { childPort } from '@quack/session';
 import { stubService } from './stub-service.ts';
 
@@ -17,28 +18,6 @@ function v0First(n: string) {
   const first = reviews.find((r) => r.user.login.startsWith('quack-jason'));
   if (!first) throw new Error(`#${n} has no v0 review`);
   return { state: first.state as string, commit: first.commit_id as string, at: first.submitted_at as string, body: first.body as string };
-}
-
-// A runtime's graceful close waits for its in-flight run, so SIGKILL follows; a survivor would answer the next run's requestId from its old session.
-async function stop(child: ChildProcess) {
-  // A child that already exited (a crash) has emitted its exit event; waiting on it then would never return.
-  const exited = new Promise<void>((r) => (child.exitCode !== null || child.signalCode !== null ? r() : child.once('exit', () => r())));
-  child.kill('SIGTERM');
-  const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
-  await exited;
-  clearTimeout(timer);
-}
-
-// Polls with the same request id instead of one long wait: dedupe returns the run's status, and fetch drops a request
-// whose headers take over five minutes.
-async function untilSettled(url: string, n: string, deadline: number): Promise<unknown> {
-  const body = JSON.stringify({ input: `Review pull request ${repo}#${n}.`, requestId: `bench-${n}` });
-  for (;;) {
-    const r = (await (await fetch(`${url}/invocations`, { method: 'POST', body })).json()) as { status: string };
-    if (r.status === 'done' || r.status === 'unanswered') return r;
-    if (Date.now() > deadline) return { ...r, status: 'timeout' };
-    await new Promise((res) => setTimeout(res, 5_000));
-  }
 }
 
 const pins: Record<string, { head: string; at: string }> = {};
@@ -64,11 +43,12 @@ for (const n of prs) {
     // The runtime clones the repository before it listens, so the port wait shares the run's deadline (as eval's replay does).
     const deadline = started + 30 * 60_000;
     const port = await childPort(child, 'runtime', deadline - Date.now());
-    result = await untilSettled(`http://127.0.0.1:${port}`, n, deadline);
+    // A survivor of a stopped run would answer the next run's requestId from its old session, so stopChild escalates to SIGKILL.
+    result = await untilSettled(`http://127.0.0.1:${port}`, { input: `Review pull request ${repo}#${n}.`, requestId: `bench-${n}` }, deadline, child);
   } catch (err) {
     result = { status: 'error', error: String(err) };
   } finally {
-    await stop(child);
+    await stopChild(child);
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ pr: Number(n), seconds, result, v0: v0[n] }, null, 2));

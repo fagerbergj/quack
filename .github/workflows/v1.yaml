@@ -47,10 +47,51 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: npm run sloplint -- diff origin/${{ github.base_ref }}
 
+  # Session isolation is only provable against a real image under gVisor, so this job builds one and runs the live test.
+  isolation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: v1/.node-version
+          cache: npm
+          cache-dependency-path: v1/package-lock.json
+      - run: npm ci
+      # Prod runs sessions under runsc; if the runner cannot install it, the test still runs under runc and the job warns.
+      - id: runtime
+        name: Install gVisor (runsc) as a Docker runtime
+        run: |
+          install_runsc() {
+            curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg &&
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list &&
+            sudo apt-get update && sudo apt-get install -y runsc &&
+            sudo runsc install -- --network=host && sudo systemctl restart docker &&
+            docker run --rm --runtime=runsc --network=host busybox true
+          }
+          if install_runsc; then echo "name=runsc" >> "$GITHUB_OUTPUT"; else echo "::warning::gVisor is unavailable on this runner; the isolation test runs under runc"; echo "name=runc" >> "$GITHUB_OUTPUT"; fi
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: v1
+          load: true
+          tags: quack:isolation
+          cache-from: type=gha,scope=quack-v1
+      # Host networking lets the runner reach the session on 127.0.0.1:8080; the assertions are about env, files and tokens.
+      - run: set -o pipefail; node --test --test-reporter=spec packages/distributor/test/docker-live.test.ts | tee live.log; grep -q '^ℹ pass 1' live.log
+        env:
+          QUACK_LIVE_IMAGE: quack:isolation
+          QUACK_LIVE_RUNTIME: ${{ steps.runtime.outputs.name }}
+          QUACK_LIVE_NETWORK: host
+          QUACK_LIVE_URL: http://127.0.0.1:8080
+
   # Each trunk push publishes an image the home server pins by commit, under the public quack package.
   image:
     if: github.event_name == 'push'
-    needs: check
+    needs: [check, isolation]
     runs-on: ubuntu-latest
     permissions:
       contents: read

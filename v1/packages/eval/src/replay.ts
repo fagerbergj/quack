@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import type { EvalService } from '@quack/sdk';
 import { childPort } from '@quack/session';
 import type { DatasetItem } from './langfuse.ts';
+import { stopChild, untilSettled } from './driver.ts';
 import { readSession, type SessionRecord } from './record.ts';
 
 export type { EvalService };
@@ -16,37 +17,6 @@ export type Candidate = { deployment: string; agent: string; env?: Record<string
 export type ReplayResult = { item: DatasetItem; seconds: number; record: SessionRecord; captured: unknown[]; error?: string };
 
 const RUNTIME = fileURLToPath(new URL('../../runtime/src/main.ts', import.meta.url));
-
-// One request with wait: true holds until the run settles. A runtime that exits (a bad config path, a crash)
-// ends the wait at once instead of at the deadline; a dropped connection is retried.
-async function untilSettled(input: string, deadline: number, child: ChildProcess) {
-  const stop = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  const failed = new Promise<never>((_, reject) => {
-    const fail = (message: string) => (stop.abort(), reject(new Error(message)));
-    const exited = () => fail(`runtime exited with ${child.exitCode ?? child.signalCode}`);
-    if (child.exitCode !== null || child.signalCode) exited();
-    child.once('exit', exited);
-    timer = setTimeout(() => fail('replay timed out'), Math.max(0, deadline - Date.now()));
-  });
-  const settled = async () => {
-    const url = `http://127.0.0.1:${await childPort(child, 'runtime', deadline - Date.now())}`;
-    for (;;) {
-      try {
-        await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1', wait: true }), signal: stop.signal });
-        return;
-      } catch (err) {
-        if (stop.signal.aborted) throw err;
-        await new Promise((res) => setTimeout(res, 200));
-      }
-    }
-  };
-  try {
-    await Promise.race([settled(), failed]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 // Node ends a crash dump with its version line, so the error line itself is the one that says what went wrong.
 const crashLine = (stderr: string) => {
@@ -69,16 +39,13 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   let error: string | undefined;
   try {
     // Only the first input replays: later turns were the operator's answers to what the recorded run said.
-    await untilSettled(inputs[0] ?? '', started + timeoutMs, child);
+    const deadline = started + timeoutMs;
+    const port = await childPort(child, 'runtime', deadline - Date.now());
+    await untilSettled(`http://127.0.0.1:${port}`, { input: inputs[0] ?? '', requestId: 'eval-1' }, deadline, child);
   } catch (err) {
     error = `${(err as Error).message}${stderr ? `: ${crashLine(stderr)}` : ''}`;
   } finally {
-    // A child killed by a signal has a null exitCode too; waiting on its exit event then would never return.
-    if (child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise((r) => child.once('exit', r));
-      child.kill('SIGTERM');
-      await exited;
-    }
+    await stopChild(child);
     await Promise.all(doubles.map((d) => d.close()));
   }
   const seconds = Math.round((Date.now() - started) / 1000);

@@ -1,9 +1,10 @@
-// sloplint for TypeScript: comment runs and cyclomatic complexity on diff-touched code, mirroring the Go tool.
+// sloplint for TypeScript: comment runs, cyclomatic complexity and duplicated code on diff-touched lines, mirroring v0's gates.
 // Usage: node tools/sloplint.ts diff <git-ref> | repo
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
+import { clones, MIN_TOKENS } from './dupl.ts';
 
 export const MAX_COMMENT_RUN = 2;
 export const MAX_CC = 15;
@@ -29,23 +30,40 @@ export function changedRanges(diff: string): Map<string, Range[]> {
   return out;
 }
 
+/** Every comment's range, from the trivia around each token, so one before a closing brace or at the end of the file counts. */
+function commentRanges(sf: ts.SourceFile): ts.CommentRange[] {
+  const byPos = new Map<number, ts.CommentRange>();
+  const jsxText: Range[] = [];
+  const visit = (node: ts.Node): void => {
+    if (node.kind === ts.SyntaxKind.JsxText) jsxText.push([node.pos, node.end]);
+    for (const r of [...(ts.getLeadingCommentRanges(sf.text, node.getFullStart()) ?? []), ...(ts.getTrailingCommentRanges(sf.text, node.getEnd()) ?? [])]) byPos.set(r.pos, r);
+    for (const child of node.getChildren(sf)) visit(child);
+  };
+  visit(sf);
+  // Slashes in JSX text are text the page shows, not comments.
+  return [...byPos.values()].filter((r) => !jsxText.some(([a, b]) => r.pos >= a && r.pos < b));
+}
+
+/** Lines whose last non-blank character sits in a comment: comment-only lines and code with a trailing comment, not a comment inside code. */
+function commentLines(sf: ts.SourceFile): boolean[] {
+  const inComment = new Uint8Array(sf.text.length);
+  for (const r of commentRanges(sf)) inComment.fill(1, r.pos, r.end);
+  let next = 0;
+  return sf.text.split('\n').map((line) => {
+    const [start, used] = [next, line.trimEnd().length];
+    next += line.length + 1;
+    return used > 0 && inComment[start + used - 1] === 1;
+  });
+}
+
 /** Runs of consecutive comment lines (a block comment counts each of its lines) longer than the limit. */
 function commentRuns(sf: ts.SourceFile, rs: Range[] | 'all'): Finding[] {
-  const lines = sf.text.split('\n');
-  const isComment = new Array(lines.length).fill(false);
-  ts.forEachChild(sf, function visit(node) {
-    for (const r of ts.getLeadingCommentRanges(sf.text, node.getFullStart()) ?? []) {
-      const s = sf.getLineAndCharacterOfPosition(r.pos).line;
-      const e = sf.getLineAndCharacterOfPosition(r.end).line;
-      for (let l = s; l <= e; l++) isComment[l] = true;
-    }
-    ts.forEachChild(node, visit);
-  });
+  const isComment = commentLines(sf);
   const findings: Finding[] = [];
-  for (let l = 0; l < lines.length; l++) {
+  for (let l = 0; l < isComment.length; l++) {
     if (!isComment[l] || (l > 0 && isComment[l - 1])) continue;
     let end = l;
-    while (end + 1 < lines.length && isComment[end + 1]) end++;
+    while (end + 1 < isComment.length && isComment[end + 1]) end++;
     const n = end - l + 1;
     if (n > MAX_COMMENT_RUN && overlaps(l + 1, end + 1, rs)) findings.push({ line: l + 1, message: `${n}-line comment run touches changed lines` });
   }
@@ -107,20 +125,18 @@ const linted = (rel: string) => /\.tsx?$/.test(rel) && !/\.test\.tsx?$|\/test\/|
 
 function run(mode: string, ref: string | undefined): number {
   const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-  const files = mode === 'repo'
-    ? new Map(execFileSync('git', ['ls-files', 'v1'], { cwd: root, encoding: 'utf8' }).split('\n').map((f) => [f, 'all' as const]))
+  // A file the diff names but the working tree no longer has (moved or deleted) has nothing left to lint.
+  const tree = new Map(execFileSync('git', ['ls-files', 'v1'], { cwd: root, encoding: 'utf8' }).split('\n')
+    .filter((f) => linted(f) && existsSync(join(root, f))).map((f) => [f, readFileSync(join(root, f), 'utf8')]));
+  const touched: Map<string, Range[] | 'all'> = mode === 'repo'
+    ? new Map([...tree.keys()].map((f) => [f, 'all' as const]))
     : changedRanges(execFileSync('git', ['diff', '-U0', `${ref}...HEAD`, '--', 'v1'], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 }));
-  let count = 0;
-  for (const [rel, rs] of files) {
-    // A file the diff names but the working tree no longer has (moved or deleted) has nothing left to lint.
-    if (!linted(rel) || !existsSync(join(root, rel))) continue;
-    for (const f of lintSource(rel, readFileSync(join(root, rel), 'utf8'), rs)) {
-      console.log(`${relative(process.cwd(), join(root, rel))}:${f.line}: ${f.message}`);
-      count++;
-    }
-  }
-  if (count === 0) console.log('sloplint: ok');
-  return mode === 'repo' ? 0 : Math.min(count, 1);
+  const files = new Map([...touched].filter(([f]) => tree.has(f)));
+  const findings = [...files].flatMap(([rel, rs]) => lintSource(rel, tree.get(rel)!, rs).map((f) => ({ rel, ...f })));
+  for (const c of clones(tree, files)) findings.push({ rel: c.file, line: c.line, message: `lines ${c.line}-${c.endLine} duplicate ${relative(process.cwd(), join(root, c.other))}:${c.otherLine} (${MIN_TOKENS}+ tokens)` });
+  for (const f of findings) console.log(`${relative(process.cwd(), join(root, f.rel))}:${f.line}: ${f.message}`);
+  if (findings.length === 0) console.log('sloplint: ok');
+  return mode === 'repo' ? 0 : Math.min(findings.length, 1);
 }
 
 if (import.meta.main) {

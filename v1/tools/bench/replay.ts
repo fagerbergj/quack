@@ -3,13 +3,13 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
-import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import { defineTool } from '@earendil-works/pi-durable';
+import { driveTool } from '@quack/eval';
 import { reviewEvidence, reviewerRubric, reviewKind } from '@quack/github';
 import { feedback, rejudge, type Verdict } from '@quack/judge';
 import { Artifacts } from '@quack/sdk';
-import { buildModels, openSession, parseDeployment, resolveDeployment } from '@quack/session';
+import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
 
 const [deploymentPath, judgeRef, ...dirs] = process.argv.slice(2);
 if (!deploymentPath || !judgeRef?.includes('/') || !dirs.length) throw new Error('usage: replay.ts <deployment.json> <provider/model> <session-dir>...');
@@ -41,14 +41,7 @@ for (const dir of dirs) {
       return { output: [{ type: 'text', text: 'done' }] };
     },
   });
-  const faux = fauxProvider({ models: [{ id: 'driver' }] });
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('replay_judge', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('replayed')]);
-  const models = buildModels(deployment);
-  models.setProvider(faux.provider);
-  const m = faux.getModel();
-  const session = await openSession({ dir: copy, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'replay', tools: [replay] })] } });
-  await session.submit('Replay the judge.', `replay-${run}`, true);
-  await session.close();
+  await driveTool(buildModels(deployment), copy, replay, `replay-${run}`);
   rmSync(join(copy, '..'), { recursive: true, force: true });
   console.log(`${dir}\n${lines.join('\n')}`);
 }
