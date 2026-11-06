@@ -1,7 +1,7 @@
 import type { SleeperClient } from '../client.ts';
 import { startJob, type StartConfig } from '../jobs.ts';
 import { etDate } from '../lineup/jobs.ts';
-import type { ScheduleConfig } from '../schedules.ts';
+import { registerSchedule, type ScheduleConfig } from '../schedules.ts';
 import { nextProcessing } from '../waivers/jobs.ts';
 import type { FinderInput, TradeInput } from './facts.ts';
 
@@ -30,14 +30,8 @@ export async function registerFinderSchedules(config: ScheduleConfig, client: Sl
   if (state.season_type !== 'regular') return [];
   const run = finderRun(now(), (await client.league(league)).settings);
   if (!run) return [];
-  const id = `sleeper/trade-finder/${league}/${etDate(run.at)}`;
   const input: FinderInput = { league, week: state.week, owner };
-  const res = await (config.fetch ?? fetch)(config.url, {
-    method: 'POST',
-    body: JSON.stringify({ id, agent: FINDER_AGENT, times: [new Date(run.at).toISOString()], deadline: new Date(run.deadline).toISOString(), sessionKey: finderKey(league, state.week), input: JSON.stringify(input) }),
-  });
-  if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);
-  return [id];
+  return [await registerSchedule(config, { id: `sleeper/trade-finder/${league}/${etDate(run.at)}`, agent: FINDER_AGENT, ...run, sessionKey: finderKey(league, state.week), input })];
 }
 
 /** On-demand start (SL-2): each call is its own submission under the week's session key. */

@@ -1,4 +1,5 @@
 import type { Json, SleeperClient } from '../client.ts';
+import { newsFor } from '../lineup/news.ts';
 import { ownerTeam, round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import { playerName, record, remainingWeeks, standings, teamNames, teamOf, weekPhase, type Standing } from './week.ts';
 
@@ -81,13 +82,9 @@ export async function buildDigestFacts(deps: FactsDeps, snap: Json, input: Lineu
     return [{ id, sides, margin: round2(Math.abs(sides[0].pts - sides[1].pts)), mine: sides.some((s) => s.rosterId === mine) }];
   });
   const table = standings(league, rosters, names);
-  const news: DigestFacts['news'] = {};
-  if (deps.news && mode === 'preview') {
-    for (const s of games.flatMap((g) => g.sides)) {
-      const wanted = [...s.top, ...s.designated].map((p) => p.id);
-      for (const id of new Set<string>(wanted)) news[id] = (await deps.news({ name: playerName(dump, id), team: teamOf(dump, id), pos: dump[id]?.position ?? '' }, at)).map((n) => ({ ...n, player: playerName(dump, id) }));
-    }
-  }
+  const wanted = mode === 'preview' ? games.flatMap((g) => g.sides).flatMap((s) => [...s.top, ...s.designated]).map((p) => ({ id: p.id, name: playerName(dump, p.id), team: teamOf(dump, p.id), pos: dump[p.id]?.position ?? '' })) : [];
+  const found = await newsFor(deps.news, wanted, at);
+  const news: DigestFacts['news'] = Object.fromEntries(Object.entries(found).map(([id, items]) => [id, items.map((n) => ({ ...n, player: playerName(dump, id) }))]));
   return { league: input.league, week: input.week, mode, games, standings: table.rows, playoffTeams: table.playoffTeams, remainingWeeks: remainingWeeks(league, state.week), sourceNote: sourceNote(mode, input.week, recent.length, games.flatMap((g) => g.sides)), news };
 }
 

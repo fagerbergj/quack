@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { contentText, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { openSession } from '@quack/session';
 import { outcomeOf, WorkflowDoc, workflowSessionExtensions } from '@quack/workflows';
-import { buildSnapshot, CHAT_PROMPT, createSleeperClient, lineupWorkflow, withChat } from '../src/index.ts';
+import { CHAT_PROMPT, createSleeperClient, lineupWorkflow, withChat } from '../src/index.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/lineup.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 const AT = Date.parse('2026-11-06T15:00:00Z');
@@ -43,7 +43,7 @@ function open(chatTool?: { name: string; args: Record<string, string> }) {
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const workflow = withChat(lineupWorkflow({ client, snapshot: async (league) => ({ data: await buildSnapshot(client, league) }), now: () => AT }), { client });
+  const workflow = withChat(lineupWorkflow({ client, now: () => AT }), { client });
   return mkdtemp(join(tmpdir(), 'quack-chat-')).then(async (dir) => {
     dirs.push(dir);
     const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the lineup analyst.', extensions: workflowSessionExtensions({ workflow: NAME }, { [NAME]: workflow }) } });

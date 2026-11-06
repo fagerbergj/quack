@@ -1,42 +1,17 @@
-import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { MAX_SUGGESTIONS, VERDICTS, type FinderCard, type Offered, type TradeCard, type TRef } from './card.ts';
+import type { Evidence, Rubric } from '@quack/judge';
+import { parseCard } from '../rubric-kit.ts';
+import type { FinderCard, Offered, TradeCard, TRef } from './card.ts';
 import type { TradeFacts } from './facts.ts';
 
 type Card = TradeCard | FinderCard;
 type Row = { id: string; partner: number; give: TRef[]; get: TRef[]; verdict?: string; text: string; news: TradeCard['offers'][number]['news']; counter?: Offered | null };
 
-const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
-const parse = (artifact: string) => JSON.parse(artifact) as Card;
-const factsOf = (ev: Evidence) => ev.facts[0].state as unknown as TradeFacts;
+const parse = (artifact: string) => parseCard<Card>(artifact);
 
 /** The card's trades as one shape: an offer is judged on its verdict and reasons, a suggestion on its note. */
 function rowsOf(c: Card): Row[] {
   if (c.kind === 'trade-finder') return c.suggestions.map((s) => ({ id: `suggestion${s.rank}`, partner: s.partner.rosterId, give: [s.give], get: [s.get], text: s.note, news: s.news }));
   return c.offers.map((o, i) => ({ id: `offer${i + 1}`, partner: c.partner.rosterId, give: o.give, get: o.get, verdict: o.verdict, text: `${o.why} Flips if: ${o.flips_if}`, news: o.news, counter: o.counter }));
-}
-
-function verdictOneOf(artifact: string): CodeResult {
-  const c = parse(artifact);
-  if (c.kind === 'trade-finder') {
-    const ranked = c.suggestions.every((s, i) => s.rank === i + 1);
-    return { met: c.suggestions.length <= MAX_SUGGESTIONS && ranked ? 1 : 0, detail: `${c.suggestions.length} suggestions, ranked ${ranked}; at most ${MAX_SUGGESTIONS}, ranked from 1` };
-  }
-  const bad = c.offers.filter((o) => !VERDICTS.includes(o.verdict) || (o.verdict === 'counter') !== !!o.counter);
-  return share(c.offers.length - bad.length, c.offers.length, `verdict must be ${VERDICTS.join(', ')}, with a counter exactly when it is counter`);
-}
-
-const key = (ps: TRef[]) => ps.map((p) => p.id).sort().join(',');
-
-// Ids are checked against the rosters in the tools data, and an analysis against the offer that was asked about.
-function giveGetFromMySide(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
-  const rows = rowsOf(parse(artifact));
-  const sides = (r: Row) => [{ ps: r.give, from: f.mine.players }, { ps: r.get, from: f.partners.find((p) => p.rosterId === r.partner)?.players ?? {} }];
-  const bad = rows.filter((r) => sides(r).some(({ ps, from }) => !ps.length || ps.some((p) => from[p.id]?.proj !== p.proj)));
-  const main = rows[0];
-  const asked = !f.offer || !main || (key(main.give) === [...f.offer.give].sort().join(',') && key(main.get) === [...f.offer.get].sort().join(','));
-  const problems = [...(bad.length ? [`${bad.map((r) => r.id).join(', ')} name players or projections that differ from the rosters`] : []), ...(asked ? [] : ['the first offer is not the trade that was asked about'])];
-  return share(rows.length - bad.length - (asked ? 0 : 1), rows.length, problems.join('; '));
 }
 
 const names = (r: Row) => Object.fromEntries([...r.give, ...r.get].map((p) => [p.name, p.inj ?? 'none']));
@@ -64,16 +39,12 @@ export function tradeEvidence(f: TradeFacts) {
   };
 }
 
-// The audit's trade table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// The schema fixes the verdict and the card builder takes every player, side and projection from the rosters, so no code gate is left to fail.
 export const tradeRubric: Rubric = {
   name: 'sleeper.trade',
-  version: 3,
+  version: 4,
   threshold: 0.8,
   criteria: [
-    { id: 'faithful_to_tools', checks: [
-      { id: 'verdict_one_of', label: "Verdict isn't send, counter or decline", weight: 'gate', code: verdictOneOf },
-      { id: 'give_get_from_my_side', label: "Give and get are from the wrong side", weight: 'gate', code: giveGetFromMySide },
-    ] },
     { id: 'case_is_reasoned', checks: [
       { id: 'partner_modeled', label: "Ignores the other team's needs", weight: 4, scope: 'card', question: 'Does the case rest on the partner\'s starting slots, record and surplus from the `partner` table, not on chart value alone?' },
       { id: 'deciding_line_item', label: "Doesn't name what decides the trade", weight: 3, scope: 'suggested', question: 'Does it name the one line item that decides the call, with a condition that would flip it?' },

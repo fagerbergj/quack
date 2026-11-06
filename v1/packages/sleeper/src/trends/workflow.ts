@@ -10,11 +10,13 @@ import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildTrendsCard, KINDS, when, type TrendsDecision } from './card.ts';
 import { buildTrendsFacts, type SnapshotRef, type TrendsFacts } from './facts.ts';
 import { NEWS_CHECKS, TEXT_MAX, trendsEvidence, trendsRubric } from './rubric.ts';
+import { newsGated } from '../rubric-kit.ts';
 
 export const TRENDS_WORKFLOW = 'sleeper.trends';
 
-/** The lineup wiring plus the service's snapshot history, which the diff reads. */
+/** The lineup wiring plus the service's snapshots, which the diff reads: today's (taken if missing) and the history. */
 export type TrendsDeps = LineupDeps & {
+  snapshot: (league: string) => Promise<Json>;
   history: (league: string) => Promise<SnapshotRef[]>;
   snapshotOn: (league: string, date: string) => Promise<Json>;
 };
@@ -52,9 +54,7 @@ export function factsPrompt(f: TrendsFacts): string {
 /** Trends job (SL-1): facts, one model step for prose, a sealed card, then the judge's verdict on it. */
 export function trendsWorkflow(deps: TrendsDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  // Without a news source no item can carry a link or a conflict, so those checks are not scored; the verdict says so.
-  const rubric = deps.news ? trendsRubric : { ...trendsRubric, criteria: trendsRubric.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => !NEWS_CHECKS.includes(k.id)) })) };
-  const notes = deps.news ? [] : ['source conflicts and original sources not checked: no news source'];
+  const { rubric, notes } = newsGated(trendsRubric, NEWS_CHECKS, !!deps.news, 'source conflicts and original sources');
   const judgeOptions = (f: TrendsFacts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: trendsEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: TRENDS_WORKFLOW,

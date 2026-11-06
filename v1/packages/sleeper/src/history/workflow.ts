@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { arr, obj, str } from '@earendil-works/pi-schema';
+import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
@@ -15,7 +15,7 @@ export type HistoryDeps = LineupDeps;
 
 const decisionSchema = obj({
   summary: str({ maxLength: 800 }),
-  seasons: arr(obj({ season: str(), text: str({ maxLength: 500 }) }, { open: true })),
+  seasons: arr(obj({ season: str(), text: str({ maxLength: 500 }), picks: opt(arr(int({ minimum: 1 }))) }, { open: true })),
 }, { open: true });
 
 const seasonText = (s: SeasonFigures) => {
@@ -32,7 +32,7 @@ function prompt(f: HistoryFacts): string {
     `League history for ${f.team}, newest season first. Every figure below is computed; do not recompute or restate one differently.`,
     `Definitions in use:\n- ${Object.values(f.definitions).join('\n- ')}`,
     f.seasons.map(seasonText).join('\n\n'),
-    'Write the net-position story across the seasons in `summary`, then at most one note per season in `seasons`: what the manager controlled (lineup execution, the draft) against what they did not (points against, player outcomes). Back each criticism with a number from this season\'s figures and name the player, pick or week it is about; one bad week, one bust or one trade is not a verdict on the manager.',
+    'Write the net-position story across the seasons in `summary`, then at most one note per season in `seasons`: what the manager controlled (lineup execution, the draft) against what they did not (points against, player outcomes). Back each criticism with a number from this season\'s figures and name the player or week it is about; one bad week, one bust or one trade is not a verdict on the manager. Never write a pick number or a draft or finish rank in `text`: list the pick numbers a note discusses in `picks`, and the card shows their figures beside it.',
   ].join('\n\n');
 }
 

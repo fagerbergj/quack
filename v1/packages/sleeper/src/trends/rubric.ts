@@ -1,11 +1,10 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { credible } from '../lineup/news.ts';
+import { factsOf as factsIn, parseCard, share } from '../rubric-kit.ts';
 import { KINDS, type TrendItem, type TrendsCard } from './card.ts';
 import type { TrendsFacts } from './facts.ts';
 
-const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
-const parse = (artifact: string) => JSON.parse(artifact) as TrendsCard;
-const factsOf = (ev: Evidence) => ev.facts[0].state as unknown as TrendsFacts;
+const parse = (artifact: string) => parseCard<TrendsCard>(artifact);
+const factsOf = (ev: Evidence) => factsIn<TrendsFacts>(ev);
 const within = (s: unknown, max: number) => typeof s === 'string' && s.length > 0 && s.length <= max;
 
 // The caps are the trends schema's (time 40, source 60); the text cap is the model schema's, so one sentence stays one line in the timeline.
@@ -15,14 +14,6 @@ function itemShape(artifact: string): CodeResult {
   const { items } = parse(artifact);
   const bad = items.filter((i) => !within(i.time, 40) || !within(i.source, 60) || !within(i.text, TEXT_MAX) || !(KINDS as readonly string[]).includes(i.kind));
   return share(items.length - bad.length, items.length, `${bad.map((i) => i.text.slice(0, 30)).join('; ')} miss a time, source, kind or sentence within its cap`);
-}
-
-// The link must be one the news step returned for that very player, and from an allowlisted host: a link is never the model's to supply.
-function linkFetched(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
-  const linked = parse(artifact).items.filter((i) => i.link);
-  const bad = linked.filter((i) => !i.player || !credible(i.link!) || !(f.news[i.player.id] ?? []).some((n) => n.url === i.link));
-  return share(linked.length - bad.length, linked.length, `${bad.map((i) => i.link).join(', ')} were not returned by the news search for that player`);
 }
 
 // Ids key the card and the UI shows names; the digit and comma guards keep an add count from reading as an id.
@@ -53,15 +44,14 @@ export function trendsEvidence(f: TrendsFacts) {
   };
 }
 
-// The audit's trends table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// The card builder takes each link from that player's fetched news, so a link is never checked here.
 export const trendsRubric: Rubric = {
   name: 'sleeper.trends',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
       { id: 'item_shape', label: "A news item is malformed", weight: 'gate', code: itemShape },
-      { id: 'link_fetched', label: "Links a page that wasn't opened", weight: 'gate', code: linkFetched },
       { id: 'no_bare_ids', label: "Player id written in the item text", weight: 'gate', code: noBareIds },
     ] },
     { id: 'items_are_sourced', checks: [

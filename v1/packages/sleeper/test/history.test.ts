@@ -11,7 +11,7 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildHistoryCard, buildHistoryFacts, createSleeperClient, createSleeperService, DEFINITIONS, historyEvidence, historyKey, historyRubric, historyWorkflow, misquotedPicks, verdictOf,
+  buildHistoryCard, buildHistoryFacts, createSleeperClient, createSleeperService, DEFINITIONS, historyEvidence, historyKey, historyRubric, historyWorkflow, verdictOf,
   type HistoryCard, type HistoryFacts,
 } from '../src/index.ts';
 import type { HistoryDecision } from '../src/history/card.ts';
@@ -33,12 +33,6 @@ const factsOf = (input: Parameters<typeof buildHistoryFacts>[1] = INPUT, fx: Fix
 const decision: HistoryDecision = {
   summary: 'Two seasons in: 2025 lost two close games while leaving 21 points on the bench; 2026 is two weeks old.',
   seasons: [{ season: '2025', text: 'Efficiency 89.4%; the week 3 lineup left 11 points, and week 1 was lost by 4 to the champion.' }],
-};
-
-const gate = async (f: HistoryFacts, c: unknown) => {
-  const check = historyRubric.criteria.flatMap((k) => k.checks).find((k) => k.id === 'figures_from_tools')!;
-  const content = JSON.stringify(c);
-  return check.code!(content, await historyEvidence(f)(null, { content }));
 };
 
 test('the chain walks every season, newest first, and builds record, points, ranks, efficiency and the champion from the tools', async () => {
@@ -79,38 +73,14 @@ test('the card is the figures plus the model notes by season; a note for a seaso
   assert.throws(() => buildHistoryCard(f, { ...decision, seasons: [decision.seasons[0], decision.seasons[0]] }), /twice/);
 });
 
-test('figures_from_tools passes the card and fails a changed figure, a verdict off the one rule, or a changed definition', async () => {
+test('a note names the picks it discusses and the card shows their figures from the draft; a pick the draft lacks fails the card step', async () => {
   const f = await factsOf();
-  const c = buildHistoryCard(f, decision);
-  assert.equal((await gate(f, c)).met, 1);
-  const edit = (change: (s: HistoryCard['seasons'][number]) => object) => ({ ...c, seasons: c.seasons.map((s) => (s.season === '2025' ? { ...s, ...change(s) } : s)) });
-  const wins = await gate(f, edit(() => ({ wins: 3 })));
-  assert.equal(wins.met, 0.5);
-  assert.match(wins.detail!, /2025/);
-  assert.ok((await gate(f, edit((s) => ({ eff: 95.0, left_total: s.left_total }))))!.met < 1);
-  const verdict = await gate(f, edit((s) => ({ draft: s.draft!.map((p) => ({ ...p, verdict: 'steal' })) })));
-  assert.ok(verdict.met < 1);
-  assert.equal((await gate(f, { ...c, definitions: { ...c.definitions, reach_steal: 'PFF 20+ spots' } })).met, 0);
-  assert.equal((await gate(f, { ...c, seasons: c.seasons.slice(0, 1) })).met, 0, 'a dropped season');
-});
-
-test('a pick or rank a note quotes for a drafted player must be his, by full name or a last name unique in that draft', async () => {
-  const row = (name: string, pick: number, drafted_as: number, finished: number) => ({ round: 1, pick, player: { id: name, name, pos: 'WR' }, drafted_as, finished, pts: 100, verdict: 'as_expected' as const });
-  const draft = [row('Zay Flowers', 57, 24, 7), row('Cooper Kupp', 6, 3, 32), row('Mike Williams', 40, 20, 30), row('Javonte Williams', 41, 10, 12)];
-  assert.deepEqual(misquotedPicks('Steals: Flowers pick 57 WR24→WR7; Kupp (pick 6, WR3→32) busted.', draft), []);
-  assert.deepEqual(misquotedPicks('Flowers pick 54 WR24→WR7, then Kupp WR3→12.', draft), ['Flowers pick 54 (the draft has 57)', 'Kupp 3→12 (the draft has 3→32)']);
-  // "Williams" names two players, so only a full name binds; a figure after the next drafted name is that player's.
-  assert.deepEqual(misquotedPicks('Williams pick 99. Flowers then Kupp pick 6.', draft), []);
-  assert.deepEqual(misquotedPicks('Kupp 28→35 pts.', draft), []);
-  assert.deepEqual(misquotedPicks('steals: flowers pick 54 was a reach.', draft), ['flowers pick 54 (the draft has 57)']);
-  const f = await factsOf();
-  const c = buildHistoryCard(f, decision);
-  const pick = f.seasons[1].draft![0];
-  const note = (text: string) => ({ ...c, seasons: c.seasons.map((s) => (s.season === '2025' ? { ...s, note: text } : s)) });
-  assert.equal((await gate(f, note(`${pick.player.name} pick ${pick.pick} anchored it.`))).met, 1);
-  const bad = await gate(f, note(`${pick.player.name} pick ${pick.pick + 3} anchored it.`));
-  assert.equal(bad.met, 0.5);
-  assert.match(bad.detail!, new RegExp(`2025 note quotes ${pick.player.name} pick ${pick.pick + 3} \\(the draft has ${pick.pick}\\)`));
+  const pick = f.seasons[1].draft![1];
+  const c = buildHistoryCard(f, { ...decision, seasons: [{ ...decision.seasons[0], picks: [pick.pick, pick.pick] }] });
+  assert.deepEqual(c.seasons[1].cited, [pick], 'the pick, its ranks and its verdict, once');
+  assert.deepEqual(c.seasons[0].cited, []);
+  assert.throws(() => buildHistoryCard(f, { ...decision, seasons: [{ ...decision.seasons[0], picks: [999] }] }), /cited pick 999 in season 2025, which has no such pick/);
+  assert.throws(() => buildHistoryCard(f, { ...decision, seasons: [{ season: '2026', text: 'x', picks: [1] }] }), /season 2026, which has no draft grade/);
 });
 
 test('a row\'s judge evidence carries that season\'s figures; a season with no note has no row', async () => {
@@ -136,7 +106,7 @@ async function run(d: HistoryDecision) {
   const models = createModels();
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-history-'));
-  const workflow = historyWorkflow({ client: clientOf(), snapshot: async () => ({}), now: () => 0 });
+  const workflow = historyWorkflow({ client: clientOf(), now: () => 0 });
   const m = faux.getModel();
   const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the history analyst.', extensions: [workflowExtension([workflow])] } });
   try {
@@ -154,7 +124,7 @@ test('the workflow seals a history card whose figures are the tools and the judg
   const { sealed, verdict, judged } = await run(decision);
   const c = JSON.parse(sealed.content) as HistoryCard;
   assert.deepEqual([c.kind, c.seasons.map((s) => s.season), c.seasons[1].draft!.length], ['history', ['2026', '2025'], 3]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@3', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@4', [], true]);
   assert.ok(judged.some((q) => /schedule luck/.test(q)));
 });
 
@@ -181,7 +151,7 @@ test('the history job starts on demand under the week key with an optional seaso
 });
 
 test('a model host refusing the history call fails the card step with the host\'s error', async () => {
-  const { outcome, failed } = await refusedRun(historyWorkflow({ client: clientOf(), snapshot: async () => ({}), now: () => 0 }), INPUT);
+  const { outcome, failed } = await refusedRun(historyWorkflow({ client: clientOf(), now: () => 0 }), INPUT);
   assert.equal(outcome.status, 'failed');
   assert.deepEqual([failed?.name, failed?.error], ['card', 'step card: model call failed: 503 no slot free']);
 });

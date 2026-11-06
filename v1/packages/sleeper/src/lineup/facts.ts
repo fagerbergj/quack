@@ -1,5 +1,6 @@
 import type { Json, SleeperClient } from '../client.ts';
-import type { Searchable } from './news.ts';
+import { kickoffsByGame, voidGame } from '../games.ts';
+import { newsFor, type Searchable } from './news.ts';
 import { bestLineup, fits, lineupSlots, numberSlots } from './slots.ts';
 
 export type Game = { opponent: string; home: boolean; kickoff: string | null; locked: boolean; status: string | null };
@@ -42,9 +43,9 @@ export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** One week's games by NFL team, joined on game_id so a missing score leaves the kickoff unknown rather than borrowing another game's. */
 function gamesByTeam(schedule: Json[], scores: Json[], week: number, at: number): Map<string, Game> {
-  const starts = new Map<string, number>(scores.filter((s) => s.start_time > 0 && !['flex-schedule', 'postponed', 'cancelled'].includes(s.metadata?.status)).map((s) => [s.game_id, s.start_time]));
+  const starts = kickoffsByGame(scores);
   const out = new Map<string, Game>();
-  for (const g of schedule.filter((x) => x.week === week && x.status !== 'canceled' && x.status !== 'postponed')) {
+  for (const g of schedule.filter((x) => x.week === week && !voidGame(x.status))) {
     const start = starts.get(g.game_id);
     const locked = g.status === 'in_game' || g.status === 'complete' || (start !== undefined && start <= at);
     const kickoff = start === undefined ? null : new Date(start).toISOString();
@@ -128,7 +129,7 @@ export async function buildFacts(deps: FactsDeps, snap: Json, input: LineupInput
     oppProj: theirs ? round2((theirs.starters as string[]).reduce((n, id) => n + (proj[id]?.[key] ?? 0), 0)) : null,
     news: {},
   };
-  if (deps.news) for (const p of closeCalls(facts)) facts.news[p.id] = await deps.news(p, at);
+  facts.news = await newsFor(deps.news, closeCalls(facts), at);
   return facts;
 }
 

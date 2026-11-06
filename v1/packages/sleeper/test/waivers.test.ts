@@ -13,10 +13,10 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildSnapshot, buildWaiverFacts, waiversEvalAdapter, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
+  liveLeague, buildWaiverFacts, waiversEvalAdapter, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
   type WaiverFacts, type WaiversCard,
 } from '../src/index.ts';
-import { closeCalls, worth } from '../src/waivers/facts.ts';
+import { closeCalls, wideOwned, worth } from '../src/waivers/facts.ts';
 import type { WaiverDecision } from '../src/waivers/card.ts';
 
 type Fixtures = Record<string, any>;
@@ -33,7 +33,7 @@ const clientOf = (fixtures: Fixtures) => createSleeperClient({
   }) as unknown as typeof fetch,
   now: () => AT,
 });
-const snapshotOf = (fixtures: Fixtures) => async (league: string) => ({ data: await buildSnapshot(clientOf(fixtures), league) });
+const snapshotOf = (fixtures: Fixtures) => (league: string) => liveLeague(clientOf(fixtures), league);
 const factsOf = async (fixtures: Fixtures = base, news?: Parameters<typeof buildWaiverFacts>[0]['news']) => buildWaiverFacts({ client: clientOf(fixtures), news }, await snapshotOf(fixtures)('L1'), INPUT, AT);
 
 // What a good model returns: two claims against bench drops, the injured widely-owned receiver passed over.
@@ -47,16 +47,16 @@ const decision: WaiverDecision = {
 };
 const rollingDecision: WaiverDecision = { ...decision, claims: decision.claims.map(({ bid: _bid, ...c }) => c) };
 
-const card = async (fixtures: Fixtures = base, d: WaiverDecision = fixtures === base ? rollingDecision : decision) => {
+const card = async (fixtures: Fixtures = base, d?: WaiverDecision) => {
   const f = await factsOf(fixtures);
-  return { f, card: buildWaiversCard(f, d) };
+  return { f, card: buildWaiversCard(f, d ?? (f.waiverType === 'faab' ? decision : rollingDecision)) };
 };
 const gate = async (id: string, f: WaiverFacts, c: unknown) => {
   const check = waiversRubric.criteria.flatMap((k) => k.checks).find((k) => k.id === id)!;
   const content = JSON.stringify(c);
   return check.code!(content, await waiversEvidence(f)(null, { content }));
 };
-const GATES = ['context_fields_match', 'drop_role_matches_roster', 'drop_not_worth_more', 'widely_owned_accounted', 'faab_language_on_rolling'];
+const GATES = ['drop_not_worth_more', 'widely_owned_accounted'];
 
 test('facts hold the waiver context, the competition table, bucketed free agents and the roster roles from the recorded week', async () => {
   const f = await factsOf();
@@ -67,7 +67,8 @@ test('facts hold the waiver context, the competition table, bucketed free agents
   assert.deepEqual(f.table[0].byes, [{ week: 10, pos: 'WR', out: 3, short: 1 }]);
   assert.deepEqual(f.buckets.RB, ['300', '301']);
   assert.deepEqual(f.buckets.WR, ['302', '303']);
-  assert.deepEqual(f.widely, ['300', '302', '303']);
+  // In a 3-team league the ownership cut is 95%, so only the trending adds are marked.
+  assert.deepEqual(f.widely, ['300', '302']);
   assert.ok(!('310' in f.free) && !('311' in f.free), 'a retired player and a lineman are not free agents');
   assert.deepEqual(f.free['300'], { id: '300', name: 'Felix Free', pos: 'RB', team: 'KC', inj: null, proj: 12.4, bye: null, ppg: 12, owned: 61.2, adds: 4200 });
   assert.equal(f.free['303'].inj, 'Out');
@@ -98,6 +99,10 @@ test('the card carries the tools figures, the league currency and the claim orde
   assert.deepEqual(bid.candidates.map((c) => c.size), [{ kind: 'faab', bid: 18, left: 70, pct: 26 }, { kind: 'faab', bid: 5, left: 70, pct: 7 }]);
 });
 
+test('the ownership cut rises as the league shrinks, from 40% at 12 teams', () => {
+  assert.deepEqual([wideOwned(12), wideOwned(10), wideOwned(16), wideOwned(3)], [40, 48, 30, 95]);
+});
+
 test('a bad decision fails the card step instead of reaching the judge', async () => {
   const f = await factsOf(faab);
   const claim = decision.claims[0];
@@ -106,6 +111,8 @@ test('a bad decision fails the card step instead of reaching the judge', async (
   assert.throws(() => buildWaiversCard(f, { ...decision, claims: [{ ...claim, add: '999' }] }), /not a free agent/);
   assert.throws(() => buildWaiversCard(f, { ...decision, claims: [{ ...claim, drop: '300' }] }), /not on the roster/);
   assert.throws(() => buildWaiversCard(f, { ...decision, claims: [claim, claim] }), /more than once/);
+  const rolling = await factsOf();
+  assert.throws(() => buildWaiversCard(rolling, decision), /bid 18 for 300 in a rolling league, which has no bids/);
 });
 
 test('a card with no claims says so, and a pass for a player already claimed is not repeated', async () => {
@@ -118,28 +125,15 @@ test('a card with no claims says so, and a pass for a player already claimed is 
 test('each code gate passes the good card in either league', async () => {
   for (const fixtures of [base, faab]) {
     const { f, card: c } = await card(fixtures);
-    for (const id of GATES) assert.equal((await gate(id, f, c)).met, id === 'faab_language_on_rolling' ? 0 : 1, id);
+    for (const id of GATES) assert.equal((await gate(id, f, c)).met, 1, id);
   }
 });
 
-test('context_fields_match fails a card whose priority, type, teams or balance differ from the tools', async () => {
-  const { f, card: c } = await card(faab);
-  for (const [field, wrong] of [['my_priority', 1], ['waiver_type', 'rolling'], ['teams', 12], ['faab_left', 100]] as const) {
-    const r = await gate('context_fields_match', f, { ...c, [field]: wrong });
-    assert.ok(r.met < 1, field);
-    assert.match(r.detail!, new RegExp(field));
-  }
-});
-
-test('drop_role_matches_roster fails a mislabeled role and a starter drop not stated as one', async () => {
-  const { f, card: c } = await card();
-  const relabel = { ...c, candidates: c.candidates.map((r, i) => (i ? r : { ...r, drop: { ...r.drop, role: 'ir' as const } })) };
-  assert.match((await gate('drop_role_matches_roster', f, relabel)).detail!, /Dan Dash/);
+test('each drop carries its roster role and each add its bye, copied from the facts', async () => {
+  const { f } = await card();
   const starter = buildWaiversCard(f, { ...rollingDecision, claims: [{ add: '300', drop: '102', why: 'Felix Free has the lead-back role.' }] });
+  assert.deepEqual([starter.candidates[0].drop.role, starter.candidates[0].bye], [f.roster['102'].role, f.free['300'].bye]);
   assert.equal(starter.candidates[0].drop.role, 'starter');
-  assert.match((await gate('drop_role_matches_roster', f, starter)).detail!, /Rob Rowe/);
-  const said = buildWaiversCard(f, { ...rollingDecision, claims: [{ add: '300', drop: '102', why: 'Drops your starting RB2, Questionable.' }] });
-  assert.equal((await gate('drop_role_matches_roster', f, said)).met, 1);
 });
 
 test('drop_not_worth_more fails a drop worth more than its add, naming both, by season rate when the week has no projection', async () => {
@@ -188,44 +182,36 @@ test('empty season stats still build the facts, omit the season rate and compare
   assert.ok(Object.values((await gone).roster).every((p) => p.ppg === undefined));
 });
 
+const forgetsWire: WaiverDecision = { ...rollingDecision, claims: [rollingDecision.claims[0]], passed: [] };
+
 test('widely_owned_accounted fails a card that neither claims nor passes over a player above the cut', async () => {
   const { f } = await card();
-  const forgot = buildWaiversCard(f, { ...rollingDecision, passed: [] });
-  const r = await gate('widely_owned_accounted', f, forgot);
+  const r = await gate('widely_owned_accounted', f, buildWaiversCard(f, forgetsWire));
   assert.ok(r.met < 1);
-  assert.match(r.detail!, /Ike Hurt/);
-  assert.equal((await gate('widely_owned_accounted', f, buildWaiversCard(f, { ...rollingDecision, passed: [{ playerId: '303', why: 'Out.' }] }))).met, 1);
+  assert.match(r.detail!, /Wally Wire/);
+  assert.equal((await gate('widely_owned_accounted', f, buildWaiversCard(f, { ...forgetsWire, passed: [{ playerId: '302', why: 'No WR need.' }] }))).met, 1);
 });
 
-test('bye_coverage is absent when the claims fill every bye hole, and names an open hole and an add\'s unflagged bye', async () => {
+test('bye_coverage is absent when the claims fill every bye hole, and names an open hole', async () => {
   const { f, card: c } = await card();
   assert.deepEqual(await gate('bye_coverage', f, c), { met: 0, detail: undefined });
-  // Without the WR claim the week-10 hole stays open; an add on bye next week whose why never says so is flagged.
+  // Without the WR claim the week-10 hole stays open; however the why is worded, only the claims count.
   const noWr = buildWaiversCard(f, { ...rollingDecision, claims: [rollingDecision.claims[0]] });
-  assert.match((await gate('bye_coverage', f, noWr)).detail!, /^week 10 leaves 1 WR slot empty and the claims cover 0$/);
-  const onBye = { ...noWr, candidates: noWr.candidates.map((r) => ({ ...r, bye: 10 })) };
-  const r = await gate('bye_coverage', f, onBye);
-  assert.match(r.detail!, /Felix Free's week 10 bye is not flagged/);
-  assert.equal(r.met, 1);
-  const flagged = (why: string) => ({ ...onBye, candidates: onBye.candidates.map((x) => ({ ...x, why })) });
-  assert.doesNotMatch((await gate('bye_coverage', f, flagged('Felix Free is on bye in week 10; claim him now.'))).detail!, /Felix Free/);
-  assert.doesNotMatch((await gate('bye_coverage', f, flagged('Felix Free sits wk 10 but starts after.'))).detail!, /Felix Free/);
-  assert.match((await gate('bye_coverage', f, flagged('Covers the week 11 bye of another back.'))).detail!, /Felix Free's week 10 bye is not flagged/);
-  assert.match((await gate('bye_coverage', f, flagged('Off IR, bye aside, proj 4.10 this week.'))).detail!, /Felix Free's week 10 bye is not flagged/);
+  assert.deepEqual(await gate('bye_coverage', f, noWr), { met: 1, detail: 'week 10 leaves 1 WR slot empty and the claims cover 0' });
+  // A WR claim on bye the same week does not fill the hole.
+  const sameBye = { ...c, candidates: c.candidates.map((r) => ({ ...r, bye: 10 })) };
+  assert.equal((await gate('bye_coverage', f, sameBye)).met, 1);
   // Facts sealed before holes carried `short` still score the hole half, as one empty slot.
   const old = { ...f, table: f.table.map((t) => ({ ...t, byes: t.byes.map(({ short: _s, ...b }) => b) })) } as unknown as WaiverFacts;
   assert.match((await gate('bye_coverage', old, noWr)).detail!, /^week 10 leaves 1 WR slot empty and the claims cover 0$/);
 });
 
-test('faab_language_on_rolling penalizes FAAB figures in a rolling league and not in a FAAB one', async () => {
-  const { f, card: c } = await card();
-  const talks = { ...c, candidates: c.candidates.map((r, i) => (i ? r : { ...r, why: 'Felix Free is worth a $20 bid.' })) };
-  const r = await gate('faab_language_on_rolling', f, talks);
-  assert.equal(r.met, 1);
-  assert.match(r.detail!, /rolling league/);
-  assert.equal((await gate('faab_language_on_rolling', f, { ...c, summary: 'Bid 30% of remaining FAAB.' })).met, 1);
-  const { f: ff, card: fc } = await card(faab);
-  assert.equal((await gate('faab_language_on_rolling', ff, { ...fc, summary: 'Bid 30% of remaining FAAB.' })).met, 0);
+test('the FAAB-language question is asked only of a league without FAAB', async () => {
+  const unitsOf = async (fixtures: Fixtures) => {
+    const { f, card: c } = await card(fixtures);
+    return (await waiversEvidence(f)(null, { content: JSON.stringify(c) })).no_faab.length;
+  };
+  assert.deepEqual([await unitsOf(base), await unitsOf(faab)], [1, 0]);
 });
 
 const item = { title: 'Backfield report', url: 'https://www.nfl.com/n', date: new Date(AT - 5 * 3_600_000).toISOString() };
@@ -251,7 +237,7 @@ test('a row\'s judge evidence carries its news, the designations of both players
   assert.equal(ev.row.length, 2);
 });
 
-async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Parameters<typeof buildWaiverFacts>[0]['news']) {
+async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Parameters<typeof buildWaiverFacts>[0]['news'], stale?: Fixtures) {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
     () => fauxAssistantMessage(JSON.stringify(d)),
@@ -259,7 +245,8 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
       const asked = String(c.messages.at(-1)!.content);
       if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(d));
       judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /trending or ownership number given|share a drop as a mistake|miss a bye inside the lead time/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+      const pitfall = /trending or ownership number given|share a drop as a mistake/.test(asked) || (/talk about FAAB/.test(asked) && !/remaining FAAB/.test(asked));
+      return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -267,7 +254,8 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
   const models = createModels();
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-waivers-'));
-  const workflow = waiversWorkflow({ client: clientOf(fixtures), snapshot: snapshotOf(fixtures), now: () => AT, news });
+  // `stale` stands in for a once-a-day snapshot a job must not decide from.
+  const workflow = waiversWorkflow({ client: clientOf(fixtures), now: () => AT, news, ...(stale && { snapshot: snapshotOf(stale) }) } as never);
   const m = faux.getModel();
   const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the waiver scout.', extensions: [workflowExtension([workflow])] } });
   try {
@@ -287,7 +275,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
   const { sealed, judged, verdict } = await runWaivers(base, rollingDecision);
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@6', [], true, ['close-call news not checked: no news source']]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@7', [], true, ['close-call news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(verdict.checks.some((k) => k.id === 'faab_language_on_rolling'));
   assert.ok(judged.some((q) => /queue position spent/.test(q)));
@@ -296,7 +284,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
 test('the workflow seals a FAAB card with its bids, and with a news source the close calls are scored', async () => {
   const { sealed, verdict, judged } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@6', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@7', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });
@@ -308,13 +296,24 @@ test('a rolling-league card that talks FAAB gets the pitfall applied by the judg
   assert.equal(hit.met, 1);
 });
 
-test('a recorded waivers session scores through the eval adapter from its recorded facts, and a FAAB-talking card scores lower', async () => {
+test('a recorded waivers session scores through the eval adapter from its recorded facts, and a card that skips a marked player fails a gate', async () => {
   const good = await runWaivers(base, rollingDecision);
   assert.ok(good.record.docs['sleeper.waivers.facts'], 'the facts are recorded beside the card');
-  const talks = await runWaivers(base, { ...rollingDecision, summary: 'Bid 30% of remaining FAAB on Felix Free.' });
-  const [a, b] = await Promise.all([good, talks].map((r) => adapterScores([waiversEvalAdapter], r.record)));
+  const skips = await runWaivers(base, forgetsWire);
+  const [a, b] = await Promise.all([good, skips].map((r) => adapterScores([waiversEvalAdapter], r.record)));
   assert.equal(a['sleeper.cards.code_gates_failed'], 0);
-  assert.ok(b['sleeper.cards.code_score'] < a['sleeper.cards.code_score'], JSON.stringify([a, b]));
+  assert.equal(b['sleeper.cards.code_gates_failed'], 1, JSON.stringify(b));
+});
+
+test('the job decides from the live rosters, not a snapshot taken earlier in the day', async () => {
+  // Since the morning snapshot, teal claimed Felix Free.
+  const rosters = base['/v1/league/L1/rosters'].map((r: any, i: number) => (i === 1 ? { ...r, players: [...r.players, '300'] } : r));
+  const live = { ...base, '/v1/league/L1/rosters': rosters };
+  const d: WaiverDecision = { claims: [rollingDecision.claims[1]], passed: [], summary: 'Claim Wally Wire.' };
+  const { record } = await runWaivers(live, d, undefined, base);
+  const facts = record.docs['sleeper.waivers.facts'].facts as unknown as WaiverFacts;
+  assert.ok(!('300' in facts.free), 'a same-day pickup is not a free agent');
+  assert.deepEqual(facts.widely, ['302']);
 });
 
 // A real league's settings: Wednesday 03:00 Eastern in its processed transactions, which is 00:00 Pacific; daily_waivers_hour is ignored.
@@ -341,9 +340,9 @@ test('the run starts 12 hours before processing and is due an hour ahead of it; 
   // The real league's daily mask is an int of unknown encoding: no run rather than a guessed one.
   assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 }), null);
   assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1111111 }), null);
-  // Registered late, the run starts now and still ends before the deadline.
+  // Registered late, the time stays fixed: the schedules service fires a past time once, inside its deadline.
   const late = waiversRun(Date.parse('2026-11-11T02:00:00Z'), REAL)!;
-  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-11T02:00:00.000Z', '2026-11-11T07:00:00.000Z']);
+  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-10T20:00:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, undefined), null);
   assert.equal(waiversKey('L1', 9), 'sleeper:L1:9:waivers');
 });
@@ -450,7 +449,7 @@ test('a run that already fired is not run again by a later registration, and the
     assert.equal(fired.length, 1);
     // The six-hourly re-registration before processing must not start it again.
     clock.at = Date.parse('2026-11-11T03:00:00Z');
-    assert.deepEqual(await register(url, base, clock.at), []);
+    assert.deepEqual(await register(url, base, clock.at), ['sleeper/waivers/L1']);
     await tick();
     assert.equal(fired.length, 1);
     // After processing the entry moves on to the next week and fires there.

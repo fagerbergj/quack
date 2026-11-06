@@ -39,8 +39,8 @@ export type LineupCard = {
   bench: Array<{ player: PlayerRef; proj: number; game: Game | null }>;
 };
 
-/** What the model decides for the open slots (SL-6: no predictions in it). */
-export type Decision = { slots: Array<{ slot: string; playerId: string; why: string }>; summary: string };
+/** What the model decides for the open slots (SL-6: no predictions in it); the summary is code's. */
+export type Decision = { slots: Array<{ slot: string; playerId: string; why: string }> };
 
 export const ref = (p: PlayerFact): PlayerRef => ({ id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj });
 const sum = (rows: Array<{ proj: number }>) => Math.round(rows.reduce((n, r) => n + r.proj, 0) * 100) / 100;
@@ -56,6 +56,12 @@ function settle(f: Facts, picks: Record<string, SlotPick>): void {
     if (!at || !mine || !f.players[mine.playerId] || !fits(at, f.players[mine.playerId].pos)) continue;
     [picks[slot], picks[at]] = [picks[at], mine];
   }
+}
+
+/** "Start X over Y" for each change, from the rows themselves, so the summary can never skip or misname one. */
+function summaryOf(starters: Row[]): string {
+  const changes = starters.filter((r) => r.action === 'start').map((r) => `Start ${r.player.name} over ${r.replaces?.name ?? 'the empty slot'} at ${r.slot}`);
+  return changes.length ? `${changes.join('; ')}.` : 'No changes: the lineup stands.';
 }
 
 /** Locked slots keep their player by construction; open slots take the model's pick, whose figures come from the facts, never the model. */
@@ -78,5 +84,5 @@ export function buildCard(f: Facts, d: Decision): LineupCard {
   const started = new Set(starters.map((r) => r.player.id));
   if (started.size < starters.length) throw new Error(`the model started one player in two slots: ${starters.map((r) => `${r.slot}=${r.player.name}`).join(', ')}`);
   const bench = Object.values(f.players).filter((p) => !started.has(p.id)).sort((a, b) => b.proj - a.proj).map((p) => ({ player: ref(p), proj: p.proj, game: p.game }));
-  return { kind: 'lineup', league: f.league, week: f.week, team: f.team, opponent: f.opponent, my_proj: sum(starters), opp_proj: f.oppProj, summary: starters.some((r) => r.action === 'start') || /no change/i.test(d.summary) ? d.summary : 'No changes: the lineup stands.', starters, bench };
+  return { kind: 'lineup', league: f.league, week: f.week, team: f.team, opponent: f.opponent, my_proj: sum(starters), opp_proj: f.oppProj, summary: summaryOf(starters), starters, bench };
 }

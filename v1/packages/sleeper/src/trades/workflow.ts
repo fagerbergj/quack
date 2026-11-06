@@ -2,18 +2,20 @@ import type { JsonValue } from '@earendil-works/chord';
 import { arr, int, lit, nul, obj, opt, str, union } from '@earendil-works/pi-schema';
 import type { JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext, type Step } from '@quack/workflows';
-import { newsLink } from '../lineup/news.ts';
+import { newsFor, newsLink } from '../lineup/news.ts';
 import { cardsKind } from '../lineup/card.ts';
+import { liveLeague } from '../snapshot.ts';
 import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildFinderCard, buildTradeCard, type FinderDecision, type TradeDecision } from './card.ts';
-import { buildTradeFacts, fetchNews, playerOf, type FinderInput, type Side, type TPlayer, type TradeFacts, type TradeInput } from './facts.ts';
+import { buildTradeFacts, dealable, playerOf, type FinderInput, type Side, type TPlayer, type TradeFacts, type TradeInput } from './facts.ts';
 import { tradeEvidence, tradeRubric } from './rubric.ts';
+import { newsGated } from '../rubric-kit.ts';
 
 export const TRADE_WORKFLOW = 'sleeper.trade';
 export const FINDER_WORKFLOW = 'sleeper.trade-finder';
 
-/** The same wiring as the other jobs: the Sleeper API, today's snapshot and an optional news source. */
+/** The same wiring as the other jobs: the Sleeper API and an optional news source. */
 export type TradeJobDeps = LineupDeps;
 type News = Record<string, NewsItem[]>;
 
@@ -36,13 +38,16 @@ const roster = (s: Side, news: News) => Object.values(s.players).sort((a, b) => 
 const standing = (s: Side, of: number) => `${s.team} (${s.record}, ${s.rank} of ${of}, ${s.stance}); needs ${JSON.stringify(s.needs)}; bye holes ${JSON.stringify(s.byes)}`;
 const header = (f: TradeFacts) => `Week ${f.week}, ${standing(f.mine, f.teams)}. The league has ${f.teams} teams and ${f.playoffTeams} playoff spots; public trade charts assume 12 teams.`;
 
-function finderPrompt(f: TradeFacts): string {
-  const partners = f.partners.map((p) => `[${p.rosterId}] ${standing(p, f.teams)}\n  Surplus (the only players you may ask for):\n${p.surplus.map((id) => `    - ${line(p.players[id])}`).join('\n') || '    none'}`);
+const NEWS_RULE = 'Linked news is dated. A newer report from a credible source beats the Sleeper designation, which lags; when they conflict, say which you followed.';
+
+function finderPrompt(f: TradeFacts, news: News): string {
+  const partners = f.partners.map((p) => `[${p.rosterId}] ${standing(p, f.teams)}\n  Surplus (the only players you may ask for):\n${p.surplus.map((id) => `    - ${line(p.players[id])}${links(news, id)}`).join('\n') || '    none'}`);
   return [
     header(f),
-    `Your roster; your surplus ids: ${JSON.stringify(f.mine.surplus)}:\n${roster(f.mine, {})}`,
+    `Your roster; your surplus ids: ${JSON.stringify(f.mine.surplus)}:\n${roster(f.mine, news)}`,
     `Partners:\n${partners.join('\n')}`,
-    'Choose at most three deals, best first. Each trades one of your players (give) for one of that team\'s surplus players (get); name the team by its bracketed roster id. With no fit, return none and say so.',
+    ...(Object.values(news).some((n) => n.length) ? [NEWS_RULE] : []),
+    'Choose at most three deals, best first. Each trades one of your players (give) for one of that team\'s surplus players (get); name the team by its bracketed roster id. In `note`, cite the linked news for both players of the deal, or say none was found. With no fit, return none and say so.',
   ].join('\n\n');
 }
 
@@ -55,34 +60,33 @@ function tradePrompt(f: TradeFacts, news: News): string {
     `The offer, from your side. You give:\n${ids(f.offer!.give, f.mine)}\nYou get:\n${ids(f.offer!.get, p)}`,
     `Your roster (you need ${JSON.stringify(f.mine.needs)}):\n${roster(f.mine, news)}`,
     `${p.team}'s roster:\n${roster(p, news)}`,
-    'Linked news is dated. A newer report from a credible source beats the Sleeper designation, which lags; when they conflict, say which you followed.',
+    NEWS_RULE,
     'Give the verdict. For a counter, list the player ids on each side of your counter-offer, still from your side.',
   ].join('\n\n');
 }
 
 const judgeOf = (deps: TradeJobDeps, f: TradeFacts) => {
-  // news_per_traded_player cannot be met without a news source, so it is scored only once one is wired; the verdict says so.
-  const rubric = deps.news ? tradeRubric : { ...tradeRubric, criteria: tradeRubric.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => k.id !== 'news_per_traded_player') })) };
+  const { rubric, notes } = newsGated(tradeRubric, ['news_per_traded_player'], !!deps.news, 'news');
   const options: JudgeOptions = { kind: cardsKind, rubric, evidence: tradeEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier };
-  return { options, notes: deps.news ? [] : ['news not checked: no news source'] };
+  return { options, notes };
 };
 
 const prior = <T>(c: StepContext, step: string) => c.prior[step] as unknown as T;
 
-/** facts, [news], then one judged step: the news step goes before the decision for an analysis, and the finder fetches it for the players it picked while building the card. */
-function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Pick<Extract<Step, { kind: 'judged' }>, 'schema' | 'prompt'>; news?: (f: TradeFacts) => TPlayer[]; card: (c: StepContext, d: unknown) => object | Promise<object> }): Step[] {
+/** facts, news, then one judged step: the news is searched once, before the decision, for every player the decision may name. */
+function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Pick<Extract<Step, { kind: 'judged' }>, 'schema' | 'prompt'>; news: (f: TradeFacts) => TPlayer[]; card: (c: StepContext, d: unknown) => object | Promise<object> }): Step[] {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as I;
   const facts: Step = {
     name: 'facts',
     kind: 'code',
     run: async (c) => {
       const i = input(c);
-      return (await buildTradeFacts({ client: deps.client }, await deps.snapshot(i.league), i)) as unknown as JsonValue;
+      return (await buildTradeFacts({ client: deps.client }, await liveLeague(deps.client, i.league), i)) as unknown as JsonValue;
     },
   };
-  const news: Step[] = o.news ? [{ name: 'news', kind: 'code', run: async (c) => (await fetchNews(deps.news, o.news!(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue }] : [];
+  const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(deps.news, o.news(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
   const card: Step = { name: 'card', kind: 'judged', ...o.decide, card: o.card, judge: (c) => judgeOf(deps, prior(c, 'facts')) };
-  return [facts, ...news, card];
+  return [facts, news, card];
 }
 
 const at = (deps: TradeJobDeps, c: StepContext) => (deps.now ? deps.now() : c.api.now());
@@ -98,13 +102,9 @@ export function tradeWorkflow(deps: TradeJobDeps) {
   });
 }
 
-/** Trade finder (SL-1): the partner table is code; the model picks at most three deals; code searches news for the players it picked. */
+/** Trade finder (SL-1): the partner table is code; news for every dealable player is searched before the model picks at most three deals. */
 export function finderWorkflow(deps: TradeJobDeps) {
-  const decide = { schema: finderSchema, prompt: (c: StepContext) => finderPrompt(prior(c, 'facts')) };
-  const card = async (c: StepContext, d: unknown) => {
-    const f = prior<TradeFacts>(c, 'facts');
-    const picks = named(f, ((d as FinderDecision).suggestions ?? []).flatMap((x) => [x.give, x.get]));
-    return buildFinderCard(f, d as FinderDecision, await fetchNews(deps.news, picks, at(deps, c)));
-  };
-  return defineWorkflow({ name: FINDER_WORKFLOW, steps: steps<FinderInput>(deps, { decide, card }) });
+  const decide = { schema: finderSchema, prompt: (c: StepContext) => finderPrompt(prior(c, 'facts'), prior(c, 'news')) };
+  const card = (c: StepContext, d: unknown) => buildFinderCard(prior(c, 'facts'), d as FinderDecision, prior(c, 'news'));
+  return defineWorkflow({ name: FINDER_WORKFLOW, steps: steps<FinderInput>(deps, { decide, news: dealable, card }) });
 }

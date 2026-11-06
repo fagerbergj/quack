@@ -15,6 +15,12 @@ export async function buildSnapshot(client: SleeperClient, league: string) {
   return { league: info, state, users, rosters, matchups, players };
 }
 
+/** The league as it is now, read through the client's TTL cache: jobs decide on this, never on the day's stored snapshot, which exists for trend diffs. Shaped like a snapshot row. */
+export async function liveLeague(client: SleeperClient, league: string) {
+  const [state, info, users, rosters] = await Promise.all([client.state(), client.league(league), client.users(league), client.rosters(league)]);
+  return { data: { state, league: info, users, rosters } };
+}
+
 /** Takes today's snapshot unless one is stored; returns the stored row either way. */
 export async function takeSnapshot(client: SleeperClient, store: Store, league: string, at: Date) {
   const date = leagueDate(at);

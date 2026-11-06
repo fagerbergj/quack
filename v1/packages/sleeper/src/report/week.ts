@@ -1,14 +1,13 @@
 import type { Json } from '../client.ts';
+import { kickoffsByGame, voidGame } from '../games.ts';
 import { round2 } from '../lineup/facts.ts';
 
 export type Phase = 'preview' | 'recap' | 'live';
 export type Standing = { rank: number; rosterId: number; team: string; wins: number; losses: number; ties: number; fpts: number; fpts_against: number; in_playoff_line: boolean };
 
-const SKIPPED = ['canceled', 'postponed'];
-
 /** Final once every game is complete or Sleeper has moved on; a preview only while no game has started. */
 export function weekPhase(schedule: Json[], week: number, stateWeek: number): Phase {
-  const games = schedule.filter((g) => g.week === week && !SKIPPED.includes(g.status));
+  const games = schedule.filter((g) => g.week === week && !voidGame(g.status));
   if (week < stateWeek || (games.length > 0 && games.every((g) => g.status === 'complete'))) return 'recap';
   return games.some((g) => g.status === 'in_game' || g.status === 'complete') ? 'live' : 'preview';
 }
@@ -38,8 +37,8 @@ export const remainingWeeks = (league: Json, stateWeek: number) => Math.max(0, (
 
 /** Kickoff instant (ms) by NFL team for one week, joined on game_id. */
 export function kickoffs(schedule: Json[], scores: Json[], week: number): Map<string, number> {
-  const starts = new Map<string, number>(scores.filter((s) => s.start_time > 0).map((s) => [s.game_id, s.start_time]));
+  const starts = kickoffsByGame(scores);
   const out = new Map<string, number>();
-  for (const g of schedule.filter((x) => x.week === week && !SKIPPED.includes(x.status) && starts.has(x.game_id))) for (const t of [g.home, g.away]) out.set(t, starts.get(g.game_id)!);
+  for (const g of schedule.filter((x) => x.week === week && !voidGame(x.status) && starts.has(x.game_id))) for (const t of [g.home, g.away]) out.set(t, starts.get(g.game_id)!);
   return out;
 }
