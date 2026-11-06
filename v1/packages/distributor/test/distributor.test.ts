@@ -192,7 +192,7 @@ test('each session runs on the agent that created it, and the registry and index
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
 
-test('sessions list newest-created first; later activity does not move them and a legacy session is backfilled once', async () => {
+test('sessions list newest-active first, and a legacy session\'s created time is backfilled once', async () => {
   const { invoke, base, driver, dataDir } = await startDistributor(60_000);
   const start = Date.now();
   await invoke('ord:1', { input: 'hi', wait: true });
@@ -205,13 +205,22 @@ test('sessions list newest-created first; later activity does not move them and 
   }
   await writeFile(join(dir('ord:1'), 'created'), '1000');
   await writeFile(join(dir('ord:2'), 'created'), '2000');
+  await writeFile(join(dir('ord:1'), 'activity'), '3000');
+  await writeFile(join(dir('ord:2'), 'activity'), '4000');
   assert.deepEqual((await read()).map((s) => s.key), ['ord:2', 'ord:1']);
   await driver.touch('ord:1', Date.now() + 60_000);
-  assert.deepEqual((await read()).map((s) => s.key), ['ord:2', 'ord:1']);
+  assert.deepEqual((await read()).map((s) => s.key), ['ord:1', 'ord:2']);
   await rm(join(dir('ord:1'), 'created'));
   const legacy = (await read()).find((s) => s.key === 'ord:1');
   assert.equal(Number(await readFile(join(dir('ord:1'), 'created'), 'utf8')), Date.parse(legacy!.createdAt));
   assert.ok(Date.parse(legacy!.createdAt) > 1000);
+});
+
+test('a new session stores its last activity when it is created, so listing never scans its log', async () => {
+  const { invoke, dataDir } = await startDistributor(60_000);
+  await invoke('act:new', { input: 'hi', wait: true });
+  const dir = join(dataDir, sessionDirName('act:new'));
+  assert.equal(await readFile(join(dir, 'activity'), 'utf8'), await readFile(join(dir, 'created'), 'utf8'));
 });
 
 test('lastActivity comes from the session log, so file mtimes from a restart do not move it', async () => {

@@ -33,6 +33,16 @@ let indexOff = false;
 let streaming = false;
 let paged = false;
 
+// Applies the filters the CLI sends (agent, not archived) and pages two rows at a time when `paged` is set, as the sessions API does.
+function pageOfSessions(path: string, reply: (status: number, body: object) => void) {
+  const q = new URL(path, 'http://x').searchParams;
+  const agent = /agent:"([^"]+)"/.exec(q.get('filter') ?? '')?.[1];
+  const rows = sessions.filter((x) => !agent || x.agent === agent);
+  const from = Number(q.get('pageToken') ?? 0);
+  const size = paged ? 2 : 1000;
+  reply(200, { sessions: rows.slice(from, from + size), ...(from + size < rows.length && { nextPageToken: String(from + size) }) });
+}
+
 const readBody = async (req: IncomingMessage) => { let s = ''; for await (const c of req) s += c; return s ? JSON.parse(s) : undefined; };
 
 before(async () => {
@@ -46,7 +56,9 @@ before(async () => {
     }
     const idx = /^\/index\/(\w+)/.exec(path);
     if (idx && paged) return reply(200, { [idx[1]!]: (index[idx[1]!] as unknown[]).slice(...(path.includes('pageToken=P2') ? [1] : [0, 1])), ...(!path.includes('pageToken=') && { nextPageToken: 'P2' }) });
-    if (path === '/sessions') return reply(200, { sessions });
+    if (path.startsWith('/sessions?')) return pageOfSessions(path, reply);
+    const one = req.method === 'GET' && /^\/sessions\/([^/]+)$/.exec(path);
+    if (one) return sessions.find((x) => x.key === one[1]) ? reply(200, sessions.find((x) => x.key === one[1])!) : reply(404, { title: 'Not Found', status: 404, detail: 'no such session' });
     if (path === '/agents') return reply(200, { agents: [{ name: 'chat', version: 3 }] });
     if (idx) return indexOff ? reply(404, { error: 'not found' }) : reply(200, { [idx[1]!]: index[idx[1]!] });
     if (path.endsWith('/export')) return reply(200, { session: sessions[0], transcript: [], artifacts: sealed });
@@ -54,7 +66,7 @@ before(async () => {
     if (path.endsWith('/questions')) return reply(200, { questions: [{ id: 'q1', question: 'Which?' }] });
     if (path.endsWith('/approvals')) return reply(200, { approvals: [{ id: 'ap1', tool: 'bash' }] });
     if (path.endsWith('/approvals/ap9')) { res.writeHead(409, { 'content-type': 'application/problem+json' }); return res.end(JSON.stringify({ title: 'Conflict', status: 409, detail: 'unknown or already decided' })); }
-    if (path.endsWith('/delete') && path.includes('ui:b')) return reply(409, { error: 'session is running' });
+    if (req.method === 'DELETE' && path.includes('ui:b')) return reply(409, { error: 'session is running' });
     reply(200, { key: 'ok' });
   });
   const wss = new WebSocketServer({ server });
@@ -96,6 +108,20 @@ describe('quack', () => {
     const r = await cli(['sessions', '--json', '--agent', 'chat']);
     assert.deepEqual(JSON.parse(r.stdout), { sessions: sessions.filter((s) => s.agent === 'chat') });
     assert.match((await cli(['sessions'])).stdout, /ui:a\s+chat\s+running\s+Alpha/);
+  });
+
+  it('sessions asks the server to drop archived ones and keep one agent, and follows the pages to the end', async () => {
+    paged = true;
+    try {
+      assert.equal((await cli(['sessions', '--keys'])).stdout, 'ui:a\nui:b\nui:c');
+      const asked = calls.filter((c) => c.path.startsWith('/sessions?')).map((c) => new URL(c.path, 'http://x').searchParams);
+      assert.deepEqual(asked.map((q) => [q.get('pageSize'), q.get('pageToken'), q.get('filter')]), [['1000', null, '-archived:true'], ['1000', '2', '-archived:true']]);
+      calls = [];
+      await cli(['sessions', '--agent', 'chat']);
+      assert.equal(new URL(calls[0]!.path, 'http://x').searchParams.get('filter'), '-archived:true AND agent:"chat"');
+    } finally {
+      paged = false;
+    }
   });
 
   it('sessions --state uses the index like the UI groups', async () => {
@@ -145,7 +171,7 @@ describe('quack', () => {
     const r = await cli(['show', 'ui:nope']);
     assert.equal(r.code, 2);
     assert.match(r.stderr, /no such session/);
-    assert.deepEqual(calls.map((c) => c.path), ['/sessions']);
+    assert.deepEqual(calls.map((c) => c.path), ['/sessions/ui:nope']);
   });
 
   it('send returns once the server accepts, and reports a rejection', async () => {
@@ -168,7 +194,7 @@ describe('quack', () => {
       ['POST', '/sessions/ui:a/resume', undefined],
       ['PATCH', '/sessions/ui:a', { title: 'New name' }],
       ['PATCH', '/sessions/ui:a', { archived: true }],
-      ['POST', '/sessions/ui:a/delete', {}],
+      ['DELETE', '/sessions/ui:a', undefined],
     ]);
   });
 

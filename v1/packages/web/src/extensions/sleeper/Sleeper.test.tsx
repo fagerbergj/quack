@@ -22,6 +22,8 @@ const RUNS = [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'retro',
 const NOW = () => Date.parse('2026-11-01T15:00:00Z');
 
 let live: number | undefined;
+// What the server answers a league filter with; the page asks for its league's sessions instead of reading the workspace's rows.
+let served: Row[] = ALL;
 const calls: Array<[string, RequestInit | undefined]> = [];
 beforeEach(() => {
   calls.length = 0;
@@ -31,6 +33,7 @@ beforeEach(() => {
     if (init?.method === 'POST') return new Response(JSON.stringify({ sessionKey: key(9, 'waivers') }));
     if (url === 'apps/sleeper/schedule') return new Response(JSON.stringify({ week: live, runs: RUNS }));
     if (url === 'apps/sleeper') return new Response(JSON.stringify({ league: L }));
+    if (url.startsWith('sessions?')) return new Response(JSON.stringify({ sessions: served }));
     const m = /^sessions\/(.+)\/artifacts$/.exec(url);
     const sealed = m && SEALED[decodeURIComponent(m[1]!).split(':').slice(2, 4).join(':')];
     return new Response(JSON.stringify({ artifacts: sealed ? [sealed] : [] }));
@@ -38,7 +41,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const page = (rows = ALL) => render(<Sleeper rows={rows} now={NOW} />);
+const page = (rows = ALL) => ((served = rows), render(<Sleeper rows={rows} now={NOW} />));
 const card = async (name: string) => within(await screen.findByRole('article', { name }));
 
 test('a card shows as soon as its own read lands, while a slow session is still booting', async () => {
@@ -223,6 +226,23 @@ test('a refused Run shows the reason, and tapping a job name closes the sheet at
   await userEvent.click(screen.getByRole('button', { name: /^Trends/ }));
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(scroll).toHaveBeenCalled();
+});
+
+test('the page asks the server for its league by key prefix, following pages, and ignores other leagues', async () => {
+  const other = { ...row(9, 'lineup'), key: 'sleeper:999:9:lineup' };
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const u = String(url);
+    calls.push([u, init]);
+    if (u === 'apps/sleeper') return new Response(JSON.stringify({ league: L }));
+    if (u === 'apps/sleeper/schedule') return new Response(JSON.stringify({ week: undefined, runs: [] }));
+    if (!u.startsWith('sessions?')) return new Response(JSON.stringify({ artifacts: [] }));
+    return new Response(JSON.stringify(new URL(u, 'http://x').searchParams.get('pageToken') ? { sessions: [row(9, 'lineup', true)] } : { sessions: [other, row(8, 'waivers')], nextPageToken: 't' }));
+  });
+  page();
+  expect(await screen.findByRole('heading', { name: 'Week 9' })).toBeInTheDocument();
+  const asked = calls.map(([u]) => new URL(u, 'http://x')).filter((u) => u.pathname === '/sessions');
+  expect(asked.map((u) => u.searchParams.get('filter'))).toEqual([`key:sleeper:${L}:*`, `key:sleeper:${L}:*`]);
+  expect(calls.some(([u]) => u.includes('sleeper%3A999'))).toBe(false);
 });
 
 test('without a league the page says it is not set up', async () => {

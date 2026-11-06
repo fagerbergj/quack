@@ -92,22 +92,25 @@ test('an invocation racing a delete waits for it and then starts a fresh session
   assert.deepEqual(log, ['remove', 'ensure']);
 });
 
-test('a touch newer than the last log message is the session\'s last activity', async () => {
+test('a touch moves the stored last activity forward and never back', async () => {
   const root = await mkdtemp(join(tmpdir(), 'quack-touch-'));
   servers.push(() => void rm(root, { recursive: true, force: true }));
   const dataDir = join(root, 'data');
   const dir = join(dataDir, sessionDirName('job'));
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'session-key'), 'job');
-  // An older log message, so the newer touch has to win over it.
+  // A legacy log message: the first touch backfills from it, so an older touch cannot move the value behind it.
   const db = new DatabaseSync(join(dir, 'session.sqlite'));
   db.exec('CREATE TABLE entries (record TEXT)');
   db.prepare('INSERT INTO entries VALUES (?)').run(JSON.stringify({ model: [{ timestamp: Date.parse('2026-11-01T12:00:00Z') }] }));
   db.close();
   const driver = processDriver({ command: [], dataDir, agentsDir: join(root, 'agents') });
-  await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
-  const [session] = await driver.sessions();
-  assert.equal(session.lastActivity, '2026-11-02T12:00:00.000Z');
   await driver.touch('job', Date.parse('2026-10-31T12:00:00Z'));
-  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-01T12:00:00.000Z', 'a log message newer than the touch wins');
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-01T12:00:00.000Z');
+  await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');
+  await driver.touch('job', Date.parse('2026-11-01T18:00:00Z'));
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');  // Overlapping touches, newer first: the older one must not land over it.
+  await Promise.all([driver.touch('job', Date.parse('2026-11-04T12:00:00Z')), driver.touch('job', Date.parse('2026-11-03T12:00:00Z'))]);
+  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-04T12:00:00.000Z');
 });

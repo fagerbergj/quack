@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
-import { authorized } from '@quack/index';
+import { authorized, type Fact } from '@quack/index';
 import { sendProblem, serviceHttp } from '@quack/sdk';
 import { AgentError, type HostDriver, type SessionInfo } from './process-driver.ts';
+import { listQuery, paged } from './session-list.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
@@ -106,10 +107,17 @@ const realTimer: SetTimer = (fn, ms) => {
 };
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
+type Spend = { key: string; cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
+
+/** A session's `status` fact turning idle is a completed turn, dated when it ended; sessions resend unacknowledged facts, so a run that ended while this process was down still lands. */
+export const recordTurns = (driver: Pick<HostDriver, 'touch'>) => async (session: string, facts: Fact[]): Promise<void> => {
+  for (const f of facts) if (f.kind === 'status' && f.data.state === 'idle') await driver.touch(session, f.at).catch(() => {});
+};
+
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables the page's rename, archive and delete routes, and DELETE /sessions/:key for callers bearing `token` when one is set; `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
@@ -263,10 +271,37 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     await withSession(key, agent, 'GET /export', async (url) => void (await exportSession(info, url, res)));
   }
 
+  // Stored values plus what the last sweep saw and the index's spend; the index being off only drops cost and tokens.
+  async function decorate(found: SessionInfo[]) {
+    const spent = new Map((found.length ? await opts.spend?.().catch(() => []) ?? [] : []).map((x) => [x.key, x]));
+    return found.map((x) => {
+      const s = spent.get(x.key);
+      return { ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }), ...(s && { cost: s.cost, tokens: s.tokens }) };
+    });
+  }
+
+  async function sessionList(params: URLSearchParams, res: ServerResponse) {
+    const query = listQuery(params);
+    if (typeof query === 'string') return sendProblem(res, 400, query);
+    const { rows, next } = paged((await driver.sessions()).filter(query.keep), query);
+    send(res, 200, { sessions: await decorate(rows), ...(next && { nextPageToken: next }) });
+  }
+
+  async function sessionOne(key: string | undefined, res: ServerResponse) {
+    if (!key || !KEY.test(key)) return sendProblem(res, 400, 'invalid session key');
+    const found = (await driver.sessions()).find((x) => x.key === key);
+    if (found) send(res, 200, (await decorate([found]))[0]);
+    else sendProblem(res, 404, 'no such session');
+  }
+
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents' && req.url !== '/version')) return false;
-    if (req.url === '/version') return send(res, 200, { commit: process.env.QUACK_COMMIT || null, builtAt: process.env.QUACK_BUILT_AT || null }), true;
-    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }) })) });
+    const { pathname, searchParams } = new URL(req.url ?? '', 'http://distributor');
+    const one = /^\/sessions\/([^/]+)$/.exec(pathname);
+    if (req.method !== 'GET' || !(one || ['/sessions', '/agents', '/version'].includes(pathname))) return false;
+    if (pathname === '/version') send(res, 200, { commit: process.env.QUACK_COMMIT || null, builtAt: process.env.QUACK_BUILT_AT || null });
+    else if (pathname === '/agents') send(res, 200, { agents: await driver.agents() });
+    else if (one) await sessionOne(safeDecode(one[1]!), res);
+    else await sessionList(searchParams, res);
     return true;
   }
 
@@ -313,16 +348,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     send(res, 200, { key });
   }
 
-  async function deletion(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const match = req.method === 'DELETE' && opts.retire?.token ? /^\/sessions\/([^/?]+)$/.exec(req.url ?? '') : null;
-    if (!match) return false;
-    const key = safeDecode(match[1]);
-    if (!authorized(req, opts.retire!.token!)) sendProblem(res, 401, 'unauthorized');
-    else if (!key || !KEY.test(key)) sendProblem(res, 400, 'invalid session key');
-    else await retire(key, res);
-    return true;
-  }
-
   const TITLE_MAX = 120;
 
   // A title is text of bounded length and archived a boolean; the string is an error for the caller.
@@ -341,21 +366,31 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return sendProblem(res, 409, "Can't archive a session that is running or waiting on you.");
     const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
     if (done.includes(false)) return sendProblem(res, 404, 'no such session');
-    send(res, 200, { key });
+    const [row] = await decorate((await driver.sessions()).filter((x) => x.key === key));
+    return row ? send(res, 200, row) : sendProblem(res, 404, 'no such session');
   }
 
-  // The page's routes carry no token: the proxy's identity header (else the tailnet) is the boundary, as for approvals.
-  // A JSON content type keeps a cross-site form from posting here.
+  // Why a housekeeping request is refused before it runs, if it is: it needs the admin token or the proxy's identity (the legacy route only the identity), and a body must be JSON (a cross-site form cannot send it).
+  function refusal(req: IncomingMessage, key: string | undefined, legacy: boolean): [number, string] | undefined {
+    const proxied = Boolean(req.headers['x-authentik-username']);
+    if (legacy || !req.headers.authorization ? !proxied : !authorized(req, opts.retire!.token ?? '')) return [401, 'unauthorized'];
+    if (!key || !KEY.test(key)) return [400, 'invalid session key'];
+    return req.method !== 'DELETE' && !req.headers['content-type']?.startsWith('application/json') ? [legacy ? 400 : 415, 'send JSON'] : undefined;
+  }
+
+  // Rename, archive and delete change what a person sees, so each needs a credential; reads stay perimeter-trusted.
   async function housekeeping(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const match = opts.retire && /^\/sessions\/([^/?]+)(\/delete)?$/.exec(req.url ?? '');
-    if (!match || req.method !== (match[2] ? 'POST' : 'PATCH')) return false;
-    const key = safeDecode(match[1]);
-    if (!key || !KEY.test(key)) sendProblem(res, 400, 'invalid session key');
-    else if (!req.headers['content-type']?.startsWith('application/json')) sendProblem(res, 415, 'send JSON');
-    else if (match[2]) {
-      console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
-      await retire(key, res);
-    } else await patch(key, req, res);
+    const match = opts.retire && /^\/sessions\/([^/]+)(\/delete)?$/.exec(new URL(req.url ?? '', 'http://distributor').pathname);
+    const legacy = Boolean(match?.[2]);
+    if (!match || !(legacy ? req.method === 'POST' : req.method === 'PATCH' || req.method === 'DELETE')) return false;
+    const key = safeDecode(match[1]!);
+    const refused = refusal(req, key, legacy);
+    if (refused) sendProblem(res, ...refused);
+    else if (req.method === 'PATCH') await patch(key!, req, res);
+    else {
+      console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'the admin token'}`);
+      await retire(key!, res);
+    }
     return true;
   }
 
@@ -371,7 +406,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     await stopSession(key, undefined);
   }
 
-  const removal = async (req: IncomingMessage, res: ServerResponse) => (await deletion(req, res)) || (await housekeeping(req, res)) || (await agentRoutes(req, res));
+  const removal = async (req: IncomingMessage, res: ServerResponse) => (await housekeeping(req, res)) || (await agentRoutes(req, res));
 
   const server = createServer(async (req, res) => {
     try {

@@ -16,8 +16,16 @@ const sessions = [
   { key: 'home:one', agent: 'quack', title: 'chat', running: true, active: true, createdAt: day(1), lastActivity: day(4) },
 ];
 const long = 'x'.repeat(5000);
+
+// The sessions API as the tools use it: the filters they send (agent, not home:) applied, two rows to a page so every list is followed.
+function sessionPage(url: string) {
+  const q = new URL(url, 'http://x').searchParams;
+  const agent = /agent:"([^"]+)"/.exec(q.get('filter') ?? '')?.[1];
+  const rows = sessions.filter((s) => (!q.get('filter')?.includes('-key:home:*') || !s.key.startsWith('home:')) && (!agent || s.agent === agent));
+  const from = Number(q.get('pageToken') ?? 0);
+  return { sessions: rows.slice(from, from + 2), ...(from + 2 < rows.length && { nextPageToken: String(from + 2) }) };
+}
 const reply: Record<string, unknown> = {
-  'GET /sessions': { sessions },
   'GET /index/questions?state=pending': { questions: [{ session: 'research:abc' }] },
   'GET /index/approvals?state=pending': { approvals: [] },
   'GET /index/failures': { failures: [{ session: 'sleeper:L1:9:waivers' }] },
@@ -40,7 +48,8 @@ const server = createServer(async (req, res) => {
   for await (const c of req) chunks.push(c);
   const url = req.url ?? '';
   calls.push({ method: req.method ?? '', url, body: Buffer.concat(chunks).toString() });
-  const found = reply[`${req.method} ${url}`];
+  const one = req.method === 'GET' && /^\/sessions\/([^/?]+)$/.exec(url);
+  const found = url.startsWith('/sessions?') ? sessionPage(url) : one ? sessions.find((s) => s.key === decodeURIComponent(one[1]!)) : reply[`${req.method} ${url}`];
   const post = req.method === 'POST' ? { ok: true } : undefined;
   res.writeHead(found || post ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(found ?? post ?? { error: 'nope' }));
 });
@@ -78,6 +87,16 @@ test('find_sessions lists newest first with state, hides home chats, and filters
   assert.equal((await run('find_sessions', { text: 'nothing' })).text, 'No sessions match.');
 });
 
+test('find_sessions asks the server to drop home chats and keep one agent, and follows every page', async () => {
+  calls.length = 0;
+  await run('find_sessions', { agent: 'researcher' });
+  const asked = calls.filter((c) => c.url.startsWith('/sessions?')).map((c) => new URL(c.url, 'http://x').searchParams.get('filter'));
+  assert.deepEqual(asked, ['-key:home:* AND agent:"researcher"']);
+  calls.length = 0;
+  assert.equal((await run('find_sessions', {})).text.split('\n').length, 3);
+  assert.equal(calls.filter((c) => c.url.startsWith('/sessions?')).length, 2, 'three rows over two-row pages');
+});
+
 test('read_session returns a bounded read: newest results with summaries, questions, last messages', async () => {
   const { text } = await run('read_session', { key: 'github:acme/widgets#7' });
   assert.ok(text.length <= 4001);
@@ -97,7 +116,7 @@ test('a key the distributor does not list is refused before any session endpoint
     assert.match(out.text, /no session with key nope:1/);
   }
   assert.equal((await run('stop_session', { key: 'home:one' })).isError, true);
-  assert.ok(calls.every((c) => c.url === '/sessions'));
+  assert.ok(calls.every((c) => c.url === '/sessions/nope%3A1' || c.url === '/sessions/home%3Aone'));
 });
 
 test('send_message queues behind the current step under the session\'s own agent', async () => {

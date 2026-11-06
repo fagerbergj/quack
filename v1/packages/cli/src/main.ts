@@ -23,11 +23,13 @@ function table(rows: Array<Array<string | number | undefined>>, head: string[]):
 }
 
 
-// A key the distributor does not list is not found; a read of one answers 404, so check first for a clear message.
+// A read of a key the distributor does not know answers 404, so check first for a clear message.
 async function known(c: Client, key: string): Promise<any> {
-  const s = (await c.sessions()).find((x) => x.key === key);
-  if (!s) throw new ApiError(`no such session: ${key}`, 404);
-  return s;
+  try {
+    return await c.session(key);
+  } catch (e) {
+    throw e instanceof ApiError && e.status === 404 ? new ApiError(`no such session: ${key}`, 404) : e;
+  }
 }
 
 // Mirrors the UI's groups: a session with an approval, question or failure needs you, whatever else it is doing.
@@ -47,7 +49,7 @@ async function filterByState(c: Client, sessions: any[], state: string): Promise
 
 async function sessions(c: Client, _: string[], o: Opts): Promise<Result> {
   if (o.state && !STATES.includes(o.state)) throw usageError(`--state must be one of ${STATES.join(', ')}`);
-  let list = (await c.sessions()).filter((s) => !s.archived && (!o.agent || s.agent === o.agent));
+  let list = await c.sessions(['-archived:true', ...(o.agent ? [`agent:${JSON.stringify(o.agent)}`] : [])].join(' AND '));
   if (o.state) list = await filterByState(c, list, o.state);
   if (o.keys) return { data: { sessions: list }, text: list.map((s) => s.key).join('\n') };
   return { data: { sessions: list }, text: table(list.map((s) => [s.key, s.agent, s.running ? (s.active ? 'running' : 'idle') : 'stopped', s.title, s.lastActivity]), ['KEY', 'AGENT', 'STATE', 'TITLE', 'LAST ACTIVITY']) };

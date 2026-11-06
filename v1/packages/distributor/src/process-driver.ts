@@ -47,7 +47,7 @@ export type HostDriver = {
   setArchived(key: string, archived: boolean): Promise<boolean>;
   /** Records when a stopped session next needs a process (its earliest sleep); undefined clears it. */
   setWake(key: string, at: number | undefined): Promise<void>;
-  /** Records that the session was doing work at `at`, for runs that add no log messages. */
+  /** Records that the session was active at `at` (a run completed or is working); the stored value only moves forward. */
   touch(key: string, at: number): Promise<void>;
   /** Every session with a recorded wake time. */
   wakes(): Promise<Array<{ key: string; at: number }>>;
@@ -110,10 +110,14 @@ async function logTimes(dir: string, fn: 'min' | 'max'): Promise<number> {
   }
 }
 
-// Newest of the last log message and the last recorded touch; file mtimes move on every restart and checkpoint.
+// The stored `activity` file is written when a run completes; a session without one is backfilled once from its log (and the older `touched` file), like `created`.
 async function lastActivity(dir: string): Promise<number> {
-  const touched = Number(await readText(join(dir, 'touched'))) || 0;
-  return Math.max(await logTimes(dir, 'max'), touched) || createdAt(dir);
+  const stored = Number(await readText(join(dir, 'activity')));
+  if (stored) return stored;
+  const at = Math.max(await logTimes(dir, 'max'), Number(await readText(join(dir, 'touched'))) || 0) || (await createdAt(dir));
+  // `wx`: a touch that lands during the backfill keeps its value.
+  if (at) await writeFile(join(dir, 'activity'), String(at), { flag: 'wx' }).catch(() => undefined);
+  return at;
 }
 
 const TITLE_MAX = 120;
@@ -271,7 +275,9 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'session-key'), key);
       await writeFile(join(dir, 'agent'), name);
-      await writeFile(join(dir, 'created'), String(Date.now()));
+      const born = String(Date.now());
+      await writeFile(join(dir, 'created'), born);
+      await writeFile(join(dir, 'activity'), born);
     }
     return { name, path: from && join(snapshotDir, 'agent.json') };
   }
@@ -355,7 +361,14 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
   }
 
-  const touch = (key: string, at: number) => writeFile(join(sessionDir(key), 'touched'), String(at));
+  // Touches of one session run in turn, so an older read can never be written over a newer one.
+  const touching = new Map<string, Promise<unknown>>();
+  const touch = (key: string, at: number) => {
+    const next = (touching.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
+    touching.set(key, next);
+    void next.finally(() => touching.get(key) === next && touching.delete(key)).catch(() => {});
+    return next;
+  };
 
   async function setWake(key: string, at: number | undefined) {
     if (at === undefined) await rm(join(sessionDir(key), 'wake'), { force: true });

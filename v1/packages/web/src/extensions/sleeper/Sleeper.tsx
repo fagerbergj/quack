@@ -4,7 +4,7 @@ import type { Row } from '../../sessions.ts';
 import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
-import { sessionsOf, useResults, wanted, weekResult, type Result } from './week.ts';
+import { useLeagueSessions, useResults, wanted, weekResult, type Result } from './week.ts';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
 type Player = { id: string; name: string; pos: string; team: string | null; inj: string | null };
@@ -264,6 +264,15 @@ function Lineup({ r, running }: { r: Result | undefined; running: boolean }) {
   );
 }
 
+function Alerts({ note, error }: { note: string; error: string }) {
+  return (
+    <>
+      {note && <p role="alert" className="m-0 text-[13px] text-ink-2">{note}</p>}
+      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+    </>
+  );
+}
+
 export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now?: () => number }) {
   const [league, setLeague] = useState<string>();
   const [unconfigured, setUnconfigured] = useState('');
@@ -275,7 +284,7 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
   const runs = live.runs;
   useEffect(() => void upcoming().then(setLive), []);
   useEffect(() => void sleeperLeague().then(setLeague, () => setUnconfigured('Sleeper is not set up on this server.')), []);
-  const all = useMemo(() => sessionsOf(league, rows), [league, rows]);
+  const { sessions: all, error: listError } = useLeagueSessions(league, rows);
   // Sleeper's live week leads when the service reports it, so a week with no runs yet is still the current one.
   const weeks = [...new Set([...all.map((s) => s.week), ...(live.week ? [live.week] : [])])].sort((a, b) => a - b);
   const current = weeks.at(-1);
@@ -296,8 +305,7 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
   return (
     <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-4 px-4 pt-4 pb-10 sm:px-6">
       <Header week={week} team={team} prev={weeks.filter((w) => w < (week ?? 0)).at(-1)} next={weeks.find((w) => w > (week ?? 0))} past={past} onWeek={setPicked} onMenu={() => setMenu(true)} />
-      {unconfigured && <p role="alert" className="m-0 text-[13px] text-ink-2">{unconfigured}</p>}
-      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+      <Alerts note={unconfigured} error={error || listError} />
       {league && week === undefined && <p className="m-0 text-[13px] text-ink-2">No results yet. Run a job from the menu.</p>}
       {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} runs={runs} /><Lineup r={lineup} running={running('lineup')} /></>}
       {past && <Outcome week={week!} results={found} />}

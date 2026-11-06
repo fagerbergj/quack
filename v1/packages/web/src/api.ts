@@ -1,7 +1,8 @@
 // Every call to the distributor, so its contract lives in one place.
-export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string };
 /** What a session has spent: tokens by kind, and `cost` in dollars at the deployment's cloud-equivalent prices (0 when unpriced). */
 export type Spend = { cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
+/** A session row; `cost` and `tokens` are absent while the session index is off. */
+export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string } & Partial<Spend>;
 export type AgentSummary = { name: string; version: number; status: 'draft' | 'promoted'; model?: string; description?: string };
 export type RubricCheck = { label?: string; weight?: number | 'gate' };
 export type AgentRubric = { criteria: Array<{ id: string; checks: RubricCheck[] }> };
@@ -25,7 +26,17 @@ export async function json<T>(res: Response): Promise<T> {
 // Paths are relative to the page so the bundle works under any prefix (/ locally, /v1/ behind the proxy).
 const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
-export const listSessions = async () => (await json<{ sessions: SessionSummary[] }>(await fetch('sessions'))).sessions;
+/** Every session matching `filter` (a Lucene-style expression, see the sessions API): pages are followed to the end, so none is dropped. */
+export async function listSessions(filter?: string): Promise<SessionSummary[]> {
+  const rows: SessionSummary[] = [];
+  for (let token = ''; ;) {
+    const query = new URLSearchParams({ pageSize: '1000', ...(filter && { filter }), ...(token && { pageToken: token }) });
+    const page = await json<{ sessions: SessionSummary[]; nextPageToken?: string }>(await fetch(`sessions?${query}`));
+    rows.push(...page.sessions);
+    if (!page.nextPageToken) return rows;
+    token = page.nextPageToken;
+  }
+}
 export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
 export const getAgent = async (name: string, version?: number) => json<AgentDetail>(await fetch(`agents/${encodeURIComponent(name)}${version === undefined ? '' : `?version=${version}`}`));
 export const promoteAgent = async (name: string, version: number) =>
@@ -41,7 +52,7 @@ const housekeep = async (path: string, method: string, body: object) =>
   void (await json(await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
 export const renameSession = (key: string, title: string) => housekeep(base(key), 'PATCH', { title });
 export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { archived });
-export const deleteSession = (key: string) => housekeep(`${base(key)}/delete`, 'POST', {});
+export const deleteSession = async (key: string) => void (await json(await fetch(base(key), { method: 'DELETE' })));
 /** Where the session downloads as one JSON file; a plain link, so the browser saves it. */
 export const exportUrl = (key: string) => `${base(key)}/export`;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
@@ -73,7 +84,6 @@ export type Failure = { step: string; error: string };
 export type IndexFailure = Failure & { session: string; at: string };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
 export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
-export const indexSessions = () => indexRead<{ key: string } & Spend>('index/sessions', 'sessions');
 export const approvalOf = (a: IndexApproval): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: Date.parse(a.at) });
 /** A session's pending approvals from the index, which knows stopped sessions too; the session's own peek (empty while it is stopped) only when the index is off. */
 export async function sessionApprovals(key: string): Promise<Approval[]> {
