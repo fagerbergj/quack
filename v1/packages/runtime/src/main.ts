@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, resolveDeployment } from '@quack/session';
+import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, resolveDeployment } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -29,7 +29,8 @@ for (const name of [...declaredEnv(extensions, catalog), ...deploymentEnv(deploy
 const server = createSessionServer(session);
 listenReporting(server, Number(env('PORT', '8080')));
 
-// A held wait:true invocation would block close until its run ends; a caller that needs the result re-sends the same requestId to rejoin the run.
-for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(signal, () => { server.closeAllConnections(); server.close(() => void publisher?.stop().then(() => session.close()).then(() => process.exit(0))); });
-}
+// A caller cut off mid-invocation re-sends the same requestId to rejoin the run.
+exitOnStop(server, async () => {
+  await publisher?.stop();
+  await session.close();
+});

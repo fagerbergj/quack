@@ -418,11 +418,21 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 }
 
 /** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */
-export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number }): HostDriver {
+export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }
 
-function processLauncher(opts: { command: string[]; inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number }): Launch {
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
+
+// Below the distributor's 20 s drain, so a drain still finishes after a kill.
+const STOP_TIMEOUT_MS = 10_000;
+const unrefTimer = (fn: () => void, ms: number) => {
+  const t = setTimeout(fn, ms);
+  t.unref();
+  return () => clearTimeout(t);
+};
+
+function processLauncher(opts: LauncherOptions): Launch {
   return async ({ key, dir, agentPath }) => {
     const [cmd, ...args] = opts.command;
     // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
@@ -446,9 +456,13 @@ function processLauncher(opts: { command: string[]; inherit?: (agentPath: string
         pid: proc.pid,
         onExit: (cb) => (proc.exitCode !== null || proc.signalCode ? cb() : void proc.once('exit', cb)),
         stop: async () => {
+          if (proc.exitCode !== null || proc.signalCode) return;
           const exited = new Promise((r) => proc.once('exit', r));
           proc.kill('SIGTERM');
+          // A process that ignores SIGTERM or never finishes closing must not wedge every request for its key.
+          const cancel = (opts.setTimer ?? unrefTimer)(() => proc.kill('SIGKILL'), opts.stopTimeoutMs ?? STOP_TIMEOUT_MS);
           await exited;
+          cancel();
         },
       };
     } catch (err) {

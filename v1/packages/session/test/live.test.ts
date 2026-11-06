@@ -11,6 +11,24 @@ import { decide, person } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
 import { nextFrame, runEnded } from './ws-helpers.ts';
 
+test('shutdown closes the server while a page holds its live socket open', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const own = await mkdtemp(join(tmpdir(), 'quack-live-'));
+  after(() => rm(own, { recursive: true, force: true }));
+  const session = await openSession({ dir: own, models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
+  assert.equal((await nextFrame(ws, () => true)).type, 'view');
+  const closed = new Promise((r) => ws.addEventListener('close', r));
+  await server.shutdown();
+  await closed;
+  await session.close();
+});
+
 const dir = await mkdtemp(join(tmpdir(), 'quack-live-'));
 after(() => rm(dir, { recursive: true, force: true }));
 

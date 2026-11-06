@@ -8,7 +8,8 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Agent, fetch as ufetch, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
-import { shellEnv } from '@quack/session';
+import { childPort, shellEnv } from '@quack/session';
+import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { createDistributor, forwardOutput, processDriver, sessionDirName } from '../src/index.ts';
 
@@ -764,6 +765,33 @@ test('a session process whose report cannot be written still fails, naming the m
   const swallow = "process.report.directory = '/nonexistent/reports'; setInterval(() => {}, 1000);";
   const driver = processDriver({ command: [process.execPath, '-e', swallow], dataDir, defaultAgent: '', startTimeoutMs: 500 });
   await assert.rejects(driver.ensure('research:swallowed'), /no diagnostic report within 5s/);
+});
+
+test('a session process that ignores SIGTERM is killed at the stop deadline', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const deaf = "process.on('SIGTERM', () => {}); process.send({ port: 1 }); setInterval(() => {}, 1000);";
+  const deadlines: Array<{ fn: () => void; ms: number }> = [];
+  const setTimer = (fn: () => void, ms: number) => (deadlines.push({ fn, ms }), () => {});
+  const driver = processDriver({ command: [process.execPath, '-e', deaf], dataDir, defaultAgent: '', stopTimeoutMs: 5_000, setTimer });
+  await driver.ensure('research:deaf');
+  const pid = driver.pid('research:deaf')!;
+  const stopped = driver.stop('research:deaf');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(deadlines.map((d) => d.ms), [5_000]);
+  deadlines[0].fn();
+  await stopped;
+  assert.throws(() => process.kill(pid, 0), /ESRCH/, 'the process is gone');
+});
+
+test('a session process exits when the parent holding its IPC channel goes away', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-orphan-'));
+  dirs.push(dir);
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  await childPort(child, 'echo session', 15_000);
+  const exited = new Promise((r) => child.once('exit', (code) => r(code)));
+  child.disconnect();
+  assert.equal(await exited, 0);
 });
 
 test('a broken output sink neither throws nor loses the tail', async () => {

@@ -1,6 +1,6 @@
 // A session process whose fake model echoes the last user message, for distributor tests.
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { createSessionServer, listenReporting, openSession } from '@quack/session';
+import { createSessionServer, exitOnStop, listenReporting, openSession } from '@quack/session';
 
 const faux = fauxProvider({ models: [{ id: 'echo' }] });
 faux.setResponses(
@@ -16,4 +16,4 @@ const m = faux.getModel();
 
 const session = await openSession({ dir: process.env.QUACK_SESSION_DIR!, models, agent: { model: { provider: m.provider, modelId: m.id } } });
 const server = listenReporting(createSessionServer(session));
-process.on('SIGTERM', () => server.close(() => void session.close().then(() => process.exit(0))));
+exitOnStop(server, () => session.close());
