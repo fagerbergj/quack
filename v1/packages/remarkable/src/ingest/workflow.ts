@@ -2,6 +2,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import { contentText } from '@earendil-works/pi-ai';
 import type { ClassifierRef, ModelRef } from '@quack/judge';
 import { agentModel, observeGeneration, seal, type Decision } from '@quack/sdk';
+import { defineDoc } from '@earendil-works/pi-durable';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { classifierChoice, parseTopic } from './classify.ts';
 import { renderNotebook, renderPages } from './render.ts';
@@ -55,8 +56,15 @@ async function must<T>(read: Promise<{ ok: true; value: T } | { ok: false; error
   return r.value;
 }
 
-// A page that still fails after this many tries is recorded as not transcribed and the document carries on.
+// A page that still fails after this many tries fails the document once every other page has had its turn.
 const PAGE_ATTEMPTS = 3;
+
+/** Pages transcribed for one document version; they outlive the run, so a retry asks the model again only for the pages that failed. */
+export const PagesDoc = defineDoc<{ of: string | null; pages: Record<string, string> }>({ kind: 'remarkable.pages', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ of: null, pages: {} }), checkpointWhen: () => false });
+const versionOf = (c: StepContext) => {
+  const d = JSON.parse(String(c.input)) as Doc;
+  return `${d.id}@${d.version}`;
+};
 
 async function transcribePage(c: StepContext, deps: IngestDeps, n: number, count: number): Promise<string> {
   const agent = await c.api.agent(c.ctx);
@@ -73,36 +81,55 @@ async function transcribePage(c: StepContext, deps: IngestDeps, n: number, count
   return page;
 }
 
-// Success and failure are both memoized: a restart resumes at the next page and never retries a page already given up on.
-async function settle(c: StepContext, deps: IngestDeps, n: number, count: number): Promise<{ text: string; failed: boolean }> {
-  const done = await c.api.memo<string>(`transcribe:${n}`, c.ctx);
-  if (done !== undefined) return { text: done, failed: false };
+async function keep(c: StepContext, n: number, text: string) {
+  const of = versionOf(c);
+  await c.api.commit(async (tx) => {
+    const d = await tx.doc(PagesDoc, c.api.conversationId);
+    if (d.of !== of) Object.assign(d, { of, pages: {} });
+    d.pages[String(n)] = text;
+  }, c.ctx);
+}
+
+// A page given up on stays given up for the rest of this run, so a restart does not retry it; the next run does.
+async function settle(c: StepContext, deps: IngestDeps, n: number, count: number): Promise<{ text: string } | { failed: string }> {
+  const kept = await c.api.snapshot(PagesDoc, c.api.conversationId, c.ctx);
+  const done = kept?.of === versionOf(c) ? kept.pages[String(n)] : undefined;
+  if (done !== undefined) return { text: done };
   const gaveUp = await c.api.memo<string>(`transcribe-failed:${n}`, c.ctx);
-  if (gaveUp !== undefined) return { text: gaveUp, failed: true };
+  if (gaveUp !== undefined) return { failed: gaveUp };
   let reason = '';
   for (let attempt = 0; attempt < PAGE_ATTEMPTS; attempt++) {
     try {
-      return { text: await c.api.memo<string>(`transcribe:${n}`, await transcribePage(c, deps, n, count), c.ctx), failed: false };
+      const text = await transcribePage(c, deps, n, count);
+      await keep(c, n, text);
+      return { text };
     } catch (err) {
       // A close or abort interrupts the step; it resumes rather than counting against the page.
       if (c.signal.aborted) throw err;
       reason = err instanceof Error ? err.message : String(err);
     }
   }
-  return { text: await c.api.memo<string>(`transcribe-failed:${n}`, `not transcribed: ${reason}`, c.ctx), failed: true };
+  return { failed: await c.api.memo<string>(`transcribe-failed:${n}`, reason, c.ctx) };
+}
+
+// "pages 1, 3: the model returned an empty page; page 2: ..." so a document whose model is down reads as one reason.
+function failureSummary(failed: Array<[number, string]>): string {
+  const byReason = new Map<string, number[]>();
+  for (const [n, reason] of failed) byReason.set(reason, [...(byReason.get(reason) ?? []), n]);
+  return [...byReason].map(([reason, ns]) => `${ns.length === 1 ? 'page' : 'pages'} ${ns.join(', ')}: ${reason}`).join('; ');
 }
 
 async function transcribe(c: StepContext, deps: IngestDeps): Promise<JsonValue> {
   const count = step<{ pages: number }>(c, 'render').pages;
   const pages: string[] = [];
-  let failures = 0;
+  const failed: Array<[number, string]> = [];
   for (let n = 1; n <= count; n++) {
     const page = await settle(c, deps, n, count);
-    pages.push(page.text);
-    failures += page.failed ? 1 : 0;
+    if ('text' in page) pages.push(page.text);
+    else failed.push([n, page.failed]);
     await c.report({ progress: { done: n, total: count } });
   }
-  if (failures === count) throw new Error(`step transcribe: no page could be transcribed; ${pages[0]}`);
+  if (failed.length) throw new Error(`step transcribe: ${failed.length} of ${count} pages could not be transcribed (${failureSummary(failed)}); a retry transcribes only those`);
   return pages;
 }
 

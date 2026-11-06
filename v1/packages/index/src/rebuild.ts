@@ -10,7 +10,7 @@ import type { IndexStore } from './store.ts';
 const ctx = BACKGROUND_CONTEXT;
 const text = (path: string) => readFile(path, 'utf8').catch(() => undefined);
 
-// Replays every session log under dataDir into the index (A6); a log has one owner, so stop the distributor first.
+// Replays every session log under dataDir into the index; a log has one owner, so stop the distributor first.
 export async function rebuild(store: IndexStore, dataDir: string, now = Date.now, priceOf?: PriceOf): Promise<number> {
   let sessions = 0;
   for (const d of await readdir(dataDir)) {

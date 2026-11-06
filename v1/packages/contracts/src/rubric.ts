@@ -1,9 +1,12 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import ts from 'typescript';
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { Artifacts, Questions, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, Questions, type SealedArtifact } from '@quack/sdk';
+import { approvedSpec } from './approval.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
+import { exportsOf } from './typescript-rules.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
@@ -13,7 +16,7 @@ export const guideAnchors = (skill: string) => new Set([...skill.matchAll(/^###\
 function pointerResolves(doc: unknown, pointer: string): boolean {
   if (pointer === '') return true;
   // A TypeScript document is source text; its pointer is "/" plus the name of an export.
-  if (typeof doc === 'string') return /^\/[A-Za-z_$][\w$]*$/.test(pointer) && new RegExp(`^export (declare )?(type|interface|function|const|var|class|enum|namespace) ${pointer.slice(1).replace(/\$/g, '\\$')}\\b`, 'm').test(doc);
+  if (typeof doc === 'string') return exportsOf(ts.createSourceFile('contract.d.ts', doc, ts.ScriptTarget.ES2022, true)).some((e) => `/${e.name}` === pointer);
   let at: unknown = doc;
   for (const raw of pointer.split('/').slice(1)) {
     const key = raw.replaceAll('~1', '/').replaceAll('~0', '~');
@@ -61,7 +64,9 @@ export function specEvidence() {
     const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
     // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
     const cleared = (doc?.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
-    const prev = cleared.length ? (parseSpec(cleared.at(-1)!.content) as ContractSpec) : undefined;
+    // Breaks are against what callers were given: the approved spec, or before any approval the first that passed.
+    const base = approvedSpec(doc?.kinds ?? {}, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {}, sealed.version) ?? cleared[0];
+    const prev = base && (parseSpec(base.content) as ContractSpec);
     const [findings, unresolved, breaking] = await Promise.all([
       kind.check(spec.document),
       unresolvedLinks(api, spec, guideAnchors(kind.skill), ctx),

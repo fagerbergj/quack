@@ -5,7 +5,7 @@ import type { ReplayResult } from './replay.ts';
 /** Whether an agent's final artifacts block what they judged; undefined when they hold no verdict. */
 export type Blocks = (finals: Record<string, string>) => boolean | undefined;
 
-// EV2's known-bad cases count only if a replay blocks them, and known-good ones only if it does not; the checker can pass a review that misses the defect.
+// Known-bad cases count only if a replay blocks them, and known-good ones only if it does not; the checker can pass a review that misses the defect.
 function labelScores(r: ReplayResult, blocks?: Blocks): Record<string, number> {
   const label = (r.item.metadata as { label?: string } | undefined)?.label;
   const blocked = blocks?.(Object.fromEntries(Object.entries(r.record.artifacts).map(([k, v]) => [k, v.at(-1)!.content])));
@@ -32,7 +32,7 @@ export function scoresOf(r: ReplayResult, blocks?: Blocks): Record<string, numbe
   };
 }
 
-/** Records one replay as a trace with scores, linked into the run as a Langfuse experiment (EV1). */
+/** Records one replay as a trace with scores, linked into the run as a Langfuse experiment. */
 export async function publish(lf: Langfuse, runName: string, r: ReplayResult, blocks?: Blocks, extra: Record<string, number> = {}) {
   // OTLP trace ids are 16 random bytes in hex.
   const traceId = randomBytes(16).toString('hex');

@@ -150,7 +150,7 @@ test('the index calls onFacts with each accepted publish', async () => {
   dirs.push(dir);
   const seen: string[] = [];
   const store = createStore(sqliteBackend(join(dir, 'index.sqlite')));
-  const handler = indexRoutes(store, 't', async (session, facts) => void seen.push(`${session}:${facts.length}`));
+  const handler = indexRoutes(store, (t) => (t === 't' ? 's1' : undefined), async (session, facts) => void seen.push(`${session}:${facts.length}`));
   const server = createServer((req, res) => void handler(req, res));
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/index/facts`, { method: 'POST', headers: { authorization: 'Bearer t' }, body: JSON.stringify({ session: 's1', facts: [approval('a1')] }) });

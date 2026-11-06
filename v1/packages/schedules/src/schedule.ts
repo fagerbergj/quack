@@ -12,7 +12,7 @@ export type Schedule = {
   /** `{time}` becomes the occurrence's ISO time, so each occurrence can have its own session. */
   sessionKey: string;
   input: string;
-  /** Usefulness window (SCH-4): an occurrence stays useful for staleMs, and never past the deadline. Default: until the next occurrence, or ONE_SHOT_GRACE_MS past the last of `times`. */
+  /** Usefulness window: an occurrence stays useful for staleMs, and never past the deadline. Default: until the next occurrence, or ONE_SHOT_GRACE_MS past the last of `times`. */
   staleMs?: number;
   deadline?: string;
 };

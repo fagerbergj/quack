@@ -224,6 +224,43 @@ test('a restart resubmits pending items with the same request id and the batch c
   await second.stop();
 });
 
+test('ingest runs at most `concurrency` documents at once, oldest first, and the queue survives a restart', async () => {
+  const dir = mkdtempSync(`${tmpdir()}/rm-`);
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  // The distributor as an injected fetch: a submission is recorded the moment it is made and held until released.
+  const keys: string[] = [];
+  const held: Array<() => void> = [];
+  let onCall = () => {};
+  const distributorFetch = (async (url: string, init: RequestInit) => {
+    keys.push(decodeURIComponent(new URL(url).pathname.split('/')[2]));
+    onCall();
+    return new Promise<Response>((resolve, reject) => {
+      held.push(() => resolve(new Response('{"status":"done"}')));
+      init.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+    });
+  }) as typeof fetch;
+  const start = () => createRemarkableService({ dbPath: `${dir}/rm.db`, distributorUrl: 'http://distributor.test', fetch: distributorFetch, agent: 'a', concurrency: 1, client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
+  const headers = { authorization: 'Bearer svc-secret' };
+
+  const first = start();
+  const firstUrl = await listen(serveApp(first));
+  const { batch: id } = (await (await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2', 'n1'] }) })).json()) as any;
+  assert.deepEqual(keys, ['remarkable:n2'], 'the second document waits for the first');
+  await first.stop();
+
+  const second = start();
+  const secondUrl = await listen(serveApp(second));
+  assert.deepEqual(keys, ['remarkable:n2', 'remarkable:n2'], 'after a restart the head of the queue goes first, alone');
+  const next = new Promise<void>((resolve) => (onCall = resolve));
+  held[1]();
+  await next;
+  assert.equal(keys[2], 'remarkable:n1', 'the next queued document starts once the first is answered');
+  held[2]();
+  await second.settled();
+  assert.equal(((await (await fetch(`${secondUrl}/batches/${id}`, { headers })).json()) as any).status, 'done');
+  await second.stop();
+});
+
 test('a 200 whose result is unanswered settles the item failed with the reason', async () => {
   answerBody = { status: 'unanswered', reason: 'aborted by operator' };
   const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1'] })).json()) as any;

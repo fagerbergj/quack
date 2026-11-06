@@ -56,7 +56,7 @@ const mountFor = (data: DockerLauncherOptions['data'], sub: string) => 'volume' 
   ? { Mounts: [{ Type: 'volume', Source: data.volume, Target: SESSION_MOUNT, VolumeOptions: { Subpath: sub } }] }
   : { Binds: [`${data.hostDir}/${sub}:${SESSION_MOUNT}`] };
 
-/** A11's Docker driver: one container per session from the quack image, with only that session's directory mounted. */
+/** The Docker driver: one container per session from the quack image, with only that session's directory mounted. */
 export function dockerLauncher(opts: DockerLauncherOptions): Launch {
   const { api } = opts;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));

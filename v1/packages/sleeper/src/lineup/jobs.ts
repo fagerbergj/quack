@@ -4,7 +4,7 @@ import type { ScheduleConfig } from '../schedules.ts';
 import type { LineupInput } from './facts.ts';
 
 export const LINEUP_AGENT = 'sleeper-lineup';
-/** SL-9: a scheduled lineup finishes this long before the kickoff it serves. */
+/** A scheduled lineup finishes this long before the kickoff it serves. */
 export const MARGIN_MS = 60 * 60_000;
 export const ET = 'America/New_York';
 
@@ -27,7 +27,7 @@ const wednesdayBefore = (ms: number) => {
   return etDate(Date.parse(`${etDate(ms)}T12:00:00Z`) - back * 86_400_000);
 };
 
-/** After Wednesday's injury report, and again on Sunday morning; each is useful until an hour before the first kickoff it covers (SL-9, audit proposal). */
+/** After Wednesday's injury report, and again on Sunday morning; each is useful until an hour before the first kickoff it covers. */
 export function lineupRuns(kickoffs: number[]): Array<{ id: 'wed' | 'sun'; at: number; deadline: number }> {
   if (!kickoffs.length) return [];
   const first = Math.min(...kickoffs);
@@ -58,5 +58,5 @@ export async function registerLineupSchedules(config: ScheduleConfig, client: Sl
   return ids;
 }
 
-/** On-demand start (SL-2): submits the job to the distributor under the week's session key; each call is its own submission. */
+/** On-demand start: submits the job to the distributor under the week's session key; each call is its own submission. */
 export const startLineup = (config: StartConfig, input: LineupInput) => startJob(config, LINEUP_AGENT, lineupKey(input.league, input.week), input);

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLoad } from './useLoad.ts';
 import { listArtifacts, type SealedArtifact } from './api.ts';
 import { ArtifactBoundary } from './ArtifactBoundary.tsx';
 import { delivered, versionOf } from './delivered.ts';
@@ -9,11 +10,9 @@ const fullOf = (a: SealedArtifact) => EXTENSIONS.map((e) => e.full?.(a)).find(Bo
 
 // One artifact as its own page, for kinds whose layout needs more room than the drawer; `version` picks one, else the newest.
 export function ArtifactPage({ sessionKey, version }: { sessionKey: string; version?: number }) {
-  const [items, setItems] = useState<SealedArtifact[]>();
-  const [error, setError] = useState('');
   const [picked, setPicked] = useState(version);
   useEffect(() => setPicked(version), [version]);
-  useEffect(() => void listArtifacts(sessionKey).then((all) => setItems(delivered(all.filter(fullOf))), (e: Error) => setError(e.message)), [sessionKey]);
+  const { data: items, error } = useLoad(async (): Promise<SealedArtifact[] | undefined> => delivered((await listArtifacts(sessionKey)).filter(fullOf)), [sessionKey], undefined);
   // The URL carries the version so a reload or shared link lands on it.
   const pick = (v: number) => {
     setPicked(v);

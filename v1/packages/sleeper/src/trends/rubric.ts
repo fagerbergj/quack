@@ -53,7 +53,7 @@ export function trendsEvidence(f: TrendsFacts) {
   };
 }
 
-// The audit's trends table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// Trends weights are unreplayed: replay them before any weight gates delivery.
 export const trendsRubric: Rubric = {
   name: 'sleeper.trends',
   version: 1,

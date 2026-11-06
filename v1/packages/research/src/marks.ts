@@ -17,7 +17,7 @@ const NOTES: Record<string, (line: string, marks: Set<string>) => string | undef
   quotes_exist: (l, m) => ([...m].some((q) => l.includes(q)) ? 'quote not found in the cited source' : undefined),
 };
 
-/** The report as delivered (RES-4, ART-4): passed unchanged; released at the revision limit with a banner and a note on each line a failing check marked; undefined while still being revised. */
+/** The report as delivered: passed unchanged; released at the revision limit with a banner and a note on each line a failing check marked; undefined while still being revised. */
 export function deliveredReport(content: string, v: Verdict | null | undefined): string | undefined {
   if (!v || !(v.passed || v.limitReached)) return undefined;
   if (v.passed) return content;

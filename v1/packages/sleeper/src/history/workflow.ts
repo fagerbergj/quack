@@ -36,7 +36,7 @@ function prompt(f: HistoryFacts): string {
   ].join('\n\n');
 }
 
-/** League history job (SL-1): code assembles every figure; one model step writes the narrative; the judge checks the sealed card. */
+/** League history job: code assembles every figure; one model step writes the narrative; the judge checks the sealed card. */
 export function historyWorkflow(deps: HistoryDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as HistoryInput;
   const judgeOptions = (f: HistoryFacts): JudgeOptions => ({ kind: cardsKind, rubric: historyRubric, evidence: historyEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });

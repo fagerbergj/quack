@@ -8,7 +8,7 @@ const params = obj({
   week: opt(int({ minimum: 1, description: 'NFL week; the current week when omitted' })),
 }, { open: true });
 
-/** Runs a job through the Sleeper app's on-demand endpoint (SL-2), which owns the session key and input. */
+/** Runs a job through the Sleeper app's on-demand endpoint, which owns the session key and input. */
 export const runJob: Action<typeof params> = {
   name: 'run_job',
   summary: 'Run a Sleeper fantasy job (lineup, waivers, trends, digest, retro, trade-finder, history) for a week, in the configured league unless one is named',

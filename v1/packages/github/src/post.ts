@@ -17,7 +17,7 @@ const postFailed = async (res: Response) => ({
   isError: true,
 });
 
-// Delivers a version the judge cleared (passed, or released at the revision limit with its failures marked) once per checkout (R3, ART-4).
+// Delivers a version the judge cleared (passed, or released at the revision limit with its failures marked) once per checkout.
 function postCleared(config: SessionConfig) {
   return async (sealed: SealedArtifact, v: Verdict, api: ToolExecutionApi, ctx: Context) => {
     const doc = await api.snapshot(PullRequestDoc, api.conversationId, ctx);

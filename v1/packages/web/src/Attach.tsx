@@ -1,4 +1,5 @@
 import { useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent } from 'react';
+import { Dialog } from './Dialog.tsx';
 
 export type Img = { data: string; mimeType: string };
 
@@ -121,12 +122,13 @@ export function Thumbs({ images }: { images: Img[] }) {
         ))}
       </ul>
       {open && (
-        <div role="dialog" aria-modal="true" aria-label="Image" onClick={() => setOpen(null)} onKeyDown={(e) => e.key === 'Escape' && setOpen(null)} className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4">
+        // A tap anywhere closes it: the image lets clicks through to the backdrop.
+        <Dialog label="Image" onClose={() => setOpen(null)} scrim="fixed inset-0 z-50 bg-black/80" className="pointer-events-none fixed inset-0 z-50 grid place-items-center p-4">
           <img src={dataUrl(open)} alt="Full size" className="max-h-full max-w-full object-contain" />
-          <button type="button" autoFocus aria-label="Close image" onClick={() => setOpen(null)} className="absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 grid size-11 cursor-pointer place-items-center rounded-full border-0 bg-white/15 text-white">
+          <button type="button" data-autofocus aria-label="Close image" onClick={() => setOpen(null)} className="pointer-events-auto absolute top-[max(0.5rem,env(safe-area-inset-top))] right-2 grid size-11 cursor-pointer place-items-center rounded-full border-0 bg-white/15 text-white">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
-        </div>
+        </Dialog>
       )}
     </>
   );

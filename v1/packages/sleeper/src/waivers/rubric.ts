@@ -100,7 +100,7 @@ export function waiversEvidence(f: WaiverFacts) {
   };
 }
 
-// The audit's waivers table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// Waivers weights are unreplayed: replay them before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
   version: 6,

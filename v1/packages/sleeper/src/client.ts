@@ -1,4 +1,4 @@
-// Read-only Sleeper API client (SL-7): it only ever issues GET.
+// Read-only Sleeper API client: it only ever issues GET.
 export type Json = any;
 
 export class NotFound extends Error {}

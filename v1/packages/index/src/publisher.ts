@@ -9,7 +9,7 @@ const STOP_WAIT_MS = 5_000;
 
 export type PublisherOptions = { url: string; token: string; meta: SessionMeta; priceOf?: PriceOf; retryMs?: number; pollMs?: number; now?: () => number };
 
-// Sends a session's unacknowledged facts to the index (A6). The log is the outbox: a fact is unsent while its revision is
+// Sends a session's unacknowledged facts to the index. The log is the outbox: a fact is unsent while its revision is
 // above the acknowledged one in the Outbox document, so a crash, an index outage or a restart loses nothing.
 export async function startPublisher(session: { harness: Harness; root: Conversation }, opts: PublisherOptions) {
   const { harness, root } = session;
