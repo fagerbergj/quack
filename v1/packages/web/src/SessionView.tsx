@@ -14,7 +14,7 @@ import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
-import { PrChip } from './prState.tsx';
+import { SessionChips } from './slots.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { useLoad } from './useLoad.ts';
@@ -260,7 +260,7 @@ function Header({ sessionKey, name, back, status, tone, spend, link, result, onD
           <StatusChip text={status} tone={tone} />
           {result && <Result result={result} />}
         </div>
-        <PrChip sessionKey={sessionKey} />
+        <SessionChips sessionKey={sessionKey} />
         <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
         {onDetails && <button type="button" onClick={onDetails} className="h-11 flex-none cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-link hover:bg-soft lg:h-9">Details</button>}
         {link && (

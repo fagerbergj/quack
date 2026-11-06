@@ -8,8 +8,8 @@ import { useModal } from './useModal.ts';
 import { useLoad } from './useLoad.ts';
 import type { View } from './view.ts';
 import { useMedia, WIDE } from './useDesktop.ts';
-import { parseReview } from './extensions/review.ts';
-import { isPrSession, PrSection } from './extensions/PrRail.tsx';
+import { RailSections } from './slots.tsx';
+import { EXTENSIONS } from './extensions/index.ts';
 
 const head = 'm-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase';
 const jumpBtn = 'flex min-h-11 w-full cursor-pointer items-start border-0 bg-transparent p-0 text-left text-[13px] text-ink lg:min-h-8';
@@ -20,16 +20,13 @@ function jump(id: string) {
 
 const clock = (at: string | number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-const DECISION: Record<string, string> = { approve: 'Approve', request_changes: 'Request changes', comment: 'Comment' };
-
 // A score only when partial, as in the ledger's check result.
 function summaryOf(a: SealedArtifact): string {
   const v = a.verdict;
   const pct = v && v.score > 0 && v.score < 1 ? `, ${Math.round(v.score * 100)}%` : '';
   const checked = v ? [`${v.passed ? 'Double-checked' : "Didn't pass its checks"}${pct}`] : [];
-  const decision = a.kind === 'github.review' ? DECISION[parseReview(a.content)?.verdict ?? ''] : undefined;
-  const github = a.links?.some((l) => new URL(l.url, 'https://x').hostname === 'github.com');
-  const posted = a.links?.length ? [`Posted${github ? ' to GitHub' : ''}${decision ? ` as ${decision}` : ''}`] : [];
+  const postedTo = EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.postedTo;
+  const posted = a.links?.length ? [postedTo ?? 'Posted'] : [];
   return [...checked, ...posted].join(' · ');
 }
 
@@ -136,7 +133,7 @@ export type RailData = {
 export function RailBody(d: RailData) {
   return (
     <div className="flex flex-col gap-7">
-      {isPrSession(d.sessionKey) && <PrSection sessionKey={d.sessionKey} opening={openingOf(d.view)} meta={d.meta} fallbackTitle={d.title} />}
+      <RailSections sessionKey={d.sessionKey} title={d.title} opening={openingOf(d.view)} meta={d.meta} />
       <Versions items={d.items} />
       <NeedsYou approvals={d.approvals} questions={d.questions} />
       <Cost spend={d.spend} />
