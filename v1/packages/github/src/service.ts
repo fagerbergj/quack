@@ -1,10 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
-import { GithubError, NoInstallation, type GithubApp } from './app.ts';
-import { reviewFeedback } from './feedback.ts';
-import { fixQueued, fixRefused, noticeFor, settled } from './notice.ts';
+import { GithubError, NoInstallation, RateLimited, type GithubApp } from './app.ts';
+import { allReviews, reviewFeedback } from './feedback.ts';
+import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused, settled } from './notice.ts';
 import { prStateKey, pullStates, stateOf } from './pulls.ts';
-import { waitingQueue } from './queue.ts';
+import { waitingQueue, type WaitingStore } from './queue.ts';
+import { sqliteWaiting } from './waiting-store.ts';
 import { closedIssues, stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
@@ -21,9 +22,9 @@ export type ServiceConfig = {
   issueBase?: Record<string, string>;
   /** Where PR states persist; without it they live in memory and are re-read after a restart. */
   statesFile?: string;
-  /** Where `/fix`es waiting for a busy session persist; without it they wait in memory and a restart drops them. */
-  queueFile?: string;
-  /** How often a waiting `/fix` retries; default 15 s. */
+  /** Where reviews and `/fix`es waiting for a busy session persist; without it they wait in memory and a restart drops them. */
+  waiting?: WaitingStore;
+  /** How often waiting work retries; default 15 s. */
   queuePollMs?: number;
 };
 
@@ -69,25 +70,28 @@ const prKey = (owner: string, repo: string, number: number) => `${owner.toLowerC
 const baseFor = (bases: Record<string, string> | undefined, owner: string, repo: string) =>
   Object.entries(bases ?? {}).find(([r]) => r.toLowerCase() === `${owner}/${repo}`.toLowerCase())?.[1];
 
-// Waits out a run the webhook started and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
-async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number, doFetch?: typeof fetch) {
-  try {
-    const outcome = await settled(target, { ...payload, wait: true }, doFetch);
-    const note = noticeFor(outcome, (state.posted.get(prKey(t.repo.owner, t.repo.name, t.number)) ?? 0) > before);
-    if (note) await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: note });
-  } catch (err) {
-    console.warn(`github: run watch for ${t.sessionKey} failed: ${String(err)}`);
-  }
-}
-
-// A /fix still waits this long for a busy session before it is given up on.
+// Work still waits this long for a busy session before it is given up on.
 const QUEUE_TTL_MS = 6 * 3600_000;
 
-/** A `/fix` waiting for its session to finish a run; the same submission the webhook would have sent. */
-type QueuedFix = { sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number; /** The opening-card data computed for the first submission. */ meta?: object };
-type FixQueue = ReturnType<typeof waitingQueue<QueuedFix>>;
+/** A review or `/fix` that starts a run: what the webhook submits, and what waits in the queue while the session is busy. */
+type Queued = {
+  sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number;
+  /** The opening-card data computed for the first submission. */ meta?: object;
+  /** Absent in items an older release queued, which were all `/fix`. */ role?: Trigger['role'];
+};
+type WorkQueue = ReturnType<typeof waitingQueue<Queued>>;
+
+// One waiting review per PR, so a newer push or /review replaces an older one; a /fix waits beside it under its own key.
+const queueKey = (q: Queued) => (q.role === 'reviewer' ? `${q.sessionKey} review` : q.sessionKey);
+const submissionOf = (q: Queued) => ({ key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(q.meta && { meta: q.meta }) });
+const unreachable = (err: unknown) => new Response(JSON.stringify({ detail: `the distributor is unreachable: ${String(err)}` }), { status: 503 });
+const submit = (config: ServiceConfig, q: Queued) => submitToSession(config.distributorUrl, submissionOf(q), config.fetch).catch(unreachable);
+const postedCount = (state: RunState, q: Queued) => state.posted.get(prKey(q.owner, q.repo, q.number)) ?? 0;
 
 const midRun = (reason: string) => reason.includes('mid-run');
+// A busy session or a distributor outage is worth waiting out; any other refusal never succeeds on retry.
+const waits = (status: number, reason: string) => status >= 500 || (status === 409 && midRun(reason));
+const refusedNote = (q: Queued, reason: string, issue?: boolean) => (q.role === 'reviewer' ? reviewRefused(reason) : fixRefused(reason, issue));
 const comment = (app: GithubApp, q: { owner: string; repo: string; number: number }, body: string) =>
   app.asInstallation(q.owner, q.repo, 'POST', `/repos/${q.owner}/${q.repo}/issues/${q.number}/comments`, { body });
 const problemOf = async (upstream: Response) => {
@@ -95,24 +99,42 @@ const problemOf = async (upstream: Response) => {
   return problem.detail ?? problem.error ?? 'the distributor refused the run';
 };
 
-// A /fix the distributor refused is answered where it was written, never dropped; one that only waits on a running session is queued instead.
-async function noticeRefusedFix(app: GithubApp, t: Trigger, upstream: Response, queue: FixQueue, queued: QueuedFix): Promise<boolean> {
-  if (upstream.status !== 409 || t.role !== 'implementer') return false;
-  const reason = await problemOf(upstream);
-  if (t.issue || !midRun(reason)) await comment(app, queued, fixRefused(reason, t.issue));
-  else if (queue.add(queued.sessionKey, queued)?.requestId !== queued.requestId) await comment(app, queued, fixQueued);
-  return true;
+// Waits out a review run and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
+function watchRun(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued, before: number) {
+  if (state.watched.has(q.requestId)) return;
+  state.watched.add(q.requestId);
+  const { url, body } = invocationRequest(config.distributorUrl, submissionOf(q));
+  void settled(url, { ...JSON.parse(body), wait: true }, config.fetch)
+    .then((outcome) => noticeFor(outcome, postedCount(state, q) > before))
+    .then(async (note) => { if (note) await comment(app, q, note); })
+    .catch((err) => console.warn(`github: run watch for ${q.sessionKey} failed: ${String(err)}`));
 }
 
-// One retry of a queued /fix: done once it started or can never start. A session still mid-run, or a distributor outage, waits for the next try.
-async function startQueuedFix(app: GithubApp, config: ServiceConfig, q: QueuedFix): Promise<boolean> {
-  const payload = { key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(q.meta && { meta: q.meta }) };
-  const upstream = await submitToSession(config.distributorUrl, payload, config.fetch);
+// A refused start is answered where it was written, never dropped: a busy session or an outage queues it, anything else is said on the PR. Returns the webhook's status.
+async function answerRefusal(app: GithubApp, t: Trigger, upstream: Response, queue: WorkQueue, queued: Queued): Promise<number> {
+  const reason = await problemOf(upstream);
+  // An issue's /implement mid-run is refused, not queued, as before.
+  if (!waits(upstream.status, reason) || (t.issue && upstream.status === 409)) {
+    await comment(app, queued, refusedNote(queued, reason, t.issue));
+    return 200;
+  }
+  const prior = await queue.add(queueKey(queued), queued);
+  // A replaced review was already announced; a new /fix instruction is worth saying again.
+  const fresh = queued.role === 'reviewer' ? !prior : prior?.requestId !== queued.requestId;
+  if (fresh && upstream.status === 409) await comment(app, queued, queued.role === 'reviewer' ? reviewQueued : fixQueued);
+  return 202;
+}
+
+// One retry of queued work: done once it started or can never start. A session still busy, or a distributor outage, waits for the next try.
+async function startQueued(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued): Promise<boolean> {
+  const before = postedCount(state, q);
+  const upstream = await submit(config, q);
+  if (upstream.ok && q.role === 'reviewer') watchRun(app, config, state, q, before);
   if (upstream.ok) return true;
   const reason = await problemOf(upstream);
-  const waiting = upstream.status >= 500 || (upstream.status === 409 && midRun(reason));
+  const waiting = waits(upstream.status, reason);
   if (waiting && Date.now() - q.at < QUEUE_TTL_MS) return false;
-  await comment(app, q, fixRefused(waiting ? 'the running agent did not finish in 6 hours' : reason));
+  await comment(app, q, refusedNote(q, waiting ? 'the running agent did not finish in 6 hours' : reason));
   return true;
 }
 
@@ -132,7 +154,7 @@ async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trig
   send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
 }
 
-async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States, queue: FixQueue) {
+async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States, queue: WorkQueue) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
   const event = req.headers['x-github-event'] as string | undefined;
@@ -146,17 +168,14 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const session = { key: trigger.sessionKey, agent };
   if (trigger.followUp) return queueFollowUp(res, config, trigger, session, requestId);
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
-  const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
-  const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
-  const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload }, config.fetch);
-  const queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta };
-  if (await noticeRefusedFix(app, trigger, upstream, queue, queued)) return send(res, 200, { session: trigger.sessionKey, status: 409, noticed: true });
+  const queued: Queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta, role: trigger.role };
+  const before = postedCount(state, queued);
+  const upstream = await submit(config, queued);
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
-  if (upstream.ok && trigger.role === 'reviewer' && !state.watched.has(requestId)) {
-    state.watched.add(requestId);
-    void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before, config.fetch);
-  }
-  send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
+  if (upstream.ok && trigger.role === 'reviewer') watchRun(app, config, state, queued, before);
+  if (upstream.ok) return send(res, 202, { session: trigger.sessionKey, status: upstream.status });
+  const status = await answerRefusal(app, trigger, upstream, queue, queued);
+  send(res, status, { session: trigger.sessionKey, status: upstream.status, ...(status === 202 ? { queued: true } : { noticed: true }) });
 }
 
 async function gitCredential(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
@@ -169,7 +188,16 @@ async function gitCredential(req: IncomingMessage, res: ServerResponse, app: Git
   }
 }
 
-// Posts a review the session sealed and checked; the session never holds an API token (D56).
+const deliveryMark = (r: Record<string, any>) => (typeof r.deliveryId === 'string' && r.deliveryId ? `\n\n<!-- quack-delivery: ${encodeURIComponent(r.deliveryId)} -->` : '');
+
+// The review a delivery already posted, found by the mark in its body: a retry after a lost answer or a crash posts nothing twice.
+async function postedBefore(app: GithubApp, r: Record<string, any>, slug: string, mark: string): Promise<any> {
+  if (!mark) return undefined;
+  const reviews = await allReviews(app, r.owner, r.repo, `/repos/${r.owner}/${r.repo}/pulls/${r.number}`, Infinity);
+  return reviews.find((v) => String(v.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase() && String(v.body ?? '').includes(mark.trim()));
+}
+
+// Posts a review the session sealed and checked; the session never holds an API token. A `deliveryId` makes a repeat return the first post.
 async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState) {
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && EVENTS.has(r.event) && typeof r.body === 'string' && r.body.length > 0;
@@ -177,11 +205,16 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   const comments = Array.isArray(r.comments) ? r.comments.filter((c: any) => typeof c?.path === 'string' && Number.isInteger(c.line) && typeof c.body === 'string') : [];
   const slug = await app.slug();
   const path = `/repos/${r.owner}/${r.repo}/pulls/${r.number}/reviews`;
+  const mark = deliveryMark(r);
+  const key = prKey(r.owner, r.repo, r.number);
+  const count = () => state.posted.set(key, (state.posted.get(key) ?? 0) + 1);
+  const earlier = await postedBefore(app, r, slug, mark);
+  if (earlier) return (count(), send(res, 200, { id: earlier.id, url: earlier.html_url }));
   // GitHub refuses an approve or request-changes from a pull request's author, and the implementer opens pull requests as this app.
   const own = r.event !== 'COMMENT' && String((await app.asInstallation(r.owner, r.repo, 'GET', `/repos/${r.owner}/${r.repo}/pulls/${r.number}`)).json?.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
   const lead = own ? `**Verdict: ${r.event === 'APPROVE' ? 'approve' : 'request changes'}.** GitHub does not take this verdict from a pull request's own author, so it is posted as a comment.\n\n` : '';
   const post = (body: string, inline: any[]) => app.asInstallation(r.owner, r.repo, 'POST', path, {
-    event: own ? 'COMMENT' : r.event, body: stripMentions(lead + body, slug), ...(r.commitId ? { commit_id: r.commitId } : {}),
+    event: own ? 'COMMENT' : r.event, body: stripMentions(lead + body, slug) + mark, ...(r.commitId ? { commit_id: r.commitId } : {}),
     ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body, slug) })) } : {}),
   });
   // GitHub answers 422 when an inline line is off the diff; only then does the review go as written, findings in the body. Outages are the caller's to retry.
@@ -189,8 +222,7 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
     if (!comments.length || !(err instanceof GithubError) || err.status !== 422) throw err;
     return post(typeof r.fallbackBody === 'string' ? r.fallbackBody : r.body, []);
   });
-  const key = prKey(r.owner, r.repo, r.number);
-  state.posted.set(key, (state.posted.get(key) ?? 0) + 1);
+  count();
   send(res, 201, { id: json?.id, url: json?.html_url });
 }
 
@@ -228,13 +260,19 @@ async function checkRuns(app: GithubApp, owner: string, repo: string, sha: strin
   throw new Error(`more than ${MAX_CHECK_PAGES * 100} check runs on ${sha}; refusing to review against a partial CI result`);
 }
 
+// A deleted issue answers 410 (a missing one 404, which reads as no body): either is no linked issue, not a failed read.
+const gone = (err: unknown) => {
+  if (err instanceof GithubError && err.status === 410) return undefined;
+  throw err;
+};
+
 /** What a review needs to know about a pull request, read with the app's token on the session's behalf. */
 async function prFacts(app: GithubApp, owner: string, repo: string, number: number) {
   const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
   if (!pr) return undefined;
   const checks = { check_runs: await checkRuns(app, owner, repo, pr.head.sha) };
   const closes = closedIssues(pr.body);
-  const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
+  const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json, gone)));
   return {
     owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
     state: pr.merged ? 'merged' : pr.state === 'closed' ? 'closed' : 'open',
@@ -272,12 +310,20 @@ async function editPullRequest(req: IncomingMessage, res: ServerResponse, app: G
   send(res, 200, { url: json.html_url });
 }
 
-// /issues|pulls/{owner}/{repo}/{n}: GET reads either, PATCH edits a pull request; false when the path or method is neither.
+// The live head and description alone: one read, for callers that only check whether the PR moved.
+async function pullHead(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+  const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
+  send(res, pr ? 200 : 404, pr ? { headSha: pr.head.sha, body: pr.body ?? '' } : { error: 'no such pull request' });
+}
+
+// /issues|pulls/{owner}/{repo}/{n}: GET reads either, PATCH edits a pull request, GET .../head reads a PR's head; false when the path or method is none of these.
 async function itemRoute(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, path: string): Promise<boolean> {
-  const item = /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
+  const item = /^\/(issues|pulls)\/([^/]+)\/([^/]+)\/(\d+)(\/head)?$/.exec(path);
   if (!item) return false;
-  const [, what, owner, repo, n] = item;
-  if (req.method === 'PATCH' && what === 'pulls') await editPullRequest(req, res, app, owner, repo, Number(n));
+  const [, what, owner, repo, n, head] = item;
+  if (head && (what !== 'pulls' || req.method !== 'GET')) return false;
+  if (head) await pullHead(res, app, owner, repo, Number(n));
+  else if (req.method === 'PATCH' && what === 'pulls') await editPullRequest(req, res, app, owner, repo, Number(n));
   else if (req.method !== 'GET') return false;
   else if (what === 'issues') await issueRoute(res, app, owner, repo, Number(n), baseFor(config.issueBase, owner, repo));
   else await pullRequest(res, app, owner, repo, Number(n));
@@ -312,12 +358,22 @@ async function pullStatesRoute(req: IncomingMessage, res: ServerResponse, app: G
   send(res, 200, await states.lookup(app, keys));
 }
 
-/** `resume` re-arms the queued `/fix`es a restart found on disk; `stop` ends the retry timer. */
-export function createGithubService(app: GithubApp, config: ServiceConfig): App & { resume(): void; stop(): void } {
+// By cause, so a caller retries only what can succeed: GitHub's refusals keep their status, its outages are a bad gateway, a rate limit is 503, a fault here is 500.
+function failureStatus(err: unknown): number {
+  if (err instanceof SyntaxError) return 400;
+  if (err instanceof NoInstallation) return 404;
+  if (err instanceof RateLimited) return 503;
+  // A 401 is the app's own credential failing upstream, not the caller's.
+  if (err instanceof GithubError) return err.status >= 500 || err.status === 401 ? 502 : err.status;
+  return 500;
+}
+
+/** `resume` re-arms the work a restart found in the store; `stop` ends the retry timer; `sweep` retries waiting work now. */
+export function createGithubService(app: GithubApp, config: ServiceConfig): App & { resume(): void; stop(): void; sweep(): Promise<void> } {
   const state: RunState = { posted: new Map(), watched: new Set() };
   const states = pullStates(config.statesFile);
-  const queue = waitingQueue<QueuedFix>(config.queueFile, (_key, q) => startQueuedFix(app, config, q), config.queuePollMs);
-  return { resume: queue.resume, stop: queue.stop, handle: async (req, res) => {
+  const queue = waitingQueue<Queued>(config.waiting ?? sqliteWaiting(':memory:'), (_key, q) => startQueued(app, config, state, q), config.queuePollMs);
+  return { resume: queue.resume, stop: queue.stop, sweep: queue.sweep, handle: async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;
       if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state, states, queue);
@@ -328,7 +384,8 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       if (!(await itemRoute(req, res, app, config, path))) send(res, 404, { error: 'not found' });
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
-      send(res, err instanceof SyntaxError ? 400 : 502, { error: (err as Error).message });
+      if (err instanceof RateLimited) res.setHeader('retry-after', String(Math.ceil(err.retryAfterMs / 1000)));
+      send(res, failureStatus(err), { error: (err as Error).message });
     }
   } };
 }

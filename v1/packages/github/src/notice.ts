@@ -32,3 +32,9 @@ export const fixRefused = (reason: string, issue = false) => `Quack could not st
 
 /** Said on the PR when a `/fix` arrives while the session is mid-run: it starts when that run ends. */
 export const fixQueued = 'Quack is still working on this pull request, so `/fix` is queued and starts when the running agent finishes.';
+
+/** Said on the PR when the distributor refuses a review for any reason but a busy session. */
+export const reviewRefused = (reason: string) => `Quack could not start a review of this pull request: ${reason}. ${RETRY}`;
+
+/** Said on the PR when a review arrives while another agent runs or waits on a person; a later push or `/review` replaces it. */
+export const reviewQueued = 'Quack is busy on this pull request (another agent is running or waiting on a person), so the review is queued and starts when that finishes.';

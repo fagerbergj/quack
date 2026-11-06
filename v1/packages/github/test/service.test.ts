@@ -5,11 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { serveApp } from '@quack/sdk';
 import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { fixQueued, fixRefused, noticeFor } from '../src/notice.ts';
+import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused } from '../src/notice.ts';
+import { sqliteWaiting } from '../src/waiting-store.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -36,6 +36,7 @@ const reviews = [
   review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
 ];
 let graphqlErrors = false;
+const posted15: any[] = [];
 const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
 const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 'Fixed already.')];
 const commentWaiters: Array<() => void> = [];
@@ -95,6 +96,17 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/14/reviews') return calls.at(-1)!.body.event === 'COMMENT' ? reply(200, { id: 10, html_url: 'https://github.com/acme/widgets/pull/14#review-10' }) : reply(422, { message: 'Can not approve your own pull request' });
     const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
     if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
+    if (url === '/repos/acme/widgets/pulls/15' && req.method === 'GET') return reply(200, { number: 15, user: { login: 'dev' } });
+    if (url === '/repos/acme/widgets/pulls/15/reviews' && req.method === 'POST') {
+      const id = 100 + posted15.length;
+      posted15.push({ id, user: { login: 'quack-app[bot]' }, state: 'COMMENTED', body: calls.at(-1)!.body.body, commit_id: calls.at(-1)!.body.commit_id, html_url: `https://github.com/acme/widgets/pull/15#review-${id}` });
+      return reply(200, posted15.at(-1));
+    }
+    const page15 = /^\/repos\/acme\/widgets\/pulls\/15\/reviews\?per_page=100&page=(\d+)$/.exec(url);
+    if (page15) return reply(200, [...reviews.slice(0, 100), ...posted15].slice((Number(page15[1]) - 1) * 100, Number(page15[1]) * 100));
+    if (url === '/repos/acme/widgets/pulls/16' && auth === 'token ghs_test') return reply(200, { number: 16, title: 't', body: 'Fixes #17, closes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/18/reviews') return reply(422, { message: 'Unprocessable' });
+    if (url === '/repos/acme/widgets/issues/17') return reply(410, { message: 'This issue was deleted' });
     if (url === '/graphql' && graphqlErrors) return reply(200, { errors: [{ message: 'Resource not accessible by integration' }] });
     if (url === '/graphql') return reply(200, { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } });
     reply(404, {});
@@ -106,6 +118,7 @@ const watchers: string[] = [];
 const watcherWaiters: Array<() => void> = [];
 const holds: Record<string, Promise<void>> = {};
 let busy = false;
+let busyStatus = 409;
 let busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
 const outcomes: Record<string, unknown> = {};
 const distributor = await listen(
@@ -120,7 +133,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
-    if (busy) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: busyDetail }));
+    if (busy) return res.writeHead(busyStatus, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: busyDetail }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
   }),
@@ -129,10 +142,10 @@ const distributor = await listen(
 const config = { webhookSecret: 'hook-secret', distributorUrl: distributor, label: 'quack:review', agent: 'reviewer' };
 const service = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), config)));
 
-function deliver(event: string, payload: unknown, opts: { secret?: string; id?: string } = {}) {
+function deliver(event: string, payload: unknown, opts: { secret?: string; id?: string; to?: string } = {}) {
   const body = JSON.stringify(payload);
   const sig = `sha256=${createHmac('sha256', opts.secret ?? 'hook-secret').update(body).digest('hex')}`;
-  return fetch(`${service}/webhook`, { method: 'POST', body, headers: { 'x-github-event': event, 'x-hub-signature-256': sig, 'x-github-delivery': opts.id ?? 'd-1' } }).then((r) => r.status);
+  return fetch(`${opts.to ?? service}/webhook`, { method: 'POST', body, headers: { 'x-github-event': event, 'x-hub-signature-256': sig, 'x-github-delivery': opts.id ?? 'd-1' } }).then((r) => r.status);
 }
 
 const repository = { name: 'widgets', owner: { login: 'acme' } };
@@ -197,15 +210,15 @@ test('/fix runs the implementer in the PR session only where one is configured; 
 });
 
 const fixComment = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/fix the cache test', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
-const fixService = (extra: object = {}) => {
-  const svc = createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer', queuePollMs: 10, ...extra });
+// The retry timer never fires inside a test; each test runs a retry pass itself with sweep().
+const queuedService = (extra: object = {}) => {
+  const svc = createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, implementerAgent: 'implementer', queuePollMs: 3_600_000, ...extra });
   return listen(serveApp(svc)).then((url) => ({ svc, url }));
 };
-const postFix = (url: string, id: string) => {
-  const body = JSON.stringify(fixComment);
-  const sig = `sha256=${createHmac('sha256', 'hook-secret').update(body).digest('hex')}`;
-  return fetch(`${url}/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': sig, 'x-github-delivery': id } }).then((r) => r.status);
-};
+const fixService = queuedService;
+const postFix = (url: string, id: string) => deliver('issue_comment', fixComment, { id, to: url });
+const MID_RUN = 'session is mid-run as agent reviewer; implementer can start once it finishes';
+const metaReads = () => calls.filter((c) => c.path === '/repos/acme/widgets/pulls/7/files?per_page=100').length;
 
 test('a /fix that finds the session mid-run is queued behind it, answered once, and started once the session is idle', async () => {
   invocations.length = 0;
@@ -213,18 +226,17 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
   const { svc, url } = await fixService();
   try {
     busy = true;
-    assert.equal(await postFix(url, 'd-q1'), 200);
-    assert.equal(await postFix(url, 'd-q1'), 200, 'a redelivery');
-    await sleep(60);
+    assert.equal(await postFix(url, 'd-q1'), 202);
+    assert.equal(await postFix(url, 'd-q1'), 202, 'a redelivery');
     assert.deepEqual(commented, [fixQueued]);
     assert.equal(invocations.length, 0);
-    const metaReads = () => calls.filter((c) => c.path === '/repos/acme/widgets/pulls/7/files?per_page=100').length;
     const before = metaReads();
-    await sleep(60);
+    await svc.sweep();
+    assert.equal(invocations.length, 0, 'still mid-run, still waiting');
     assert.equal(metaReads(), before, 'retries reuse the stored opening-card data');
     busy = false;
-    while (!invocations.length) await sleep(10);
-    await sleep(60);
+    await svc.sweep();
+    await svc.sweep();
     assert.equal(invocations.length, 1, 'started once');
     assert.equal(invocations[0].body.requestId, 'github-delivery:d-q1');
     assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
@@ -236,25 +248,23 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
   }
 });
 
-test('a queued /fix survives a restart: a new service reading the same file starts it', async () => {
+test('queued work survives a restart: a new service reading the same store starts it', async () => {
   invocations.length = 0;
   commented.length = 0;
-  const queueFile = join(mkdtempSync(join(tmpdir(), 'fixq-')), 'github-fixes.json');
-  const first = await fixService({ queueFile });
+  const db = join(mkdtempSync(join(tmpdir(), 'fixq-')), 'github.db');
+  const first = await fixService({ waiting: sqliteWaiting(db) });
   busy = true;
-  assert.equal(await postFix(first.url, 'd-q2'), 200);
+  assert.equal(await postFix(first.url, 'd-q2'), 202);
   first.svc.stop();
   busy = false;
-  await sleep(60);
-  assert.equal(invocations.length, 0, 'nothing retries without the timer');
-  const second = await fixService({ queueFile });
+  assert.equal(invocations.length, 0);
+  const store = sqliteWaiting(db);
+  const second = await fixService({ waiting: store });
   try {
-    second.svc.resume();
-    while (!invocations.length) await sleep(10);
-    await sleep(60);
+    await second.svc.sweep();
     assert.equal(invocations.length, 1);
     assert.equal(invocations[0].body.requestId, 'github-delivery:d-q2');
-    assert.deepEqual(JSON.parse(readFileSync(queueFile, 'utf8')), {}, 'started work leaves the file');
+    assert.deepEqual(await store.list(), [], 'started work leaves the store');
   } finally {
     second.svc.stop();
   }
@@ -268,13 +278,96 @@ test('a /fix refused for any reason other than a running session is answered, no
     busy = true;
     busyDetail = 'agent implementer is not registered';
     assert.equal(await postFix(url, 'd-q3'), 200);
-    busy = false;
-    await sleep(60);
-    assert.equal(invocations.length, 0);
     assert.deepEqual(commented, [fixRefused('agent implementer is not registered')]);
+    busy = false;
+    await svc.sweep();
+    assert.equal(invocations.length, 0, 'nothing was queued to start');
   } finally {
     busy = false;
-    busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
+    busyDetail = MID_RUN;
+    svc.stop();
+  }
+});
+
+const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository };
+const pushed = (sha: string) => ({ action: 'synchronize', pull_request: { ...pr, head: { sha, ref: 'fix' }, labels: [{ name: 'quack:review' }] }, repository });
+
+test('a review that finds another agent in the session is queued, a newer push replaces it, and it starts once the session is free', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    busy = true;
+    busyDetail = 'session is mid-run as agent implementer; reviewer can start once it finishes';
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-rq1', to: url }), 202, 'handled, so never redelivered');
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-rq2', to: url }), 202);
+    assert.deepEqual(commented, [reviewQueued], 'said once, not once per push');
+    await svc.sweep();
+    assert.equal(invocations.length, 0);
+    busy = false;
+    await svc.sweep();
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-rq2'], 'only the newest head is reviewed, once');
+    assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=reviewer');
+    assert.match(invocations[0].body.input, /Head: def456 on fix/);
+  } finally {
+    busy = false;
+    busyDetail = MID_RUN;
+    svc.stop();
+  }
+});
+
+test('a review queued behind a /fix waits beside it; neither replaces the other', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    busy = true;
+    assert.equal(await postFix(url, 'd-both1'), 202);
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-both2', to: url }), 202);
+    busy = false;
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => i.body.requestId).sort(), ['github-delivery:d-both1', 'github-delivery:d-both2']);
+  } finally {
+    busy = false;
+    svc.stop();
+  }
+});
+
+test('a review refused for any other reason is said on the PR, not dropped', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    busy = true;
+    busyDetail = 'agent reviewer version 2 changed since it was first used; bump its version';
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-rr1', to: url }), 200);
+    assert.deepEqual(commented, [reviewRefused('agent reviewer version 2 changed since it was first used; bump its version')]);
+    busy = false;
+    await svc.sweep();
+    assert.equal(invocations.length, 0);
+  } finally {
+    busy = false;
+    busyDetail = MID_RUN;
+    svc.stop();
+  }
+});
+
+test('a distributor outage queues the start instead of answering 502 for a redelivery that may never come', async () => {
+  invocations.length = 0;
+  commented.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    busy = true;
+    busyStatus = 503;
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-out1', to: url }), 202);
+    assert.deepEqual(commented, [], 'an outage is not worth a comment');
+    busy = false;
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-out1']);
+  } finally {
+    busy = false;
+    busyStatus = 409;
     svc.stop();
   }
 });
@@ -400,7 +493,7 @@ test('GraphQL errors in a 200 answer are reported, not read as no threads', asyn
 
 test('a commit with more check runs than the service reads is refused, not reviewed against part of its CI', async () => {
   const res = await fetch(`${service}/pulls/acme/widgets/8`, { headers: { authorization: 'Bearer svc-secret' } });
-  assert.equal(res.status, 502);
+  assert.equal(res.status, 500, 'a limit here, not a GitHub outage to retry');
   assert.match((await res.json()).error, /more than 1000 check runs on full111/);
 });
 
@@ -420,14 +513,6 @@ test('an unreachable distributor is retried with capped backoff, then the promot
   let up = false;
   const url = await listen(createServer((_req, res) => { if (up) res.end(JSON.stringify({ agents: [{ name: 'reviewer', status: 'draft' }] })); else res.writeHead(503).end(); }));
   await assert.rejects(assertPromoted(url, 'reviewer', async () => { up = true; }), /reviewer is draft/);
-});
-
-test('a redelivered event carries the original delivery id, so it is one submission', async () => {
-  invocations.length = 0;
-  const event = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository };
-  assert.equal(await deliver('pull_request', event, { id: 'd-redo' }), 202);
-  assert.equal(await deliver('pull_request', event, { id: 'd-redo' }), 202);
-  assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-redo', 'github-delivery:d-redo']);
 });
 
 test('a run that fails says so on the PR once, even when its delivery arrives twice', async () => {
@@ -528,6 +613,39 @@ test('a review posts its inline comments on the right side, mentions stripped; a
   const down = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'x', fallbackBody: 'y', comments: [{ path: 'down.ts', line: 1, body: 'n' }] }), headers: { authorization: 'Bearer svc-secret' } });
   assert.equal(down.status, 502);
   assert.equal(posts() - before, 3);
+});
+
+const postTo = (body: unknown) => fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+test('a review delivery whose answer was lost is found on retry, not posted twice', async () => {
+  const review = { owner: 'acme', repo: 'widgets', number: 15, commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', deliveryId: 'conv-1/v1' };
+  const first = await postTo(review);
+  assert.equal(first.status, 201);
+  assert.match(posted15[0].body, /\n\n<!-- quack-delivery: conv-1%2Fv1 -->$/);
+  const again = await postTo(review);
+  assert.deepEqual([again.status, again.body.url], [200, first.body.url]);
+  assert.equal(posted15.length, 1, 'GitHub got one review');
+  assert.equal((await postTo({ ...review, deliveryId: 'conv-1/v2' })).status, 201, 'another delivery posts');
+  assert.equal(posted15.length, 2);
+});
+
+test('a deleted linked issue is absent from the record, not a failed read', async () => {
+  const res = await fetch(`${service}/pulls/acme/widgets/16`, { headers: { authorization: 'Bearer svc-secret' } });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await res.json()).linkedIssues.map((i: any) => i.number), [3]);
+});
+
+test('the head route reads the pull request once, without its checks, reviews or issues', async () => {
+  await fetch(`${service}/pulls/acme/widgets/7/head`, { headers: { authorization: 'Bearer svc-secret' } });
+  const before = calls.length;
+  const res = await fetch(`${service}/pulls/acme/widgets/7/head`, { headers: { authorization: 'Bearer svc-secret' } });
+  assert.deepEqual(await res.json(), { headSha: 'abc123', body: 'Fixes #3' });
+  assert.deepEqual(calls.slice(before).map((c) => c.path), ['/repos/acme/widgets/pulls/7']);
+  assert.equal((await fetch(`${service}/pulls/acme/widgets/404/head`)).status, 404);
+});
+
+test('a GitHub refusal keeps its status and a fault here is a 500, so neither is redelivered as an outage', async () => {
+  assert.equal((await postTo({ owner: 'acme', repo: 'widgets', number: 18, event: 'COMMENT', body: 'x' })).status, 422);
 });
 
 const pulls = (keys: string, token = 'svc-secret') =>
