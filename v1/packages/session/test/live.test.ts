@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
-import { obj } from '@earendil-works/pi-schema';
+import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { decide, person } from '@quack/sdk';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { Artifacts, decide, gated, person } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
 import { nextFrame, runEnded } from './ws-helpers.ts';
 
@@ -93,7 +94,7 @@ test('an open question rides the socket as a standing frame and clears when answ
   const port = (server.address() as AddressInfo).port;
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const quiet = nextFrame(ws, (f) => f.type === 'standing');
-  assert.deepEqual(await quiet, { type: 'standing', questions: [], failures: [] });
+  assert.deepEqual(await quiet, { type: 'standing', questions: [], failures: [], approvals: [] });
 
   const asked = nextFrame(ws, (f) => f.type === 'standing' && f.questions.length === 1);
   await fetch(`http://127.0.0.1:${port}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'go' }) });
@@ -104,6 +105,39 @@ test('an open question rides the socket as a standing frame and clears when answ
   const res = await fetch(`http://127.0.0.1:${port}/questions/${encodeURIComponent(question.id)}`, { method: 'POST', body: JSON.stringify({ choice: 'Pollard', by: 'jf' }) });
   assert.equal(res.status, 200);
   await cleared;
+
+  ws.close();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});
+
+test('a gated call\'s approval and each sealed artifact ride the socket the moment they are committed', async () => {
+  const post = gated(defineTool({ name: 'post_comment', description: 'post', parameters: obj({ body: str() }, { open: true }), execute: async () => ({ output: [{ type: 'text', text: 'posted' }] }) }));
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('post_comment', { body: 'LGTM' }), { stopReason: 'toolUse' }), fauxAssistantMessage('Done.')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await mkdtemp(join(tmpdir(), 'quack-live-')), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'demo', tools: [post] })] } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const port = (server.address() as AddressInfo).port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  assert.deepEqual(await nextFrame(ws, (f) => f.type === 'artifacts'), { type: 'artifacts', artifacts: [] });
+
+  const asked = nextFrame(ws, (f) => f.type === 'standing' && f.approvals.length === 1);
+  await fetch(`http://127.0.0.1:${port}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'go' }) });
+  const [approval] = (await asked).approvals;
+  assert.deepEqual([approval.tool, approval.args], ['post_comment', { body: 'LGTM' }]);
+  const cleared = nextFrame(ws, (f) => f.type === 'standing' && f.approvals.length === 0);
+  const res = await fetch(`http://127.0.0.1:${port}/approvals/${encodeURIComponent(approval.id)}`, { method: 'POST', body: JSON.stringify({ decision: 'approve' }) });
+  assert.equal(res.status, 200);
+  await cleared;
+
+  const version = { kind: 'demo.note', version: 1, hash: 'h', content: 'hi', sealedAt: 1, verdict: null };
+  const sealed = nextFrame(ws, (f) => f.type === 'artifacts' && f.artifacts.length === 1);
+  await session.root.commit(async (tx) => { (await tx.doc(Artifacts, session.root.id)).kinds['demo.note'] = { versions: [version] }; }, BACKGROUND_CONTEXT);
+  assert.deepEqual((await sealed).artifacts, [version]);
 
   ws.close();
   await new Promise((r) => server.close(r));

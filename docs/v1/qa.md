@@ -59,4 +59,4 @@ const scenario: Scenario = {
 export default scenario;
 ```
 
-Routes are hash routes (`#/sessions`, `#/s/<key>`). On a phone width the page title moves into the header, so assert on page content inside `main`, not on an `h1`. A session view scrolls inside `[aria-live="polite"]`, not the window. A question card is `region "Question"` inside `main`; the sidebar Needs-you list repeats its text, so scope to `main`.
+Routes are hash routes (`#/sessions`, `#/s/<key>`). On a phone width the page title moves into the header, so assert on page content inside `main`, not on an `h1`. A session view scrolls inside its pane, not the window; find the transcript as `getByRole('log', { name: 'Transcript' })`. A question card is `region "Question"` inside `main`; the sidebar Needs-you list repeats its text, so scope to `main`.
