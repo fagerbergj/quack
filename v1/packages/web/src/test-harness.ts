@@ -1,4 +1,4 @@
-import { act } from '@testing-library/react';
+import { act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import { forgetVersion } from './api.ts';
 
@@ -19,9 +19,10 @@ const OFF: Routes = {
   'GET /index/approvals?state=pending': notFound, 'GET /index/questions?state=pending': notFound,
   'GET /index/failures': notFound, 'GET /index/artifacts': notFound, 'GET /version': notFound,
 };
-const QUIET = /^GET \/sessions\/[^/?]+\/(meta|questions)$/;
+// A session's own reads answer empty, and an extension's service is not connected, unless a test routes them.
+const QUIET = /^GET \/sessions\/[^/?]+\/(meta|questions|approvals)$/;
+const APP = /^GET \/apps\//;
 
-const STRICT = false;
 /** The answers for this test; a test adds or deletes entries in place. */
 export const routes: Routes = {};
 const unexpected: string[] = [];
@@ -38,7 +39,8 @@ export const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const route = `${init?.method ?? 'GET'} /${url}`;
   const hit = routes[route] ?? routes[route.replace(/^GET \/sessions\?.*/, 'GET /sessions')] ?? OFF[route];
   if (hit !== undefined) return reply(hit);
-  if (QUIET.test(route)) return reply(route.endsWith('/meta') ? { meta: [] } : { questions: [] });
+  if (QUIET.test(route)) return reply({ [route.split('/').at(-1)!]: [] });
+  if (APP.test(route)) return reply(notFound);
   unexpected.push(route);
   return reply(notFound);
 });
@@ -89,8 +91,10 @@ export function useHarness(base: () => Routes) {
     location.hash = '';
   });
   afterEach(() => {
+    // Unmount first, so a failure below cannot leave this test's page in the next one.
+    cleanup();
     vi.unstubAllGlobals();
-    if (STRICT) expect(unexpected.join('\n'), 'requests no route answered').toBe('');
+    expect(unexpected.join('\n'), 'requests no route answered').toBe('');
   });
 }
 

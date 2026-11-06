@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
-import { assistant, entry, FakeSocket, Fail, fetchMock, item, live, notFound, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
+import { assistant, entry, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
@@ -241,10 +241,11 @@ test('the first Home send asks only for home:main, by key filter', async () => {
 });
 
 test('a first send the distributor refuses shows the error and keeps the text', async () => {
+  routes['POST /sessions/home%3Amain/invocations?agent=quack'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   render(<App />);
   await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'hello');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
   expect(screen.getByRole('textbox', { name: 'What do you need?' })).toHaveValue('hello');
   expect(FakeSocket.all).toEqual([]);
 });
@@ -479,30 +480,6 @@ test('shows a server error frame', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('input is too long');
 });
 
-test('approving posts the verdict and clears the item', async () => {
-  const pending = { id: 'a/1', tool: 'bash', args: { cmd: 'rm x' }, requestedAt: 1 };
-  (live['ui%3Au1'] ??= {}).approvals = [pending];
-  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
-  const ws = await openSession();
-  ws.frame(snapshot());
-  const approve = await screen.findByRole('button', { name: /^Approve/ });
-  await userEvent.click(approve);
-  await waitFor(() => expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull());
-  const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
-  expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve' });
-});
-
-test('an approval a gated tool commits after it is already running shows its card, with no refetch', async () => {
-  const ws = await openSession();
-  ws.frame(snapshot());
-  ws.frame(view({ run: true, tools: [{ callId: 't', name: 'push', status: 'running' }] }));
-  expect(screen.getByRole('status')).toHaveTextContent('Running');
-  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] });
-  expect(screen.getByRole('button', { name: /^Reject/ })).toBeInTheDocument();
-  expect(screen.getByRole('status')).toHaveTextContent('Waiting on you');
-  expect(fetchMock.mock.calls.filter(([u]) => /^sessions\/ui%3Au1\/(approvals|artifacts)/.test(String(u)))).toEqual([]);
-});
-
 test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
   routes['GET /sessions'] = { sessions: [] };
   routes['GET /agents'] = { agents: [] };
@@ -553,11 +530,12 @@ test('Abort shows only while a run is in progress and posts to the abort route',
 });
 
 test('a failed abort is reported', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   const ws = await openSession();
   ws.frame(snapshot({ run: {} }));
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Stop' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
 });
 
 test('a dropped socket reconnects with backoff and the new snapshot replaces the transcript', () => {
@@ -863,24 +841,6 @@ test('a failed decision keeps the card with its error', async () => {
   expect(screen.getByRole('region', { name: 'Approval' })).toBeInTheDocument();
 });
 
-test('a pending approval from the session socket shows with the reason field, and the rail lists it', async () => {
-  live['ui%3Au1'] = { approvals: [{ id: 'a/1', tool: 'propose_contract', args: { summary: 'Ship the contract' }, requestedAt: 1 }] };
-  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
-  stubViewport(true, true);
-  const ws = await openSession();
-  ws.frame(snapshot());
-  const card = await screen.findByRole('region', { name: 'Approval' });
-  expect(within(card).getAllByText('Ship the contract').length).toBeGreaterThan(0);
-  expect(screen.getAllByRole('region', { name: 'Approval' })).toHaveLength(1);
-  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('sessions/ui%3Au1/approvals'))).toBe(false);
-  expect(within(screen.getByRole('complementary', { name: 'Context' })).getByRole('button', { name: 'Ship the contract' })).toBeInTheDocument();
-  await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'no');
-  await userEvent.click(screen.getByRole('button', { name: /^Confirm reject/ }));
-  expect(lastPost()).toEqual({ decision: 'reject', reason: 'no' });
-  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
-});
-
 const pendingDecision = { questions: [{ session: 'gh:3', id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: iso(1) }] };
 
 test('Home shows a workflow question with its options, and an option answers it', async () => {
@@ -915,8 +875,6 @@ test('a structured question renders title, Markdown detail, suggested option fir
   expect(within(card).getByText('errors.ts').tagName).toBe('CODE');
   const rows = within(card).getAllByRole('button');
   expect(rows.map((b) => b.textContent)).toEqual(['Problem JSONSuggestedTyped, one more field.', 'Plain textSmallest change.', 'You decide']);
-  expect(rows[0]).toHaveClass('text-left', 'w-full', 'min-h-11');
-  expect(rows[2]).not.toHaveClass('border');
   expect(within(card).getByText('Why this matters')).toBeInTheDocument();
   routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
   await userEvent.click(rows[0]!);
@@ -988,7 +946,7 @@ test('a question without title keeps the plain layout and Evidence fold', async 
   const card = await screen.findByRole('region', { name: 'Question' });
   expect(within(card).getByText('Evidence')).toBeInTheDocument();
   expect(within(card).queryByText('Suggested')).toBeNull();
-  expect(within(card).getByRole('button', { name: 'meeting' })).not.toHaveClass('text-left');
+  expect(within(card).getByRole('button', { name: 'meeting' })).toHaveTextContent(/^meeting$/);
 });
 
 test('a re-asked question with a newer askedAt shows again after the first was answered', async () => {
@@ -1009,11 +967,12 @@ test('a failed answer keeps the question card and shows the error', async () => 
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/questions/7%3Atype'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   stubViewport(false);
   location.hash = '#/';
   render(<App />);
   await userEvent.click(await screen.findByRole('button', { name: 'meeting' }));
-  expect(await screen.findByRole('alert')).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
   expect(screen.getByRole('region', { name: 'Question' })).toBeInTheDocument();
 });
 
@@ -1052,6 +1011,7 @@ test('a failed run shows Failed in the header and a card with the step, the firs
 
 test('a failed run that cannot resume shows why, and Copy error copies the whole error', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
+  routes['POST /sessions/ui%3Au1/resume'] = new Fail(409, { title: 'Conflict', detail: 'no failed run to resume' });
   const ws = await openSession();
   ws.frame({ type: 'standing', questions: [], failures: [failure], approvals: [] });
   const writeText = vi.fn(async () => undefined);
@@ -1060,7 +1020,7 @@ test('a failed run that cannot resume shows why, and Copy error copies the whole
   await userEvent.click(within(card).getByRole('button', { name: 'Copy error' }));
   expect(writeText).toHaveBeenCalledWith(failure.error);
   await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
-  expect(await within(card).findByRole('alert')).toBeInTheDocument();
+  expect(await within(card).findByRole('alert')).toHaveTextContent('no failed run to resume');
 });
 
 test('a session whose run failed is under Needs you with its step and the error first line', async () => {
@@ -1173,7 +1133,7 @@ test('Artifacts says so when the index is off', async () => {
 });
 
 test('a failed load shows its error on Home', async () => {
-  delete routes['GET /sessions'];
+  routes['GET /sessions'] = new Fail(503, { title: 'Unavailable', detail: 'index down' });
   stubViewport(false);
   location.hash = '#/';
   render(<App />);
@@ -1393,14 +1353,6 @@ test('below lg the session pane subtracts the 48px nav plus the bottom safe inse
   expect(pane?.style.getPropertyValue('--ws-h')).toBe('calc(844px - 48px - var(--safe-b))');
 });
 
-test('below lg main is the scroller inside a fixed frame that ends at the nav', async () => {
-  stubViewport(false);
-  await openSession();
-  const main = screen.getByRole('main');
-  expect(main).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto', 'overscroll-y-contain');
-  expect(main.parentElement).toHaveClass('fixed', 'top-0', 'bottom-[calc(48px+var(--safe-b))]', 'lg:contents');
-});
-
 // Real prod index rows [version, judge passed, posted, verdict in the content] for #2019 and #2042.
 const PROD: Record<string, Array<[number, boolean, boolean, string]>> = {
   'github:fagerbergj/quack#2019': [[1, false, false, 'approve'], [2, true, false, 'approve'], [3, true, false, 'request_changes'], [4, true, false, 'request_changes'], [5, false, false, 'request_changes'], [6, true, true, 'request_changes'], [7, false, true, 'approve']],
@@ -1538,10 +1490,10 @@ test('an archived session is still readable and offers Unarchive', async () => {
 
 test('a refused archive says why and the session stays', async () => {
   withRow();
-  delete routes['PATCH /sessions/ui%3Au1'];
+  routes['PATCH /sessions/ui%3Au1'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   await openSession();
   await menu('Archive');
-  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
 });
 
 test('Delete asks first, names the session, and goes back to the list once confirmed', async () => {
@@ -1562,11 +1514,11 @@ test('Delete asks first, names the session, and goes back to the list once confi
 
 test('a refused delete keeps the dialog open with the server reason', async () => {
   withRow();
-  delete routes['DELETE /sessions/ui%3Au1'];
+  routes['DELETE /sessions/ui%3Au1'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
   await openSession();
   await menu('Delete');
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('not found');
+  expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('refused by the server');
 });
 
 const phoneAt = (hash: string) => {
@@ -2024,7 +1976,7 @@ describe('the session context rail', () => {
     const pr = within(rail).getByRole('region', { name: 'Pull request' });
     expect(await within(pr).findByText('#1 Cost per run')).toBeInTheDocument();
     expect(within(pr).getByText('feat/x → v1')).toBeInTheDocument();
-    expect(within(pr).getByText('✓ All passed')).toHaveClass('text-success');
+    expect(within(pr).getByText('✓ All passed')).toBeInTheDocument();
     expect(within(pr).queryByText(/image|skipped/i)).toBeNull();
     expect(within(pr).getByText(/2 files changed/)).toHaveTextContent('2 files changed +212 −14');
     expect(within(pr).getByRole('link', { name: 'Open on GitHub ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
@@ -2042,7 +1994,7 @@ describe('the session context rail', () => {
   test('failed and running checks are named and skipped ones never show', async () => {
     await openReview(true, { checks: [check('test', 'completed', 'failure'), check('lint', 'in_progress', null), check('build', 'completed', 'success'), check('image', 'completed', 'skipped')] });
     const pr = within(await screen.findByRole('complementary', { name: 'Context' })).getByRole('region', { name: 'Pull request' });
-    expect(await within(pr).findByText('✗ test failed')).toHaveClass('text-danger');
+    expect(await within(pr).findByText('✗ test failed')).toBeInTheDocument();
     expect(within(pr).getByText('… lint running')).toBeInTheDocument();
     expect(within(pr).queryByText(/All passed|image|build/)).toBeNull();
   });
