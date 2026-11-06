@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { request, type IncomingMessage, type ServerResponse } from 'node:http';
+import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { sendProblem } from '@quack/sdk';
 
 /** A12 for container sessions: third-party keys stay here; a session holds a per-launch token and reaches those services through /proxy/<name>, and the distributor's own routes with the same token. */
@@ -14,7 +15,7 @@ function sessionToken(req: IncomingMessage): string | undefined {
 }
 
 /** Streams the request to `target` with the real credentials (`auth` headers) the caller never sees: method, content type and body go up uncapped, and the upstream's status and body come back unchanged. GET, HEAD and DELETE send no body. */
-function proxy(req: IncomingMessage, res: ServerResponse, target: URL, auth: Record<string, string>): Promise<void> {
+function proxy(req: IncomingMessage, res: ServerResponse, target: URL, auth: Record<string, string>, ca: TrustedCa): Promise<void> {
   return new Promise<void>((resolve) => {
     const fail = (err: Error) => {
       // After headers a JSON error would corrupt the partial body, so cut the connection instead.
@@ -24,11 +25,13 @@ function proxy(req: IncomingMessage, res: ServerResponse, target: URL, auth: Rec
     };
     const headers: Record<string, string> = { ...auth };
     if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
-    const up = request(target, { method: req.method, headers }, (r) => {
+    const options = { method: req.method, headers };
+    const respond = (r: IncomingMessage) => {
       res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
       r.pipe(res).on('finish', resolve);
       r.on('error', fail);
-    });
+    };
+    const up = target.protocol === 'https:' ? httpsRequest(target, { ...options, ...(ca && { ca }) }, respond) : httpRequest(target, options, respond);
     up.on('error', fail);
     res.on('close', () => up.destroy());
     if (['GET', 'HEAD', 'DELETE'].includes(req.method ?? '')) up.end();
@@ -36,7 +39,10 @@ function proxy(req: IncomingMessage, res: ServerResponse, target: URL, auth: Rec
   });
 }
 
-export function credentialBroker() {
+/** Extra trust for https upstreams beyond Node's bundled roots, such as a LAN service's own CA. */
+type TrustedCa = string | Buffer | undefined;
+
+export function credentialBroker(opts: { ca?: TrustedCa } = {}) {
   const services = new Map<string, { url: string; auth: Record<string, string> }>();
   const issued = new Map<string, string>();
 
@@ -62,7 +68,7 @@ export function credentialBroker() {
       if (!presented || sessionOf(presented) === undefined) return sendProblem(res, 401, 'unauthorized'), true;
       const service = services.get(match[1]);
       if (!service) return sendProblem(res, 404, 'no such service'), true;
-      await proxy(req, res, new URL(`${service.url}${match[2] ?? ''}${match[3] ?? ''}`), service.auth);
+      await proxy(req, res, new URL(`${service.url}${match[2] ?? ''}${match[3] ?? ''}`), service.auth, opts.ca);
       return true;
     },
   };
