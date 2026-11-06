@@ -1,7 +1,7 @@
 // The lifecycle channel's HTTP adapter: POST /sessions/{key}/events on the credentialed session listener.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
-import type { Catalog, CatalogEvent } from './core.ts';
+import { BatchError, type Catalog, type CatalogEvent } from './core.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 const ROUTE = /^\/sessions\/([^/]+)\/events$/;
@@ -139,7 +139,8 @@ export function eventsRoute(catalog: Catalog) {
       if (out.gap) res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, detail: `the batch starts past seq ${out.acked + 1}`, error: `the batch starts past seq ${out.acked + 1}`, acked: out.acked }));
       else send(res, 200, { acked: out.acked });
     } catch (err) {
-      sendProblem(res, 503, `the catalog is unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      if (err instanceof BatchError) sendProblem(res, 400, err.message);
+      else sendProblem(res, 503, `the catalog is unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
     return true;
   };
