@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { Conversation, ConversationView, Harness } from '@earendil-works/pi-durable';
+import type { Conversation, Harness } from '@earendil-works/pi-durable';
 import { onGeneration } from '@quack/sdk';
+import { runsIn, viewSignature } from '@quack/session';
 import { collectFacts, Outbox, type PriceOf, type SessionMeta, type Spend } from './facts.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -69,8 +70,8 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
   });
   // Streamed deltas change only the view's live message, so a flush follows what facts are made of: entries, run state, usage.
   const watch = await root.watch(ctx);
-  const runs = (v: ConversationView) => v.docs['pi.live']?.run !== undefined;
-  const signature = (v: ConversationView) => JSON.stringify([v.entries.at(-1)?.id, runs(v), v.docs['pi.usage'], (v.docs['pi.live']?.tools as { status: string }[] | undefined)?.map((t) => t.status)]);
+  const runs = runsIn;
+  const signature = viewSignature;
   let seen = signature(watch.value);
   let running = runs(watch.value);
   watch.start(async (call) => {
