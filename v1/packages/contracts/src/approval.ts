@@ -43,10 +43,8 @@ async function reconcile(api: ToolExecutionApi, ctx: Context) {
 type Versions = Record<string, { versions: SealedArtifact[] } | undefined>;
 const passed = (v: SealedArtifact) => (v.verdict as { passed?: boolean } | null)?.passed === true;
 
-/**
- * The sealed spec the newest approval before artifact `before` approved: the newest passing one of its spec version
- * sealed by the time the approval was requested, since a proposal puts up the newest sealed version.
- */
+/** The spec the newest approval before artifact `before` approved: a proposal puts up the newest sealed version, so it is
+ * the last passing one of the approved spec version sealed by the time the approval was requested. */
 export function approvedSpec(all: Versions, approvals: Record<string, Approval>, before = Infinity): SealedArtifact | undefined {
   const specs = (all[CONTRACT_KIND]?.versions ?? []).filter((v) => v.version < before && passed(v));
   for (const r of (all[APPROVED_KIND]?.versions ?? []).toReversed()) {
