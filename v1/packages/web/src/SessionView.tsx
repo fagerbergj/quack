@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
-import { AttachButton, Pending, useAttachments, type Attachments, type Img } from './Attach.tsx';
+import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
@@ -25,11 +25,13 @@ type Frame = { type: 'queued'; items: Queued[] } | ViewFrame | ({ type: 'standin
 
 let nextRequest = 0;
 
+type SocketState = 'connecting' | 'open' | 'reconnecting';
+
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
   const held = useRef<View>(emptyView);
   const [view, setView] = useState<View>(emptyView);
-  const [state, setState] = useState<'connecting' | 'open' | 'reconnecting'>('connecting');
+  const [state, setState] = useState<SocketState>('connecting');
   const [error, setError] = useState('');
   const [approvalTick, setTick] = useState(0);
   const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
@@ -88,7 +90,7 @@ function useSocket(key: string, agent: string | undefined) {
     };
   }, [key, agent]);
   // Resolves true once the server accepts the input, false when it rejects it or the socket drops, so a composer clears only on true.
-  const send = (input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []): Promise<boolean> => {
+  const send = useCallback((input: string, whenBusy?: 'steer' | 'followUp', images: Img[] = []): Promise<boolean> => {
     if (ws.current?.readyState !== WebSocket.OPEN) {
       setError('Disconnected: reconnecting. Your message was not sent.');
       return Promise.resolve(false);
@@ -99,11 +101,11 @@ function useSocket(key: string, agent: string | undefined) {
     const done = new Promise<boolean>((resolve) => acks.current.set(requestId, resolve));
     ws.current.send(JSON.stringify({ type: 'input', requestId, input, images: images.length ? images : undefined, whenBusy }));
     return done;
-  };
+  }, []);
   // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
-  const unqueue = (type: 'withdraw' | 'steer', id: string) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }));
+  const unqueue = useCallback((type: 'withdraw' | 'steer', id: string) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }))), []);
   // An earlier or gap row asks the server for the entries the window does not hold.
-  const load = (req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req));
+  const load = useCallback((req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req))), []);
   return { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load };
 }
 
@@ -125,7 +127,11 @@ function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void
 
 type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
 
-function Composer({ busy, disabled, send, input, setInput, queued, unqueue, attach }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue; attach: Attachments }) {
+type Send = (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>;
+
+// The composer owns its draft, so a keystroke re-renders it alone, never the transcript.
+const Composer = memo(function Composer({ sessionKey, state, busy, send, queued, unqueue }: { sessionKey: string; state: SocketState; busy: boolean; send: Send; queued: Queued[]; unqueue: Unqueue }) {
+  const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [sending, setSending] = useState(false);
   const submit = async (e: SubmitEvent) => {
     e.preventDefault();
@@ -144,13 +150,13 @@ function Composer({ busy, disabled, send, input, setInput, queued, unqueue, atta
         <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <button type="submit" disabled={disabled || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
+        <button type="submit" disabled={state !== 'open' || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
         </button>
       </form>
     </>
   );
-}
+});
 
 type Tone = 'wait' | 'run' | 'idle' | 'fail';
 const TONES: Record<Tone, string> = {
@@ -268,7 +274,7 @@ function Header({ sessionKey, name, back, status, tone, spend, link, result, onD
   );
 }
 
-function statusOf(state: 'connecting' | 'open' | 'reconnecting', waiting: number, running: boolean, failed?: Failure): [string, Tone] {
+function statusOf(state: SocketState, waiting: number, running: boolean, failed?: Failure): [string, Tone] {
   if (state !== 'open') return [state === 'reconnecting' ? 'Reconnecting' : 'Connecting', 'idle'];
   if (waiting) return ['Waiting on you', 'wait'];
   if (failed && !running) return [`Failed · ${failed.step}`, 'fail'];
@@ -285,7 +291,7 @@ function usePaneStyle(): CSSProperties | undefined {
 
 // The landing composer's text and images seed this composer; they are sent once when the socket opens (queued behind a run if the session, like Home's standing chat, is busy), and only while
 // the composer still holds the untouched seed, so an edit or a failed connect leaves them to the user.
-function useSeed(sessionKey: string, state: string, send: (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>) {
+function useSeed(sessionKey: string, state: SocketState, send: Send) {
   const [seed] = useState(() => pendingInput.get(sessionKey));
   const [input, setInput] = useState(seed?.text ?? '');
   const attach = useAttachments(seed?.images);
@@ -312,7 +318,6 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
 
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load } = useSocket(sessionKey, agent);
-  const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
@@ -338,7 +343,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <div className="flex min-h-0 flex-1">
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
+        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             {artifactsError && <p role="alert" className="m-0 text-[13px] text-danger">{artifactsError}</p>}
@@ -354,7 +359,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
         {/* On a phone the keyboard leaves room for an open answer field or the composer, not both; focus would flicker it under a tap. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 max-lg:group-has-[[data-answer]]/pane:hidden bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[860px] flex-col gap-2">
-            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} attach={attach} />
+            <Composer sessionKey={sessionKey} state={state} busy={view.running} send={send} queued={queued} unqueue={unqueue} />
           </div>
         </div>
       </div>
