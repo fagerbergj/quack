@@ -7,7 +7,7 @@ import type { SealedArtifact } from '@quack/sdk';
 
 type Usage = { input: number; output: number; cacheRead: number };
 
-/** What one recorded session did, read from its log without resuming it (OBS-4). */
+/** What one recorded session did, read from its log without resuming it. */
 export type SessionRecord = {
   inputs: string[];
   /** The last submission's outcome: its answer, or why it went unanswered. */

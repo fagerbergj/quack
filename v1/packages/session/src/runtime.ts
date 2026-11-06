@@ -62,7 +62,7 @@ export function reportLine({ error, ...info }: Report): string | null {
   return `session: ${[info.kind, ...where].join(' ')}: ${error instanceof Error ? error.message : String(error)}`;
 }
 
-// One process owns one session: its SQLite log is the only source of truth (A1, A6).
+// One process owns one session: its SQLite log is the only source of truth.
 export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));

@@ -16,7 +16,7 @@ export const RECAP_STALE_MS = 3 * 24 * 60 * 60_000;
 export const digestKey = (league: string, week: number) => `sleeper:${league}:${week}:digest`;
 export const retroKey = (league: string, week: number) => `sleeper:${league}:${week}:retro`;
 
-/** Preview before the first kickoff (due an hour ahead, SL-9), recap and retro once the last game is final (audit schedule rows). */
+/** Preview before the first kickoff (due an hour ahead), recap and retro once the last game is final. */
 export function reportRuns(kickoffs: number[], league: string, week: number) {
   if (!kickoffs.length) return [];
   const [first, last] = [Math.min(...kickoffs), Math.max(...kickoffs)];
@@ -48,6 +48,6 @@ export async function registerReportSchedules(config: ScheduleConfig, client: Sl
   return ids;
 }
 
-/** On-demand start (SL-2): each call is its own submission under the week's session key. */
+/** On-demand start: each call is its own submission under the week's session key. */
 export const startDigest = (config: StartConfig, input: LineupInput) => startJob(config, DIGEST_AGENT, digestKey(input.league, input.week), input);
 export const startRetro = (config: StartConfig, input: LineupInput) => startJob(config, RETRO_AGENT, retroKey(input.league, input.week), input);

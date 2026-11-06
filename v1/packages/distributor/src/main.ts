@@ -30,7 +30,7 @@ void store.ensure().catch((err) => console.error('index migrations will retry:',
 const broker = credentialBroker();
 const manifests = await loadManifests();
 
-// QUACK_SESSION_DRIVER picks where sessions run (A11): child processes here (default) or one gVisor/Kata container each.
+// QUACK_SESSION_DRIVER picks where sessions run: child processes here (default) or one gVisor/Kata container each.
 function sessionDriver(): HostDriver {
   const config = parseHostConfig(process.env);
   const base = { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests) };

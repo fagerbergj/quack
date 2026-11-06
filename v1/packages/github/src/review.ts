@@ -39,7 +39,7 @@ export function parseReview(text: string): ParsedReview {
   return { sections, verdict: sections.verdict?.trim().split(/\s/)[0]?.toLowerCase(), findings, unparsed };
 }
 
-/** Structure problems, all at once (ART-2); content problems are the judge's to find. */
+/** Structure problems, all at once; content problems are the judge's to find. */
 export function validateReview(text: string): string[] {
   const r = parseReview(text);
   const problems = ['takeaway', 'verdict', 'findings'].filter((s) => !(s in r.sections)).map((s) => `missing a "## ${s[0].toUpperCase()}${s.slice(1)}" section`);

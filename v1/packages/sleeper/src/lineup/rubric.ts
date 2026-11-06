@@ -74,7 +74,7 @@ export function lineupEvidence(f: Facts) {
   };
 }
 
-// The audit's lineup table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// Lineup weights are unreplayed: replay them before any weight gates delivery.
 export const lineupRubric: Rubric = {
   name: 'sleeper.lineup',
   version: 4,

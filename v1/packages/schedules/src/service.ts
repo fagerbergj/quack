@@ -7,7 +7,7 @@ import { between, expiry, nextAfter, validate, type Schedule } from './schedule.
 
 export type ServiceConfig = {
   distributorUrl: string;
-  /** SQLite file on the service's volume (SCH-2); ':memory:' for tests. */
+  /** SQLite file on the service's volume; ':memory:' for tests. */
   dbPath: string;
   /** Same layout the distributor reads: <dir>/<agent>/agent.json, whose optional `schedules` array registers schedules. */
   agentsDir?: string;
@@ -88,12 +88,12 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
 
   async function submit(s: Schedule, occurrence: Date): Promise<boolean> {
     const key = s.sessionKey.replaceAll('{time}', occurrence.toISOString());
-    // The request id makes a retry or duplicate firing one submission (HAR-5).
+    // The request id makes a retry or duplicate firing one submission.
     const requestId = `schedule:${s.id}:${occurrence.toISOString()}`;
     return (await submitToSession(config.distributorUrl, { key, agent: s.agent, input: s.input, requestId }, doFetch)).ok;
   }
 
-  // Handles every occurrence since the last recorded one: the newest useful one fires, the rest are recorded missed (SCH-4).
+  // Handles every occurrence since the last recorded one: the newest useful one fires, the rest are recorded missed.
   // The same path serves live firing and catch-up after downtime.
   const warned = new Set<string>();
   async function runDue(row: Row, at: Date) {
@@ -111,7 +111,7 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
     for (const o of older) record.run(row.id, o.toISOString(), 'missed', at.toISOString());
   }
 
-  // Policy for D24: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.
+  // Retention: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.
   async function sweepRetention() {
     const sessions: Array<{ key: string; lastActivity: string; retention?: { idleDays: number } }> = [];
     for (let token = ''; ;) {

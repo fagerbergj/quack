@@ -78,7 +78,7 @@ async function watchStanding(session: Session, ws: WebSocket) {
   ws.on('close', () => void Promise.all([questions?.stop(), failures?.stop(), approvals?.stop(), artifacts?.stop()]));
 }
 
-// Streams pi-durable's conversation view (A9): the transcript items when they change, the live, usage and inbox state on every change.
+// Streams pi-durable's conversation view: the transcript items when they change, the live, usage and inbox state on every change.
 async function stream(session: Session, ws: WebSocket) {
   const { root } = session;
   const transcript = new ConversationTranscript((query, limit, c) => root.entries(query, limit, undefined, c));
