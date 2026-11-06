@@ -1,4 +1,5 @@
 import { BlockList, isIP, isIPv4 } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { shellEnv } from '@quack/session';
@@ -133,8 +134,8 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
   };
 }
 
-/** Whether a peer address is on the session containers' network, so the public listener can drop it; throws when the network cannot be read, as sessions must not boot unfenced. */
-export async function onSessionNetwork(api: DockerCall, network: string): Promise<(address: string | undefined) => boolean> {
+/** Whether a peer is on the session network, for the public listener to drop, and this host's address there, the only one the session listener binds; throws when either is missing, as sessions must not boot unfenced. */
+export async function onSessionNetwork(api: DockerCall, network: string, interfaces = networkInterfaces()): Promise<{ refuse: (address: string | undefined) => boolean; address: string }> {
   const { status, body } = await api('GET', `/networks/${encodeURIComponent(network)}`);
   const subnets = ((body as { IPAM?: { Config?: Array<{ Subnet?: string }> } } | null)?.IPAM?.Config ?? []).flatMap((c) => (c.Subnet ? [c.Subnet] : []));
   if (status !== 200 || !subnets.length) throw new Error(`docker network ${network} has no subnet to fence off (answered ${status})`);
@@ -144,10 +145,13 @@ export async function onSessionNetwork(api: DockerCall, network: string): Promis
     list.addSubnet(net!, Number(prefix), isIPv4(net!) ? 'ipv4' : 'ipv6');
   }
   // A dual-stack listener reports IPv4 peers as ::ffff:a.b.c.d.
-  return (address = '') => {
+  const refuse = (address = '') => {
     const v4 = address.replace(/^::ffff:/, '');
     return isIPv4(v4) ? list.check(v4, 'ipv4') : isIP(address) === 6 && list.check(address, 'ipv6');
   };
+  const address = Object.values(interfaces).flat().find((i) => i && refuse(i.address))?.address;
+  if (!address) throw new Error(`this host has no address on docker network ${network} (${subnets.join(', ')}); attach the distributor's container to it`);
+  return { refuse, address };
 }
 
 /** Removes containers a previous distributor left running; a restart does not adopt them. */
