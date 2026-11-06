@@ -568,6 +568,12 @@ test('a trusted mention is queued behind the PR session\'s run with its text, au
   assert.equal(sent.body.meta, undefined);
 });
 
+test('a mention whose submission throws answers 502, which the sweeper redelivers', async () => {
+  const failing = (async (url: string | URL, init?: RequestInit) => (String(url).includes('/invocations') ? Promise.reject(new Error('dispatch failed')) : fetch(url, init))) as typeof fetch;
+  const down = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, fetch: failing })));
+  assert.equal(await deliver('issue_comment', mention('@quack-app why?'), { id: 'd-m-down', to: down }), 502);
+});
+
 test('a review-comment mention names the thread root, so the reply lands under it', async () => {
   invocations.length = 0;
   const payload = { action: 'created', pull_request: pr, comment: { id: 56, in_reply_to_id: 55, body: 'thanks @quack-app, and the fix?', html_url: 'https://github.com/acme/widgets/pull/7#discussion_r56', author_association: 'OWNER', user: { login: 'dev', type: 'User' } }, repository };

@@ -150,7 +150,7 @@ function recordState(states: States, event: string | undefined, p: Record<string
 }
 
 async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trigger, session: { key: string; agent: string }, requestId: string) {
-  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' }, config.fetch);
+  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' }, config.fetch).catch(unreachable);
   send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
 }
 

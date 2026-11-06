@@ -38,6 +38,12 @@ test('a primary limit whose reset is far off is handed back with its wait, not s
   assert.deepEqual(sleeps, []);
 });
 
+test('a primary limit without a reset header waits a minute instead of NaN', async () => {
+  const { app, sleeps } = scripted([json(403, { message: 'API rate limit exceeded' }, { 'x-ratelimit-remaining': '0' }), json(200, {})]);
+  await app.asApp('GET', '/app');
+  assert.deepEqual(sleeps, [60_000]);
+});
+
 test('retries are bounded: a limit that persists ends as RateLimited after three tries', async () => {
   const { app, seen, sleeps } = scripted(Array.from({ length: 5 }, () => json(429, {}, { 'retry-after': '1' })));
   await assert.rejects(app.asApp('GET', '/app'), RateLimited);

@@ -44,7 +44,8 @@ function rateLimitWait(res: Response, text: string, now: number): number | undef
   if (res.status !== 403 && res.status !== 429) return undefined;
   const after = res.headers.get('retry-after');
   if (after !== null && Number.isFinite(Number(after))) return Number(after) * 1000;
-  if (res.headers.get('x-ratelimit-remaining') === '0') return Math.max(0, Number(res.headers.get('x-ratelimit-reset')) * 1000 - now);
+  const reset = Number(res.headers.get('x-ratelimit-reset') ?? NaN);
+  if (res.headers.get('x-ratelimit-remaining') === '0') return Number.isFinite(reset) ? Math.max(0, reset * 1000 - now) : SECONDARY_WAIT_MS;
   return res.status === 429 || /rate limit/i.test(text) ? SECONDARY_WAIT_MS : undefined;
 }
 
