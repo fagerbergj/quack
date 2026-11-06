@@ -1,0 +1,35 @@
+{
+  "case": {
+    "subject": "github:fagerbergj/quack",
+    "target": "github:fagerbergj/quack#2202",
+    "prefix": ["#2169", "#2170", "#2171", "#2172", "#2173", "#2175", "#2176", "#2177", "#2178", "#2179", "#2180", "#2181", "#2182", "#2183", "#2117", "#2184", "#2185", "#2186", "#2187", "#2191", "#2192", "#2194", "#2195", "#2188", "#2196", "#2197", "#2198", "#2199", "#2200", "#2201"]
+  },
+  "probes": [
+    { "id": "ie1", "type": "information extraction", "q": "Which command runs v1's sloplint over a pull request's diff against the v1 branch?", "ref": "From v1/: node tools/sloplint.ts diff origin/v1 (or npm run sloplint -- diff origin/v1).", "any": ["sloplint.ts diff", "npm run sloplint"] },
+    { "id": "ie2", "type": "information extraction", "q": "In a fresh checkout, what must be run in v1/ before its tests can run?", "ref": "npm ci", "all": ["npm ci"] },
+    { "id": "ie3", "type": "information extraction", "q": "What is the exact command for the full v1 node test suite?", "ref": "node --test --test-force-exit --test-timeout=30000 'packages/*/test/*.test.ts' 'tools/*.test.ts' (run from v1/)", "all": ["packages/*/test/*.test.ts", "tools/*.test.ts"] },
+    { "id": "ie4", "type": "information extraction", "q": "Which file computes what each agent bundle's version.lock should contain?", "ref": "v1/tools/bundle-locks.ts (bundleLocks(), using digest() from v1/packages/distributor/src/process-driver.ts)", "any": ["bundle-locks.ts", "bundleLocks"] },
+    { "id": "ie5", "type": "information extraction", "q": "What is the repository path of the sleeper-history agent's prompt?", "ref": "v1/agents/sleeper-history/prompt.md", "all": ["v1/agents/sleeper-history/prompt.md"] },
+    { "id": "ie6", "type": "information extraction", "q": "Which tests fail in the full v1 suite on the PR author's machine, and why?", "ref": "The three reMarkable rmc render tests; the rmc Python module (binary) is missing on the author's laptop. CI has it.", "all": ["rmc"] },
+
+    { "id": "ms1", "type": "multi-session reasoning", "q": "Which pull requests in these reviews received a request_changes verdict at least once?", "ref": "#2177, #2185, #2187 and #2196", "all": ["2177", "2185", "2187", "2196"] },
+    { "id": "ms2", "type": "multi-session reasoning", "q": "Which pull requests changed the extensions.github.settings.issueBase setting?", "ref": "#2182 (added it), #2184 (per-repository map) and #2186 (case-insensitive lookup)", "all": ["2182", "2184", "2186"] },
+    { "id": "ms3", "type": "multi-session reasoning", "q": "When reviewers re-ran the full v1 suite in their own sandbox, did the reMarkable rmc tests fail there?", "ref": "No. In the reviewer sandbox they skip rather than fail (5 skipped, 0 fail); the author's local failures did not reproduce.", "judge": true },
+    { "id": "ms4", "type": "multi-session reasoning", "q": "What did earlier sessions report about how the Sleeper waivers bye_coverage check behaves?", "ref": "It fired on 6 of 7 judged waivers cards (#2198) and swings between 0 and 0.67 on the same card under the same question (#2201).", "judge": true },
+
+    { "id": "ku1", "type": "knowledge update", "q": "Does the v1 judge currently send every unit to Clef at once (up to the classifier's concurrency), or classify units one at a time?", "ref": "One at a time: #2178 sent them at once, and #2180 reverted it.", "all": ["one at a time"] },
+    { "id": "ku2", "type": "knowledge update", "q": "How many parallel slots (-np) does Clef's llama-server run with now?", "ref": "1 (-np 1 -c 8192); #2178 planned -np 4 and #2180 set it back.", "any": ["-np 1", "one slot", "1 slot", "single slot"] },
+    { "id": "ku3", "type": "knowledge update", "q": "What shape does the extensions.github.settings.issueBase setting have now?", "ref": "A map from owner/repo to a branch, looked up case-insensitively; the original single-branch string shape (#2182) is refused since #2184.", "judge": true },
+    { "id": "ku4", "type": "knowledge update", "q": "How many tests did the full v1 node suite have in the most recent run that reported a count?", "ref": "767 tests (762 pass, 0 fail, 5 skipped), in the #2198 review.", "all": ["767"] },
+
+    { "id": "tr1", "type": "temporal reasoning", "q": "What did the last review of pull request #2200 decide?", "ref": "approve", "all": ["approve"] },
+    { "id": "tr2", "type": "temporal reasoning", "q": "What was the first verdict on pull request #2196, and the last?", "ref": "First request_changes, last approve.", "judge": true },
+    { "id": "tr3", "type": "temporal reasoning", "q": "Which pull request, reviewed after #2178 and #2179, reverted the change they made?", "ref": "#2180", "all": ["2180"] },
+    { "id": "tr4", "type": "temporal reasoning", "q": "Which was the most recent change to issueBase, and what did it do?", "ref": "#2186: the issueBase lookup ignores repository case.", "all": ["2186"] },
+
+    { "id": "ab1", "type": "abstention", "q": "What verdict did the review of pull request #2202 reach?", "ref": "not known", "abstain": true },
+    { "id": "ab2", "type": "abstention", "q": "Which license is fagerbergj/quack released under?", "ref": "not known", "abstain": true },
+    { "id": "ab3", "type": "abstention", "q": "Which eslint or prettier configuration does v1 use?", "ref": "not known", "abstain": true },
+    { "id": "ab4", "type": "abstention", "q": "Which command deploys v1 to the production server?", "ref": "not known", "abstain": true }
+  ]
+}

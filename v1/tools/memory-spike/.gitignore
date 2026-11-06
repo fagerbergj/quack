@@ -1,0 +1,5 @@
+# Copied prod sessions and the Graphiti venv stay local.
+data/
+graphiti/.venv/
+graphiti/db/
+__pycache__/
