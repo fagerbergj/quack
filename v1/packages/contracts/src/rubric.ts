@@ -1,10 +1,12 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import ts from 'typescript';
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
+import { exportsOf } from './typescript-rules.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
@@ -14,7 +16,7 @@ export const guideAnchors = (skill: string) => new Set([...skill.matchAll(/^###\
 function pointerResolves(doc: unknown, pointer: string): boolean {
   if (pointer === '') return true;
   // A TypeScript document is source text; its pointer is "/" plus the name of an export.
-  if (typeof doc === 'string') return /^\/[A-Za-z_$][\w$]*$/.test(pointer) && new RegExp(`^export (declare )?(type|interface|function|const|var|class|enum|namespace) ${pointer.slice(1).replace(/\$/g, '\\$')}\\b`, 'm').test(doc);
+  if (typeof doc === 'string') return exportsOf(ts.createSourceFile('contract.d.ts', doc, ts.ScriptTarget.ES2022, true)).some((e) => `/${e.name}` === pointer);
   let at: unknown = doc;
   for (const raw of pointer.split('/').slice(1)) {
     const key = raw.replaceAll('~1', '/').replaceAll('~0', '~');
