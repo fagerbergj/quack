@@ -142,8 +142,8 @@ test('schedules and their history survive a restart', async () => {
   await first.api('POST', '/', daily);
   clock = new Date('2026-01-01T09:00:00Z');
   await first.svc.tick();
-  first.svc.stop();
-  open.length = 0;
+  // Closes the first server too, which a bare svc.stop() left listening.
+  open.pop()!.stop();
 
   clock = new Date('2026-01-01T09:05:00Z');
   const second = await start(path);
