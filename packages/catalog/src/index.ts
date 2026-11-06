@@ -6,4 +6,4 @@ export { parseQuery, QueryError } from './query.ts';
 export { sqliteCatalog } from './sqlite.ts';
 export type * from './port.ts';
 export { eventsRoute, parseBatch, parseEvents } from './channel.ts';
-export { openCatalog } from './open.ts';
+export { catalogStore, openCatalog } from './open.ts';
