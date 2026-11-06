@@ -3,7 +3,8 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type ImageContent, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
@@ -99,8 +100,9 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     // A test drives sleeps on a fake clock: the Harness reads the same `now` and arms its timers through `setTimer`.
     ...(opts.now && { now: () => +opts.now!() }),
     ...(opts.setTimer && { setTimer: opts.setTimer }),
-    // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them.
-    settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue' },
+    // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them;
+    // queued steers and follow-ups reach the model together in one turn, not one per turn.
+    settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue', steeringMode: 'all', followUpMode: 'all' },
   }, ctx);
   open = harness;
   const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
@@ -128,6 +130,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     return live.length > 0 && live.every((t) => pending.has(String(t.record.id)));
   }
 
+  let metaWrites = Promise.resolve();
   return {
     harness,
     workspace,
@@ -143,16 +146,21 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       await writeFile(join(opts.dir, 'title'), title.replace(/\s+/g, ' ').trim().slice(0, 200), { flag: 'wx' }).catch(() => undefined);
     },
     // Data the UI reads beside the transcript (a PR's files and checks); one record per `id`, a later one replacing the earlier.
-    // Best effort: a run never waits on it, so a failed read or write is dropped, and the rename keeps a crash from leaving half a file.
-    async recordMeta(record: Record<string, unknown>) {
-      try {
-        const kept = (await this.meta()).filter((r) => r.id !== record.id);
-        const file = join(opts.dir, 'meta.json');
-        await writeFile(`${file}.tmp`, JSON.stringify([...kept, record]));
-        await rename(`${file}.tmp`, file);
-      } catch {
-        // the review runs without fresh meta
-      }
+    // Best effort, a failed write dropped; writes run in turn so records arriving together all land, and a renamed unique temp file survives a crash.
+    recordMeta(record: Record<string, unknown>) {
+      const write = metaWrites.then(async () => {
+        try {
+          const kept = (await this.meta()).filter((r) => r.id !== record.id);
+          const file = join(opts.dir, 'meta.json');
+          const temp = `${file}.${randomUUID()}.tmp`;
+          await writeFile(temp, JSON.stringify([...kept, record]));
+          await rename(temp, file).catch(async (err) => { await rm(temp, { force: true }); throw err; });
+        } catch {
+          // the review runs without fresh meta
+        }
+      });
+      metaWrites = write;
+      return write;
     },
     async meta(): Promise<Array<Record<string, unknown>>> {
       try {

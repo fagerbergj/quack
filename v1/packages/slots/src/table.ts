@@ -10,6 +10,9 @@ export type TableConfig = {
   now: () => number;
 };
 
+// Grant waits kept per endpoint for the operate view; older ones are dropped as new ones land.
+const WAIT_HISTORY = 100;
+
 type Entry = { holder: string; state: 'held' | 'waiting'; since: number; expires: number };
 
 // The slot ledger: one row per holder or waiter. Every call first drops expired rows and promotes waiters FIFO,
@@ -42,6 +45,7 @@ export class SlotTable {
       this.#db.prepare("UPDATE entries SET state = 'held', expires = ? WHERE endpoint = ? AND holder = ?").run(now + this.#config.ttlMs, endpoint, w.holder);
       this.#db.prepare('INSERT INTO waits (endpoint, holder, queued, granted) VALUES (?, ?, ?, ?)').run(endpoint, w.holder, w.since, now);
     }
+    if (next.length) this.#db.prepare('DELETE FROM waits WHERE endpoint = ? AND rowid NOT IN (SELECT rowid FROM waits WHERE endpoint = ? ORDER BY rowid DESC LIMIT ?)').run(endpoint, endpoint, WAIT_HISTORY);
   }
 
   #get(endpoint: string, holder: string) {
@@ -86,7 +90,7 @@ export class SlotTable {
     return Object.entries(this.#config.limits).map(([endpoint, limit]) => {
       this.#sweep(endpoint);
       const rows = this.#db.prepare('SELECT holder, state FROM entries WHERE endpoint = ? ORDER BY seq').all(endpoint) as Array<{ holder: string; state: string }>;
-      const waits = this.#db.prepare('SELECT holder, granted - queued AS ms FROM waits WHERE endpoint = ? ORDER BY rowid DESC LIMIT 100').all(endpoint) as Array<{ holder: string; ms: number }>;
+      const waits = this.#db.prepare('SELECT holder, granted - queued AS ms FROM waits WHERE endpoint = ? ORDER BY rowid DESC LIMIT ?').all(endpoint, WAIT_HISTORY) as Array<{ holder: string; ms: number }>;
       return { endpoint, limit, held: rows.filter((r) => r.state === 'held').map((r) => r.holder), waiting: rows.filter((r) => r.state === 'waiting').map((r) => r.holder), waits };
     });
   }

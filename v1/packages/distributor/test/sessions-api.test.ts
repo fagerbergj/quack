@@ -45,7 +45,7 @@ async function start(opts: { sessions?: Record<string, Seed>; running?: string[]
   const stopped: string[] = [];
   const stop = async (k: string) => void (stopped.push(k), running.splice(running.indexOf(k), 1));
   const ensure = async () => { if (opts.pingUrl) return opts.pingUrl; throw new Error('a read must not start a process'); };
-  const driver: HostDriver = { ...real, running: () => running, stop, sessions: async () => (await real.sessions()).map((s) => ({ ...s, running: running.includes(s.key) })), ensure, setWake: async () => {} };
+  const driver: HostDriver = { ...real, running: () => running, stop, sessions: async () => (await real.sessions()).map((s) => ({ ...s, running: running.includes(s.key) })), session: async (k) => { const s = await real.session(k); return s && { ...s, running: running.includes(s.key) }; }, ensure, setWake: async () => {} };
   const forgotten: string[] = [];
   const server = createDistributor(driver, { retire: { token: opts.token, waiting: async () => false, forget: async (k) => void forgotten.push(k) }, spend: opts.spend }).listen(0);
   await new Promise((r) => server.once('listening', r));
