@@ -323,6 +323,40 @@ test('a judged card that passes is not revised', async () => {
   assert.equal(versions.length, 1);
 });
 
+test('a crash while judging a revision resumes that revision: no answer is asked again and the count holds', async () => {
+  let entered: () => void;
+  const inJudge = new Promise<void>((r) => (entered = r));
+  const build = (hang: boolean) => defineWorkflow({
+    name: 'judged',
+    steps: [{
+      name: 'card', kind: 'judged', schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object,
+      judge: () => ({ options: { kind: note, rubric: sayOk, maxRevisions: 1, evidence: async (_api, sealed, c) => {
+        if (hang && sealed.version === 2) {
+          entered();
+          await new Promise((_, reject) => c.abortSignal!.addEventListener('abort', () => reject(c.abortSignal!.reason)));
+        }
+        return {};
+      } } }),
+    }],
+  });
+  const dir = await tmp();
+  const before: Message[][] = [];
+  const a = await open(dir, build(true), reply('{"text": "fine"}', before), reply('{"text": "ok"}', before));
+  const running = runWorkflow(a.harness, a.root, build(true), null).catch(() => undefined);
+  await inJudge;
+  await a.close();
+  await running;
+
+  const after: Message[][] = [];
+  const b = await open(dir, build(false), reply('{"text": "fine"}', after), reply('{"text": "ok"}', after));
+  const outcome = await runWorkflow(b.harness, b.root, build(false), null);
+  const versions = (await b.harness.snapshot(Artifacts, b.root.id, ctx))!.kinds['test.note'].versions;
+  await b.close();
+  assert.equal(after.length, 0, 'both answers were already given');
+  assert.deepEqual(versions.map((v) => (v.verdict as { passed: boolean }).passed), [false, true]);
+  assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: { version: number; revisions: number } }).card.revisions, 1);
+});
+
 test('a judged card still failing after the last revision is delivered with its failing verdict', async () => {
   const seen: Message[][] = [];
   const { outcome, versions } = await runJudged(reply('{"text": "no"}', seen), reply('{"text": "nope"}', seen), reply('{"text": "never"}', seen));
