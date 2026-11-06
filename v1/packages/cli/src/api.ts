@@ -1,4 +1,6 @@
 // The distributor's HTTP API as the CLI uses it: the same routes as packages/web/src/api.ts.
+import { randomUUID } from 'node:crypto';
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -10,6 +12,7 @@ export class ApiError extends Error {
 export type Client = ReturnType<typeof client>;
 type Json = any;
 const SOCKET_MS = 10_000;
+const INVOKE_ATTEMPTS = 3;
 
 export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) {
   root = root.replace(/\/+$/, '');
@@ -91,8 +94,18 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     archive: (key: string) => call(path(key), 'PATCH', { archived: true }),
     unarchive: (key: string) => call(path(key), 'PATCH', { archived: false }),
     /** The distributor creates the session on its first invocation. With `wait` the answer is the run's outcome; a long run holds the request open. */
-    invoke: (key: string, input: string, o: { agent?: string; wait?: boolean } = {}): Promise<{ status: string; answer?: string; reason?: string; detail?: string }> =>
-      call(`${path(key)}/invocations${o.agent ? `?agent=${encodeURIComponent(o.agent)}` : ''}`, 'POST', { input, requestId: `cli:${Date.now()}`, wait: o.wait }),
+    invoke: async (key: string, input: string, o: { agent?: string; wait?: boolean } = {}): Promise<{ status: string; answer?: string; reason?: string; detail?: string }> => {
+      const route = `${path(key)}/invocations${o.agent ? `?agent=${encodeURIComponent(o.agent)}` : ''}`;
+      // One id per logical request: a retry after a dropped connection joins the run the first attempt started.
+      const body = { input, requestId: `cli:${randomUUID()}`, wait: o.wait };
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await call(route, 'POST', body);
+        } catch (e) {
+          if (!(e instanceof ApiError && e.status === 0) || attempt >= INVOKE_ATTEMPTS) throw e;
+        }
+      }
+    },
     /** Calls `onFrame` for every view frame and resolves when the run is over (at once if none is running). */
     follow: (key: string, onFrame: (items: any[] | undefined) => void) =>
       socket<true>(key, undefined, (f) => (f.type !== 'view' ? undefined : (onFrame(f.items), f.live?.run === undefined ? true : undefined)), 0),
