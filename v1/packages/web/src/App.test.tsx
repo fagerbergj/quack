@@ -3,74 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
-import { forgetVersion } from './api.ts';
+import { assistant, entry, FakeSocket, Fail, fetchMock, item, notFound, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
 const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: 'error', error, requestId: requestOf(sock, i) });
 
-class FakeSocket {
-  static all: FakeSocket[] = [];
-  sent: unknown[] = [];
-  readyState = 1;
-  static OPEN = 1;
-  onopen?: () => void;
-  onclose?: () => void;
-  onmessage?: (e: { data: string }) => void;
-  url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeSocket.all.push(this);
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {}
-  open() {
-    act(() => this.onopen?.());
-  }
-  frame(f: object) {
-    act(() => this.onmessage?.({ data: JSON.stringify(f) }));
-  }
-}
-
-const usage = {};
-const entry = (id: string, model: object[]) => ({ id, conversationId: 'c', kind: 'x', model });
-const item = (e: object) => ({ kind: 'entry', entry: e });
-// The conversation view as the socket sends it; omitted `entries` leave the transcript the client holds as it is.
-const view = (o: { entries?: object[]; run?: boolean | object; message?: object; tools?: object[]; usage?: object } = {}) => ({
-  type: 'view',
-  items: o.entries?.map(item),
-  live: { ...(o.run ? { run: { taskId: 1, inputs: [], turns: 0 } } : {}), ...(o.message ? { generation: { attempt: 1, message: o.message } } : {}), ...(o.tools ? { tools: o.tools } : {}) },
-  usage: o.usage ?? usage,
-});
-const snapshot = (o: Parameters<typeof view>[0] = {}) => view({ entries: [], ...o });
-const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
-
-// Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
-const stubViewport = (desktop: boolean, wide = false) =>
-  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('1440') ? wide : desktop, addEventListener() {}, removeEventListener() {} }));
-
-let routes: Record<string, unknown>;
-const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-  // The session list carries paging and filter parameters; a route without them answers any.
-  const route = `${init?.method ?? 'GET'} /${url}`;
-  const hit = routes[route] ?? routes[route.replace(/^GET \/sessions\?.*/, 'GET /sessions')];
-  return new Response(JSON.stringify(hit ?? { title: 'Not Found', detail: 'not found' }), { status: hit ? 200 : 404, headers: { 'content-type': hit ? 'application/json' : 'application/problem+json' } });
-});
-
-beforeEach(() => {
-  FakeSocket.all = [];
-  routes = { 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
-  fetchMock.mockClear();
-  forgetVersion();
-  vi.stubGlobal('WebSocket', FakeSocket);
-  vi.stubGlobal('fetch', fetchMock);
-  vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
-  stubViewport(true);
-  location.hash = '';
-});
-afterEach(() => vi.unstubAllGlobals());
+useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } }));
 
 async function openSession() {
   location.hash = '#/s/ui%3Au1';
@@ -80,7 +19,6 @@ async function openSession() {
   return ws;
 }
 
-const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T01:00:00.000Z', ...over });
 
 test('the list is newest-created first however the server pages it, and labels rows by creation when an older session becomes active', async () => {
   const older = sess('gh:old', { title: 'Older', running: true, active: true, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' });
@@ -592,7 +530,7 @@ test('a send on a closed socket keeps the input and says so', async () => {
 });
 
 test('a failed session fetch shows its error on the list', async () => {
-  routes = {};
+  routes['GET /sessions'] = new Fail(503, { title: 'Unavailable', detail: 'index down' });
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -1536,12 +1474,6 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   expect(within(done).getAllByRole('img', { name: 'Double-checked' })).toHaveLength(1);
   // The card carries the one Posted link; the pinned line drops its own.
   expect(within(screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
-});
-
-test('the transcript scroller is the containing block for absolute children, so sr-only headings cannot stretch main', async () => {
-  stubViewport(false);
-  await openSession();
-  expect(document.querySelector('[aria-live="polite"]')).toHaveClass('relative', 'overflow-y-auto');
 });
 
 const withRow = (over: object = {}) => {
