@@ -40,6 +40,29 @@ function windowKey(toks: Tok[], at: number): string {
 }
 const touches = (s: number, e: number, rs: Range[] | 'all') => rs === 'all' || rs.some(([a, b]) => s <= b && e >= a);
 
+/** The window's smallest period: the least p with toks[i] === toks[i + p] across it, from the KMP failure function. */
+function period(toks: Tok[], at: number): number {
+  const fail = new Array<number>(MIN_TOKENS).fill(0);
+  for (let i = 1; i < MIN_TOKENS; i++) {
+    let k = fail[i - 1];
+    while (k > 0 && toks[at + i].id !== toks[at + k].id) k = fail[k - 1];
+    fail[i] = toks[at + i].id === toks[at + k].id ? k + 1 : k;
+  }
+  return MIN_TOKENS - fail[MIN_TOKENS - 1];
+}
+
+type Run = { p: number; start: number; end: number };
+
+/** The maximal stretch [start, end) around the window that repeats with the window's period; reuses `prev` while inside it. */
+function runAt(toks: Tok[], at: number, prev: Run | undefined): Run {
+  const p = period(toks, at);
+  if (prev && prev.p === p && at >= prev.start && at + MIN_TOKENS <= prev.end) return prev;
+  let [start, end] = [at, at + MIN_TOKENS];
+  while (start > 0 && toks[start - 1].id === toks[start - 1 + p].id) start--;
+  while (end < toks.length && toks[end].id === toks[end - p].id) end++;
+  return { p, start, end };
+}
+
 /** Runs of at least MIN_TOKENS tokens on changed lines that also occur elsewhere in `sources`, one finding per run. */
 export function clones(sources: Map<string, string>, changed: Map<string, Range[] | 'all'>): Clone[] {
   const vocab = new Map<string, number>();
@@ -56,10 +79,14 @@ export function clones(sources: Map<string, string>, changed: Map<string, Range[
     const mine = toks.get(file);
     if (!mine) continue;
     let open: Clone | undefined;
+    let run: Run | undefined;
     for (let at = 0; at + MIN_TOKENS <= mine.length; at++) {
       const [start, end] = [mine[at].line, mine[at + MIN_TOKENS - 1].line];
-      // A window overlapping itself (a repeated run inside one stretch) is not a copy.
-      const other = touches(start, end, rs) ? seen.get(windowKey(mine, at))!.find((o) => o.file !== file || Math.abs(o.at - at) >= MIN_TOKENS) : undefined;
+      const hits = touches(start, end, rs) ? seen.get(windowKey(mine, at))! : [];
+      if (hits.some((o) => o.file === file && o.at !== at)) run = runAt(mine, at, run);
+      // An occurrence overlapping this one, or another phase of one run that repeats a shorter unit, is not a copy.
+      const self = (o: { at: number }) => Math.abs(o.at - at) < MIN_TOKENS || (run!.p < MIN_TOKENS && Math.min(o.at, at) >= run!.start && Math.max(o.at, at) + MIN_TOKENS <= run!.end);
+      const other = hits.find((o) => o.file !== file) ?? hits.find((o) => o.file === file && !self(o));
       if (!other) open = undefined;
       else if (open && end >= open.endLine) open.endLine = end;
       else found.push((open = { file, line: start, endLine: end, other: other.file, otherLine: toks.get(other.file)![other.at].line }));

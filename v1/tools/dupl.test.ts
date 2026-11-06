@@ -29,6 +29,14 @@ test('only changed lines are gated, and short or merely similar code is not a cl
 });
 
 test('a pattern repeating inside one stretch of a file is not a copy of itself', () => {
-  const rows = `export const n = [${Array.from({ length: 50 }, () => '0').join(', ')}];\n`;
-  assert.deepEqual(clones(new Map([['a.ts', rows]]), new Map([['a.ts', 'all']])), []);
+  const rows = (n: number) => `function f() {\n  const n = [${Array.from({ length: n }, () => '0').join(', ')}];\n  return n;\n}\n`;
+  assert.deepEqual(clones(new Map([['a.ts', rows(100)]]), new Map([['a.ts', 'all']])), []);
+  const unit = Array.from({ length: 12 }, (_, i) => `x${i}: ${i % 3}`).join(', ');
+  const table = `function g() {\n  return [${Array.from({ length: 8 }, () => `{ ${unit} }`).join(',\n    ')}];\n}\n`;
+  assert.deepEqual(clones(new Map([['a.ts', table], ['b.ts', table]]), new Map([['a.ts', 'all']])).map((c) => c.other), ['b.ts'], 'another file holding the table is a copy');
+});
+
+test('a block pasted twice in one file is still a copy', () => {
+  const src = `${fn('evens', 'xs')}${fn('odds', 'ys')}`;
+  assert.deepEqual(clones(new Map([['a.ts', src]]), new Map([['a.ts', [[10, 20]]]])).map((c) => [c.line, c.other, c.otherLine]), [[10, 'a.ts', 1]]);
 });
