@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { artifactName, ledger, ledgerId } from './Artifacts.tsx';
 import { versionOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
 import { compact, needId } from './sessions.ts';
 import { useModal } from './useModal.ts';
+import { useLoad } from './useLoad.ts';
 import type { View } from './view.ts';
 import { useMedia, WIDE } from './useDesktop.ts';
 import { parseReview } from './extensions/review.ts';
@@ -98,9 +99,10 @@ function Cost({ spend }: { spend?: Spend }) {
   );
 }
 
+const NO_AGENTS: AgentSummary[] = [];
+
 function SessionInfo({ agent, created, activity }: { agent?: string; created?: string; activity?: string }) {
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
-  useEffect(() => void listAgents().then(setAgents, () => undefined), []);
+  const { data: agents } = useLoad(listAgents, [], NO_AGENTS);
   const model = agents.find((a) => a.name === agent)?.model;
   if (!agent && !created) return null;
   return (

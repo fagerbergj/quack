@@ -1,11 +1,11 @@
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, socketUrl, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
 import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
-import { artifactName, useArtifacts } from './Artifacts.tsx';
+import { artifactName } from './Artifacts.tsx';
 import { CheckProgress, liveChecks, progressLabel } from './CheckResult.tsx';
 import { SessionKeyContext } from './extension.ts';
 import { Work } from './Work.tsx';
@@ -17,11 +17,12 @@ import { SpendChip } from './SpendChip.tsx';
 import { PrChip } from './prState.tsx';
 import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
+import { useLoad } from './useLoad.ts';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 
-type Standing = { questions: Question[]; failures: Failure[] };
+type Standing = { questions: Question[]; failures: Failure[]; approvals: Approval[] };
 type Queued = { id: string; text: string };
-type Frame = { type: 'queued'; items: Queued[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
+type Frame = { type: 'queued'; items: Queued[] } | { type: 'artifacts'; artifacts: SealedArtifact[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
 
 let nextRequest = 0;
 
@@ -33,8 +34,8 @@ function useSocket(key: string, agent: string | undefined) {
   const [view, setView] = useState<View>(emptyView);
   const [state, setState] = useState<SocketState>('connecting');
   const [error, setError] = useState('');
-  const [approvalTick, setTick] = useState(0);
-  const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
+  const [standing, setStanding] = useState<Standing>({ questions: [], failures: [], approvals: [] });
+  const [artifacts, setArtifacts] = useState<SealedArtifact[]>([]);
   const [queued, setQueued] = useState<Queued[]>([]);
   // One per input in flight, keyed by the requestId the server echoes on its `accepted` or `error`; it handles inputs concurrently, so answers can arrive out of order.
   const acks = useRef(new Map<string, (ok: boolean) => void>());
@@ -55,7 +56,6 @@ function useSocket(key: string, agent: string | undefined) {
         setState('open');
       };
       // Every connect starts with a full view that replaces the one held, so a reconnect cannot duplicate lines.
-      let activity: string | undefined;
       sock.onclose = () => {
         acks.current.forEach((done) => done(false));
         acks.current.clear();
@@ -74,9 +74,8 @@ function useSocket(key: string, agent: string | undefined) {
           const next = applyView(held.current, frame);
           held.current = next;
           setView(next);
-          if (activity !== undefined && activity !== next.activity) setTick((t) => t + 1);
-          activity = next.activity;
         } else if (frame.type === 'standing') setStanding(frame);
+        else if (frame.type === 'artifacts') setArtifacts(sealedFrom(frame.artifacts));
         else if (frame.type === 'queued') setQueued(frame.items);
         else if (frame.type === 'error') (setError(frame.error), settle(frame.requestId, false));
         else if (frame.type === 'accepted') settle(frame.requestId, true);
@@ -106,7 +105,7 @@ function useSocket(key: string, agent: string | undefined) {
   const unqueue = useCallback((type: 'withdraw' | 'steer', id: string) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }))), []);
   // An earlier or gap row asks the server for the entries the window does not hold.
   const load = useCallback((req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req))), []);
-  return { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load };
+  return { view, state, error, setError, standing, artifacts, queued, send, unqueue, load };
 }
 
 const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
@@ -316,22 +315,22 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
   );
 }
 
+const NO_META: Array<Record<string, unknown>> = [];
+
 export function SessionView({ sessionKey, agent, name, delivered, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
-  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue, load } = useSocket(sessionKey, agent);
+  const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
-  const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
-  const pending = useApprovals(sessionKey, approvalTick);
+  const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
   const details = useDetails();
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
-  const [meta, setMeta] = useState<Array<Record<string, unknown>>>([]);
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
-  useEffect(() => void getMeta(sessionKey).then(setMeta, () => undefined), [sessionKey, view.running]);
+  const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -346,7 +345,6 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
         <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
-            {artifactsError && <p role="alert" className="m-0 text-[13px] text-danger">{artifactsError}</p>}
             <SessionKeyContext value={sessionKey}>
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             </SessionKeyContext>

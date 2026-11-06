@@ -25,6 +25,8 @@ const STRICT = false;
 /** The answers for this test; a test adds or deletes entries in place. */
 export const routes: Routes = {};
 const unexpected: string[] = [];
+/** What each session's socket reports on connect, by its key as the URL encodes it. */
+export const live: Record<string, { artifacts?: object[]; approvals?: object[] }> = {};
 
 const reply = (hit: unknown) => {
   const fail = hit instanceof Fail ? hit : undefined;
@@ -58,8 +60,12 @@ export class FakeSocket {
     this.sent.push(JSON.parse(data));
   }
   close() {}
+  // Like the session, an open socket first reports the artifacts and what waits on a person.
   open() {
     act(() => this.onopen?.());
+    const held = live[/\/sessions\/([^/]+)\/ws/.exec(this.url)?.[1] ?? ''];
+    if (held?.artifacts) this.frame({ type: 'artifacts', artifacts: held.artifacts });
+    if (held?.approvals) this.frame({ type: 'standing', questions: [], failures: [], approvals: held.approvals });
   }
   frame(f: object) {
     act(() => this.onmessage?.({ data: JSON.stringify(f) }));
@@ -72,6 +78,7 @@ export function useHarness(base: () => Routes) {
     FakeSocket.all = [];
     for (const k of Object.keys(routes)) delete routes[k];
     Object.assign(routes, base());
+    for (const k of Object.keys(live)) delete live[k];
     unexpected.length = 0;
     fetchMock.mockClear();
     forgetVersion();

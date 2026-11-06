@@ -3,13 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { statusOf } from './ArtifactList.tsx';
-import { assistant, entry, FakeSocket, Fail, fetchMock, item, notFound, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
+import { assistant, entry, FakeSocket, Fail, fetchMock, item, live, notFound, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
 const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: 'error', error, requestId: requestOf(sock, i) });
 
-useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } }));
+useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] } }));
 
 async function openSession() {
   location.hash = '#/s/ui%3Au1';
@@ -391,7 +391,7 @@ test('markdown tool output renders with a toggle to raw; the delivery link is no
 });
 
 test('an artifact line renders the links stored with the version, with no stream entries to read', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' }] }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' }] }];
   const ws = await openSession();
   ws.frame(snapshot());
   const link = await screen.findByRole('link', { name: 'Posted ↗' });
@@ -401,7 +401,7 @@ test('an artifact line renders the links stored with the version, with no stream
 
 test('a Sleeper card in a session links back to that session, in the list and the Work drawer', async () => {
   const lineup = (await import('./extensions/sleeper/fixtures/8-lineup.json')).default as { content: string };
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
   const asks = await screen.findAllByRole('link', { name: 'Ask about this' });
@@ -409,7 +409,7 @@ test('a Sleeper card in a session links back to that session, in the list and th
 });
 
 test('the header shows the token total and Waiting on you for a pending approval', async () => {
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }] };
+  (live['ui%3Au1'] ??= {}).approvals = [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }];
   const ws = await openSession();
   ws.frame(snapshot({ usage: { models: { 'p/m': { input: 1200, output: 300 } }, tools: {} } }));
   expect(await screen.findByRole('status')).toHaveTextContent('Waiting on you');
@@ -417,8 +417,8 @@ test('the header shows the token total and Waiting on you for a pending approval
 });
 
 test('a GitHub session header links to the pull request', async () => {
-  routes['GET /sessions/github%3Ao%2Fr%231/approvals'] = { approvals: [] };
-  routes['GET /sessions/github%3Ao%2Fr%231/artifacts'] = { artifacts: [] };
+  (live['github%3Ao%2Fr%231'] ??= {}).approvals = [];
+  (live['github%3Ao%2Fr%231'] ??= {}).artifacts = [];
   location.hash = '#/s/github%3Ao%2Fr%231';
   render(<App />);
   expect(await screen.findByRole('link', { name: 'View on GitHub' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
@@ -459,8 +459,8 @@ test('a send while a run works is a server-side follow-up shown as a chip; Send 
 test('the first message of a review session is the PR card, with the files and checks the service attached', async () => {
   const key = 'github%3Ao%2Fr%231';
   const text = 'Review pull request o/r#1 (label quack:review).\nTitle: Cost per run\nHead: 9f43b50aaaa on feat/x; base: v1\n\nWhat changed';
-  routes[`GET /sessions/${key}/artifacts`] = { artifacts: [] };
-  routes[`GET /sessions/${key}/approvals`] = { approvals: [] };
+  (live[`${key}`] ??= {}).artifacts = [];
+  (live[`${key}`] ??= {}).approvals = [];
   routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 3, deletions: 1 }] }] };
   location.hash = `#/s/${key}`;
   render(<App />);
@@ -481,24 +481,26 @@ test('shows a server error frame', async () => {
 
 test('approving posts the verdict and clears the item', async () => {
   const pending = { id: 'a/1', tool: 'bash', args: { cmd: 'rm x' }, requestedAt: 1 };
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [pending] };
+  (live['ui%3Au1'] ??= {}).approvals = [pending];
   routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
   const ws = await openSession();
   ws.frame(snapshot());
   const approve = await screen.findByRole('button', { name: /^Approve/ });
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [] };
   await userEvent.click(approve);
   await waitFor(() => expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull());
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
   expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve' });
 });
 
-test('an approval that appears mid-run shows up when tool activity arrives', async () => {
+test('an approval a gated tool commits after it is already running shows its card, with no refetch', async () => {
   const ws = await openSession();
   ws.frame(snapshot());
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] };
   ws.frame(view({ run: true, tools: [{ callId: 't', name: 'push', status: 'running' }] }));
-  expect(await screen.findByRole('button', { name: /^Reject/ })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Running');
+  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] });
+  expect(screen.getByRole('button', { name: /^Reject/ })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Waiting on you');
+  expect(fetchMock.mock.calls.filter(([u]) => /^sessions\/ui%3Au1\/(approvals|artifacts)/.test(String(u)))).toEqual([]);
 });
 
 test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
@@ -518,7 +520,7 @@ test('an assistant entry with only an errorMessage renders the error', async () 
 });
 
 test('a send on a closed socket keeps the input and says so', async () => {
-  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [] };
+  (live['ui%3Au1'] ??= {}).approvals = [];
   const ws = await openSession();
   ws.frame(snapshot());
   ws.readyState = 3;
@@ -594,12 +596,10 @@ test('a dropped socket reconnects with backoff and the new snapshot replaces the
 
 test('lists artifacts with their check status and failing criteria', async () => {
   const check = (criterion: string, id: string, met: number | null) => ({ criterion, id, label: `Label ${id}`, weight: 2, met, notes: [] });
-  routes['GET /sessions/ui%3Au1/artifacts'] = {
-    artifacts: [
+  (live['ui%3Au1'] ??= {}).artifacts = [
       { kind: 'github.review', version: 1, hash: 'h1', content: 'draft one', sealedAt: 1, verdict: { passed: false, gatesFailed: ['cites.lines'], score: 0.4, checks: [check('cites', 'lines', 0), check('tone', 'polite', 1), check('misc', 'na', null)] } },
       { kind: 'github.review', version: 2, hash: 'h2', content: 'final review', sealedAt: 2, verdict: { passed: true, gatesFailed: [], score: 1, checks: [check('cites', 'lines', 1)] } },
-    ],
-  };
+    ];
   const ws = await openSession();
   ws.frame(snapshot());
   const section = await screen.findByRole('log', { name: 'Transcript' });
@@ -735,11 +735,9 @@ test('assistant text renders as markdown with a table, highlighted code and cita
 });
 
 test('the Work drawer opens from the status line, shows report then checks, traps focus and closes on Esc', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = {
-    artifacts: [
+  (live['ui%3Au1'] ??= {}).artifacts = [
       { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', label: 'Cites a source that does not say it', weight: 3, met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', label: 'A claim has no date', weight: 2, met: 1, notes: [] }] } },
-    ],
-  };
+    ];
   const ws = await openSession();
   ws.frame(snapshot());
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -763,7 +761,7 @@ test('the Work drawer opens from the status line, shows report then checks, trap
 });
 
 test('the Work tabs are wired for assistive tech and switch with the arrow keys', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
   await userEvent.click(await screen.findByRole('button', { name: 'Open Report' }));
@@ -865,8 +863,8 @@ test('a failed decision keeps the card with its error', async () => {
   expect(screen.getByRole('region', { name: 'Approval' })).toBeInTheDocument();
 });
 
-test('a stopped session shows its pending approval from the index, with the reason field, and the rail lists it', async () => {
-  routes['GET /index/approvals?state=pending'] = { approvals: [{ session: 'ui:u1', id: 'a/1', tool: 'propose_contract', args: { summary: 'Ship the contract' }, state: 'pending', decision: null, by: null, at: iso(1) }, { session: 'gh:9', id: 'x', tool: 'other', state: 'pending', decision: null, by: null, at: iso(1) }] };
+test('a pending approval from the session socket shows with the reason field, and the rail lists it', async () => {
+  live['ui%3Au1'] = { approvals: [{ id: 'a/1', tool: 'propose_contract', args: { summary: 'Ship the contract' }, requestedAt: 1 }] };
   routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
   stubViewport(true, true);
   const ws = await openSession();
@@ -874,7 +872,7 @@ test('a stopped session shows its pending approval from the index, with the reas
   const card = await screen.findByRole('region', { name: 'Approval' });
   expect(within(card).getAllByText('Ship the contract').length).toBeGreaterThan(0);
   expect(screen.getAllByRole('region', { name: 'Approval' })).toHaveLength(1);
-  expect(fetchMock.mock.calls.some(([u]) => u === 'sessions/ui%3Au1/approvals')).toBe(false);
+  expect(fetchMock.mock.calls.some(([u]) => String(u).startsWith('sessions/ui%3Au1/approvals'))).toBe(false);
   expect(within(screen.getByRole('complementary', { name: 'Context' })).getByRole('button', { name: 'Ship the contract' })).toBeInTheDocument();
   await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'no');
@@ -1024,7 +1022,7 @@ test('a session waiting on a question is in Needs you, and its view shows the qu
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, session: 'ui:u1' })) };
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }], failures: [] });
+  ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }], failures: [], approvals: [] });
   const needs = await screen.findByRole('region', { name: 'Needs you' });
   expect(within(needs).getByText('What kind of document is this?')).toBeInTheDocument();
   const card = await screen.findByRole('region', { name: 'Question' });
@@ -1037,7 +1035,7 @@ const failure = { step: 'decide', error: 'Validation failed for tool "decide":\n
 test('a failed run shows Failed in the header and a card with the step, the first error line and Run again', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [], failures: [failure] });
+  ws.frame({ type: 'standing', questions: [], failures: [failure], approvals: [] });
   const card = await screen.findByRole('region', { name: 'Failed run' });
   expect(within(card).getByText('decide')).toBeInTheDocument();
   expect(within(card).getByText('Validation failed for tool "decide":')).toBeInTheDocument();
@@ -1047,7 +1045,7 @@ test('a failed run shows Failed in the header and a card with the step, the firs
   routes['POST /sessions/ui%3Au1/resume'] = { submissionId: '2', status: 'placed' };
   await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
   expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/resume', { method: 'POST' });
-  ws.frame({ type: 'standing', questions: [], failures: [] });
+  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [] });
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Failed run' })).toBeNull());
   expect(screen.getByRole('status')).toHaveTextContent('Idle');
 });
@@ -1055,7 +1053,7 @@ test('a failed run shows Failed in the header and a card with the step, the firs
 test('a failed run that cannot resume shows why, and Copy error copies the whole error', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [], failures: [failure] });
+  ws.frame({ type: 'standing', questions: [], failures: [failure], approvals: [] });
   const writeText = vi.fn(async () => undefined);
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   const card = await screen.findByRole('region', { name: 'Failed run' });
@@ -1288,7 +1286,7 @@ test('a failing check with no judge note has no disclosure', async () => {
 
 test('in the Work checks, a failed check starts open, a passed one with a note is closed, one with no note has no chevron', async () => {
   const checks = [chk('a', 'Quotes text that is not in the source', 3, 0, ['Not in the source.']), chk('b', 'Cites a source that was not opened', 3, 1, ['All sources opened.']), chk('c', 'A finding cites no source', 3, 1)];
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nx', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks } }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nx', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks } }];
   const ws = await openSession();
   ws.frame(snapshot());
   await userEvent.click(await screen.findByRole('button', { name: 'Open Report version 2' }));
@@ -1325,7 +1323,7 @@ test('an open question card keeps counting its age while the session is quiet', 
   try {
     vi.setSystemTime(new Date('2026-11-01T01:05:00.000Z'));
     const ws = await openSession();
-    ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'Which?', options: ['a'], evidence: null, askedAt: Date.parse('2026-11-01T01:04:00.000Z') }], failures: [] });
+    ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'Which?', options: ['a'], evidence: null, askedAt: Date.parse('2026-11-01T01:04:00.000Z') }], failures: [], approvals: [] });
     const card = screen.getByRole('region', { name: 'Question' });
     expect(within(card).getByText('1m')).toBeInTheDocument();
     act(() => void vi.advanceTimersByTime(120_000));
@@ -1339,8 +1337,7 @@ test('the transcript line names each artifact in plain words and never shows the
   const art = (kind: string, version: number, content: string, extra: object = {}) => ({ kind, version, hash: `h${version}`, content, sealedAt: version, verdict: null, ...extra });
   const pass = { passed: true, gatesFailed: [], score: 1, checks: [] };
   const fail = { passed: false, gatesFailed: [], score: 0.2, checks: [] };
-  routes['GET /sessions/ui%3Au1/artifacts'] = {
-    artifacts: [
+  (live['ui%3Au1'] ??= {}).artifacts = [
       art('sleeper.cards', 10, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: pass }),
       art('sleeper.cards', 11, JSON.stringify({ kind: 'waivers' }), { verdict: pass }),
       art('sleeper.cards', 12, JSON.stringify({ kind: 'trade-finder' }), { verdict: pass }),
@@ -1357,8 +1354,7 @@ test('the transcript line names each artifact in plain words and never shows the
       art('remarkable.transcript', 7, 't'),
       art('mystery.thing', 8, 'x', { verdict: fail }),
       art('mystery.other', 9, 'x'),
-    ],
-  };
+    ];
   const ws = await openSession();
   ws.frame(snapshot());
   const section = await screen.findByRole('log', { name: 'Transcript' });
@@ -1433,8 +1429,8 @@ test('an idle review reads as its posted verdict, a limit-released one included,
 async function openReview(key: string, active: boolean, sealedItems: object[] = []) {
   routes['GET /sessions'] = { sessions: [sess(key, { title: 'Sleeper week stepper', running: active, active })] };
   routes['GET /index/artifacts'] = { artifacts: prodArtifacts(key) };
-  routes[`GET /sessions/${encodeURIComponent(key)}/artifacts`] = { artifacts: sealedItems };
-  routes[`GET /sessions/${encodeURIComponent(key)}/approvals`] = { approvals: [] };
+  (live[`${encodeURIComponent(key)}`] ??= {}).artifacts = sealedItems;
+  (live[`${encodeURIComponent(key)}`] ??= {}).approvals = [];
   location.hash = `#/s/${encodeURIComponent(key)}`;
   render(<App />);
   await screen.findByRole('heading', { name: /Sleeper week stepper/ });
@@ -1714,8 +1710,8 @@ describe('bottom bar', () => {
 
 test('in a home: conversation the header reads quack and a confirm row shows what it will start', async () => {
   routes['GET /sessions'] = { sessions: [sess('home:h1', { title: 'Waivers', agent: 'quack' })] };
-  routes['GET /sessions/home%3Ah1/approvals'] = { approvals: [{ id: 'a', tool: 'start', args: { summary: 'Process waivers for week 9' }, requestedAt: 1 }] };
-  routes['GET /sessions/home%3Ah1/artifacts'] = { artifacts: [] };
+  (live['home%3Ah1'] ??= {}).approvals = [{ id: 'a', tool: 'start', args: { summary: 'Process waivers for week 9' }, requestedAt: 1 }];
+  (live['home%3Ah1'] ??= {}).artifacts = [];
   phoneAt('#/s/home%3Ah1');
   render(<App />);
   FakeSocket.all[0]!.open();
@@ -1890,7 +1886,7 @@ describe('the session page as a ledger', () => {
   ];
 
   test('each version sits in time order between the work around it, and a revised version shows its round', async () => {
-    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, fail), review(2, 70, pass)] };
+    (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, fail), review(2, 70, pass)];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
     const log = await screen.findByRole('log', { name: 'Transcript' });
@@ -1905,7 +1901,7 @@ describe('the session page as a ledger', () => {
   });
 
   test('a failed check opens on what the revision must fix; a passed one is only the tick on its line', async () => {
-    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, fail), review(2, 70, pass)] };
+    (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, fail), review(2, 70, pass)];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
     const log = await screen.findByRole('log', { name: 'Transcript' });
@@ -1920,7 +1916,7 @@ describe('the session page as a ledger', () => {
 
   test('a failed latest version opens on what to fix even with an extension card, and a partial check shows its score', async () => {
     const half = { ...check('cites', 0.5, ['Half the findings cite lines.']), weight: 2 };
-    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [review(1, 30, pass), review(2, 70, { ...fail, checks: [half] })] };
+    (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, pass), review(2, 70, { ...fail, checks: [half] })];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
     const log = await screen.findByRole('log', { name: 'Transcript' });
@@ -1969,7 +1965,7 @@ test('a contract session is named by its latest spec in the list, not by the tex
 });
 
 test('the session menu names what it opens: Open review, not Work', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h', content: 'the review', sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
   await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
@@ -1979,7 +1975,7 @@ test('the session menu names what it opens: Open review, not Work', async () => 
 });
 
 test('the session menu runs from harmless to destructive', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'r', sealedAt: 1, verdict: null }] };
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h', content: 'r', sealedAt: 1, verdict: null }];
   routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip' })] };
   const ws = await openSession();
   ws.frame(snapshot({ run: true }));
@@ -2011,8 +2007,8 @@ describe('the session context rail', () => {
     Element.prototype.scrollIntoView = vi.fn();
     routes['GET /sessions'] = { sessions: [sess('github:o/r#1', { agent: 'reviewer', createdAt: '2026-11-01T13:00:00Z', lastActivity: '2026-11-01T15:00:00Z' })] };
     routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 3, status: 'promoted', model: 'qwen3.8-27b' }] };
-    routes[`GET /sessions/${key}/artifacts`] = { artifacts: over.artifacts ?? [sealed(1, { verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [] } }), sealed(2, { links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#r' }] })] };
-    routes[`GET /sessions/${key}/approvals`] = { approvals: over.approvals ?? [] };
+    (live[`${key}`] ??= {}).artifacts = over.artifacts ?? [sealed(1, { verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [] } }), sealed(2, { links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#r' }] })];
+    (live[`${key}`] ??= {}).approvals = over.approvals ?? [];
     routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 200, deletions: 10 }, { path: 'b.ts', additions: 12, deletions: 4 }], checks: over.checks ?? [check('test', 'completed', 'success'), check('image', 'completed', 'skipped')] }] };
     location.hash = `#/s/${key}`;
     render(<App />);

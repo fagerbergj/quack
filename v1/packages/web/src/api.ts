@@ -46,6 +46,8 @@ export const listApprovals = async (key: string) => (await json<{ approvals: App
 const named = (a: SealedArtifact): SealedArtifact =>
   a.verdict ? { ...a, verdict: { ...a.verdict, checks: a.verdict.checks.map((c) => ({ ...c, label: c.label ?? c.id.replace(/_/g, ' ') })) } } : a;
 export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts.map(named);
+/** Sealed versions as the session socket sends them, read the same way as the REST list. */
+export const sealedFrom = (artifacts: SealedArtifact[]) => artifacts.map(named);
 // Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.
 export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await fetch(`${base(key)}/meta`))).meta;
 const housekeep = async (path: string, method: string, body: object) =>
@@ -85,11 +87,6 @@ export type IndexFailure = Failure & { session: string; at: string };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
 export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
 export const approvalOf = (a: IndexApproval): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: Date.parse(a.at) });
-/** A session's pending approvals from the index, which knows stopped sessions too; the session's own peek (empty while it is stopped) only when the index is off. */
-export async function sessionApprovals(key: string): Promise<Approval[]> {
-  const indexed = await indexApprovals();
-  return indexed ? indexed.filter((a) => a.session === key).map(approvalOf) : listApprovals(key);
-}
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 

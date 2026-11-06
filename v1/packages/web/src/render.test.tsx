@@ -10,7 +10,7 @@ const count = (k: string) => renders.set(k, (renders.get(k) ?? 0) + 1);
 vi.mock('./Markdown.tsx', () => ({ Markdown: ({ text }: { text: string }) => (count(text), <p>{text}</p>) }));
 vi.mock('./JsonView.tsx', async (real) => ({ ...(await real<typeof import('./JsonView.tsx')>()), Args: ({ value }: { value: unknown }) => (count(`args:${JSON.stringify(value)}`), null) }));
 
-useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } }));
+useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] } }));
 beforeEach(() => renders.clear());
 
 const call = { type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.md' } };
