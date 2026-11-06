@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { changedRanges, lintSource } from './sloplint.ts';
+import { changedRanges, changedSince, lintSource } from './sloplint.ts';
 
 const branches = (n: number) => Array.from({ length: n }, (_, i) => `  if (x === ${i}) return ${i};`).join('\n');
 
@@ -45,6 +49,26 @@ test('a comment inside code and slashes in JSX text are not comment lines', () =
 });
 
 test('parses -U0 hunks, including pure deletions', () => {
-  const diff = ['diff --git a/v1/x.ts b/v1/x.ts', '--- a/v1/x.ts', '+++ b/v1/x.ts', '@@ -1 +1,3 @@', '@@ -9,2 +11,0 @@', '@@ -20 +22 @@'].join('\n');
-  assert.deepEqual(changedRanges(diff).get('v1/x.ts'), [[1, 3], [22, 22]]);
+  const diff = ['diff --git a/pkg/x.ts b/pkg/x.ts', '--- a/pkg/x.ts', '+++ b/pkg/x.ts', '@@ -1 +1,3 @@', '@@ -9,2 +11,0 @@', '@@ -20 +22 @@'].join('\n');
+  assert.deepEqual(changedRanges(diff).get('pkg/x.ts'), [[1, 3], [22, 22]]);
+});
+
+test('a moved file is gated on its edited lines only, even with diff.renames off', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-sloplint-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+  const lines = Array.from({ length: 20 }, (_, i) => `export const v${i} = ${i};`);
+  git('init', '-q');
+  git('config', 'diff.renames', 'false');
+  writeFileSync(join(dir, 'a.ts'), `${lines.join('\n')}\n`);
+  writeFileSync(join(dir, 'gone.ts'), 'export const gone = 1;\n');
+  git('add', '.');
+  git('commit', '-qm', 'base');
+  mkdirSync(join(dir, 'pkg'));
+  git('mv', 'a.ts', 'pkg/a.ts');
+  git('rm', '-q', 'gone.ts');
+  writeFileSync(join(dir, 'pkg/a.ts'), `${lines.with(4, 'export const v4 = 40;').join('\n')}\n`);
+  git('commit', '-qam', 'move');
+  assert.deepEqual([...changedSince(dir, 'HEAD~1')], [['pkg/a.ts', [[5, 5]]]]);
 });

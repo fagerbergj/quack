@@ -1,4 +1,4 @@
-// sloplint for TypeScript: comment runs, cyclomatic complexity and duplicated code on diff-touched lines, mirroring v0's gates.
+// sloplint for TypeScript: comment runs, cyclomatic complexity and duplicated code on diff-touched lines.
 // Usage: node tools/sloplint.ts diff <git-ref> | repo
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -29,6 +29,10 @@ export function changedRanges(diff: string): Map<string, Range[]> {
   }
   return out;
 }
+
+/** Lines changed since `ref` in the repo at `root`; a moved file counts only its edited lines, whatever diff.renames is set to. */
+export const changedSince = (root: string, ref: string) =>
+  changedRanges(execFileSync('git', ['diff', '-U0', '--find-renames', '-l0', `${ref}...HEAD`], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 }));
 
 /** Every comment's range, from the trivia around each token, so one before a closing brace or at the end of the file counts. */
 function commentRanges(sf: ts.SourceFile): ts.CommentRange[] {
@@ -126,11 +130,11 @@ const linted = (rel: string) => /\.tsx?$/.test(rel) && !/\.test\.tsx?$|\/test\/|
 function run(mode: string, ref: string | undefined): number {
   const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
   // A file the diff names but the working tree no longer has (moved or deleted) has nothing left to lint.
-  const tree = new Map(execFileSync('git', ['ls-files', 'v1'], { cwd: root, encoding: 'utf8' }).split('\n')
+  const tree = new Map(execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' }).split('\n')
     .filter((f) => linted(f) && existsSync(join(root, f))).map((f) => [f, readFileSync(join(root, f), 'utf8')]));
   const touched: Map<string, Range[] | 'all'> = mode === 'repo'
     ? new Map([...tree.keys()].map((f) => [f, 'all' as const]))
-    : changedRanges(execFileSync('git', ['diff', '-U0', `${ref}...HEAD`, '--', 'v1'], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 }));
+    : changedSince(root, ref!);
   const files = new Map([...touched].filter(([f]) => tree.has(f)));
   const findings = [...files].flatMap(([rel, rs]) => lintSource(rel, tree.get(rel)!, rs).map((f) => ({ rel, ...f })));
   for (const c of clones(tree, files)) findings.push({ rel: c.file, line: c.line, message: `lines ${c.line}-${c.endLine} duplicate ${relative(process.cwd(), join(root, c.other))}:${c.otherLine} (${MIN_TOKENS}+ tokens)` });
