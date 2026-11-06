@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, resolveDeployment } from '@quack/session';
+import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -16,9 +16,12 @@ function readJson(path: string) {
     throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
-const deployment = await resolveDeployment(parseDeployment(readJson(env('QUACK_CONFIG'))));
+const config = parseDeployment(readJson(env('QUACK_CONFIG')));
+const definition = readJson(env('QUACK_AGENT'));
+// Only the providers this agent names are asked for their models, so one that is down cannot slow an agent that never uses it.
+const deployment = await resolveDeployment(config, fetch, referencedProviders(definition, config));
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions);
-const { name: agentName, version: agentVersion, extensions } = readJson(env('QUACK_AGENT'));
+const { name: agentName, version: agentVersion, extensions } = definition;
 
 const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec });
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
