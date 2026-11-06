@@ -51,6 +51,9 @@ test('every import form is seen: quotes, side effects, re-exports, dynamic, type
   for (const src of forms) assert.match(github(src).join('\n'), /github \(feature\) must not import sleeper/, src);
   assert.match(github('const m = await import(name);').join('\n'), /computed name/);
   assert.match(github("import x from '../../../elsewhere.ts';").join('\n'), /outside packages/);
+  const runtime = (to: string) => boundaryProblems([{ from: 'runtime', to, via: 'src/a.ts', declared: false }], {});
+  assert.deepEqual(runtime('<computed spec>'), [], 'the runtime loads extensions by computed specifier');
+  assert.match(runtime('<outside packages>').join('\n'), /runtime imports a file outside packages/);
 });
 
 test('an import of a package the importer does not declare is reported, even when its layer allows it', () => {

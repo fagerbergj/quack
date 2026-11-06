@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { credentialBroker, dockerApi, dockerLauncher, parseDockerHost, sessionDirName, sessionHost } from '../src/index.ts';
 
 // Opt-in: QUACK_LIVE_IMAGE=<quack image> QUACK_LIVE_RUNTIME=runsc, with the Docker daemon on /var/run/docker.sock
-// (or QUACK_DOCKER_HOST) and the temp dir visible to the daemon at the same path. Skipped in CI.
+// (or QUACK_DOCKER_HOST) and the temp dir visible to the daemon at the same path. The v1 isolation job runs it.
 const image = process.env.QUACK_LIVE_IMAGE;
 const runtime = process.env.QUACK_LIVE_RUNTIME;
 
