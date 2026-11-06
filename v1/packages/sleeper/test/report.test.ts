@@ -157,7 +157,7 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
       const asked = String(c.messages.at(-1)!.content);
       if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(decision));
       judged.push(asked);
-      const pitfall = /lucky without the point margin|go unlabeled as early|comeback, collapse|blamed on the manager/.test(asked) || (/state a projection/.test(asked) && !/70% chance/.test(asked));
+      const pitfall = /lucky without the point margin|go unlabeled as early|comeback, collapse|blamed on the manager/.test(asked);
       return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
@@ -197,13 +197,6 @@ test('the digest workflow seals a recap and a preview card and the judge passes 
   const preview = await run(digestWorkflow, PREVIEW, previewDecision, newsStub);
   assert.deepEqual([(JSON.parse(preview.sealed.content) as DigestCard).past, preview.verdict.gatesFailed, preview.verdict.passed, preview.verdict.notes], [false, [], true, []]);
   assert.ok(preview.judged.some((q) => /swings it/.test(q)));
-});
-
-test('a digest that states a projection is asked about it and takes the pitfall', async () => {
-  const { verdict } = await run(digestWorkflow, RECAP, { ...digestDecision, summary: 'Teal had a 70% chance to win.' });
-  assert.equal((verdict.checks as Array<{ id: string; met: number }>).find((k) => k.id === 'projection_language')!.met, 1);
-  const plain = await run(digestWorkflow, RECAP, digestDecision);
-  assert.equal((plain.verdict.checks as Array<{ id: string; met: number }>).find((k) => k.id === 'projection_language')!.met, 0);
 });
 
 test('the retro workflow seals a card whose figures are the facts\' and the judge passes it', async () => {

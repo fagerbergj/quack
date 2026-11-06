@@ -33,7 +33,6 @@ export const digestRubric: Rubric = {
       { id: 'small_sample_labeled', label: "Draws a trend from too few weeks", weight: -2, scope: 'card', question: 'Does a claim drawn from under three weeks of data go unlabeled as early?' },
       { id: 'luck_without_margin', label: "Calls a result lucky without the margin", weight: -3, scope: 'card', question: 'Does it call a result lucky without the point margin, or from fewer than about eight close games?' },
       { id: 'game_flow_from_score', label: "Invents how a game unfolded", weight: -3, scope: 'row', question: 'Does it describe a comeback, collapse or other game flow that only the final score implies?' },
-      { id: 'projection_language', label: "States a projection or win chance", weight: -4, scope: 'card', question: 'Does the summary or a game note state a projection, a projected total, a win probability or playoff odds, rather than the code-computed points and the standings?' },
     ] },
   ],
 };

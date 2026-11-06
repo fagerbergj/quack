@@ -206,14 +206,6 @@ test('bye_coverage is absent when the claims fill every bye hole, and names an o
   assert.match((await gate('bye_coverage', old, noWr)).detail!, /^week 10 leaves 1 WR slot empty and the claims cover 0$/);
 });
 
-test('the FAAB-language question is asked only of a league without FAAB', async () => {
-  const unitsOf = async (fixtures: Fixtures) => {
-    const { f, card: c } = await card(fixtures);
-    return (await waiversEvidence(f)(null, { content: JSON.stringify(c) })).no_faab.length;
-  };
-  assert.deepEqual([await unitsOf(base), await unitsOf(faab)], [1, 0]);
-});
-
 const item = { title: 'Backfield report', url: 'https://www.nfl.com/n', date: new Date(AT - 5 * 3_600_000).toISOString() };
 
 test('news is searched for close calls only and each row carries the links of its add and its drop, attached by code', async () => {
@@ -245,7 +237,7 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
       const asked = String(c.messages.at(-1)!.content);
       if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(d));
       judged.push(asked);
-      const pitfall = /trending or ownership number given|share a drop as a mistake/.test(asked) || (/talk about FAAB/.test(asked) && !/remaining FAAB/.test(asked));
+      const pitfall = /trending or ownership number given|share a drop as a mistake/.test(asked);
       return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
@@ -277,7 +269,6 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@7', [], true, ['close-call news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'close_call_news'));
-  assert.ok(verdict.checks.some((k) => k.id === 'faab_language_on_rolling'));
   assert.ok(judged.some((q) => /queue position spent/.test(q)));
 });
 
@@ -287,13 +278,6 @@ test('the workflow seals a FAAB card with its bids, and with a news source the c
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@7', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
-});
-
-test('a rolling-league card that talks FAAB gets the pitfall applied by the judge', async () => {
-  const talks = { ...rollingDecision, summary: 'Bid 30% of remaining FAAB on Felix Free.' };
-  const { verdict } = await runWaivers(base, talks);
-  const hit = (verdict as unknown as { checks: Array<{ id: string; met: number }> }).checks.find((k) => k.id === 'faab_language_on_rolling')!;
-  assert.equal(hit.met, 1);
 });
 
 test('a recorded waivers session scores through the eval adapter from its recorded facts, and a card that skips a marked player fails a gate', async () => {

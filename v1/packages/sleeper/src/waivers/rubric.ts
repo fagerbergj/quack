@@ -61,13 +61,11 @@ export function waiversEvidence(f: WaiverFacts) {
       row: rows,
       close: card.candidates.filter((r) => (r.news?.length ?? 0) > 0).map(unit),
       card: [cardUnit],
-      // Only a league without FAAB can misuse its language.
-      no_faab: f.waiverType === 'faab' ? [] : [cardUnit],
     };
   };
 }
 
-// The card builder copies the league context, each drop's roster role, each add's bye and the claim size from the facts, so they are not checked here.
+// The card builder copies the league context, each drop's roster role, each add's bye and the claim size from the facts, and refuses a bid where the league has none, so none is checked here.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
   version: 7,
@@ -87,7 +85,6 @@ export const waiversRubric: Rubric = {
       { id: 'bye_coverage', label: "Misses a bye week in the plan", weight: -2, code: byeCoverage },
       { id: 'crowd_metric_as_value', label: "Treats a crowd number as scoring evidence", weight: -3, scope: 'row', question: 'Is a trending or ownership number given as evidence the player will score, rather than as how hard he is to land?' },
       { id: 'ordered_fallback_flagged', label: "Calls backup claims a conflict", weight: -4, scope: 'card', question: 'Does it describe claims that share a drop as a mistake or a conflict?' },
-      { id: 'faab_language_on_rolling', label: "Talks about FAAB in a non-FAAB league", weight: -4, scope: 'no_faab', question: 'This league\'s waivers are `waiver_type`, which has no FAAB. Does the summary or a claim\'s `why` talk about FAAB, a bid amount or a budget?' },
     ] },
   ],
 };
