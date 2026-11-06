@@ -3,11 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createServer as createTlsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
+import { tmpdir, type NetworkInterfaceInfo } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { credentialBroker, containerEnv, dockerApi, dockerLauncher, onSessionNetwork, parseDockerHost, parseHostConfig, reapSessions, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
 import { proxyProviders } from '../src/keyed-services.ts';
+import { sessionDriver } from '../src/session-driver.ts';
 
 const cleanups: Array<() => void | Promise<void>> = [];
 after(async () => {
@@ -330,9 +331,25 @@ test('a container gets its server token as a file in its own mount, listens on i
   assert.deepEqual(probes, [`Bearer ${token}`]);
 });
 
+const sessionNet: DockerCall = async (_m, path) => {
+  if (path === '/networks/quack-sessions') return { status: 200, body: { IPAM: { Config: [{ Subnet: '172.30.0.0/16' }, { Subnet: 'fd00:30::/64' }] } } };
+  return path.startsWith('/containers/json') ? { status: 200, body: [] } : { status: 404, body: { message: 'no such network' } };
+};
+// This host as a container on the proxy network (eth0) and the session network (eth1).
+const nic = (address: string) => ({ address, family: address.includes(':') ? 'IPv6' : 'IPv4', internal: address === '127.0.0.1' }) as NetworkInterfaceInfo;
+const attached = { lo: [nic('127.0.0.1')], eth0: [nic('172.18.0.3')], eth1: [nic('172.30.0.7'), nic('fe80::1')] };
+
 test('the public listener can tell peers on the session network from everyone else, and a network it cannot read stops the boot', async () => {
-  const api: DockerCall = async (_m, path) => (path === '/networks/quack-sessions' ? { status: 200, body: { IPAM: { Config: [{ Subnet: '172.30.0.0/16' }, { Subnet: 'fd00:30::/64' }] } } } : { status: 404, body: { message: 'no such network' } });
-  const onIt = await onSessionNetwork(api, 'quack-sessions');
-  assert.deepEqual(['172.30.4.2', '::ffff:172.30.4.2', 'fd00:30::9', '172.31.0.2', '127.0.0.1', '::1', undefined].map((a) => onIt(a)), [true, true, true, false, false, false, false]);
-  await assert.rejects(onSessionNetwork(api, 'gone'), /no subnet/);
+  const { refuse } = await onSessionNetwork(sessionNet, 'quack-sessions', attached);
+  assert.deepEqual(['172.30.4.2', '::ffff:172.30.4.2', 'fd00:30::9', '172.31.0.2', '127.0.0.1', '::1', undefined].map((a) => refuse(a)), [true, true, true, false, false, false, false]);
+  await assert.rejects(onSessionNetwork(sessionNet, 'gone', attached), /no subnet/);
+});
+
+test('the session listener binds loopback under the process driver and only the session-network address under docker, or the boot stops', async () => {
+  const o = { dataDir: '/srv/quack', runtime: 'runtime.ts', sessionPort: 8081, broker: credentialBroker() };
+  assert.equal((await sessionDriver({}, o)).listenAddress, '127.0.0.1');
+  const docker = { QUACK_SESSION_DRIVER: 'docker', QUACK_HOST_DATA_DIR: '/srv/d', QUACK_SESSION_DISTRIBUTOR_URL: 'http://quack-v1:8081', QUACK_SESSION_IMAGE: 'quack:1' };
+  assert.equal((await sessionDriver(docker, o, { api: sessionNet, interfaces: attached })).listenAddress, '172.30.0.7');
+  const detached = { lo: attached.lo, eth0: attached.eth0 };
+  await assert.rejects(sessionDriver(docker, o, { api: sessionNet, interfaces: detached }), /no address on docker network quack-sessions/);
 });

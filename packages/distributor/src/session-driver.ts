@@ -1,0 +1,32 @@
+import type { networkInterfaces } from 'node:os';
+import { sessionEnv } from '@quack/runtime';
+import type { RubricFor } from './agent-bundle.ts';
+import type { CredentialBroker } from './credentials.ts';
+import { dockerApi, parseDockerHost, type DockerCall } from './docker-api.ts';
+import { dockerLauncher, onSessionNetwork, reapSessions } from './docker-driver.ts';
+import { parseHostConfig } from './host-config.ts';
+import { processDriver, sessionHost, type HostDriver } from './process-driver.ts';
+
+type Options = { dataDir: string; agentsDir?: string; rubricFor?: RubricFor; runtime: string; sessionPort: number; broker: CredentialBroker };
+type Seams = { api?: DockerCall; interfaces?: ReturnType<typeof networkInterfaces> };
+export type SessionDriver = { driver: HostDriver; /** Peers the public listener drops. */ refuse?: (address: string | undefined) => boolean; /** The one address the session listener binds. */ listenAddress: string };
+
+const LOOPBACK = '127.0.0.1';
+
+/** QUACK_SESSION_DRIVER picks where sessions run: child processes here (default) or one gVisor/Kata container each. */
+export async function sessionDriver(env: NodeJS.ProcessEnv, o: Options, seams: Seams = {}): Promise<SessionDriver> {
+  const config = parseHostConfig(env);
+  const { sessionPort, broker } = o;
+  const base = { dataDir: o.dataDir, agentsDir: o.agentsDir, rubricFor: o.rubricFor };
+  if (config.driver === 'process') {
+    // shortcut: process sessions share this host, its secrets and its loopback, so one can still dial the public port as the tailnet; the docker driver fences it off.
+    return { listenAddress: LOOPBACK, driver: processDriver({ ...base, command: [process.execPath, o.runtime], startTimeoutMs: 60_000, env: { QUACK_INDEX_URL: `http://${LOOPBACK}:${sessionPort}` }, broker, inherit: (agentPath) => sessionEnv(agentPath) }) };
+  }
+  if (Number(new URL(config.distributorUrl).port) !== sessionPort) throw new Error(`QUACK_SESSION_DISTRIBUTOR_URL must name the session port ${sessionPort}, never the public one`);
+  const api = seams.api ?? dockerApi(parseDockerHost(config.dockerHost));
+  const { refuse, address } = await onSessionNetwork(api, config.network, seams.interfaces);
+  // Old containers go before the first launch, or the reap could remove a session this distributor just started.
+  const reaped = reapSessions(api).catch((err) => console.error('could not remove old session containers:', err.message));
+  const launch = dockerLauncher({ ...config, api, broker, inherit: (agentPath) => sessionEnv(agentPath), startTimeoutMs: 60_000 });
+  return { listenAddress: address, driver: sessionHost(base, async (spec) => (await reaped, launch(spec))), refuse };
+}
