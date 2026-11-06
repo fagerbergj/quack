@@ -43,7 +43,9 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
-  const server = createDistributor(driver, { idleMs, retire }).listen(0);
+  // A fake clock with no timers: a test runs the idle sweep itself after moving the clock.
+  let clock = 1_000_000;
+  const server = createDistributor(driver, { idleMs, retire, now: () => clock, setTimer: () => () => {} }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   servers.push(async () => {
@@ -53,7 +55,7 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   const invoke = (key: string, body: unknown, agent?: string) =>
     fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations${agent ? `?agent=${agent}` : ''}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
   const ranAs = (key: string) => `agent: ${join(dataDir, sessionDirName(key), 'agent-def', 'agent.json')}`;
-  return { driver, invoke, base, ranAs, dataDir };
+  return { driver, invoke, base, ranAs, dataDir, sweep: () => server.sweep(), advance: (ms: number) => void (clock += ms) };
 }
 
 // Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
@@ -92,9 +94,14 @@ test('a killed session process restarts with its history', async () => {
 });
 
 test('idle sessions release their process and wake on the next request', async () => {
-  const { driver, invoke } = await startDistributor(300);
+  const { driver, invoke, sweep, advance } = await startDistributor(60_000);
   await invoke('research:spec-decoding', { input: 'first', wait: true });
-  await until(() => driver.running().length === 0);
+  advance(59_999);
+  await sweep();
+  assert.deepEqual(driver.running(), ['research:spec-decoding'], 'not idle yet');
+  advance(1);
+  await sweep();
+  assert.deepEqual(driver.running(), []);
   const woke = await invoke('research:spec-decoding', { input: 'again', wait: true });
   assert.equal(woke.body.answer, 'echo: again');
 });
@@ -166,7 +173,7 @@ test('a session open in a page is deleted from that page: its idle process is st
 });
 
 test('proxies the live stream and keeps a watched session from idling out', async () => {
-  const { driver, base, invoke } = await startDistributor(200);
+  const { driver, base, invoke, sweep, advance } = await startDistributor(60_000);
   const key = 'github:fagerbergj/quack#1827';
   await invoke(key, { input: 'start', wait: true });
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
@@ -176,11 +183,20 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
   ws.send(JSON.stringify({ type: 'input', input: 'hi', requestId: 'w-1' }));
   assert.match(JSON.stringify((await ended).items), /echo: hi/);
 
-  // Several idle sweeps pass while the viewer is connected; the session must still be running.
-  await new Promise((r) => setTimeout(r, 1_000));
+  // Idle sweeps long past the idle time while the viewer is connected; the session must still be running.
+  for (let i = 0; i < 3; i++) {
+    advance(60_000);
+    await sweep();
+  }
   assert.deepEqual(driver.running(), [key]);
   ws.close();
-  await until(() => driver.running().length === 0);
+  // The proxy's side of the socket closes a few I/O turns after the page's; sweeps on the fake clock then stop the session.
+  for (let i = 0; i < 1_000 && driver.running().length; i++) {
+    await new Promise((r) => setImmediate(r));
+    advance(60_000);
+    await sweep();
+  }
+  assert.deepEqual(driver.running(), []);
 });
 
 test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
