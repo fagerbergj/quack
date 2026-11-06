@@ -38,8 +38,9 @@ export type HostDriver = {
   promote(name: string, version: number): Promise<AgentStatus>;
   /** Every session on disk, newest-created first. */
   sessions(): Promise<SessionInfo[]>;
+  /** Stops the session's process; a start in flight is waited out and then stopped. */
   stop(key: string): Promise<void>;
-  /** Deletes the session's directory (log, workspace, snapshot); false when no such session exists. The caller has checked it is not running. */
+  /** Stops any process the session has, starting ones included, then deletes its directory (log, workspace, snapshot); false when no such session exists. The caller has checked it has no work. */
   remove(key: string): Promise<boolean>;
   /** Sets the session's title (the `title` file); undefined restores the default from its first message. False when no such session exists. */
   setTitle(key: string, title: string | undefined): Promise<boolean>;
@@ -183,6 +184,14 @@ async function stuckReport(proc: ChildProcess, dir: string): Promise<string> {
   return `stack: ${report.javascriptStack?.stack?.join(' <- ') ?? 'none'}; active handles: ${active || 'none'}`;
 }
 
+// Runs `fn` after every earlier call for `key` in `chains` has settled.
+function inTurn<T>(chains: Map<string, Promise<unknown>>, key: string, fn: () => Promise<T>): Promise<T> {
+  const next = (chains.get(key) ?? Promise.resolve()).catch(() => {}).then(fn);
+  chains.set(key, next);
+  void next.finally(() => chains.get(key) === next && chains.delete(key)).catch(() => {});
+  return next;
+}
+
 const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
@@ -191,6 +200,9 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
+  // Binding, stopping and removing one session run in turn, so two first requests never copy its bundle at once
+  // and a delete never races a start.
+  const lifecycle = new Map<string, Promise<unknown>>();
 
   // The first message never changes once written, so it is scanned once per session directory; a recorded title can appear later (an existing session's next webhook), so its file is checked on every listing.
   const titles = new Map<string, string>();
@@ -259,7 +271,6 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
 
   // Only a submission that starts a run may change the role (see rebind); any other request must agree with the record.
-  // shortcut: two first requests naming different agents at once race on the record, last writer wins; serialize per key if that matters.
   async function bind(key: string, requested?: string): Promise<{ name: string; path: string | undefined }> {
     const dir = sessionDir(key);
     const snapshotDir = join(dir, SNAPSHOT);
@@ -285,11 +296,11 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   const agentOf = (key: string) => readText(join(sessionDir(key), 'agent'));
 
   // Rewrites the snapshot and record the next start reads, so a restart resumes with the role of the latest run.
-  async function rebind(key: string, name: string) {
+  const rebind = (key: string, name: string) => inTurn(lifecycle, key, async () => {
     const from = await source(name, await defaultName());
     if (from) await snapshot(name, from, sessionDir(key), true);
     await writeFile(join(sessionDir(key), 'agent'), name);
-  }
+  });
 
   async function start(key: string, agentPath: string | undefined): Promise<string> {
     const launched = await launch({ key, dir: sessionDir(key), agentPath });
@@ -308,16 +319,20 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return launched.url;
   }
 
+  // The start itself runs outside the turn (wrapped, so the turn does not wait on it), and every caller shares it, failure included.
   async function ensure(key: string, agent?: string): Promise<string> {
-    const { path } = await bind(key, agent);
-    const live = children.get(key);
-    if (live) return live.launched.url;
-    let pending = starting.get(key);
-    if (!pending) {
-      pending = start(key, path).finally(() => starting.delete(key));
-      starting.set(key, pending);
-    }
-    return pending;
+    const { url } = await inTurn(lifecycle, key, async () => {
+      const { path } = await bind(key, agent);
+      const live = children.get(key);
+      if (live) return { url: Promise.resolve(live.launched.url) };
+      let pending = starting.get(key);
+      if (!pending) {
+        pending = start(key, path).finally(() => starting.delete(key));
+        starting.set(key, pending);
+      }
+      return { url: pending };
+    });
+    return url;
   }
 
   const agents = async () => (await registry()).map(({ name, version, status, model, description }) => ({ name, version, status, ...(model && { model }), ...(description && { description }) }));
@@ -363,12 +378,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 
   // Touches of one session run in turn, so an older read can never be written over a newer one.
   const touching = new Map<string, Promise<unknown>>();
-  const touch = (key: string, at: number) => {
-    const next = (touching.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
-    touching.set(key, next);
-    void next.finally(() => touching.get(key) === next && touching.delete(key)).catch(() => {});
-    return next;
-  };
+  const touch = (key: string, at: number) => inTurn(touching, key, async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
 
   async function setWake(key: string, at: number | undefined) {
     if (at === undefined) await rm(join(sessionDir(key), 'wake'), { force: true });
@@ -384,12 +394,14 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return found.filter((w) => w !== undefined);
   }
 
-  async function remove(key: string) {
+  // A process still running or starting for the session is stopped first, so none is left bound to a deleted directory.
+  const remove = (key: string) => inTurn(lifecycle, key, async () => {
     const dir = sessionDir(key);
     if ((await readText(join(dir, 'session-key'))) === undefined) return false;
+    await stopNow(key);
     await rm(dir, { recursive: true, force: true });
     return true;
-  }
+  });
 
   // A title or flag is a file in the session's directory, like `wake`; setting one never starts a process.
   async function setTitle(key: string, title: string | undefined) {
@@ -406,13 +418,16 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return true;
   }
 
-  async function stop(key: string) {
+  // A start in flight is waited out, then stopped, so a stop never leaves a process that comes up afterwards.
+  async function stopNow(key: string) {
+    await starting.get(key)?.catch(() => {});
     const child = children.get(key);
     if (!child) return;
     child.stopping = true;
     children.delete(key);
     await child.launched.stop();
   }
+  const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
   return { ensure, agentOf, rebind, agents, agent, promote, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
 }

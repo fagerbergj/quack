@@ -127,6 +127,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   const sockets = new Map<string, Set<Duplex>>();
   // A delete in flight per key; requests for that key wait it out, then start a fresh session.
   const removing = new Map<string, Promise<void>>();
+  // Requests per key past that wait: one may be starting or calling the process, so a delete is refused until it ends.
+  const serving = new Map<string, number>();
   // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
   const active = new Map<string, boolean>();
   const notes = new Map<string, string>();
@@ -253,15 +255,20 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   async function withSession(key: string, agent: string | undefined, what: string, use: (url: string) => Promise<void>) {
     lastUse.set(key, now());
     hold(key, 1);
+    let admitted = false;
     try {
       await stopping.get(key);
       await removing.get(key);
+      serving.set(key, (serving.get(key) ?? 0) + 1);
+      admitted = true;
       await mustExist(key, what);
       await switchRole(key, agent, what);
       const url = await driver.ensure(key, agent);
       arm(key, undefined);
       await use(url);
     } finally {
+      if (admitted) serving.set(key, serving.get(key)! - 1);
+      if (serving.get(key) === 0) serving.delete(key);
       hold(key, -1);
       lastUse.set(key, now());
     }
@@ -344,6 +351,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const live = driver.running().includes(key);
     const busy = live && (await ping(key).then((p) => p.status === 'HealthyBusy', () => true));
     const why = busy ? 'is running'
+      : serving.has(key) ? 'is handling a request'
       : !marked.has(key) && (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
         : (await opts.retire!.waiting(key)) ? 'is waiting on a person' : undefined;
     if (why) return sendProblem(res, 409, `session ${why}`);
@@ -351,6 +359,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (live) await driver.stop(key);
     marked.delete(key);
     if (!(await driver.remove(key))) return sendProblem(res, 404, 'no such session');
+    arm(key, undefined);
     await opts.retire!.forget(key);
     active.delete(key);
     notes.delete(key);
