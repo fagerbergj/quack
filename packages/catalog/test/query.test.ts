@@ -62,3 +62,28 @@ test('a field outside the list, a bad value, a regex or a wildcard on a non-text
     assert.throws(() => parseQuery(list, bad), QueryError, `${list} ${bad}`);
   }
 });
+
+test('a date-time without Z or an offset is refused, so no q depends on the host time zone', () => {
+  for (const bare of [String.raw`createdAt:>2026-11-01T09\:00\:00`, 'createdAt:>"2026-11-01T09:00"', 'createdAt:["2026-11-01T09:00:00" TO "2026-11-02T00:00:00Z"]']) {
+    assert.throws(() => parseQuery('sessions', bare), (err: Error) => err instanceof QueryError && /Z or an offset/.test(err.message), bare);
+  }
+  assert.throws(() => parseQuery('sessions', 'createdAt:>"2026-11-01T09:00Z"'), QueryError, 'an RFC 3339 date-time carries seconds');
+});
+
+test('dates and date-times read the same rows under every host time zone', () => {
+  // A zone-less date-time is in the list: refused everywhere now, where it used to resolve in each host's zone.
+  const queries = ['createdAt:2026-11-01', 'createdAt:>"2026-11-01T09:00:00Z"', 'lastActivity:<"2026-11-01T09:00:00.250+09:00"', 'oldestAskAt:["2026-11-01" TO "2026-11-02T00:00:00-05:00"}', 'createdAt:>"2026-11-01T09:00:00"'];
+  const read = (q: string) => { try { return parseQuery('sessions', q); } catch (err) { return `refused: ${(err as Error).message}`; } };
+  const saved = process.env.TZ;
+  try {
+    const seen = ['UTC', 'America/New_York', 'Asia/Tokyo'].map((tz) => {
+      process.env.TZ = tz;
+      return JSON.stringify(queries.map(read));
+    });
+    assert.equal(new Set(seen).size, 1, seen.join('\n'));
+    assert.deepEqual(parseQuery('sessions', 'createdAt:2026-11-01'), { kind: 'match', field: 'createdAt', value: Date.UTC(2026, 10, 1) }, 'a date is UTC midnight');
+  } finally {
+    if (saved === undefined) delete process.env.TZ;
+    else process.env.TZ = saved;
+  }
+});

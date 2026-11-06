@@ -23,6 +23,9 @@ type ArtifactSeal = {
   summary?: string; outcome?: string; basis?: string; carriedFrom?: { sha: string; url?: string };
 };
 
+/** A channel batch the core refuses whole: the channel's 400. */
+export class BatchError extends Error {}
+
 /** A list request as the REST surface takes it; the core parses, validates and caps it. */
 export type ListRequest = { q?: string | null; orderBy?: string | null; pageSize?: number; pageToken?: string };
 
@@ -119,6 +122,8 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
   function publish(key: string, events: CatalogEvent[]): Promise<{ acked: number; gap?: true }> {
     return serial(key, async () => {
       await ensure();
+      // Checked whole before anything applies: an out-of-order event would otherwise read as a replay and be dropped.
+      if (events.some((e, i) => !Number.isSafeInteger(e.seq) || e.seq < 1 || (i > 0 && e.seq <= events[i - 1]!.seq))) throw new BatchError('seq must be a positive integer that strictly increases within the batch');
       const before = (await store.watermark(key)) ?? 0;
       if (events.length && events[0]!.seq > before + 1) return { acked: before, gap: true };
       for (const e of events) {

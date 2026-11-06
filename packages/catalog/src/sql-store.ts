@@ -1,7 +1,7 @@
 import { compileWhere, ftsText, type Ast, type Param, type QueryDialect, type Table } from './compile.ts';
 import { keyset } from './keyset.ts';
 import type {
-  ActionWrite, ArtifactRow, AskRow, EventWrite, Json, ListOptions, ListPage, Principal, SessionCatalogStore, SessionRow, SessionState, Write,
+  ActionWrite, ArtifactRow, AskRow, EventWrite, Json, ListOptions, ListPage, Principal, RunOutcome, SessionCatalogStore, SessionRow, SessionState, Write,
 } from './port.ts';
 
 type Row = Record<string, unknown>;
@@ -31,7 +31,7 @@ function sessionRow(r: Row): SessionRow {
     createdAt: num(r.created_at), lastActivity: num(r.last_activity), cost: { currencyCode: String(r.currency), micros: BigInt(String(r.cost_text)) },
     tokens: { input: num(r.tokens_input), output: num(r.tokens_output), cacheRead: num(r.tokens_cache_read), cacheWrite: num(r.tokens_cache_write) },
     pendingAsks: num(r.pending_asks), ...(opt(r.oldest_ask_at) !== undefined && { oldestAskAt: num(r.oldest_ask_at) }),
-    ...(opt(r.last_outcome) !== undefined && { lastRun: { outcome: r.last_outcome as 'failed', endedAt: num(r.last_ended_at), failedSteps: json(r.failed_steps) ?? [] } }),
+    ...(opt(r.last_outcome) !== undefined && { lastRun: { outcome: r.last_outcome as RunOutcome, endedAt: num(r.last_ended_at), failedSteps: json(r.failed_steps) ?? [] } }),
     ...(opt(r.last_message) !== undefined && { lastMessage: String(r.last_message) }),
   };
 }

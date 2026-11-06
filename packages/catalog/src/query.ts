@@ -7,7 +7,9 @@ export class QueryError extends Error {}
 
 type ValueKind = 'text' | 'string' | 'int' | 'micros' | 'date' | 'bool' | readonly string[];
 
-const DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
+// RFC 3339: a date-time carries seconds and Z or an offset, so a q means the same rows on every host; a date is UTC midnight.
+const DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2}))?$/;
+const ZONELESS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
 
 // Each list's q field set: 'text' fields also take prefix and wildcard terms.
 const SESSIONS: Record<SessionField, ValueKind> = {
@@ -44,6 +46,7 @@ function typed(field: string, kind: ValueKind, text: string): Value {
     return BigInt(text);
   }
   if (kind === 'date') {
+    if (ZONELESS.test(text)) throw new QueryError(`${field} takes a date-time with Z or an offset, so it reads the same on every host: add one, as in ${text.length === 16 ? `${text}:00` : text}Z`);
     const ms = DATE.test(text) ? Date.parse(text) : NaN;
     if (Number.isNaN(ms)) throw bad('an RFC 3339 date or date-time');
     return ms;
@@ -65,8 +68,9 @@ function rangeLeaf(q: string, field: string, kind: ValueKind, tag: LiqeQuery & {
   const { range, location } = tag.expression;
   // liqe reads range bounds as floats; numeric bounds are re-read from the source text.
   const source = /^[[{]\s*(\S+)\s+TO\s+(\S+)\s*[\]}]$/.exec(q.slice(location.start, location.end));
-  const bound = (v: number | string, rawText: string | undefined) => typed(field, kind, typeof v === 'number' ? (rawText ?? String(v)) : v);
-  return { kind: 'range', field, from: { value: bound(range.min, source?.[1]), inclusive: range.minInclusive }, to: { value: bound(range.max, source?.[2]), inclusive: range.maxInclusive } };
+  if (!source) throw new QueryError(`${field}: cannot re-read range bounds from the source`);
+  const bound = (v: number | string, rawText: string) => typed(field, kind, typeof v === 'number' ? rawText : v);
+  return { kind: 'range', field, from: { value: bound(range.min, source[1]!), inclusive: range.minInclusive }, to: { value: bound(range.max, source[2]!), inclusive: range.maxInclusive } };
 }
 
 function termLeaf(field: string, kind: ValueKind, quoted: boolean, raw: string): Leaf {
