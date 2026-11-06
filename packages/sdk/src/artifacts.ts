@@ -3,6 +3,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, defineExtension, wrapTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
+import { assertSealFits } from './channel.ts';
 
 /** An extension-declared artifact: a finished product at a workspace path, validated by its schema. */
 export type ArtifactKind = {
@@ -71,6 +72,7 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     const summary = summaryOf(kind, content);
     if (summary) sealed.summary = summary;
     if (basis) sealed.basis = basis;
+    assertSealFits(kind.kind, sealed);
     entry.versions.push(sealed);
     return plain(sealed);
   }, ctx);
@@ -81,6 +83,7 @@ export async function attachVerdict(api: ToolExecutionApi, kind: string, version
   await api.commit(async (tx) => {
     const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
     if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
+    assertSealFits(kind, { ...plain(sealed), verdict: plain(verdict) });
     sealed.verdict = plain(verdict);
   }, ctx);
 }
@@ -90,7 +93,9 @@ export async function attachLink(api: ToolExecutionApi, kind: string, version: n
   await api.commit(async (tx) => {
     const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
     if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
-    if (!sealed.links?.some((l) => l.url === link.url)) sealed.links = [...(sealed.links ?? []), plain(link)];
+    if (sealed.links?.some((l) => l.url === link.url)) return;
+    assertSealFits(kind, { ...plain(sealed), links: [...(sealed.links ?? []), plain(link)] });
+    sealed.links = [...(sealed.links ?? []), plain(link)];
   }, ctx);
 }
 

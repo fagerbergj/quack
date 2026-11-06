@@ -2,6 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { storeFor, readDeploymentFile } from '@quack/sdk';
 import { fileURLToPath } from 'node:url';
 import { indexRoutes, openPush, openStore } from '@quack/index';
+import { eventsRoute, openCatalog } from '@quack/catalog';
+import { parseDeployment, priceOf } from '@quack/session';
+import { backfillCatalog } from './catalog-sync.ts';
 import { createDistributor, recordTurns } from './server.ts';
 import { pinnedAgentPath } from './process-driver.ts';
 import { credentialBroker } from './credentials.ts';
@@ -26,10 +29,18 @@ const dataDir = env('QUACK_DATA_DIR');
 const deployment = readDeploymentFile();
 const { store } = openStore({ dataDir, store: storeFor(deployment, deployment.stores?.index && 'index') });
 void store.ensure().catch((err) => console.error('index migrations will retry:', err.message));
+// The session catalog keeps a store named `catalog` when the deployment file has one, otherwise catalog.sqlite in the data dir.
+const catalog = openCatalog({ dataDir, store: storeFor(deployment, deployment.stores?.catalog && 'catalog') });
 const broker = credentialBroker();
 const manifests = await loadManifests();
 
-const { driver, refuse, listenAddress } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker });
+// A process that exits, stopped or crashed, is the catalog's stopped; the session cannot report its own end.
+const stopped = (key: string) => void catalog.stopped(key).catch((err) => console.error(`catalog: ${key} stop not recorded:`, err.message));
+const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker, onExit: stopped });
+// Before any session starts, so each log has one owner while its stream is seeded.
+await ready;
+const backfilled = await backfillCatalog(catalog, dataDir, priceOf(parseDeployment(deployment)));
+if (backfilled !== undefined) console.log(`catalog: backfilled ${backfilled} sessions from their logs`);
 // The extensions the deployment file lists run in this process, under /apps/<name>/*; their calls back here, and to each other, are in-process.
 const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.emit('request', req, res) });
 const pinnedDefinition = (key: string) => readFile(pinnedAgentPath(dataDir, key), 'utf8').then(JSON.parse, () => null);
@@ -41,8 +52,8 @@ const push = openPush({ dataDir, env: process.env, artifacts: async (key) => (aw
 const turns = recordTurns(driver);
 const indexHttp = indexRoutes(store, broker.sessionOf, (session, facts) => Promise.all([turns(session, facts), push.notify(session, facts)]).then(() => {}));
 // QUACK_PROXY_SECRET is the value the reverse proxy sends in x-quack-proxy-secret; without it no identity header is believed.
-const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)) };
-const server = createDistributor(driver, { retire, refuse, sessions, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, spend: () => store.sessions(), webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res)) || false }).listen(port);
+const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)), events: eventsRoute(catalog) };
+const server = createDistributor(driver, { retire, refuse, sessions, catalog, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, spend: () => store.sessions(), webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res)) || false }).listen(port);
 server.sessions.listen(sessionPort, listenAddress);
 // A failed start (the GitHub app finding its agent unpromoted, say) exits so compose restarts it, as the separate service did.
 for (const [name, app] of Object.entries(mounted)) {

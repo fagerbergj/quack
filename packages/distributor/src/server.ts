@@ -136,10 +136,14 @@ export const recordTurns = (driver: Pick<HostDriver, 'touch'>) => async (session
   for (const f of facts) if (f.kind === 'status' && f.data.state === 'idle') await driver.touch(session, f.at).catch(() => {});
 };
 
+type SessionAuth = { sessionOf(token: string): string | undefined; crossSession(key: string): Promise<boolean>; events?: (req: IncomingMessage, res: ServerResponse, key: string) => Promise<boolean> };
+type CatalogWrites = { rename(key: string, title: string | null): Promise<unknown>; archive(key: string): Promise<unknown>; unarchive(key: string): Promise<unknown>; remove(key: string): Promise<unknown> };
+const mirrored = (what: string, write: Promise<unknown> | undefined) => write?.catch((err) => console.error(`catalog: ${what} not recorded:`, err instanceof Error ? err.message : err));
+
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, and whether that session may reach others. */ sessions?: { sessionOf(token: string): string | undefined; crossSession(key: string): Promise<boolean> }; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog's person writes, mirrored while the index still serves reads; a failure is logged, never the request's. */ catalog?: CatalogWrites; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
@@ -420,6 +424,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (!(await driver.remove(key))) return sendProblem(res, 404, 'no such session');
     arm(key, undefined);
     await opts.retire!.forget(key);
+    await mirrored('delete', opts.catalog?.remove(key));
     active.delete(key);
     notes.delete(key);
     send(res, 200, { key });
@@ -443,6 +448,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return sendProblem(res, 409, "Can't archive a session that is running or waiting on you.");
     const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
     if (done.includes(false)) return sendProblem(res, 404, 'no such session');
+    if (title !== undefined) await mirrored('rename', opts.catalog?.rename(key, title.trim() || null));
+    if (archived !== undefined) await mirrored('archive', archived ? opts.catalog?.archive(key) : opts.catalog?.unarchive(key));
     const found = await driver.session(key);
     return found ? send(res, 200, (await decorate([found]))[0]) : sendProblem(res, 404, 'no such session');
   }
@@ -536,7 +543,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
 }
 
 /** The only listener a session's environment names: every request needs a current launch credential, identity headers count for nothing, and the credential reaches only what sessionRefusal allows. */
-function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who: undefined) => Promise<unknown>, auth: { sessionOf(token: string): string | undefined; crossSession(key: string): Promise<boolean> } | undefined) {
+function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who: undefined) => Promise<unknown>, auth: SessionAuth | undefined) {
   const caller = async (req: IncomingMessage): Promise<SessionCaller | undefined> => {
     const token = sessionToken(req);
     const key = token === undefined ? undefined : auth?.sessionOf(token);
@@ -549,6 +556,7 @@ function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who:
       // Routed by the normalized path the policy saw, so a `..` cannot reach a route it refused.
       const { pathname, search } = new URL(req.url ?? '', 'http://distributor');
       req.url = pathname + search;
+      if (await auth?.events?.(req, res, who.key)) return;
       const refused = sessionRefusal(req.method ?? 'GET', pathname, who);
       if (refused) return sendProblem(res, ...refused);
       await route(req, res, undefined);

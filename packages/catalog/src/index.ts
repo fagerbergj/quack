@@ -6,3 +6,5 @@ export { parseQuery, QueryError } from './query.ts';
 export { sqliteCatalog } from './sqlite.ts';
 export type * from './port.ts';
 export { artifactWire, askWire, sessionsApi, sessionWire, type Caller, type SessionsApiDeps } from './http.ts';
+export { eventsRoute, parseBatch, parseEvents } from './channel.ts';
+export { openCatalog } from './open.ts';
