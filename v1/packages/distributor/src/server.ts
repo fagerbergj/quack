@@ -123,6 +123,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const holds = new Map<string, number>();
+  // Each session's proxied page sockets, so a delete can end them: a session process does not stop while one is open.
+  const sockets = new Map<string, Set<Duplex>>();
   // A delete in flight per key; requests for that key wait it out, then start a fresh session.
   const removing = new Map<string, Promise<void>>();
   // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
@@ -335,12 +337,19 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     }
   }
 
-  // Marked in `removing` before the first await, so a request either holds the key already (refused here) or waits for the delete.
+  // Only work refuses a delete: a run in flight, a sleep with a wake time, a person's pending decision. An idle process, or a page watching it, is stopped first.
+  // Marked in `removing` before the first await, so new requests wait for the delete; ones already proxied end when the process stops.
   async function retireChecked(key: string, res: ServerResponse) {
-    const why = driver.running().includes(key) || holds.get(key) || stopping.has(key) ? 'is running'
-      : (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
+    await stopping.get(key);
+    const live = driver.running().includes(key);
+    const busy = live && (await ping(key).then((p) => p.status === 'HealthyBusy', () => true));
+    const why = busy ? 'is running'
+      : !marked.has(key) && (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
         : (await opts.retire!.waiting(key)) ? 'is waiting on a person' : undefined;
     if (why) return sendProblem(res, 409, `session ${why}`);
+    for (const s of sockets.get(key) ?? []) s.destroy();
+    if (live) await driver.stop(key);
+    marked.delete(key);
     if (!(await driver.remove(key))) return sendProblem(res, 404, 'no such session');
     await opts.retire!.forget(key);
     active.delete(key);
@@ -431,7 +440,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     const target = sessionPath(req.url);
     if (!target || target.path !== '/ws') return socket.destroy();
     hold(target.key, 1);
-    socket.once('close', () => { hold(target.key, -1); lastUse.set(target.key, now()); });
+    const open = sockets.get(target.key) ?? sockets.set(target.key, new Set()).get(target.key)!;
+    open.add(socket);
+    socket.once('close', () => { hold(target.key, -1); open.delete(socket); lastUse.set(target.key, now()); });
     try {
       await stopping.get(target.key);
       await removing.get(target.key);

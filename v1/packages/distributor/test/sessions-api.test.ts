@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,13 +36,16 @@ async function seed(dataDir: string, key: string, s: Seed) {
 }
 
 // A real driver over seeded session directories; a read that tried to start a process would throw.
-async function start(opts: { sessions?: Record<string, Seed>; running?: string[]; token?: string; spend?: () => Promise<Array<{ key: string; cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } }>> } = {}) {
+async function start(opts: { sessions?: Record<string, Seed>; running?: string[]; token?: string; /** Where a running session answers /ping; absent, any process call throws. */ pingUrl?: string; spend?: () => Promise<Array<{ key: string; cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } }>> } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-api-'));
   cleanups.push(() => void rm(dataDir, { recursive: true, force: true }));
   for (const [key, s] of Object.entries(opts.sessions ?? SESSIONS)) await seed(dataDir, key, s);
   const real = processDriver({ command: [], dataDir });
   const running = opts.running ?? [];
-  const driver: HostDriver = { ...real, running: () => running, sessions: async () => (await real.sessions()).map((s) => ({ ...s, running: running.includes(s.key) })), ensure: async () => { throw new Error('a read must not start a process'); }, setWake: async () => {} };
+  const stopped: string[] = [];
+  const stop = async (k: string) => void (stopped.push(k), running.splice(running.indexOf(k), 1));
+  const ensure = async () => { if (opts.pingUrl) return opts.pingUrl; throw new Error('a read must not start a process'); };
+  const driver: HostDriver = { ...real, running: () => running, stop, sessions: async () => (await real.sessions()).map((s) => ({ ...s, running: running.includes(s.key) })), ensure, setWake: async () => {} };
   const forgotten: string[] = [];
   const server = createDistributor(driver, { retire: { token: opts.token, waiting: async () => false, forget: async (k) => void forgotten.push(k) }, spend: opts.spend }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -54,7 +58,7 @@ async function start(opts: { sessions?: Record<string, Seed>; running?: string[]
   };
   const list = (query = '') => call('GET', `/sessions${query}`);
   const keys = async (filter: string) => (await list(`?filter=${encodeURIComponent(filter)}`)).body.sessions.map((s: Row) => s.key).sort();
-  return { call, list, keys, dataDir, forgotten, driver };
+  return { call, list, keys, dataDir, forgotten, driver, stopped };
 }
 
 const dirOf = (dataDir: string, key: string) => join(dataDir, sessionDirName(key));
@@ -176,6 +180,22 @@ test('DELETE removes the session, is refused while it runs, and a second delete 
   assert.deepEqual(forgotten, ['contracts:abc']);
   assert.equal((await list()).body.sessions.length, 4);
   assert.equal((await call('DELETE', '/sessions/no%20spaces')).status, 400);
+});
+
+test('DELETE refuses a session mid-run, and stops then deletes one whose process is only idle or watched', async () => {
+  let status = 'HealthyBusy';
+  const proc = createServer((_req, res) => res.end(JSON.stringify({ status }))).listen(0);
+  await new Promise((r) => proc.once('listening', r));
+  cleanups.push(() => proc.close());
+  const { call, stopped } = await start({ running: ['github:o/r#1'], pingUrl: `http://127.0.0.1:${(proc.address() as AddressInfo).port}` });
+  const key = `/sessions/${encodeURIComponent('github:o/r#1')}`;
+  const busy = await call('DELETE', key);
+  assert.deepEqual([busy.status, busy.body.detail], [409, 'session is running']);
+  assert.deepEqual(stopped, []);
+  status = 'HealthyIdle';
+  assert.equal((await call('DELETE', key)).status, 200);
+  assert.deepEqual(stopped, ['github:o/r#1']);
+  assert.equal((await call('GET', key)).status, 404);
 });
 
 test('rename, archive and delete take the admin token or the proxy identity and refuse a wrong token or none; the legacy POST route takes only the identity', async () => {
