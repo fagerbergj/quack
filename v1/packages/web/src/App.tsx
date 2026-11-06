@@ -8,7 +8,7 @@ import { Shell, type Route } from './Shell.tsx';
 import { Settings } from './Settings.tsx';
 import { SessionList } from './SessionList.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
-import { PrStates, usePrStates } from './prState.tsx';
+import { ExtensionProviders } from './slots.tsx';
 import { useDesktop } from './useDesktop.ts';
 import { useWorkspaceData, Workspace } from './Workspace.tsx';
 
@@ -88,11 +88,10 @@ export function App() {
   const title = !session && PLACEHOLDERS[nav];
   const data = useWorkspaceData(session?.key);
   const desktop = useDesktop();
-  const prs = usePrStates(data.rows);
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
   const inSidebar = listInSidebar(desktop, nav, Boolean(session));
   return (
-    <PrStates value={prs}>
+    <ExtensionProviders rows={data.rows}>
       <Shell route={nav} bare={Boolean(session)} sidebar={inSidebar ? list : undefined}>
         {full ? <ArtifactPage sessionKey={full.key} version={full.version} />
           : Page ? <Page rows={data.rows} />
@@ -102,6 +101,6 @@ export function App() {
           : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
           : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={inSidebar ? undefined : list} />}
       </Shell>
-    </PrStates>
+    </ExtensionProviders>
   );
 }

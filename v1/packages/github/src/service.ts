@@ -141,7 +141,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const trigger = triggerFor(event, hook, config.label, await app.slug());
   const agent = trigger?.role === 'implementer' ? config.implementerAgent : config.agent;
   if (!trigger || !agent) return send(res, 200, { ignored: true });
-  // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
+  // The delivery id is the request id, so a redelivery of the same event never starts a second run.
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const session = { key: trigger.sessionKey, agent };
   if (trigger.followUp) return queueFollowUp(res, config, trigger, session, requestId);
@@ -169,7 +169,7 @@ async function gitCredential(req: IncomingMessage, res: ServerResponse, app: Git
   }
 }
 
-// Posts a review the session sealed and checked; the session never holds an API token (D56).
+// Posts a review the session sealed and checked; the session never holds an API token.
 async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState) {
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && EVENTS.has(r.event) && typeof r.body === 'string' && r.body.length > 0;
@@ -196,7 +196,7 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
 
 const QUOTE_CHARS = 300;
 
-// Answers a mention in its thread: a reply under a review comment, or a new comment quoting an issue comment. The session never holds the token (D56).
+// Answers a mention in its thread: a reply under a review comment, or a new comment quoting an issue comment. The session never holds the token.
 async function postReply(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && Number.isInteger(r.commentId) && (r.kind === 'review' || r.kind === 'issue') && typeof r.body === 'string' && r.body.length > 0;
@@ -252,7 +252,7 @@ async function issueRoute(res: ServerResponse, app: GithubApp, owner: string, re
   send(res, 200, { owner, repo, number, title: issue.title, body: issue.body ?? '', author: issue.user?.login ?? null, state: issue.state, labels: (issue.labels ?? []).map((l: any) => (typeof l === 'string' ? l : l.name)), baseRef });
 }
 
-// Opens the pull request a session pushed a branch for, after its approval; the session never holds the token (D56).
+// Opens the pull request a session pushed a branch for, after its approval; the session never holds the token.
 async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   if (!['owner', 'repo', 'head', 'base', 'title', 'body'].every((k) => typeof r[k] === 'string' && r[k])) return send(res, 400, { error: 'need owner, repo, head, base, title and body' });
@@ -261,7 +261,7 @@ async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: G
   send(res, 201, { number: json?.number, url: json?.html_url });
 }
 
-// Rewrites a pull request's title and body from the description its approver saw; the session never holds the token (D56).
+// Rewrites a pull request's title and body from the description its approver saw; the session never holds the token.
 async function editPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   if (typeof r.title !== 'string' || !r.title || typeof r.body !== 'string') return send(res, 400, { error: 'need a non-empty title and a body' });

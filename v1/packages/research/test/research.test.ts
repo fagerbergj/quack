@@ -228,14 +228,20 @@ test('a fetched source keeps its text, retrievable by id and keyed by the record
   await session.close();
 });
 
-test('stored source text is capped at 500k characters and still retrievable', async () => {
+test('stored source text is capped at 500k characters, still retrievable, and both tools say where the stored text stops', async () => {
   const base = await web();
   const { seen, session } = await run({ maxFetchBytes: 1_000_000 }, (step) => [
     call('web_fetch', { urls: [`${base}/huge`] }),
     step(call('source_length', { id: 's1' })),
+    step(call('read_source', { id: 's1', offset: 480_000 })),
     step(fauxAssistantMessage('Done.')),
   ], { isPublic: loopbackOk }, [readSourceExt]);
+  assert.match(sees(seen, 0), /cut at 30000 of 600000 characters; read the rest with read_source id "s1" offset 30000 \(only the first 500000 are kept\)$/);
   assert.match(delivered(seen.slice(0, 2)), /^500000$/);
+  const tail = sees(seen, 2);
+  assert.equal(tail.split('\n')[0].length, 20_000);
+  assert.match(tail, /end of the stored text of source s1: only its first 500000 of 600000 characters were kept, so the rest cannot be read$/);
+  assert.doesNotMatch(tail, /end of source/);
   await session.close();
 });
 

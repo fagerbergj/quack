@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { Artifacts, decide, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension } from '@quack/workflows';
+import { runWorkflow, startWorkflow, WorkflowDoc, workflowExtension } from '@quack/workflows';
 import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
 
 // A real two-page PDF, written by hand so the render step runs the actual library.
@@ -136,7 +136,7 @@ test('a page the model returns empty fails the transcribe step and seals nothing
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify({ id: 'n1', name: 'Notes', version: 'v1' }), 'v1');
     assert.equal(outcome.status, 'failed');
-    assert.match(outcome.status === 'failed' ? outcome.error.message : '', /no page could be transcribed; not transcribed: the model returned an empty page/);
+    assert.match(outcome.status === 'failed' ? outcome.error.message : '', /^step transcribe: 2 of 2 pages could not be transcribed \(pages 1, 2: the model returned an empty page\)/);
     assert.equal((await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds['remarkable.transcript'], undefined);
   } finally {
     await s.close();
@@ -278,18 +278,38 @@ const open = (dir: string, m: ReturnType<typeof scripted>, workflow: ReturnType<
 const input = JSON.stringify({ id: 'n1', name: 'Notes', version: 'v1' });
 const transcribing = (d: { steps: Array<{ name: string; progress?: { done: number; total: number } | null }> }) => d.steps.find((r) => r.name === 'transcribe');
 
-test('a page that fails every try is recorded as not transcribed, the rest carry on, and progress counts every page', async () => {
-  const m = scripted((n) => (n === 1 ? ' ' : 'second page'));
+test('a page that fails every try fails the document, its error never reaches a transcript, and a retry asks again only for that page', async () => {
+  const m = scripted((n, attempt) => (n === 1 && attempt <= 3 ? ' ' : `page ${n} words`));
   const dir = await mkdtemp(join(tmpdir(), 'quack-rm-'));
   const workflow = ingestWorkflow({ service: fakeService(), visionModel: m.ref });
   const s = await open(dir, m, workflow);
   try {
-    const outcome = await runWorkflow(s.harness, s.root, workflow, input, 'v1');
-    assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
-    assert.equal(m.attempts.get(1), 3);
-    const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['remarkable.transcript'].versions;
-    assert.deepEqual((JSON.parse(sealed[0].content) as Transcript).pages, [{ page: 1, text: 'not transcribed: the model returned an empty page' }, { page: 2, text: 'second page' }]);
+    const failed = await runWorkflow(s.harness, s.root, workflow, input, 'v1');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.status === 'failed' ? failed.error.message : '', /^step transcribe: 1 of 2 pages could not be transcribed \(page 1: the model returned an empty page\)/);
+    assert.deepEqual([m.attempts.get(1), m.attempts.get(2)], [3, 1], 'page 2 is still tried after page 1 gives up');
     assert.deepEqual(transcribing((await s.harness.snapshot(WorkflowDoc, s.root.id, ctx))!)!.progress, { done: 2, total: 2 });
+    assert.equal((await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds['remarkable.transcript'], undefined);
+
+    const retried = await runWorkflow(s.harness, s.root, workflow, input, 'v1#1');
+    assert.equal(retried.status, 'completed', JSON.stringify(retried));
+    assert.deepEqual([m.attempts.get(1), m.attempts.get(2)], [4, 1], 'only the failed page is asked again');
+    const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['remarkable.transcript'].versions;
+    assert.deepEqual((JSON.parse(sealed[0].content) as Transcript).pages.map((p) => p.text), ['page 1 words', 'page 2 words']);
+  } finally {
+    await s.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('pages kept for one version are not reused for the next', async () => {
+  const m = scripted((n) => `page ${n} words`);
+  const dir = await mkdtemp(join(tmpdir(), 'quack-rm-'));
+  const workflow = ingestWorkflow({ service: fakeService(), visionModel: m.ref });
+  const s = await open(dir, m, workflow);
+  try {
+    for (const version of ['v1', 'v2']) assert.equal((await runWorkflow(s.harness, s.root, workflow, JSON.stringify({ id: 'n1', name: 'Notes', version }), version)).status, 'completed');
+    assert.deepEqual([m.attempts.get(1), m.attempts.get(2)], [2, 2]);
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -302,7 +322,12 @@ test('a restart mid-transcribe resumes at the next page; the finished page is vi
   try {
     const a = await open(dir, scripted((n) => (n === 1 ? 'one' : 'hang')), workflow);
     await startWorkflow(a.harness, a.root, workflow, input, 'v1');
-    await watchUntil((await a.harness.watchDoc(WorkflowDoc, a.root.id, ctx))!, (d) => (transcribing(d)?.progress?.done === 1 ? true : undefined));
+    const watch = (await a.harness.watchDoc(WorkflowDoc, a.root.id, ctx))!;
+    await new Promise<void>((resolve) => {
+      const check = async () => { if (watch.value && transcribing(watch.value)?.progress?.done === 1) resolve(); };
+      void check();
+      watch.start(check);
+    }).finally(() => watch.stop());
     await a.close();
 
     const second = scripted((n) => `again ${n}`);

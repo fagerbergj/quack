@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
+import { createIngestQueue, INGEST_CONCURRENCY, type QueuedItem } from './queue.ts';
 import { openStore } from './store.ts';
 
 export type ServiceConfig = {
@@ -17,6 +18,8 @@ export type ServiceConfig = {
   onSettle?: (batch: string, document: string) => void;
   /** Backoff between resubmits of a wait the distributor dropped; tests inject an instant one. */
   sleep?: (ms: number) => Promise<void>;
+  /** Documents ingesting at once; the rest wait in the store. */
+  concurrency?: number;
 };
 
 const MAX_BACKOFF_MS = 60_000;
@@ -44,7 +47,6 @@ const upstream = (err: unknown) => err instanceof Error && (err.message.startsWi
 
 export function createRemarkableService(config: ServiceConfig): App & { settled(): Promise<void>; stop(): Promise<void> } {
   const store = openStore(config.dbPath, config.now ?? (() => new Date()));
-  const inflight = new Set<Promise<void>>();
   const aborts = new Set<() => void>();
   let stopped = false;
 
@@ -65,32 +67,27 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
   }));
 
   // The version is the request id, so a replay (a later batch, or a resubmit after restart) joins the existing run.
-  type Job = { id: string; name: string; version: string; attempt: number };
-  async function submit(batch: string, doc: Job): Promise<void> {
-    const { url, body } = invocationRequest(config.distributorUrl, { key: `remarkable:${doc.id}`, agent: config.agent, input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, title: doc.name, wait: true });
+  async function submit({ batch, document: id, name, version, attempt }: QueuedItem): Promise<void> {
+    const { url, body } = invocationRequest(config.distributorUrl, { key: `remarkable:${id}`, agent: config.agent, input: JSON.stringify({ id, name, version }), requestId: attempt ? `${version}#${attempt}` : version, title: name, wait: true });
     try {
       for (let n = 0; ; n++) {
         if (stopped) return;
         const res = await post(url, body).catch((err) => (isReset(err) ? { status: 502, text: '' } : Promise.reject(err)));
         if (stopped) return;
         if (!dropped(res)) {
-          store.settle(batch, doc.id, failure(res));
+          store.settle(batch, id, failure(res));
           break;
         }
         await sleep(Math.min(1000 * 2 ** n, MAX_BACKOFF_MS));
       }
     } catch (err) {
       if (stopped) return;
-      store.settle(batch, doc.id, `distributor unreachable: ${(err as Error).message}`);
+      store.settle(batch, id, `distributor unreachable: ${(err as Error).message}`);
     }
-    config.onSettle?.(batch, doc.id);
+    config.onSettle?.(batch, id);
   }
 
-  function track(batch: string, doc: Job) {
-    if (stopped) return;
-    const p = submit(batch, doc).finally(() => inflight.delete(p));
-    inflight.add(p);
-  }
+  const queue = createIngestQueue(store, submit, config.concurrency ?? INGEST_CONCURRENCY);
 
   // A notebook's ingest state for the page: never ingested, edited since, still running, failed, or current.
   function stateOf(d: RmEntry) {
@@ -120,7 +117,7 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
     const refused = jobs.filter((j) => j.attempt < 0).map((j) => j.id);
     if (refused.length) return [409, { error: 'only documents whose last attempt failed can be retried', ids: refused }];
     const batch = store.create(jobs.map((j) => ({ document: j.id, name: j.name, version: j.version, attempt: j.attempt })));
-    jobs.forEach((job) => track(batch, job));
+    queue.pump();
     return [202, { batch }];
   }
 
@@ -161,15 +158,16 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
       send(res, bad ? 400 : upstream(err) ? 502 : 500, { error: (err as Error).message });
     }
   }
-  for (const p of store.pending()) track(p.batch, { id: p.document, name: p.name, version: p.version, attempt: p.attempt });
+  queue.pump();
   return {
     handle,
-    /** Resolves when every submission started so far has been answered. */
-    settled: async () => void (await Promise.all(inflight)),
+    /** Resolves when every queued submission has been answered. */
+    settled: () => queue.drained(),
     stop: async () => {
       stopped = true;
+      queue.stop();
       aborts.forEach((abort) => abort());
-      await Promise.all(inflight);
+      await queue.drained();
       store.close();
     },
   };

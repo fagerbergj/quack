@@ -448,7 +448,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     return true;
   }
 
-  // A submission naming another agent changes the session's role if no run is active (D33); an open run, a pending approval or a sleep is still a run.
+  // A submission naming another agent changes the session's role if no run is active; an open run, a pending approval or a sleep is still a run.
   // shortcut: a busy session is refused (409) rather than queued as the next run; queue it if callers need follow-ups across roles.
   async function switchRole(key: string, agent: string | undefined, request: string) {
     if (!agent || request !== 'POST /invocations') return;

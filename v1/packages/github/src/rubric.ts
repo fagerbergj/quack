@@ -37,7 +37,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
   return { met: ok ? 1 : 0, detail: ok ? undefined : `the findings call for ${expected}, the verdict says ${r.verdict ?? 'nothing'}` };
 }
 
-// v0's five code-reviewer criteria, audited into weighted atomic checks (D11, D54). Scopes come from reviewEvidence.
+// v0's five code-reviewer criteria, audited into weighted atomic checks. Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
   version: 5,

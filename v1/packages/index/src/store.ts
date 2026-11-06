@@ -19,7 +19,7 @@ const iso = (...candidates: unknown[]) => new Date((candidates.find((c) => typeo
 const newestFirst = (a: { at: number; session: string; id: string }, b: typeof a) => b.at - a.at || a.session.localeCompare(b.session) || a.id.localeCompare(b.id);
 const field = (f: FactRow | undefined, key: string) => (f?.data as Record<string, unknown> | undefined)?.[key];
 
-/** The derived index (A6); it holds nothing a session log cannot regenerate. Reads are shaped here so both backends answer alike. */
+/** The derived index; it holds nothing a session log cannot regenerate. Reads are shaped here so both backends answer alike. */
 export function createStore(backend: Backend) {
   let ready: Promise<void> | undefined;
   // Memoized once it succeeds, retried while the database is down, so the distributor can start before Postgres does.

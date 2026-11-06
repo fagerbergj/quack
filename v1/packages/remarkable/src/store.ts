@@ -5,7 +5,7 @@ export type ItemStatus = 'pending' | 'done' | 'failed';
 export type BatchItem = { document: string; version: string; status: ItemStatus; error?: string };
 export type Batch = { id: string; created: string; status: ItemStatus; items: BatchItem[] };
 
-/** Batch records on the service's volume (RM4). A batch is done when every item is done, failed when all settled and any failed. */
+/** Batch records on the service's volume. A batch is done when every item is done, failed when all settled and any failed. */
 export function openStore(path: string, now: () => Date) {
   const db = new DatabaseSync(path);
   db.exec(`

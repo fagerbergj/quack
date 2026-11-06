@@ -15,8 +15,9 @@ export const MAX_PICKS = 3;
 
 const KEY = 'quack:bottom-bar';
 const CHANGED = 'quack:bottom-bar-changed';
-// Agents is a choice, never a default. Sleeper is an extension page; when it is absent the next available page fills its place.
-const DEFAULT = [...new Set([...['sessions', 'artifacts', 'sleeper'].filter((r) => PAGES.some((p) => p.route === r)), ...PAGES.map((p) => p.route).filter((r) => r !== 'agents')])].slice(0, MAX_PICKS);
+// Agents is a choice, never a default. Pinned extension pages follow Sessions and Artifacts; the next available page fills any room left.
+const PINNED = EXTENSIONS.flatMap((e) => (e.nav?.pinned ? [e.nav.route] : []));
+const DEFAULT = [...new Set(['sessions', 'artifacts', ...PINNED, ...PAGES.map((p) => p.route).filter((r) => r !== 'agents')])].slice(0, MAX_PICKS);
 
 // Per device; unreadable or stale storage reads as the default.
 export function storedBar(): string[] {

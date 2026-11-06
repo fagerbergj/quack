@@ -64,7 +64,7 @@ export function tradeEvidence(f: TradeFacts) {
   };
 }
 
-// The audit's trade table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
+// Trade weights are unreplayed: replay them before any weight gates delivery.
 export const tradeRubric: Rubric = {
   name: 'sleeper.trade',
   version: 3,

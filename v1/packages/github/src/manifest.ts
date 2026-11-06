@@ -5,7 +5,7 @@ import { mountGithub } from './mount.ts';
 import { settingsProblems } from './settings.ts';
 import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 
-// The launch credential comes from the environment, never the definition file (D56).
+// The launch credential comes from the environment, never the definition file.
 export const manifest: ExtensionManifest = {
   name: 'github',
   optional: ['judge'],

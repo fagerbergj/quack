@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { guideAnchors, kinds, lintTypeScript, typeScriptBreaks, typescriptKind, validateSpec, type ContractSpec } from '../src/index.ts';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { guideAnchors, kinds, lintTypeScript, specEvidence, typeScriptBreaks, typescriptKind, validateSpec, type ContractSpec } from '../src/index.ts';
 
 const SURFACE = `/** Provided by each extension, read by core at boot. */
 export interface Manifest {
@@ -83,4 +84,19 @@ test('diff reports a removed re-export', async () => {
   const re = "/** R. */\nexport { Extension, defineExtension } from '@earendil-works/pi-durable';\n";
   const out = await breaks(re, re.replace(', defineExtension', ''));
   assert.deepEqual(out, ['export-removed /defineExtension: export "defineExtension" is removed, so code that names it no longer compiles']);
+});
+
+test('a pointer resolves for every export form the AST lists, and not for a name that is only declared', async () => {
+  const doc = `declare class Local {}\n/** L. */\nexport { Local };\n/** A. */\nexport declare abstract class Base {}\n/** E. */\nexport declare const enum Mode { A }\n/** V. */\nexport declare let counter: number;\ndeclare const hidden: number;\n`;
+  const names = ['Local', 'Base', 'Mode', 'counter', 'hidden', 'nope'];
+  const spec: ContractSpec = {
+    kind: 'typescript', title: 'SDK surface', version: 1,
+    intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: ['extensions'], guarantees: [] },
+    document: doc,
+    choices: names.map((n) => ({ id: n, pointer: `/${n}`, decision: 'd', why: [{ source: 'guide' as const, text: 't', ref: 'typescript#additions' }] })),
+  };
+  const api = { conversationId: 'c', env: undefined, snapshot: async () => undefined } as never;
+  const sealed = { kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null, outcome: '', summary: '' };
+  const { unresolved } = (await specEvidence()(api, sealed, BACKGROUND_CONTEXT)).spec[0].state as { unresolved: string[] };
+  assert.deepEqual(unresolved, ['hidden: pointer `/hidden` is not in the document', 'nope: pointer `/nope` is not in the document']);
 });

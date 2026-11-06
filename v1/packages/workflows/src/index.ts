@@ -9,7 +9,7 @@ import { latestRun, type Chat, type ChatSession } from './chat.ts';
 import { WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, Wait, type Step, type StepContext } from './steps.ts';
 
-export { WorkflowDoc, watchUntil, type StepRecord } from './doc.ts';
+export { WorkflowDoc, type StepRecord } from './doc.ts';
 export { latestRun, type Chat, type ChatSession } from './chat.ts';
 export { Wait, type Step, type StepContext } from './steps.ts';
 
@@ -150,10 +150,7 @@ export async function runWorkflow(harness: Harness, root: Conversation, workflow
 /** An agent definition's binding: `"workflows": { "workflow": "<name>" }` makes a submission run that workflow instead of the agent loop. */
 export type WorkflowsConfig = { workflow: string };
 
-// Workflows this image carries; extensions add theirs here as they ship.
-const available: Record<string, Workflow> = {};
-
-export const boundWorkflow = (config: unknown, from: Record<string, Workflow> = available): Workflow => {
+export const boundWorkflow = (config: unknown, from: Record<string, Workflow>): Workflow => {
   const wanted = (config as Partial<WorkflowsConfig> | undefined)?.workflow;
   const found = wanted ? from[wanted] : undefined;
   if (!found) throw new Error(`unknown workflow ${wanted}; available: ${Object.keys(from).sort().join(', ') || 'none'}`);
@@ -197,7 +194,7 @@ function chatExtension(workflow: Workflow, chat: Chat, session: () => ChatSessio
 }
 
 /** The bound workflow runs in place of the agent loop: the submission's text is its input, and its results are the answer. A message with no requestId is a person's, not a start, and goes to the chat loop when the workflow has one. */
-export function workflowSessionExtensions(config: unknown, from?: Record<string, Workflow>): Extension[] {
+export function workflowSessionExtensions(config: unknown, from: Record<string, Workflow>): Extension[] {
   const workflow = boundWorkflow(config, from);
   let current: ChatSession | undefined;
   const dispatch: Dispatch = async (session, input, requestId, wait) => {

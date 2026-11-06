@@ -29,7 +29,7 @@ export type HostDriver = {
   ensure(key: string, agent?: string): Promise<string>;
   /** The agent the session is bound to; undefined for a session that does not exist yet. */
   agentOf(key: string): Promise<string | undefined>;
-  /** Binds an existing session to `agent` from its next start (D33); the caller has checked no run is active and stops the process. 404 for an unknown agent. */
+  /** Binds an existing session to `agent` from its next start; the caller has checked no run is active and stops the process. 404 for an unknown agent. */
   rebind(key: string, agent: string): Promise<void>;
   agents(): Promise<AgentInfo[]>;
   /** One agent's definition, prompt and rubric at `version` (default: current); undefined when the host holds no such copy. */
@@ -60,7 +60,7 @@ export type HostDriver = {
 
 /** A session's running process or container, as its launcher reports it. */
 export type Launched = { url: string; pid?: number; stop(): Promise<void>; onExit(cb: () => void): void };
-/** Starts one session (A11): `dir` is its data directory and `agentPath` its pinned definition. Rejects when it cannot come up. */
+/** Starts one session: `dir` is its data directory and `agentPath` its pinned definition. Rejects when it cannot come up. */
 export type Launch = (spec: { key: string; dir: string; agentPath: string | undefined }) => Promise<Launched>;
 
 type Child = { launched: Launched; stopping: boolean };
@@ -197,7 +197,7 @@ function inTurn<T>(chains: Map<string, Promise<unknown>>, key: string, fn: () =>
 const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
-// Shared host-driver logic: the session registry, directories and lifecycle bookkeeping; `launch` is the part that differs per host (A11).
+// Shared host-driver logic: the session registry, directories and lifecycle bookkeeping; `launch` is the part that differs per host.
 export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string; /** The rubric each agent runs with, stored beside each version so diffs cover it. */ rubricFor?: RubricFor }, launch: Launch): HostDriver {
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
@@ -319,7 +319,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   async function start(key: string, agentPath: string | undefined): Promise<string> {
     const launched = await launch({ key, dir: sessionDir(key), agentPath });
     const child: Child = { launched, stopping: false };
-    // A crash after startup restarts from the log (NFR-HAR-2), up to a budget so a process-level crash cannot loop;
+    // A crash after startup restarts from the log, up to a budget so a process-level crash cannot loop;
     // past it the next request restarts the session. Startup crashes are reported to the caller instead.
     launched.onExit(() => {
       if (children.get(key) !== child) return;
@@ -456,7 +456,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
 }
 
-/** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */
+/** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
 export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }

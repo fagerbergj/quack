@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode, type SubmitEvent } from 'react';
+import { Dialog } from './Dialog.tsx';
 
 const btn = 'min-h-11 cursor-pointer rounded-full border px-4 text-[14px] font-medium lg:min-h-9';
 
@@ -9,9 +10,8 @@ export function Modal({ title, onClose, onSubmit, children, action, danger, busy
     onSubmit();
   };
   return (
-    <>
-      <div aria-hidden="true" onClick={onClose} className="fixed inset-0 z-40 bg-ink/25 backdrop-blur-[2px]" />
-      <form role="dialog" aria-modal="true" aria-labelledby={id} onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onClose()} className="fixed inset-x-3 top-1/2 z-50 mx-auto flex max-w-md -translate-y-1/2 flex-col gap-3 rounded-2xl border border-line bg-canvas p-4 shadow-lift">
+    <Dialog labelledBy={id} onClose={onClose} className="fixed inset-x-3 top-1/2 z-50 mx-auto max-w-md -translate-y-1/2 rounded-2xl border border-line bg-canvas p-4 shadow-lift">
+      <form onSubmit={submit} className="flex flex-col gap-3">
         <h2 id={id} className="m-0 font-sans text-base font-semibold">{title}</h2>
         {children}
         {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
@@ -20,7 +20,7 @@ export function Modal({ title, onClose, onSubmit, children, action, danger, busy
           <button type="submit" disabled={busy} className={`${btn} border-0 disabled:opacity-50 ${danger ? 'bg-danger text-canvas' : 'bg-ink text-on-ink'}`}>{action}</button>
         </div>
       </form>
-    </>
+    </Dialog>
   );
 }
 

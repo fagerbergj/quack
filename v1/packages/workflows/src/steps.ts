@@ -4,7 +4,7 @@ import type { Schema } from '@earendil-works/pi-schema';
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
 import { feedback, rejudge, undecidedMessage, type JudgeOptions } from '@quack/judge';
-import { attachVerdict, decide, gated, observeGeneration, person as sdkPerson, seal, type DecisionPoint, type Resolver } from '@quack/sdk';
+import { attachVerdict, decide, gated, observeGeneration, person as sdkPerson, seal, sealedVersion, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
@@ -99,22 +99,34 @@ async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext)
   return { result, cost };
 }
 
+type Revision = { version: number; reply: JsonValue; cost: number };
+
+// A revision's answer and sealed version are memoized on the task, so a rerun after a crash continues the step instead of asking again.
+async function revise(step: Extract<Step, { kind: 'judged' }>, c: StepContext, messages: Message[], kind: JudgeOptions['kind'], n: number): Promise<Revision> {
+  const key = `judged:${step.name}:${n}`;
+  const done = await c.api.memo<Revision>(key, c.ctx);
+  if (done) return done;
+  const { built, reply, cost } = await converse(step, c, messages, (d) => step.card(c, d));
+  await c.api.env!.writeFile(kind.path, JSON.stringify(built, null, 1), c.ctx);
+  const sealed = await seal(c.api, kind, c.ctx);
+  return c.api.memo<Revision>(key, { version: sealed.version, reply: JSON.parse(JSON.stringify(reply)), cost }, c.ctx);
+}
+
 // A failed version's notes go back like a rejected answer would: the model's own reply, then what was wrong with it.
 async function judgedStep(step: Extract<Step, { kind: 'judged' }>, c: StepContext): Promise<StepOutcome> {
   const { options, notes = [] } = step.judge(c);
   const messages = askOf(step, c);
   let cost = 0;
   for (let revisions = 0; ; revisions++) {
-    const { built, reply, cost: spent } = await converse(step, c, messages, (d) => step.card(c, d));
-    cost += spent;
-    await c.api.env!.writeFile(options.kind.path, JSON.stringify(built, null, 1), c.ctx);
-    const sealed = await seal(c.api, options.kind, c.ctx);
+    const r = await revise(step, c, messages, options.kind, revisions);
+    cost += r.cost;
+    const sealed = (await sealedVersion(c.api, options.kind.kind, r.version, c.ctx))!;
     const verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
     if (verdict.undecided.length) throw new Error(undecidedMessage(verdict.undecided, 'the judge'));
     await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
     if (verdict.passed || revisions >= options.maxRevisions) return { result: { version: sealed.version, revisions, passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes }, cost };
     const lines = feedback(verdict.checks).map((l) => `- ${l}`).join('\n');
-    messages.push(reply, { role: 'user', content: `The ${sealed.kind} built from that answer failed its checks:\n${lines}\nAnswer again with one JSON object that fixes each point and nothing else.`, timestamp: c.api.now() });
+    messages.push(r.reply as unknown as Message, { role: 'user', content: `The ${sealed.kind} built from that answer failed its checks:\n${lines}\nAnswer again with one JSON object that fixes each point and nothing else.`, timestamp: c.api.now() });
   }
 }
 

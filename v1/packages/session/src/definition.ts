@@ -12,18 +12,18 @@ import type { AgentSpec } from './runtime.ts';
 export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };
 type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
 const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
-/** `systemone` providers are decision models such as Clef: classifiers with an input cap and no generation (D54). */
+/** `systemone` providers are decision models such as Clef: classifiers with an input cap and no generation. */
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
-/** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
+/** Per deployment: the OpenAI-compatible providers sessions may use. */
 export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
-/** Per agent (D48): its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
-export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
+/** Per agent: its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
+export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
 export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[] };
-/** Extensions compiled into the runtime image, by name (A8). */
+/** Extensions compiled into the runtime image, by name. */
 export type Catalog = Record<string, CatalogEntry>;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -241,8 +241,8 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   if (!positive(raw.version)) problems.push('version must be a positive integer');
   const model = raw.model ?? deployment.defaultModel;
   problems.push(...modelProblems(model, deployment));
-  // Pinned snapshots are immutable history and may still carry the removed key (D58), so it is ignored, not rejected.
-  if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed (D58) and is ignored`);
+  // Pinned snapshots are immutable history and may still carry the removed key, so it is ignored, not rejected.
+  if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed and is ignored`);
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
   problems.push(...retentionProblems(raw.retention), ...ceilingProblems(raw.turnCeiling));
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 export type SnapshotRow = { league: string; date: string; takenAt: string; data: unknown };
 
-/** League store on the service's volume (SL-5): snapshots are kept indefinitely. Suggestions, outcomes and prediction scores are schema only for now. */
+/** League store on the service's volume: snapshots are kept indefinitely. Suggestions, outcomes and prediction scores are schema only for now. */
 export function openStore(path: string) {
   const db = new DatabaseSync(path);
   db.exec(`

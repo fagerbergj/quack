@@ -28,5 +28,5 @@ export async function registerTrendsSchedules(config: ScheduleConfig, client: Sl
   return [id];
 }
 
-/** On-demand start (SL-2): each call is its own submission under the week's session key. */
+/** On-demand start: each call is its own submission under the week's session key. */
 export const startTrends = (config: StartConfig, input: LineupInput) => startJob(config, TRENDS_AGENT, trendsKey(input.league, input.week), input);

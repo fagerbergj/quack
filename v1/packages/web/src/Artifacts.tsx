@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
 import { ArtifactBoundary } from './ArtifactBoundary.tsx';
 import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
-import { listArtifacts, type SealedArtifact } from './api.ts';
+import type { SealedArtifact } from './api.ts';
 import { CheckResult } from './CheckResult.tsx';
 import { StatusIcon } from './StatusIcon.tsx';
 
@@ -59,12 +58,4 @@ export function LedgerItem({ a, round, latest, running, meta, onOpen }: { a: Sea
       {a.verdict && !a.verdict.passed && <CheckResult verdict={a.verdict} open />}
   </div>
   );
-}
-
-// `refresh` changes whenever the session saw tool activity, which is when a version can be ready or checked.
-export function useArtifacts(sessionKey: string, refresh: number) {
-  const [items, setItems] = useState<SealedArtifact[]>([]);
-  const [error, setError] = useState('');
-  useEffect(() => void listArtifacts(sessionKey).then(setItems, (e: Error) => setError(e.message)), [sessionKey, refresh]);
-  return { items, error };
 }

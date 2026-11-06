@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { look, type Look, type Tone } from './kinds.ts';
 import { age, group, matches, startOf, type Filters, type Row } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
-import { PrChip } from './prState.tsx';
+import { ListNotices, SessionChips } from './slots.tsx';
 
 const field = 'rounded-full border border-line bg-soft text-[12.5px] outline-none';
 
@@ -41,7 +41,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
         </span>
         <span className="flex gap-2">
           <span className={`min-w-0 flex-1 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
-          <PrChip sessionKey={r.key} />
+          <SessionChips sessionKey={r.key} />
           <SpendChip spend={r.spend} className="text-xs text-muted" />
         </span>
       </span>
@@ -113,6 +113,7 @@ export function SessionList({ rows, selected, error, now }: { rows: Row[] | unde
       </div>
       <div className="flex-1 overflow-y-auto pb-4">
         {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
+        <ListNotices />
         {rows?.length === 0 && <p className="px-4 pt-3 text-[13px] text-muted">No sessions yet.</p>}
         {rows && rows.length > 0 && !shown.length && <p className="px-4 pt-3 text-[13px] text-muted">No sessions match.</p>}
         <Section name="Needs you" rows={g.needs} kind="needs" selected={selected} now={now} />

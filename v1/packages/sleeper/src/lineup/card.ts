@@ -39,7 +39,7 @@ export type LineupCard = {
   bench: Array<{ player: PlayerRef; proj: number; game: Game | null }>;
 };
 
-/** What the model decides for the open slots (SL-6: no predictions in it). */
+/** What the model decides for the open slots (no predictions in it). */
 export type Decision = { slots: Array<{ slot: string; playerId: string; why: string }>; summary: string };
 
 export const ref = (p: PlayerFact): PlayerRef => ({ id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj });
