@@ -1,7 +1,8 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { Artifacts, Questions, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, Questions, type SealedArtifact } from '@quack/sdk';
+import { approvedSpec } from './approval.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
@@ -61,7 +62,9 @@ export function specEvidence() {
     const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
     // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
     const cleared = (doc?.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
-    const prev = cleared.length ? (parseSpec(cleared.at(-1)!.content) as ContractSpec) : undefined;
+    // Breaks are against what callers were given: the approved spec, or before any approval the first that passed.
+    const base = approvedSpec(doc?.kinds ?? {}, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {}, sealed.version) ?? cleared[0];
+    const prev = base && (parseSpec(base.content) as ContractSpec);
     const [findings, unresolved, breaking] = await Promise.all([
       kind.check(spec.document),
       unresolvedLinks(api, spec, guideAnchors(kind.skill), ctx),
