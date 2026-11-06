@@ -128,12 +128,12 @@ function run(mode: string, ref: string | undefined): number {
   // A file the diff names but the working tree no longer has (moved or deleted) has nothing left to lint.
   const tree = new Map(execFileSync('git', ['ls-files', 'v1'], { cwd: root, encoding: 'utf8' }).split('\n')
     .filter((f) => linted(f) && existsSync(join(root, f))).map((f) => [f, readFileSync(join(root, f), 'utf8')]));
-  const touched = mode === 'repo'
+  const touched: Map<string, Range[] | 'all'> = mode === 'repo'
     ? new Map([...tree.keys()].map((f) => [f, 'all' as const]))
     : changedRanges(execFileSync('git', ['diff', '-U0', `${ref}...HEAD`, '--', 'v1'], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 }));
   const files = new Map([...touched].filter(([f]) => tree.has(f)));
   const findings = [...files].flatMap(([rel, rs]) => lintSource(rel, tree.get(rel)!, rs).map((f) => ({ rel, ...f })));
-  for (const c of clones(tree, files)) findings.push({ rel: c.file, line: c.line, message: `lines ${c.line}-${c.endLine} duplicate ${c.other}:${c.otherLine} (${MIN_TOKENS}+ tokens)` });
+  for (const c of clones(tree, files)) findings.push({ rel: c.file, line: c.line, message: `lines ${c.line}-${c.endLine} duplicate ${relative(process.cwd(), join(root, c.other))}:${c.otherLine} (${MIN_TOKENS}+ tokens)` });
   for (const f of findings) console.log(`${relative(process.cwd(), join(root, f.rel))}:${f.line}: ${f.message}`);
   if (findings.length === 0) console.log('sloplint: ok');
   return mode === 'repo' ? 0 : Math.min(findings.length, 1);
