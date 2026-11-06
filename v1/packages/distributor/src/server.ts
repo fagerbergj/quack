@@ -106,6 +106,10 @@ const realTimer: SetTimer = (fn, ms) => {
   return () => clearTimeout(t);
 };
 const MAX_TIMER_MS = 2 ** 31 - 1;
+// A session that cannot answer this fast is left for the next sweep, so one stuck process cannot stall the sweep and every wake behind it.
+export const PING_TIMEOUT_MS = 2_000;
+// A failed wake is retried after 1 s, doubling to at most this.
+const WAKE_RETRY_MAX_MS = 5 * 60_000;
 
 type Spend = { key: string; cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
 
@@ -135,6 +139,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   const wakeTimers = new Map<string, () => void>();
   // Sessions whose busy marker (a wake time of "now") is on disk; written by the sweep so a crash still restarts them.
   const marked = new Set<string>();
+  // Consecutive failed wakes per session, for the retry backoff and so a failure streak is logged once.
+  const wakeFailures = new Map<string, number>();
   let draining = false;
   const idleMs = opts.idleMs ?? 10 * 60_000;
   const idle = (key: string) => !holds.get(key) && now() - (lastUse.get(key) ?? 0) >= idleMs;
@@ -156,20 +162,38 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     }, Math.min(Math.max(0, at - now()), MAX_TIMER_MS)));
   }
 
+  // A due wake is retried with backoff until it succeeds or the session is gone.
+  function retryWake(key: string, why: string) {
+    const failures = (wakeFailures.get(key) ?? 0) + 1;
+    wakeFailures.set(key, failures);
+    if (failures === 1) console.warn(`session ${key}: ${why}; retrying with backoff`);
+    arm(key, now() + Math.min(1000 * 2 ** (failures - 1), WAKE_RETRY_MAX_MS));
+  }
+
   async function wake(key: string) {
+    await stopping.get(key)?.catch(() => {});
+    await removing.get(key);
     try {
-      await stopping.get(key);
+      if ((await driver.agentOf(key)) === undefined) return void wakeFailures.delete(key);
       await driver.ensure(key);
       // A grace period, so the next sweep does not stop the session before it has run.
       lastUse.set(key, now());
-      await driver.setWake(key, undefined);
-    } catch {
-      // the next request starts the session
+      // A busy session keeps its marker, so a crash before its next sweep still restarts it.
+      if (!marked.has(key)) await driver.setWake(key, undefined);
+    } catch (err) {
+      retryWake(key, `wake failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   async function ping(key: string): Promise<Ping> {
-    return (await (await fetch(`${await driver.ensure(key)}/ping`)).json()) as Ping;
+    const url = await driver.ensure(key);
+    const deadline = new AbortController();
+    const cancel = setTimer(() => deadline.abort(new Error(`session ${key} did not answer /ping within ${PING_TIMEOUT_MS} ms`)), PING_TIMEOUT_MS);
+    try {
+      return (await (await fetch(`${url}/ping`, { signal: deadline.signal })).json()) as Ping;
+    } finally {
+      cancel();
+    }
   }
 
   // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
@@ -177,6 +201,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     active.delete(key);
     notes.delete(key);
     marked.delete(key);
+    wakeFailures.delete(key);
     const stop = driver.stop(key).finally(() => stopping.delete(key));
     stopping.set(key, stop);
     await driver.setWake(key, at);
@@ -189,7 +214,16 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (busy && !marked.has(key)) {
       await driver.setWake(key, now());
       marked.add(key);
-    } else if (!busy && marked.delete(key)) await driver.setWake(key, sleepAt);
+    } else if (!busy && marked.delete(key)) {
+      wakeFailures.delete(key);
+      await driver.setWake(key, sleepAt);
+    }
+  }
+
+  // A session last seen busy whose process is gone (it crashed past the driver's restart budget, or its restart failed) is due now.
+  function rewakeLost() {
+    const running = new Set(driver.running());
+    for (const key of marked) if (!running.has(key) && !stopping.has(key) && !wakeTimers.has(key)) retryWake(key, 'its process exited mid-run');
   }
 
   async function sweepOnce() {
@@ -209,6 +243,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
         // a session that cannot answer /ping is left for the next sweep
       }
     }
+    rewakeLost();
   }
 
   let sweepStop = () => {};
@@ -358,6 +393,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     for (const s of sockets.get(key) ?? []) s.destroy();
     if (live) await driver.stop(key);
     marked.delete(key);
+    wakeFailures.delete(key);
     if (!(await driver.remove(key))) return sendProblem(res, 404, 'no such session');
     arm(key, undefined);
     await opts.retire!.forget(key);

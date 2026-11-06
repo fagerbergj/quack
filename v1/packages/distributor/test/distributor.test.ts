@@ -12,6 +12,9 @@ import { childPort, shellEnv } from '@quack/session';
 import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { createDistributor, forwardOutput, processDriver, sessionDirName } from '../src/index.ts';
+import { PING_TIMEOUT_MS } from '../src/server.ts';
+
+const WAKE_RETRY_MAX = 5 * 60_000;
 
 const dirs: string[] = [];
 const servers: Array<() => Promise<void>> = [];
@@ -415,9 +418,10 @@ test('GET /agents reports a promoted agent as promoted', async () => {
 // A driver with no processes: sessions are stub /ping servers, so sleep and wake run on a fake clock.
 async function fakeFleet(ping: (now: number) => unknown) {
   let clock = 1_000_000;
-  const stub = createHttpServer((_req, res) => res.end(JSON.stringify(ping(clock)))).listen(0);
+  // A ping answer of undefined is a session that never answers.
+  const stub = createHttpServer((_req, res) => { const answer = ping(clock); if (answer !== undefined) res.end(JSON.stringify(answer)); }).listen(0);
   await new Promise((r) => stub.once('listening', r));
-  servers.push(() => new Promise((r) => stub.close(() => r())));
+  servers.push(() => new Promise((r) => { stub.close(() => r()); stub.closeAllConnections(); }));
   const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
   const wakes = new Map<string, number>();
   const touches = new Map<string, number>();
@@ -646,6 +650,73 @@ test('a marker write that fails is retried by the next sweep', async () => {
   assert.equal(fleet.wakes.has('sleeper:trends'), false);
   await server.sweep();
   assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
+});
+
+test('a wake that fails is retried with backoff until it succeeds, and the failure is logged once', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
+  fleet.wakes.set('research:nap', fleet.now() + HOUR);
+  const ensure = fleet.driver.ensure;
+  let failures = 2;
+  fleet.driver.ensure = async (key: string) => { if (failures-- > 0) throw new Error('no capacity'); return ensure(key); };
+  const server = fleet.start();
+  await server.sweep();
+  fleet.advance(HOUR);
+  await server.sweep();
+  assert.deepEqual([fleet.log, fleet.wakes.has('research:nap')], [[], true], 'the first wake failed and its record stays');
+  fleet.advance(1000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, [], 'the retry after 1 s failed too');
+  fleet.advance(1999);
+  await server.sweep();
+  assert.deepEqual(fleet.log, [], 'the next retry waits 2 s');
+  fleet.advance(1);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start research:nap']);
+  assert.equal(fleet.wakes.has('research:nap'), false);
+  assert.equal(warn.mock.callCount(), 1);
+});
+
+test('a wake for a session deleted meanwhile is dropped, not retried', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
+  fleet.wakes.set('research:gone', fleet.now() + HOUR);
+  fleet.driver.agentOf = async () => undefined as unknown as string;
+  const server = fleet.start();
+  await server.sweep();
+  fleet.advance(HOUR + 10 * WAKE_RETRY_MAX);
+  await server.sweep();
+  assert.deepEqual(fleet.log, []);
+});
+
+test('a busy session whose process is gone without a restart is woken by the sweep', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const server = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await server.sweep();
+  // The process is gone and the driver gave up restarting it: past its crash budget, or its restart failed.
+  await fleet.driver.stop('sleeper:trends');
+  fleet.log.length = 0;
+  await server.sweep();
+  fleet.advance(1000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start sleeper:trends']);
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now() - 1000, 'the busy marker stays on disk while it runs');
+});
+
+test('a session that never answers /ping is left at the deadline, and the sweep goes on', async () => {
+  let answer = true;
+  const fleet = await fakeFleet((now) => (answer ? { status: 'Healthy', waitingOnHuman: false, wake: {}, now } : undefined));
+  const server = fleet.start();
+  await fleet.driver.ensure('research:stuck');
+  answer = false;
+  let done = false;
+  const swept = server.sweep().then(() => (done = true));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(done, false);
+  fleet.advance(PING_TIMEOUT_MS);
+  await swept;
+  assert.deepEqual(fleet.driver.running(), ['research:stuck'], 'left for the next sweep');
 });
 
 test('active work is never stopped', async () => {
