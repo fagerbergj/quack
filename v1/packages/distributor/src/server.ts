@@ -117,7 +117,7 @@ export const recordTurns = (driver: Pick<HostDriver, 'touch'>) => async (session
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); a caller presenting a bearer must present `token`, one presenting none is trusted at the proxy or tailnet; `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
@@ -369,14 +369,15 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     send(res, 200, (await decorate((await driver.sessions()).filter((x) => x.key === key)))[0]);
   }
 
-  // Why a housekeeping request is refused before it runs, if it is: a presented bearer must be the admin token, and a body must be JSON (a cross-site form cannot send it).
+  // Why a housekeeping request is refused before it runs, if it is: it needs the admin token or the proxy's identity (the legacy route only the identity), and a body must be JSON (a cross-site form cannot send it).
   function refusal(req: IncomingMessage, key: string | undefined, legacy: boolean): [number, string] | undefined {
-    if (req.headers.authorization && !authorized(req, opts.retire!.token ?? '')) return [401, 'unauthorized'];
+    const proxied = Boolean(req.headers['x-authentik-username']);
+    if (legacy || !req.headers.authorization ? !proxied : !authorized(req, opts.retire!.token ?? '')) return [401, 'unauthorized'];
     if (!key || !KEY.test(key)) return [400, 'invalid session key'];
     return req.method !== 'DELETE' && !req.headers['content-type']?.startsWith('application/json') ? [legacy ? 400 : 415, 'send JSON'] : undefined;
   }
 
-  // Rename, archive and delete carry no required token: the proxy's identity header (else the tailnet) is the boundary, as for approvals.
+  // Rename, archive and delete change what a person sees, so each needs a credential; reads stay perimeter-trusted.
   async function housekeeping(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const match = opts.retire && /^\/sessions\/([^/]+)(\/delete)?$/.exec(new URL(req.url ?? '', 'http://distributor').pathname);
     const legacy = Boolean(match?.[2]);
@@ -386,7 +387,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (refused) sendProblem(res, ...refused);
     else if (req.method === 'PATCH') await patch(key!, req, res);
     else {
-      console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'tailnet'}`);
+      console.log(`session ${key} deleted by ${req.headers['x-authentik-username'] ?? 'the admin token'}`);
       await retire(key!, res);
     }
     return true;

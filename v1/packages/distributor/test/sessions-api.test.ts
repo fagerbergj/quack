@@ -48,7 +48,8 @@ async function start(opts: { sessions?: Record<string, Seed>; running?: string[]
   cleanups.push(() => server.close());
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
   const call = async (method: string, path: string, init: { body?: unknown; headers?: Record<string, string> } = {}) => {
-    const res = await fetch(url(path), { method, headers: init.headers ?? (init.body ? { 'content-type': 'application/json' } : {}), body: init.body === undefined ? undefined : JSON.stringify(init.body) });
+    // A browser call arrives through the proxy with the caller's identity; a test passes headers to be another caller.
+    const res = await fetch(url(path), { method, headers: init.headers ?? { 'x-authentik-username': 'jason', ...(init.body ? { 'content-type': 'application/json' } : {}) }, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
     return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as any };
   };
   const list = (query = '') => call('GET', `/sessions${query}`);
@@ -177,11 +178,16 @@ test('DELETE removes the session, is refused while it runs, and a second delete 
   assert.equal((await call('DELETE', '/sessions/no%20spaces')).status, 400);
 });
 
-test('DELETE takes the admin token or no credential, and refuses a wrong one; the legacy POST route does the same delete', async () => {
+test('rename, archive and delete take the admin token or the proxy identity and refuse a wrong token or none; the legacy POST route takes only the identity', async () => {
   const { call, keys } = await start({ token: 'admin' });
   const key = (k: string) => `/sessions/${encodeURIComponent(k)}`;
-  const bearer = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
+  const bearer = (t: string) => ({ headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' } });
+  const none = { headers: { 'content-type': 'application/json' } };
   assert.equal((await call('DELETE', key('contracts:abc'), bearer('wrong'))).status, 401);
+  assert.equal((await call('DELETE', key('contracts:abc'), none)).status, 401);
+  assert.equal((await call('PATCH', key('contracts:abc'), { ...none, body: { title: 'x' } })).status, 401);
+  assert.equal((await call('PATCH', key('contracts:abc'), { ...bearer('admin'), body: { title: 'x' } })).status, 200);
+  assert.equal((await call('POST', `${key('sleeper:platinum:2:lineup')}/delete`, { ...bearer('admin'), body: {} })).status, 401);
   assert.equal((await call('DELETE', key('contracts:abc'), bearer('admin'))).status, 200);
   assert.equal((await call('DELETE', key('sleeper:gold:1:lineup'), { headers: { 'x-authentik-username': 'jason' } })).status, 200);
   const legacy = await call('POST', `${key('sleeper:platinum:2:lineup')}/delete`, { body: {} });

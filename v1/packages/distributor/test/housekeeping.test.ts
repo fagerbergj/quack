@@ -29,7 +29,8 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
   cleanups.push(() => server.close());
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
   const call = async (method: string, path: string, body: unknown = {}, headers: Record<string, string> = { 'content-type': 'application/json' }) => {
-    const res = await fetch(url(path), { method, headers, body: JSON.stringify(body) });
+    // The page reaches these routes through the proxy, which sets the caller's identity.
+    const res = await fetch(url(path), { method, headers: { 'x-authentik-username': 'jason', ...headers }, body: JSON.stringify(body) });
     return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as { error?: string; detail?: string; title?: string; status?: number } };
   };
   const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; archived?: boolean }> }).sessions;
