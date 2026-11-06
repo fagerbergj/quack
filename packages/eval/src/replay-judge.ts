@@ -1,4 +1,4 @@
-// Judges recorded cases under one or more rubric arms, N times, and prints the met table; an arm's ref is "." or a git ref (docs/v1/README.md).
+// Judges recorded cases under one or more rubric arms, N times, and prints the met table; an arm's ref is "." or a git ref (docs/README.md).
 // Usage: node packages/eval/src/replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--classifier <provider/model>] [--arm label=ref]... [--repeat N] [--concurrency N]
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 import { extensionList, loadManifests } from '@quack/runtime/catalog';
 import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
 import { adaptersOf } from './adapters.ts';
-import { replayJudge, table, type Arm } from './judge-replay.ts';
+import { packagesTar, replayJudge, table, type Arm } from './judge-replay.ts';
 
 /** The adapters of the extensions as they stood at ref: their tree is unpacked beside this one's node_modules and imported from there. */
 async function adaptersAt(ref: string) {
@@ -17,8 +17,7 @@ async function adaptersAt(ref: string) {
   const dir = mkdtempSync(join(tmpdir(), 'quack-arm-'));
   try {
     const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-    const tar = execFileSync('git', ['archive', '--format=tar', `${ref}:v1`, 'packages'], { cwd: top, maxBuffer: 1 << 30 });
-    execFileSync('tar', ['-x', '-C', dir], { input: tar });
+    execFileSync('tar', ['-x', '-C', dir], { input: packagesTar(top, ref) });
     symlinkSync(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(dir, 'node_modules'));
     const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => pathToFileURL(join(dir, 'packages', s.slice(7), 'src/index.ts')).href);
     return adaptersOf(await loadManifests(specs));

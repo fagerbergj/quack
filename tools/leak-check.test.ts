@@ -26,7 +26,7 @@ test('a test file that cleans up exits on its own', () => {
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });
 
-test('a known leak is excused by its path under v1/, and only that file', () => {
+test('a known leak is excused by its repo-relative path, and only that file', () => {
   const known = 'packages/x/test/leaky.test.ts';
   const list = { [known]: 'a fixture leak' };
   assert.equal(fileOf(['node', join(import.meta.dirname, '..', known)]), known);

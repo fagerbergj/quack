@@ -1,3 +1,4 @@
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +14,12 @@ import { readSession } from './record.ts';
 /** A recorded artifact to judge: from a session directory, or with its content and evidence given inline (for a kind whose adapter cannot rebuild evidence). */
 export type Case = { case: string; kind: string; checks?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence };
 export type Arm = { label: string; adapters: EvalAdapter[] };
+
+/** A tar of `packages/` as it stood at ref in the repo at `top`; a ref from before the repo-root layout keeps it under v1/. */
+export function packagesTar(top: string, ref: string): Buffer {
+  const base = spawnSync('git', ['cat-file', '-e', `${ref}:packages`], { cwd: top }).status === 0 ? '' : 'v1';
+  return execFileSync('git', ['archive', '--format=tar', `${ref}:${base}`, 'packages'], { cwd: top, maxBuffer: 1 << 30 });
+}
 export type Row = { arm: string; rep: number; case: string; check: string; met: number | null; clef: number; esc: number; ms: number };
 export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; classifier?: ClassifierRef };
 

@@ -4,7 +4,7 @@ import { digest } from '../packages/distributor/src/index.ts';
 
 const root = new URL('../agents/', import.meta.url).pathname;
 
-/** Name, version and content hash of every bundle under v1/agents, as its version.lock should read. */
+/** Name, version and content hash of every bundle under agents/, as its version.lock should read. */
 export async function bundleLocks() {
   const dirs = (await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory());
   return Promise.all(dirs.map(async (d) => {

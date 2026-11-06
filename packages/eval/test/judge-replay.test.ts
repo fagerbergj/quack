@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import type { Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { replayJudge, table, type Arm, type Case } from '../src/index.ts';
+import { packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
 
 const rubric = (question: string): Rubric => ({
   name: 'acme', version: 1, threshold: 0.5,
@@ -62,4 +66,21 @@ test('a run that faults fails loudly, and so does a judge the deployment lacks',
   const boom: Arm = { label: 'boom', adapters: [{ kind: 'acme.note', judge: { evidence: async () => undefined, rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 'gate', code: () => { throw new Error('bad rubric code'); } }] }] } } }] };
   await assert.rejects(replayJudge({ cases, arms: [boom], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /bad rubric code/);
   await assert.rejects(replayJudge({ cases, arms, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel: { provider: 'judge', modelId: 'nope' } }), /judge judge\/nope is not configured/);
+});
+
+test('an arm ref unpacks packages/ whether that commit kept them at the root or under v1/', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-arm-ref-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+  const files = (ref: string) => execFileSync('tar', ['-t'], { input: packagesTar(dir, ref), encoding: 'utf8' }).split('\n').filter((f) => f.endsWith('.ts'));
+  git('init', '-q');
+  mkdirSync(join(dir, 'v1/packages/x'), { recursive: true });
+  writeFileSync(join(dir, 'v1/packages/x/a.ts'), 'export const a = 1;\n');
+  git('add', '.');
+  git('commit', '-qm', 'nested');
+  git('mv', 'v1/packages', 'packages');
+  git('commit', '-qm', 'root');
+  assert.deepEqual(files('HEAD~1'), ['packages/x/a.ts']);
+  assert.deepEqual(files('HEAD'), ['packages/x/a.ts']);
 });

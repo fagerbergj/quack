@@ -1,4 +1,4 @@
-// Duplicated-code detection over token windows, the TypeScript counterpart of v0's golangci dupl gate.
+// Duplicated-code detection over token windows.
 import ts from 'typescript';
 
 export const MIN_TOKENS = 80;
