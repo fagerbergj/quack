@@ -48,7 +48,8 @@ export async function listen(server: Server) {
 
 /** The service half's session-facing API, faked: PR metadata, credentials, and posted reviews recorded. */
 /** With `issue`, number 12 is that issue: /pulls/12 is a 404 and /issues/12 returns it; POST /pulls records the opened pull request in `opened`. */
-export async function fakeService(head: string, extra: Record<string, unknown> = {}, issue?: Record<string, unknown>) {
+/** A repeated `deliveryId` answers the first post, as the service does; `loseFirstReview` records the first post, then answers 502 as a lost reply would. */
+export async function fakeService(head: string, extra: Record<string, unknown> = {}, issue?: Record<string, unknown>, faults: { loseFirstReview?: boolean } = {}) {
   const posted: any[] = [];
   const opened: any[] = [];
   const replies: any[] = [];
@@ -74,8 +75,11 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       if (issue && req.url === '/pulls/acme/widgets/12') return res.writeHead(404).end('{}');
       if (issue && req.url === '/issues/acme/widgets/12') return res.writeHead(200).end(JSON.stringify(issue));
       if (req.url === '/reviews') {
-        posted.push(JSON.parse(raw));
-        return res.writeHead(201).end(JSON.stringify({ id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' }));
+        const r = JSON.parse(raw);
+        const repeat = r.deliveryId && posted.some((p) => p.deliveryId === r.deliveryId);
+        posted.push(r);
+        if (faults.loseFirstReview && posted.length === 1) return res.writeHead(502).end('{"error":"github POST: socket hang up"}');
+        return res.writeHead(repeat ? 200 : 201).end(JSON.stringify({ id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' }));
       }
       const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 'Bump a', body: 'Fixes #3', author: 'dev', state: 'open', headSha: head, headRef: 'bump', baseRef: 'main', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [{ number: 3, title: 'a should be 2', body: 'It is 1.' }], ...extra };
       res.writeHead(200).end(JSON.stringify(pr));

@@ -152,17 +152,37 @@ async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): P
   }
 }
 
-/** Fills each provider's models with the merge rule: discovered ids plus hand-written ids, a hand-written field winning; throws when defaultModel is not selectable (one with a contextWindow). */
-export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch): Promise<DeploymentConfig> {
+/** Fills each provider's models with the merge rule: discovered ids plus hand-written ids, a hand-written field winning; throws when defaultModel is not selectable (one with a contextWindow).
+ * `only` limits discovery to those provider ids (see referencedProviders): the rest keep their hand-written models, and defaultModel is checked only when its provider is among them. */
+export async function resolveDeployment(deployment: DeploymentConfig, fetchFn: typeof fetch = fetch, only?: readonly string[]): Promise<DeploymentConfig> {
+  const wanted = (id: string) => !only || only.includes(id);
   const providers = Object.fromEntries(await Promise.all(Object.entries(deployment.providers).map(async ([id, p]) => {
-    const models = await discover(id, p, fetchFn);
+    const models = wanted(id) ? await discover(id, p, fetchFn) : {};
     for (const [m, l] of Object.entries(p.models ?? {})) models[m] = { ...models[m], ...l };
     return [id, { ...p, models }] as const;
   })));
   const resolved = { ...deployment, providers };
-  const problem = modelProblems(resolved.defaultModel, resolved);
+  const problem = wanted(splitRef(resolved.defaultModel)[0]) ? modelProblems(resolved.defaultModel, resolved) : [];
   if (problem.length) throw new Error(`invalid deployment config:\n- defaultModel: ${problem.join('; ')}`);
   return resolved;
+}
+
+/** The deployment's providers an agent definition names: its model (the default when it names none), and any "provider/model" string or `{ provider }` object in its extension config. */
+export function referencedProviders(definition: unknown, deployment: Pick<DeploymentConfig, 'providers' | 'defaultModel'>): string[] {
+  const found = new Set<string>();
+  const note = (id: unknown) => typeof id === 'string' && Object.hasOwn(deployment.providers, id) && found.add(id);
+  const def = isObject(definition) ? definition : {};
+  note(splitRef(typeof def.model === 'string' ? def.model : deployment.defaultModel)[0]);
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string' && v.includes('/')) note(splitRef(v)[0]);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (isObject(v)) {
+      note(v.provider);
+      Object.values(v).forEach(walk);
+    }
+  };
+  walk(def.extensions);
+  return [...found];
 }
 
 function modelProblems(model: unknown, deployment: DeploymentConfig): string[] {

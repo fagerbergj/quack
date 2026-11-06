@@ -5,6 +5,9 @@ import { type JudgeOptions, type Rubric } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { newsLink } from '../lineup/news.ts';
 import { cardsKind } from '../lineup/card.ts';
+import { liveLeague } from '../snapshot.ts';
+import { kickoffTimes } from '../games.ts';
+import { newsGated } from '../rubric-kit.ts';
 import { round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { RECAP_LAG_MS, RECAP_STALE_MS } from './jobs.ts';
@@ -18,7 +21,7 @@ export const RETRO_WORKFLOW = 'sleeper.retro';
 /** How often a run that fired before the games were final looks again. */
 const RECHECK_MS = 60 * 60_000;
 
-/** The same wiring as the lineup job: the Sleeper API, today's snapshot and an optional news source. */
+/** The same wiring as the lineup job: the Sleeper API and an optional news source. */
 export type ReportDeps = LineupDeps;
 
 type Spec<F, D> = {
@@ -38,8 +41,7 @@ type Spec<F, D> = {
 /** facts (code), one model decision, a sealed card (code), then the judge's verdict on it: the lineup job's shape. */
 function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const rubric: Rubric = deps.news ? spec.rubric : { ...spec.rubric, criteria: spec.rubric.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => !spec.newsChecks.includes(k.id)) })) };
-  const notes = deps.news ? [] : [`${spec.newsChecks.join(', ')} not checked: no news source`];
+  const { rubric, notes } = newsGated(spec.rubric, spec.newsChecks, !!deps.news, spec.newsChecks.join(', '));
   return defineWorkflow({
     name: spec.name,
     steps: [
@@ -49,12 +51,12 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
         kind: 'code',
         run: async (c) => {
           const i = input(c);
-          const { league, state } = (await deps.snapshot(i.league)).data;
+          const { league, state } = (await liveLeague(deps.client, i.league)).data;
           const [schedule, scores] = await Promise.all([deps.client.schedule(league.season), deps.client.scores(league.season, i.week)]);
           const phase = weekPhase(schedule, i.week, state.week);
           if (spec.ready(phase)) return { phase };
           const now = deps.now ? deps.now() : c.api.now();
-          const starts = scores.map((s: any) => s.start_time as number).filter((t: number) => t > 0);
+          const starts = kickoffTimes(scores);
           if (!starts.length) throw new Error(`sleeper: week ${i.week} has no kickoff, so the run cannot wait for it to be final`);
           const give = Math.max(...starts) + RECAP_LAG_MS + RECAP_STALE_MS;
           if (now >= give) throw new Error(`sleeper: week ${i.week} was still ${phase === 'live' ? 'in progress' : 'not final'} at this run's deadline`);
@@ -66,7 +68,7 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
         kind: 'code',
         run: async (c) => {
           const i = input(c);
-          return (await spec.facts({ client: deps.client, news: deps.news }, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
+          return (await spec.facts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
         },
       },
       {

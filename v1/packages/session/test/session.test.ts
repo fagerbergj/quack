@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,4 +95,14 @@ test('every run sees the date in the deployment zone, and a run resumed on a lat
   await second.close();
   assert.match(seen[0], /Today is Monday, 2026-11-02 \(Asia\/Tokyo\)\./);
   assert.match(seen[1], /Today is Tuesday, 2026-11-03 \(Asia\/Tokyo\)\./);
+});
+
+test('meta records arriving together all land, one per id, and leave no temp files', async () => {
+  const own = await mkdtemp(join(tmpdir(), 'quack-meta-'));
+  after(() => rm(own, { recursive: true, force: true }));
+  const session = await openSession({ dir: own, ...fakeModels() });
+  await Promise.all(['files', 'checks', 'files', 'labels'].map((id, i) => session.recordMeta({ id, n: i })));
+  assert.deepEqual((await session.meta()).map((r) => [r.id, r.n]).sort(), [['checks', 1], ['files', 2], ['labels', 3]]);
+  assert.deepEqual((await readdir(own)).filter((f) => f.startsWith('meta')), ['meta.json']);
+  await session.close();
 });

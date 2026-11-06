@@ -1,25 +1,10 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
+import { factsOf as factsIn, parseCard, share } from '../rubric-kit.ts';
 import type { Candidate, WaiversCard } from './card.ts';
-import { BYE_LEAD, worth, type WaiverFacts } from './facts.ts';
+import { worth, type WaiverFacts } from './facts.ts';
 
-const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
-const parse = (artifact: string) => JSON.parse(artifact) as WaiversCard;
-const factsOf = (ev: Evidence) => ev.facts[0].state as unknown as WaiverFacts;
-
-function contextFieldsMatch(artifact: string, ev: Evidence): CodeResult {
-  const c = parse(artifact);
-  const f = factsOf(ev);
-  const wrong = (['waiver_type', 'my_priority', 'faab_left', 'teams'] as const).filter((k) => c[k] !== { waiver_type: f.waiverType, my_priority: f.myPriority, faab_left: f.faabLeft, teams: f.teams }[k]);
-  return share(4 - wrong.length, 4, `${wrong.join(', ')} differ from the tools`);
-}
-
-// The label is checked against Sleeper's own starters, not the card's bookkeeping; a starter drop must also be said aloud.
-function dropRoleMatchesRoster(artifact: string, ev: Evidence): CodeResult {
-  const f = factsOf(ev);
-  const rows = parse(artifact).candidates;
-  const bad = rows.filter((r) => f.roster[r.drop.player.id]?.role !== r.drop.role || (r.drop.role === 'starter' && !/starter|starting/i.test(r.why)));
-  return share(rows.length - bad.length, rows.length, `the drop of ${bad.map((r) => r.drop.player.name).join(', ')} is mislabeled or a starter not stated as one`);
-}
+const parse = (artifact: string) => parseCard<WaiversCard>(artifact);
+const factsOf = (ev: Evidence) => factsIn<WaiverFacts>(ev);
 
 // A dearer drop than the add is fine when no bench player is cheaper (an empty slot scores zero); a player with no figure is not compared.
 function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
@@ -44,8 +29,7 @@ function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
   return share(f.widely.length - missing.length, f.widely.length, `no claim or reason for ${missing.map((id) => f.free[id].name).join(', ')}`);
 }
 
-// A pitfall over the bye holes and the claims: a hole needs as many claims at its position, on another bye, as it is short,
-// and an add whose own bye falls inside the lead time says so in `why`.
+// A pitfall over the bye holes: a hole needs as many claims at its position, on another bye, as it is short. Each add's own bye is on the card.
 function byeCoverage(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf(ev);
   const rows = parse(artifact).candidates;
@@ -56,27 +40,7 @@ function byeCoverage(artifact: string, ev: Evidence): CodeResult {
     const covers = rows.filter((r) => r.player.pos === h.pos && r.bye !== h.week).length;
     return covers < short ? [`week ${h.week} leaves ${short} ${h.pos} slot${short > 1 ? 's' : ''} empty and the claims cover ${covers}`] : [];
   });
-  // The add's own week must sit beside the word: another team's bye named in the same why does not flag his.
-  // The week stands alone: "proj 4.11" does not name week 11.
-  const flags = (why: string, week: number) => {
-    const w = `(?<![\\d.])${week}(?!\\.?\\d)`;
-    const gap = '(?:[^.;]|\\.(?!\\s|$))*?';
-    return new RegExp(`\\b(?:bye|sits|idle|off)\\b${gap}${w}|${w}${gap}\\b(?:bye|sits|idle|off)\\b`, 'i').test(why);
-  };
-  const unflagged = rows.filter((r) => r.bye !== null && r.bye >= f.week && r.bye <= f.week + BYE_LEAD && !flags(r.why, r.bye)).map((r) => `${r.player.name}'s week ${r.bye} bye is not flagged`);
-  const flaws = [...open, ...unflagged];
-  const units = holes.length + rows.length;
-  return { met: units ? flaws.length / units : 0, detail: flaws.length ? flaws.join('; ') : undefined };
-}
-
-const FAAB_WORDS = /\bfaab\b|\bbids?\b|\bbidding\b|\$\s?\d|\bbudget\b/i;
-
-// A pitfall: met is 1 when the card talks FAAB in a league that has none.
-function faabLanguageOnRolling(artifact: string): CodeResult {
-  const c = parse(artifact);
-  if (c.waiver_type === 'faab') return { met: 0 };
-  const hits = [c.summary, ...c.candidates.map((r) => r.why)].filter((t) => FAAB_WORDS.test(t));
-  return { met: hits.length ? 1 : 0, detail: hits.length ? `FAAB language in a ${c.waiver_type} league: ${hits[0]}` : undefined };
+  return { met: holes.length ? open.length / holes.length : 0, detail: open.length ? open.join('; ') : undefined };
 }
 
 /** Sleeper's designation by player name, so a check never pins one player's injury on another. */
@@ -91,24 +55,24 @@ export function waiversEvidence(f: WaiverFacts) {
       state: { row: r, week: f.week, waiver_type: f.waiverType, my_priority: f.myPriority, faab_left: f.faabLeft, teams: f.teams, news: r.news ?? [], designations: designations(r) } as never,
     });
     const rows = card.candidates.map(unit);
+    const cardUnit = { id: 'card', whole: true as const, state: { summary: card.summary, waiver_type: f.waiverType, rows: card.candidates.map((r) => ({ rank: r.rank, add: r.player.name, drop: r.drop.player.name, why: r.why })), table: f.table } as never };
     return {
       facts: [{ id: 'facts', whole: true as const, state: f as never }],
       row: rows,
       close: card.candidates.filter((r) => (r.news?.length ?? 0) > 0).map(unit),
-      card: [{ id: 'card', whole: true as const, state: { summary: card.summary, waiver_type: f.waiverType, rows: card.candidates.map((r) => ({ rank: r.rank, add: r.player.name, drop: r.drop.player.name, why: r.why })), table: f.table } as never }],
+      card: [cardUnit],
     };
   };
 }
 
+// The card builder copies the league context, each drop's roster role, each add's bye and the claim size from the facts, and refuses a bid where the league has none, so none is checked here.
 // Waivers weights are unreplayed: replay them before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 6,
+  version: 7,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
-      { id: 'context_fields_match', label: "Card facts differ from the league data", weight: 'gate', code: contextFieldsMatch },
-      { id: 'drop_role_matches_roster', label: "Drops a player in the wrong roster role", weight: 'gate', code: dropRoleMatchesRoster },
       { id: 'drop_not_worth_more', label: "Drops a player worth more than the add", weight: 'gate', code: dropNotWorthMore },
       { id: 'widely_owned_accounted', label: "Ignores that the add is widely owned", weight: 'gate', code: widelyOwnedAccounted },
     ] },
@@ -122,7 +86,6 @@ export const waiversRubric: Rubric = {
       { id: 'bye_coverage', label: "Misses a bye week in the plan", weight: -2, code: byeCoverage },
       { id: 'crowd_metric_as_value', label: "Treats a crowd number as scoring evidence", weight: -3, scope: 'row', question: 'Is a trending or ownership number given as evidence the player will score, rather than as how hard he is to land?' },
       { id: 'ordered_fallback_flagged', label: "Calls backup claims a conflict", weight: -4, scope: 'card', question: 'Does it describe claims that share a drop as a mistake or a conflict?' },
-      { id: 'faab_language_on_rolling', label: "Talks about FAAB in a non-FAAB league", weight: -4, code: faabLanguageOnRolling },
     ] },
   ],
 };

@@ -1,6 +1,6 @@
 import { NotFound, type Json, type SleeperClient } from '../client.ts';
 import { ownerTeam, ptsKey, round2, type LineupInput, type NewsItem } from '../lineup/facts.ts';
-import type { Searchable } from '../lineup/news.ts';
+import { newsFor, type Searchable } from '../lineup/news.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
 
 export type WaiverType = 'rolling' | 'reverse_standings' | 'faab';
@@ -48,7 +48,9 @@ export const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
 /** Skill positions want one bench cover beyond their starting slots. */
 export const COVER: Record<string, number> = { RB: 1, WR: 1, TE: 1 };
 export const TOP_PER_POS = 5;
+/** The ownership cut for a 12-team league. A smaller league leaves more owned players free, so its cut rises in proportion, never past 95. */
 export const WIDE_OWNED = 40;
+export const wideOwned = (teams: number) => Math.min(95, (WIDE_OWNED * 12) / Math.max(teams, 1));
 const TRENDING_LIMIT = 25;
 /** Weeks ahead a bye still counts as inside the lead time to cover it. */
 export const BYE_LEAD = 2;
@@ -104,7 +106,7 @@ function teamRows(rosters: Json[], users: Json[], deps: { type: WaiverType; budg
   });
 }
 
-function freeAgents(dump: Json, taken: Set<string>, positions: string[], wp: (id: string) => Valued, trending: Map<string, number>, research: Json) {
+function freeAgents(dump: Json, taken: Set<string>, positions: string[], wp: (id: string) => Valued, trending: Map<string, number>, research: Json, cut: number) {
   const free: Record<string, FreeAgent> = {};
   for (const [id, p] of Object.entries<Json>(dump)) {
     if (taken.has(id) || p.active === false || !positions.includes(p.position)) continue;
@@ -112,7 +114,7 @@ function freeAgents(dump: Json, taken: Set<string>, positions: string[], wp: (id
     if (w.team) free[id] = { ...w, owned: research[id]?.owned ?? null, adds: trending.get(id) ?? null };
   }
   const all = Object.values(free).sort((a, b) => b.proj - a.proj || a.id.localeCompare(b.id));
-  const widely = all.filter((p) => (p.owned ?? 0) >= WIDE_OWNED || (p.adds ?? 0) > 0).map((p) => p.id);
+  const widely = all.filter((p) => (p.owned ?? 0) >= cut || (p.adds ?? 0) > 0).map((p) => p.id);
   const buckets = Object.fromEntries(positions.map((pos) => {
     const top = all.filter((p) => p.pos === pos).slice(0, TOP_PER_POS).map((p) => p.id);
     return [pos, [...new Set([...top, ...widely.filter((id) => free[id].pos === pos)])].sort((a, b) => free[b].proj - free[a].proj || a.localeCompare(b))];
@@ -149,11 +151,11 @@ export async function buildWaiverFacts(deps: WaiverDeps, snap: Json, input: Line
     faabLeft: table.find((t) => t.mine)!.faabLeft,
     teams: rosters.length,
     table,
-    ...freeAgents(dump, taken, positions, wp, new Map(adds.map((t: Json) => [t.player_id, t.count])), research),
+    ...freeAgents(dump, taken, positions, wp, new Map(adds.map((t: Json) => [t.player_id, t.count])), research, wideOwned(rosters.length)),
     roster: mine,
     news: {},
   };
-  if (deps.news) for (const p of closeCalls(facts)) facts.news[p.id] = await deps.news(p, at);
+  facts.news = await newsFor(deps.news, closeCalls(facts), at);
   return facts;
 }
 

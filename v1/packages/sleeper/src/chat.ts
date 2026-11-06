@@ -2,9 +2,10 @@ import { obj, opt, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolRegistration } from '@earendil-works/pi-durable';
 import { Artifacts } from '@quack/sdk';
 import { latestRun, type Chat, type ChatSession, type Workflow } from '@quack/workflows';
-import { createSleeperClient, type SleeperClient } from './client.ts';
+import type { SleeperClient } from './client.ts';
+import { sessionClient, sessionNews } from './deps.ts';
 import type { NewsItem } from './lineup/facts.ts';
-import { exaNews, type Searchable } from './lineup/news.ts';
+import type { Searchable } from './lineup/news.ts';
 
 export const CHAT_PROMPT = `You answer follow-up questions about one Sleeper football job: its latest result and the facts it was built from.
 
@@ -65,7 +66,7 @@ export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegis
   return [result, facts, player];
 }
 
-const chatDepsFromEnv = (env: Record<string, string | undefined> = process.env): ChatDeps => ({ client: createSleeperClient(), news: env.QUACK_EXA_API_KEY ? exaNews({ apiKey: env.QUACK_EXA_API_KEY, url: env.QUACK_EXA_URL }) : undefined });
+const chatDepsFromEnv = (env: Record<string, string | undefined> = process.env): ChatDeps => ({ client: sessionClient(env), news: sessionNews(env) });
 
 /** A sleeper job's workflow with the follow-up chat added; the Sleeper API and news come from the environment. */
 export function withChat(workflow: Workflow, deps: ChatDeps = chatDepsFromEnv()): Workflow {

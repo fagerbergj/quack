@@ -13,7 +13,7 @@ import { Artifacts, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildCard, buildFacts, buildSnapshot, createSleeperClient, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, newsLink, registerLineupSchedules,
+  buildCard, buildFacts, createSleeperClient, liveLeague, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, newsLink, registerLineupSchedules,
   type Facts, type LineupCard, type LineupDeps,
 } from '../src/index.ts';
 import { closeCalls } from '../src/lineup/facts.ts';
@@ -29,7 +29,7 @@ const doFetch = (async (input: string) => {
   return path in fixtures ? new Response(JSON.stringify(fixtures[path])) : new Response('null');
 }) as unknown as typeof fetch;
 const client = () => createSleeperClient({ fetch: doFetch, now: () => AT });
-const snapshot = async (league: string) => ({ data: await buildSnapshot(client(), league) });
+const snapshot = (league: string) => liveLeague(client(), league);
 const facts = async () => buildFacts({ client: client() }, await snapshot('L1'), INPUT, AT);
 
 // What a good model returns: the RB2 swap the baseline also makes, everything else kept.
@@ -44,7 +44,6 @@ const decision = {
     { slot: 'FLEX', playerId: '106', why: 'Wade (10.0) beats Rowe (9.1, Questionable) for the flex.' },
     { slot: 'DEF', playerId: 'SEA', why: 'Only defense.' },
   ],
-  summary: 'Start Dan Dash over Rob Rowe at RB2; every other slot is unchanged.',
 };
 
 async function goodCard(): Promise<{ f: Facts; card: LineupCard }> {
@@ -57,7 +56,7 @@ const gate = async (id: string, f: Facts, card: unknown) => {
   const content = JSON.stringify(card);
   return check.code!(content, await lineupEvidence(f)(null, { content }));
 };
-const GATES = ['every_slot_decided', 'one_player_per_slot', 'no_locked_swap', 'figures_match_tools', 'summary_names_changes'];
+const GATES = ['every_slot_decided', 'no_locked_swap'];
 
 test('slots are numbered and the flex is solved with the strict slots filled first', () => {
   assert.deepEqual(numberSlots(['QB', 'RB', 'RB', 'FLEX']), ['QB', 'RB1', 'RB2', 'FLEX']);
@@ -97,39 +96,38 @@ test('each code gate passes the good card', async () => {
   for (const id of GATES) assert.equal((await gate(id, f, card)).met, 1, id);
 });
 
-test('a card with no changes passes the summary gate only when it says so', async () => {
+test('the summary is written by code from the changes, and a card with none says so', async () => {
   const f = await facts();
-  const keep = buildCard(f, { slots: decision.slots.map((s) => ({ ...s, playerId: f.current[s.slot]! })), summary: 'No changes: the lineup stands.' });
-  assert.equal((await gate('summary_names_changes', f, keep)).met, 1);
-  assert.equal((await gate('summary_names_changes', f, { ...keep, summary: 'All set.' })).met, 0);
+  assert.equal(buildCard(f, decision).summary, 'Start Dan Dash over Rob Rowe at RB2.');
+  const keep = buildCard(f, { slots: decision.slots.map((s) => ({ ...s, playerId: f.current[s.slot]! })) });
+  assert.equal(keep.summary, 'No changes: the lineup stands.');
 });
 
 // Like a real model, each why is about the player picked for the slot.
-const swapIn = (f: Facts, pairs: Record<string, string>, summary = 'No change.') =>
-  buildCard(f, { slots: decision.slots.map((s) => { const playerId = pairs[s.slot] ?? f.current[s.slot] ?? s.playerId; return { slot: s.slot, playerId, why: `Start ${f.players[playerId].name}.` }; }), summary });
+const swapIn = (f: Facts, pairs: Record<string, string>) =>
+  buildCard(f, { slots: decision.slots.map((s) => { const playerId = pairs[s.slot] ?? f.current[s.slot] ?? s.playerId; return { slot: s.slot, playerId, why: `Start ${f.players[playerId].name}.` }; }) });
 const changes = (c: LineupCard) => c.starters.filter((r) => r.action === 'start').map((r) => [r.slot, r.player.id, r.replaces?.id]);
 
 test('a WR2/FLEX permutation of the same starters is all keeps with no changes', async () => {
   const f = await facts();
-  const card = swapIn(f, { WR2: f.current.FLEX!, FLEX: f.current.WR2! }, 'Start Walt Wade over Wes West at WR2.');
+  const card = swapIn(f, { WR2: f.current.FLEX!, FLEX: f.current.WR2! });
   assert.deepEqual(changes(card), []);
   assert.equal(card.summary, 'No changes: the lineup stands.');
-  assert.equal((await gate('summary_names_changes', f, card)).met, 1);
   for (const r of card.starters.filter((x) => !x.locked)) assert.equal(r.why, `Start ${r.player.name}.`);
 });
 
 test('one real swap shows one changed row replacing the benched player', async () => {
   const f = await facts();
-  const card = swapIn(f, { RB2: '103' }, 'Start Dan Dash over Rob Rowe at RB2.');
+  const card = swapIn(f, { RB2: '103' });
   assert.deepEqual(changes(card), [['RB2', '103', f.current.RB2]]);
-  assert.equal((await gate('summary_names_changes', f, card)).met, 1);
+  assert.equal(card.summary, 'Start Dan Dash over Rob Rowe at RB2.');
 });
 
 test('a rotation that also starts a bench player shows one change', async () => {
   const f = await facts();
-  const card = swapIn(f, { WR1: f.current.WR2!, WR2: f.current.FLEX!, FLEX: f.current.WR1!, RB2: '103' }, 'Start Dan Dash over Rob Rowe at RB2.');
+  const card = swapIn(f, { WR1: f.current.WR2!, WR2: f.current.FLEX!, FLEX: f.current.WR1!, RB2: '103' });
   assert.deepEqual(changes(card), [['RB2', '103', f.current.RB2]]);
-  assert.equal((await gate('summary_names_changes', f, card)).met, 1);
+  assert.equal(card.summary, 'Start Dan Dash over Rob Rowe at RB2.');
 });
 
 test('every_slot_decided fails a card with no FLEX', async () => {
@@ -148,20 +146,6 @@ test('no_locked_swap fails a card that benches the locked kicker', async () => {
   assert.match(r.detail!, /K/);
 });
 
-test('figures_match_tools fails a projection or a kickoff that differs from the tools', async () => {
-  const { f, card } = await goodCard();
-  const wrongProj = { ...card, starters: card.starters.map((r) => (r.slot === 'QB' ? { ...r, proj: 24 } : r)) };
-  assert.match((await gate('figures_match_tools', f, wrongProj)).detail!, /QB/);
-  const wrongGame = { ...card, starters: card.starters.map((r) => (r.slot === 'WR1' ? { ...r, game: { ...r.game!, kickoff: '2026-11-08T13:00:00.000Z' } } : r)) };
-  assert.match((await gate('figures_match_tools', f, wrongGame)).detail!, /WR1/);
-});
-
-test('summary_names_changes fails a summary that misses a change', async () => {
-  const { f, card } = await goodCard();
-  assert.equal((await gate('summary_names_changes', f, { ...card, summary: 'Start Dan Dash at RB2.' })).met, 0);
-  assert.equal((await gate('summary_names_changes', f, { ...card, summary: 'No changes.' })).met, 0);
-});
-
 async function runLineup(news?: LineupDeps['news']) {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
@@ -177,7 +161,7 @@ async function runLineup(news?: LineupDeps['news']) {
   const models = createModels();
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-lineup-'));
-  const workflow = lineupWorkflow({ client: client(), snapshot, now: () => AT, news });
+  const workflow = lineupWorkflow({ client: client(), now: () => AT, news });
   const m = faux.getModel();
   const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the lineup analyst.', extensions: [workflowExtension([workflow])] } });
   try {
@@ -198,7 +182,7 @@ test('the workflow seals a lineup card from the recorded week and the judge pass
   assert.equal(card.starters.length, 9);
   assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
   assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@4', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@5', [], true]);
   assert.deepEqual(verdict.notes, ['close-call news not checked: no news source']);
   assert.ok(!verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(!judged.some((q) => /Questionable starter/.test(q)));
@@ -211,15 +195,10 @@ test('with a news source wired the close calls are scored for news', async () =>
   assert.ok(judged.some((q) => /Questionable starter/.test(q)));
 });
 
-test('a player started in two slots fails the card step and the one_player_per_slot gate', async () => {
+test('a player started in two slots fails the card step, so the model is asked again', async () => {
   const f = await facts();
   const dup = { ...decision, slots: decision.slots.map((s) => (s.slot === 'FLEX' ? { ...s, playerId: '101' } : s)) };
   assert.throws(() => buildCard(f, dup), /two slots/);
-  const { card } = await goodCard();
-  const twice = { ...card, starters: card.starters.map((r) => (r.slot === 'FLEX' ? { ...r, player: card.starters[1].player } : r)) };
-  const r = await gate('one_player_per_slot', f, twice);
-  assert.ok(r.met < 1);
-  assert.match(r.detail!, /101/);
 });
 
 test('the lineup runs are after Wednesday and Sunday morning, each ending an hour before its kickoff', () => {
@@ -360,7 +339,7 @@ test('a failing search leaves a close call with no news rather than failing the 
 test('with Exa news wired the card is judged on close_call_news', async () => {
   const exa = await fakeExa();
   const { verdict, judged } = await runLineup(exaNews({ apiKey: 'k', url: exa.url }));
-  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@4', []]);
+  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@5', []]);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(judged.some((q) => /Questionable starter/.test(q)));
 });

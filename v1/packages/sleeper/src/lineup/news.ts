@@ -1,10 +1,15 @@
-import type { NewsItem, PlayerFact } from './facts.ts';
+import { limiter } from '../limit.ts';
+import type { NewsSearch, Searchable } from '../ports.ts';
+import type { NewsItem } from './facts.ts';
 
-/** The slice of a player a news search needs. */
-export type Searchable = Pick<PlayerFact, 'name' | 'team' | 'pos'>;
+export type { Searchable } from '../ports.ts';
 
 export const NEWS_WINDOW_MS = 72 * 3_600_000;
 const PER_PLAYER = 3;
+/** Searches in flight per process; a job's searches queue behind it rather than being dropped. */
+export const EXA_CONCURRENCY = 4;
+/** Results kept for repeat searches (same player, same cutoff); the oldest go first. */
+const CACHE_ENTRIES = 2000;
 
 // Credible outlets only (SL news tiers: league, team, national desks); any other host is dropped, content farms included.
 export const NEWS_DOMAINS = [
@@ -46,28 +51,50 @@ function item(h: Hit, name: string): NewsItem | undefined {
 /** One news item as a prompt line: the link, its date, and the excerpt that names the player when the title does not. */
 export const newsLink = (n: NewsItem) => `[${n.title}](${n.url}), ${n.date.slice(0, 16)}${n.excerpt ? `: "${n.excerpt}"` : ''}`;
 
-/** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup. */
-export function exaNews(config: { apiKey: string; url?: string }) {
-  return async (p: Searchable, at: number): Promise<NewsItem[]> => {
-    const since = at - NEWS_WINDOW_MS;
-    try {
-      const res = await fetch(`${config.url ?? 'https://api.exa.ai'}/search`, {
-        method: 'POST',
-        headers: { 'x-api-key': config.apiKey, 'content-type': 'application/json' },
-        body: JSON.stringify({ query: `${p.name} ${p.team ?? ''} ${p.pos} injury status news`, numResults: PER_PLAYER, category: 'news', contents: { highlights: true }, includeDomains: NEWS_DOMAINS, startPublishedDate: new Date(since).toISOString() }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (!res.ok) return [];
-      const hits = ((await res.json()) as { results?: Hit[] }).results ?? [];
-      // Exa's date filter is advisory, so the window and the allowlist are enforced here too.
-      return hits
-        .filter((h) => credible(h.url))
-        .flatMap((h) => item(h, p.name) ?? [])
-        .filter((n) => Date.parse(n.date) >= since && Date.parse(n.date) <= at)
-        .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
-        .slice(0, PER_PLAYER);
-    } catch {
-      return [];
+type ExaConfig = { apiKey: string; url?: string; fetch?: typeof fetch };
+
+/** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup, and is not cached. */
+export function exaNews(config: ExaConfig): NewsSearch {
+  const slot = limiter(EXA_CONCURRENCY);
+  const cache = new Map<string, Promise<NewsItem[] | null>>();
+  return async (p, at) => {
+    const key = JSON.stringify([p.name, p.team, p.pos, at]);
+    if (!cache.has(key)) {
+      if (cache.size >= CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
+      cache.set(key, slot(() => searchOnce(config, p, at)));
     }
+    const found = await cache.get(key)!;
+    if (found === null) cache.delete(key);
+    return found ?? [];
   };
+}
+
+async function searchOnce(config: ExaConfig, p: Searchable, at: number): Promise<NewsItem[] | null> {
+  const since = at - NEWS_WINDOW_MS;
+  try {
+    const res = await (config.fetch ?? fetch)(`${config.url ?? 'https://api.exa.ai'}/search`, {
+      method: 'POST',
+      headers: { 'x-api-key': config.apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify({ query: `${p.name} ${p.team ?? ''} ${p.pos} injury status news`, numResults: PER_PLAYER, category: 'news', contents: { highlights: true }, includeDomains: NEWS_DOMAINS, startPublishedDate: new Date(since).toISOString() }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const hits = ((await res.json()) as { results?: Hit[] }).results ?? [];
+    // Exa's date filter is advisory, so the window and the allowlist are enforced here too.
+    return hits
+      .filter((h) => credible(h.url))
+      .flatMap((h) => item(h, p.name) ?? [])
+      .filter((n) => Date.parse(n.date) >= since && Date.parse(n.date) <= at)
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
+      .slice(0, PER_PLAYER);
+  } catch {
+    return null;
+  }
+}
+
+/** News for each player, searched together under the adapter's bound; no source means no links, not an error. */
+export async function newsFor(search: NewsSearch | undefined, players: Array<Searchable & { id: string }>, at: number): Promise<Record<string, NewsItem[]>> {
+  if (!search) return {};
+  const unique = [...new Map(players.map((p) => [p.id, p])).values()];
+  return Object.fromEntries(await Promise.all(unique.map(async (p) => [p.id, await search(p, at)] as const)));
 }

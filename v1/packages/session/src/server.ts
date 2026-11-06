@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { answerQuestion, type AnswerInput, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, serviceHttp } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
@@ -136,6 +137,35 @@ export function createSessionServer(session: Session) {
       problem(res, message === 'body too large' ? 413 : err instanceof SyntaxError ? 400 : 500, message);
     }
   });
-  server.on('upgrade', liveUpgrade(session));
-  return server;
+  // Upgraded sockets leave the server's connection tracking, so closeAllConnections misses them and close() would wait on every open page.
+  const live = new Set<Duplex>();
+  const upgrade = liveUpgrade(session);
+  server.on('upgrade', (req, socket, head) => {
+    live.add(socket);
+    socket.once('close', () => live.delete(socket));
+    upgrade(req, socket, head);
+  });
+  /** Stops listening and ends every connection, live sockets and held invocations included; resolves once the server has closed. */
+  const shutdown = () => new Promise<void>((resolve) => {
+    server.close(() => resolve());
+    server.closeAllConnections();
+    for (const socket of live) socket.destroy();
+  });
+  return Object.assign(server, { shutdown });
+}
+
+/** Shuts the server down on SIGTERM or SIGINT, or when the parent holding this process's IPC channel goes away, then runs `cleanup` and exits. */
+export function exitOnStop(server: ReturnType<typeof createSessionServer>, cleanup: () => Promise<unknown>) {
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void server.shutdown().then(cleanup).then(() => process.exit(0), (err) => {
+      console.error('session shutdown failed:', err);
+      process.exit(1);
+    });
+  };
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, stop);
+  // A child that outlived its distributor would share its log with the session process the next distributor starts.
+  if (process.channel) process.once('disconnect', stop);
 }

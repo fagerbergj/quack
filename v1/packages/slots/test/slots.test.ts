@@ -1,5 +1,9 @@
 import { slotLimits } from '../src/limits.ts';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
 import { observeGeneration, serveApp, whileWaiting } from '@quack/sdk';
@@ -292,4 +296,26 @@ test('the real clock\'s sleep rejects at once on an already-aborted signal', asy
 
 test('slot limits come from the providers that name slots', () => {
   assert.deepEqual(slotLimits({ providers: { local: { slots: 6 }, clef: {} } }), { local: 6 });
+});
+
+test('the wait history keeps the newest 100 grants per endpoint, so it does not grow with every grant', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-slots-'));
+  const dbPath = join(dir, 'slots.sqlite');
+  const ledger = new SlotTable({ dbPath, limits: { swap: 1, other: 1 }, ttlMs: TTL, now: clock.now });
+  try {
+    for (let i = 0; i < 250; i++) {
+      for (const endpoint of ['swap', 'other']) {
+        ledger.acquire(endpoint, `h${i}`);
+        ledger.release(endpoint, `h${i}`);
+      }
+    }
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const rows = db.prepare('SELECT endpoint, COUNT(*) AS n, MAX(holder = ?) AS newest FROM waits GROUP BY endpoint ORDER BY endpoint').all('h249');
+    db.close();
+    assert.deepEqual(rows.map((r) => ({ ...r })), [{ endpoint: 'other', n: 100, newest: 1 }, { endpoint: 'swap', n: 100, newest: 1 }]);
+    assert.equal(ledger.snapshot()[0].waits.length, 100);
+  } finally {
+    ledger.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

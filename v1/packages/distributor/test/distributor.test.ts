@@ -8,9 +8,13 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Agent, fetch as ufetch, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
-import { shellEnv } from '@quack/session';
+import { childPort, shellEnv } from '@quack/session';
+import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { createDistributor, forwardOutput, processDriver, sessionDirName } from '../src/index.ts';
+import { PING_TIMEOUT_MS } from '../src/server.ts';
+
+const WAKE_RETRY_MAX = 5 * 60_000;
 
 const dirs: string[] = [];
 const servers: Array<() => Promise<void>> = [];
@@ -39,7 +43,9 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
-  const server = createDistributor(driver, { idleMs, retire }).listen(0);
+  // A fake clock with no timers: a test runs the idle sweep itself after moving the clock.
+  let clock = 1_000_000;
+  const server = createDistributor(driver, { idleMs, retire, now: () => clock, setTimer: () => () => {} }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   servers.push(async () => {
@@ -49,7 +55,7 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   const invoke = (key: string, body: unknown, agent?: string) =>
     fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations${agent ? `?agent=${agent}` : ''}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
   const ranAs = (key: string) => `agent: ${join(dataDir, sessionDirName(key), 'agent-def', 'agent.json')}`;
-  return { driver, invoke, base, ranAs, dataDir };
+  return { driver, invoke, base, ranAs, dataDir, sweep: () => server.sweep(), advance: (ms: number) => void (clock += ms) };
 }
 
 // Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
@@ -88,9 +94,14 @@ test('a killed session process restarts with its history', async () => {
 });
 
 test('idle sessions release their process and wake on the next request', async () => {
-  const { driver, invoke } = await startDistributor(300);
+  const { driver, invoke, sweep, advance } = await startDistributor(60_000);
   await invoke('research:spec-decoding', { input: 'first', wait: true });
-  await until(() => driver.running().length === 0);
+  advance(59_999);
+  await sweep();
+  assert.deepEqual(driver.running(), ['research:spec-decoding'], 'not idle yet');
+  advance(1);
+  await sweep();
+  assert.deepEqual(driver.running(), []);
   const woke = await invoke('research:spec-decoding', { input: 'again', wait: true });
   assert.equal(woke.body.answer, 'echo: again');
 });
@@ -162,7 +173,7 @@ test('a session open in a page is deleted from that page: its idle process is st
 });
 
 test('proxies the live stream and keeps a watched session from idling out', async () => {
-  const { driver, base, invoke } = await startDistributor(200);
+  const { driver, base, invoke, sweep, advance } = await startDistributor(60_000);
   const key = 'github:fagerbergj/quack#1827';
   await invoke(key, { input: 'start', wait: true });
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
@@ -172,15 +183,24 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
   ws.send(JSON.stringify({ type: 'input', input: 'hi', requestId: 'w-1' }));
   assert.match(JSON.stringify((await ended).items), /echo: hi/);
 
-  // Several idle sweeps pass while the viewer is connected; the session must still be running.
-  await new Promise((r) => setTimeout(r, 1_000));
+  // Idle sweeps long past the idle time while the viewer is connected; the session must still be running.
+  for (let i = 0; i < 3; i++) {
+    advance(60_000);
+    await sweep();
+  }
   assert.deepEqual(driver.running(), [key]);
   ws.close();
-  await until(() => driver.running().length === 0);
+  // The proxy's side of the socket closes a few I/O turns after the page's; sweeps on the fake clock then stop the session.
+  for (let i = 0; i < 1_000 && driver.running().length; i++) {
+    await new Promise((r) => setImmediate(r));
+    advance(60_000);
+    await sweep();
+  }
+  assert.deepEqual(driver.running(), []);
 });
 
 test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
-  const broken = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const broken = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], session: async () => undefined, ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -414,9 +434,10 @@ test('GET /agents reports a promoted agent as promoted', async () => {
 // A driver with no processes: sessions are stub /ping servers, so sleep and wake run on a fake clock.
 async function fakeFleet(ping: (now: number) => unknown) {
   let clock = 1_000_000;
-  const stub = createHttpServer((_req, res) => res.end(JSON.stringify(ping(clock)))).listen(0);
+  // A ping answer of undefined is a session that never answers.
+  const stub = createHttpServer((_req, res) => { const answer = ping(clock); if (answer !== undefined) res.end(JSON.stringify(answer)); }).listen(0);
   await new Promise((r) => stub.once('listening', r));
-  servers.push(() => new Promise((r) => stub.close(() => r())));
+  servers.push(() => new Promise((r) => { stub.close(() => r()); stub.closeAllConnections(); }));
   const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
   const wakes = new Map<string, number>();
   const touches = new Map<string, number>();
@@ -425,6 +446,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
   const driver = {
     agents: async () => [], agentOf: async () => '', rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, pid: () => undefined,
     sessions: async () => [...running].map((key) => ({ key, agent: '', running: true, createdAt: '', lastActivity: '' })),
+    session: async (key: string) => (running.has(key) ? { key, agent: '', running: true, createdAt: '', lastActivity: '' } : undefined),
     ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
     stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
     remove: async () => false, setTitle: async () => false, setArchived: async () => false,
@@ -647,6 +669,73 @@ test('a marker write that fails is retried by the next sweep', async () => {
   assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
 });
 
+test('a wake that fails is retried with backoff until it succeeds, and the failure is logged once', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
+  fleet.wakes.set('research:nap', fleet.now() + HOUR);
+  const ensure = fleet.driver.ensure;
+  let failures = 2;
+  fleet.driver.ensure = async (key: string) => { if (failures-- > 0) throw new Error('no capacity'); return ensure(key); };
+  const server = fleet.start();
+  await server.sweep();
+  fleet.advance(HOUR);
+  await server.sweep();
+  assert.deepEqual([fleet.log, fleet.wakes.has('research:nap')], [[], true], 'the first wake failed and its record stays');
+  fleet.advance(1000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, [], 'the retry after 1 s failed too');
+  fleet.advance(1999);
+  await server.sweep();
+  assert.deepEqual(fleet.log, [], 'the next retry waits 2 s');
+  fleet.advance(1);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start research:nap']);
+  assert.equal(fleet.wakes.has('research:nap'), false);
+  assert.equal(warn.mock.callCount(), 1);
+});
+
+test('a wake for a session deleted meanwhile is dropped, not retried', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
+  fleet.wakes.set('research:gone', fleet.now() + HOUR);
+  fleet.driver.agentOf = async () => undefined as unknown as string;
+  const server = fleet.start();
+  await server.sweep();
+  fleet.advance(HOUR + 10 * WAKE_RETRY_MAX);
+  await server.sweep();
+  assert.deepEqual(fleet.log, []);
+});
+
+test('a busy session whose process is gone without a restart is woken by the sweep', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const server = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await server.sweep();
+  // The process is gone and the driver gave up restarting it: past its crash budget, or its restart failed.
+  await fleet.driver.stop('sleeper:trends');
+  fleet.log.length = 0;
+  await server.sweep();
+  fleet.advance(1000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start sleeper:trends']);
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now() - 1000, 'the busy marker stays on disk while it runs');
+});
+
+test('a session that never answers /ping is left at the deadline, and the sweep goes on', async () => {
+  let answer = true;
+  const fleet = await fakeFleet((now) => (answer ? { status: 'Healthy', waitingOnHuman: false, wake: {}, now } : undefined));
+  const server = fleet.start();
+  await fleet.driver.ensure('research:stuck');
+  answer = false;
+  let done = false;
+  const swept = server.sweep().then(() => (done = true));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(done, false);
+  fleet.advance(PING_TIMEOUT_MS);
+  await swept;
+  assert.deepEqual(fleet.driver.running(), ['research:stuck'], 'left for the next sweep');
+});
+
 test('active work is never stopped', async () => {
   const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
   const server = fleet.start();
@@ -699,7 +788,7 @@ test('an invocation held past undici\'s headers timeout is still proxied, not tu
   const session = createHttpServer((_req, res) => setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"answered"}'), 2_000)).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], session: async () => undefined, ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const previous = getGlobalDispatcher();
@@ -724,7 +813,7 @@ test('a client that hangs up mid-body does not take the distributor down', async
   }).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => undefined, rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], session: async () => undefined, ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const port = (server.address() as AddressInfo).port;
@@ -766,6 +855,33 @@ test('a session process whose report cannot be written still fails, naming the m
   await assert.rejects(driver.ensure('research:swallowed'), /no diagnostic report within 5s/);
 });
 
+test('a session process that ignores SIGTERM is killed at the stop deadline', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const deaf = "process.on('SIGTERM', () => {}); process.send({ port: 1 }); setInterval(() => {}, 1000);";
+  const deadlines: Array<{ fn: () => void; ms: number }> = [];
+  const setTimer = (fn: () => void, ms: number) => (deadlines.push({ fn, ms }), () => {});
+  const driver = processDriver({ command: [process.execPath, '-e', deaf], dataDir, defaultAgent: '', stopTimeoutMs: 5_000, setTimer });
+  await driver.ensure('research:deaf');
+  const pid = driver.pid('research:deaf')!;
+  const stopped = driver.stop('research:deaf');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(deadlines.map((d) => d.ms), [5_000]);
+  deadlines[0].fn();
+  await stopped;
+  assert.throws(() => process.kill(pid, 0), /ESRCH/, 'the process is gone');
+});
+
+test('a session process exits when the parent holding its IPC channel goes away', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-orphan-'));
+  dirs.push(dir);
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+  await childPort(child, 'echo session', 15_000);
+  const exited = new Promise((r) => child.once('exit', (code) => r(code)));
+  child.disconnect();
+  assert.equal(await exited, 0);
+});
+
 test('a broken output sink neither throws nor loses the tail', async () => {
   const src = new PassThrough();
   const dst = new Writable({ write: (_b, _e, cb) => cb(new Error('EPIPE')) });
@@ -783,7 +899,7 @@ test('the identity header reaches the session; without it none is sent', async (
   const session = createHttpServer((req, res) => { seen.push(req.headers['x-authentik-username'] as string | undefined); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); }).listen(0);
   await new Promise((r) => session.once('listening', r));
   const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
-  const driver = { agents: async () => [], agentOf: async () => '', rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const driver = { agents: async () => [], agentOf: async () => '', rebind: async () => {}, agent: async () => undefined, promote: async () => 'draft' as const, sessions: async () => [], session: async () => undefined, ensure: async () => url, stop: async () => {}, remove: async () => false, setTitle: async () => false, setArchived: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/k1`;

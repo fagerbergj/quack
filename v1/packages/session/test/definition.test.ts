@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
+import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
   defaultModel: 'local/qwen3.8-27b',
@@ -242,6 +242,20 @@ test('a classifier provider is not asked for /models', async () => {
   const counting = (async () => ((asked += 1), { ok: true, json: async () => ({ data: [] }) })) as unknown as typeof fetch;
   await resolveDeployment(parseDeployment({ ...thin, providers: { ...thin.providers, clef: { baseUrl: 'http://clef/v1', api: 'systemone', models: { clef: { contextWindow: 8192 } } } } }), counting);
   assert.equal(asked, 1, 'only the local provider');
+});
+
+test('a session start asks only the providers its agent names, so a provider that is down does not block it', async () => {
+  const config = parseDeployment({ ...thin, providers: { ...thin.providers, hosted: { baseUrl: 'http://hosted/v1', models: { big: { contextWindow: 1000 } } }, vision: { baseUrl: 'http://vision/v1' }, spare: { baseUrl: 'http://spare/v1' } } });
+  const def = { name: 'x', version: 1, extensions: { workflows: { visionModel: { provider: 'vision', modelId: 'v' } }, judge: { model: 'hosted/big' } } };
+  assert.deepEqual(referencedProviders(def, config).sort(), ['hosted', 'local', 'vision']);
+  assert.deepEqual(referencedProviders({ ...def, model: 'hosted/big', extensions: {} }, config), ['hosted']);
+  const asked: string[] = [];
+  // Every provider but local hangs, as one that is down would until its timeout.
+  const hanging = (async (url: string) => (asked.push(new URL(url).host), url.startsWith('http://x/') ? { ok: true, json: async () => ({ data: [] }) } : new Promise(() => {}))) as unknown as typeof fetch;
+  const resolved = await resolveDeployment(config, hanging, referencedProviders({ name: 'x', version: 1, extensions: {} }, config));
+  assert.deepEqual(asked, ['x']);
+  assert.deepEqual(resolved.providers.hosted.models, { big: { contextWindow: 1000 } }, 'an unasked provider keeps its hand-written models');
+  assert.equal(parseDefinition({ name: 'y', version: 1, model: 'hosted/big', extensions: {} }, await resolveDeployment(parseDeployment({ ...config, defaultModel: 'spare/none' }), listing([]), ['hosted']), {}).model, 'hosted/big', 'a default the agent does not use is not checked');
 });
 
 test('defaultModel must resolve to a selectable model', async () => {

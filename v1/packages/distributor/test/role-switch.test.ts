@@ -65,6 +65,18 @@ test('a session switches agent when a run starts, keeps its log, and a restart r
   assert.equal((await driver.sessions())[0].agent, 'implementer');
 });
 
+test('a role switch on a session a page is watching stops its process and runs the new role', async () => {
+  const { invoke, snapshot, base } = await start('echo-session.ts');
+  const key = 'github:o/r#9';
+  assert.equal((await invoke(key, { input: 'first', wait: true }, 'reviewer')).status, 200);
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
+  await new Promise((r) => ws.addEventListener('message', r, { once: true }));
+  const closed = new Promise((r) => ws.addEventListener('close', r));
+  assert.equal((await invoke(key, { input: 'second', wait: true }, 'implementer')).status, 200);
+  assert.equal((await snapshot(key)).agent, 'implementer');
+  await closed;
+});
+
 test('a submission naming another agent is refused while a run is open', async () => {
   const { invoke, snapshot, base } = await start('gate-session.ts');
   const key = 'github:o/r#8';

@@ -4,7 +4,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { gated } from '@quack/sdk';
-import { createSessionServer, listenReporting, openSession } from '@quack/session';
+import { createSessionServer, exitOnStop, listenReporting, openSession } from '@quack/session';
 
 const extension = defineExtension({
   name: 'gate-fixture',
@@ -35,4 +35,4 @@ const m = faux.getModel();
 
 const session = await openSession({ dir: process.env.QUACK_SESSION_DIR!, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [extension] } });
 const server = listenReporting(createSessionServer(session));
-process.on('SIGTERM', () => { server.closeAllConnections(); server.close(() => void session.close().then(() => process.exit(0))); });
+exitOnStop(server, () => session.close());

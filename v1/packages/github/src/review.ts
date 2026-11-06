@@ -78,10 +78,22 @@ export function resolveCitedPath(files: string[], repoName: string, cited: strin
 
 type Tracked = { files?: string[] };
 
-export async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
+// A git read the judge's evidence rests on: a failure throws, so a review is never scored against missing evidence.
+async function gitRead(api: ToolExecutionApi, repoDir: string, args: string[], ctx: Context): Promise<string> {
   let out = '';
-  const r = await api.env!.exec(['git', '-C', repoDir, 'ls-files'], { onOutput: (t) => { out += t; } }, ctx);
-  return r.ok ? out.split('\n').filter(Boolean) : [];
+  const r = await api.env!.exec(['git', '-C', repoDir, ...args], { onOutput: (t) => { out += t; } }, ctx);
+  if (!r.ok || r.value.exitCode !== 0) throw new Error(`git ${args[0]} in ${repoDir} failed: ${r.ok ? out.slice(-300) : r.error.message}`);
+  return out;
+}
+
+export async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
+  return (await gitRead(api, repoDir, ['ls-files'], ctx)).split('\n').filter(Boolean);
+}
+
+/** Where the repo's installed JS dependencies would be: node_modules beside each tracked package.json, at any depth. */
+export async function dependencyDirs(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
+  const manifests = (await gitRead(api, repoDir, ['ls-files', '--', ':(glob)**/package.json'], ctx)).split('\n').filter(Boolean);
+  return manifests.map((m) => `${repoDir}/${m.slice(0, -'package.json'.length)}node_modules`);
 }
 
 async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context, tracked: Tracked = {}) {
@@ -104,11 +116,7 @@ async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: 
   return { exists: true, excerpt: text, file: read.value, path };
 }
 
-export async function diffOf(api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context): Promise<string> {
-  let out = '';
-  const r = await api.env!.exec(['git', '-C', repoDir, 'diff', `origin/${baseRef}...HEAD`], { onOutput: (t) => { out += t; } }, ctx);
-  return r.ok ? out : '';
-}
+export const diffOf = (api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context) => gitRead(api, repoDir, ['diff', `origin/${baseRef}...HEAD`], ctx);
 
 const truncated = (diff: string) => (diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… diff truncated at ${MAX_DIFF_CHARS} characters` : diff);
 const STATEMENT = /[{]|:=|\s=\s|==|=>|\breturn\b/;
@@ -126,6 +134,8 @@ export function quotedCode(text: string): string[][] {
 const KEYWORDS = new Set(['true', 'false', 'null', 'undefined', 'void', 'this', 'new', 'typeof', 'instanceof', 'return', 'const', 'let', 'var', 'function', 'class', 'async', 'await', 'string', 'number', 'boolean']);
 const MAX_NAMES = 8;
 const DEP_GLOBS = ['--include=*.js', '--include=*.mjs', '--include=*.cjs', '--include=*.ts'];
+// Each search is bounded; one that runs out cannot show a name invented, so it counts as found.
+const SEARCH_SECONDS = 20;
 
 /** Names a span claims exist: members, callees and object keys. Bare locals and string contents are proposals. */
 export function claimedNames(span: string): string[] {
@@ -141,12 +151,16 @@ export function claimedNames(span: string): string[] {
 }
 
 // A span is invented only when a name it claims exists nowhere: the cited file, the change, the repo or installed dependencies.
-export async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context, known = new Map<string, boolean>()): Promise<string[]> {
+export async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context, known = new Map<string, boolean>(), deps = [`${repoDir}/node_modules`]): Promise<string[]> {
   const haystack = squash(file) + '\n' + squash(diff.split('\n').map((l) => l.replace(/^[+\- ]/, '')).join('\n'));
-  const grep = async (argv: string[]) => { const r = await api.env!.exec(argv, {}, ctx); return r.ok && r.value.exitCode === 0; };
+  const grep = async (argv: string[]) => {
+    const r = await api.env!.exec(argv, { timeout: SEARCH_SECONDS }, ctx);
+    return r.ok ? r.value.exitCode === 0 : r.error.code === 'timeout';
+  };
+  const inDeps = (id: string) => deps.length > 0 && grep(['grep', '-rqsw', '-F', ...DEP_GLOBS, '-e', id, ...deps]);
   const exists = async (id: string) => {
     if (new RegExp(`(?<![\\w$])${id.replace(/\$/g, '\\$')}(?![\\w$])`).test(haystack)) return true;
-    if (!known.has(id)) known.set(id, await grep(['git', '-C', repoDir, 'grep', '-q', '-w', '-F', '-e', id, 'HEAD', '--']) || await grep(['grep', '-rqsw', '-F', ...DEP_GLOBS, '-e', id, `${repoDir}/node_modules`, `${repoDir}/v1/node_modules`]));
+    if (!known.has(id)) known.set(id, await grep(['git', '-C', repoDir, 'grep', '-q', '-w', '-F', '-e', id, 'HEAD', '--']) || await inDeps(id));
     return known.get(id)!;
   };
   const invented: string[] = [];
@@ -168,13 +182,14 @@ export function reviewEvidence(repoDir = 'repo') {
       ? { description: `${pr.title}\n\n${pr.body}`, ci: pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', '), linkedIssues: pr.linkedIssues.map((i) => `#${i.number} ${i.title}\n${i.body}`).join('\n\n'), diff: await diffOf(api, repoDir, pr.baseRef, ctx) }
       : { description: '(unknown)', ci: '(unknown)', linkedIssues: '', diff: '' };
     const diff = change.diff;
-    change.diff = pr ? truncated(diff) || '(diff unavailable)' : '(no checkout)';
+    change.diff = pr ? truncated(diff) || '(empty diff)' : '(no checkout)';
     const known = new Map<string, boolean>();
     const tracked: Tracked = {};
+    const deps = pr && r.findings.length ? await dependencyDirs(api, repoDir, ctx) : [];
     const findings: Array<Unit & { blocking: boolean; cited: boolean; misquotes: string[] }> = [];
     for (const f of r.findings) {
       const e = await excerpt(api, repoDir, f, ctx, tracked);
-      const wrong = pr ? await misquotes(api, repoDir, f, e.file, diff, ctx, known) : [];
+      const wrong = pr ? await misquotes(api, repoDir, f, e.file, diff, ctx, known, deps) : [];
       findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, misquotes: wrong, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
     }
     const changeUnit = { id: 'change', state: { review: sealed.content, ...change } };

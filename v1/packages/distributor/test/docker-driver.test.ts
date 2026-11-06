@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createServer as createTlsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -192,6 +193,30 @@ test('the broker forwards with the real token for a live session token and refus
   assert.equal((await fetch(`${front}/proxy/NOPE/x`, { headers: { authorization: `Bearer ${token}` } })).status, 404);
   broker.revoke(token);
   assert.equal((await fetch(`${front}/proxy/PROVIDER_x/predict`, { headers: { authorization: `Bearer ${token}` } })).status, 401, 'revoked');
+});
+
+test('the broker reaches http and https upstreams alike, trusting a CA it is given', async () => {
+  const tls = { cert: await readFile(new URL('./fixtures/tls/cert.pem', import.meta.url)), key: await readFile(new URL('./fixtures/tls/key.pem', import.meta.url)) };
+  const seen: string[] = [];
+  const answer: Parameters<typeof createServer>[1] = (req, res) => { seen.push(`${req.method} ${req.url} ${req.headers['x-api-key']}`); res.end('{"ok":true}'); };
+  const secure = createTlsServer(tls, answer).listen(0, '127.0.0.1');
+  await new Promise((r) => secure.once('listening', r));
+  cleanups.push(() => void secure.close());
+  const plain = await listen(answer);
+  const broker = credentialBroker({ ca: tls.cert });
+  broker.register('QUACK_EXA', `https://127.0.0.1:${(secure.address() as AddressInfo).port}`, { 'x-api-key': 'real-exa' });
+  broker.register('LANGFUSE', plain, { 'x-api-key': 'real-lf' });
+  const front = await listen((req, res) => void broker.route(req, res));
+  const token = broker.mint('a');
+  const call = (name: string) => fetch(`${front}/proxy/${name}/search`, { method: 'POST', headers: { 'x-api-key': token }, body: '{}' }).then(async (r) => [r.status, await r.json()]);
+  assert.deepEqual(await call('QUACK_EXA'), [200, { ok: true }]);
+  assert.deepEqual(await call('LANGFUSE'), [200, { ok: true }]);
+  assert.deepEqual(seen, ['POST /search real-exa', 'POST /search real-lf']);
+  // Without the CA the self-signed upstream is refused, as an untrusted certificate must be.
+  const untrusting = credentialBroker();
+  untrusting.register('QUACK_EXA', `https://127.0.0.1:${(secure.address() as AddressInfo).port}`, {});
+  const strict = await listen((req, res) => void untrusting.route(req, res));
+  assert.equal((await fetch(`${strict}/proxy/QUACK_EXA/search`, { headers: { 'x-api-key': untrusting.mint('a') } })).status, 502);
 });
 
 test('a request body over 1 MiB reaches the upstream intact, and the upstream\'s own status passes back', async () => {

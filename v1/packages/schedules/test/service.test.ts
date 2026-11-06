@@ -110,9 +110,29 @@ test('the default window is the next occurrence, and explicit times honor a dead
   clock = new Date('2026-01-01T02:00:00Z');
   await svc.tick();
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:two:2026-01-01T02:00:00.000Z']);
-  const byId = Object.fromEntries((await api('GET', '/')).json.schedules.map((s: any) => [s.id, s]));
-  assert.deepEqual(byId.once.missedRuns, ['2026-01-01T01:00:00.000Z']);
-  assert.deepEqual(byId.two.missedRuns, ['2026-01-01T01:00:00.000Z']);
+  const listed = (await api('GET', '/')).json.schedules;
+  assert.deepEqual(listed.map((s: any) => s.id), [], 'both one-shots are spent: once missed, two fired its last time');
+  assert.deepEqual(calls.length, 1);
+});
+
+test('a spent one-shot is deleted while its runs stay, so registering the same time again never refires it', async () => {
+  const { svc, api } = await start(':memory:');
+  clock = new Date('2026-01-01T10:00:00Z');
+  const once = { id: 'w', agent: 'a', times: ['2026-01-01T10:00:00Z'], deadline: '2026-01-01T12:00:00Z', sessionKey: 'w', input: 'x' };
+  await api('POST', '/', once);
+  await svc.tick();
+  assert.equal(calls.length, 1);
+  assert.deepEqual((await api('GET', '/')).json.schedules, []);
+  await api('POST', '/', once);
+  clock = new Date('2026-01-01T11:00:00Z');
+  await svc.tick();
+  assert.equal(calls.length, 1);
+  assert.deepEqual((await api('GET', '/')).json.schedules, []);
+  // A one-shot still ahead, and a cron, are kept.
+  await api('POST', '/', { ...once, id: 'later', times: ['2026-01-02T10:00:00Z'], deadline: '2026-01-02T12:00:00Z' });
+  await api('POST', '/', daily);
+  await svc.tick();
+  assert.deepEqual((await api('GET', '/')).json.schedules.map((s: any) => s.id), ['daily', 'later']);
 });
 
 test('schedules and their history survive a restart', async () => {
@@ -122,8 +142,8 @@ test('schedules and their history survive a restart', async () => {
   await first.api('POST', '/', daily);
   clock = new Date('2026-01-01T09:00:00Z');
   await first.svc.tick();
-  first.svc.stop();
-  open.length = 0;
+  // Closes the first server too, which a bare svc.stop() left listening.
+  open.pop()!.stop();
 
   clock = new Date('2026-01-01T09:05:00Z');
   const second = await start(path);
@@ -170,7 +190,7 @@ test('an exhausted one-shot whose moment passed long ago is recorded missed, not
   clock = new Date('2026-01-02T01:00:00Z');
   await svc.tick();
   assert.equal(calls.length, 0);
-  assert.deepEqual((await api('GET', '/')).json.schedules[0].missedRuns, ['2026-01-01T01:00:00.000Z']);
+  assert.deepEqual((await api('GET', '/')).json.schedules, [], 'recorded missed, it is spent and deleted');
 });
 
 test('a one-shot registered for the moment it is written fires once, and re-registering it does not fire it again', async () => {

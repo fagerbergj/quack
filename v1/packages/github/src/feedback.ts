@@ -33,10 +33,10 @@ async function openComments(app: GithubApp, owner: string, repo: string, number:
 
 const MAX_REVIEW_PAGES = 30;
 
-// Every page, since the list is oldest first and the newest review is the one that counts. shortcut: 3,000 reviews.
-async function allReviews(app: GithubApp, owner: string, repo: string, base: string): Promise<any[]> {
+// Every page, since the list is oldest first and the newest review is the one that counts. shortcut: 3,000 reviews unless maxPages says more.
+export async function allReviews(app: GithubApp, owner: string, repo: string, base: string, maxPages = MAX_REVIEW_PAGES): Promise<any[]> {
   const all: any[] = [];
-  for (let page = 1; page <= MAX_REVIEW_PAGES; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     const batch = (await app.asInstallation(owner, repo, 'GET', `${base}/reviews?per_page=100&page=${page}`)).json ?? [];
     all.push(...batch);
     if (batch.length < 100) break;

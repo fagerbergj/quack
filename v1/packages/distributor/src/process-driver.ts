@@ -38,8 +38,11 @@ export type HostDriver = {
   promote(name: string, version: number): Promise<AgentStatus>;
   /** Every session on disk, newest-created first. */
   sessions(): Promise<SessionInfo[]>;
+  /** One session's row, read from its directory alone; undefined when it does not exist. */
+  session(key: string): Promise<SessionInfo | undefined>;
+  /** Stops the session's process; a start in flight is waited out and then stopped. */
   stop(key: string): Promise<void>;
-  /** Deletes the session's directory (log, workspace, snapshot); false when no such session exists. The caller has checked it is not running. */
+  /** Stops any process the session has, starting ones included, then deletes its directory (log, workspace, snapshot); false when no such session exists. The caller has checked it has no work. */
   remove(key: string): Promise<boolean>;
   /** Sets the session's title (the `title` file); undefined restores the default from its first message. False when no such session exists. */
   setTitle(key: string, title: string | undefined): Promise<boolean>;
@@ -183,6 +186,14 @@ async function stuckReport(proc: ChildProcess, dir: string): Promise<string> {
   return `stack: ${report.javascriptStack?.stack?.join(' <- ') ?? 'none'}; active handles: ${active || 'none'}`;
 }
 
+// Runs `fn` after every earlier call for `key` in `chains` has settled.
+function inTurn<T>(chains: Map<string, Promise<unknown>>, key: string, fn: () => Promise<T>): Promise<T> {
+  const next = (chains.get(key) ?? Promise.resolve()).catch(() => {}).then(fn);
+  chains.set(key, next);
+  void next.finally(() => chains.get(key) === next && chains.delete(key)).catch(() => {});
+  return next;
+}
+
 const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
@@ -191,6 +202,9 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
+  // Binding, stopping and removing one session run in turn, so two first requests never copy its bundle at once
+  // and a delete never races a start.
+  const lifecycle = new Map<string, Promise<unknown>>();
 
   // The first message never changes once written, so it is scanned once per session directory; a recorded title can appear later (an existing session's next webhook), so its file is checked on every listing.
   const titles = new Map<string, string>();
@@ -231,17 +245,29 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return defaultPath ? ((await readJson(defaultPath).catch(() => null))?.name as string | undefined) ?? '' : '';
   }
 
-  // A version is immutable: refuse a source whose name and version match a session snapshot with different content.
+  // A version is immutable: the first session pinned to it records its content hash beside the stored version, and a source that differs is refused.
   async function assertUnforked(name: string, source: string) {
     const version = (await readJson(source).catch(() => null))?.version;
+    if (typeof version !== 'number') return;
     const want = await digest(dirname(source));
+    const record = join(versionDir(opts.dataDir, name, version), 'digest');
+    const known = (await readText(record)) ?? (await recordDigest(record, name, version, want));
+    if (known !== want) throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
+  }
+
+  // Versions pinned before the record existed are scanned once; `wx` keeps the first writer's hash when two sessions race.
+  async function recordDigest(record: string, name: string, version: number, want: string): Promise<string> {
+    let first = want;
     for (const d of await readdir(opts.dataDir).catch(() => [])) {
       const snap = join(opts.dataDir, d, SNAPSHOT);
       const def = await readJson(join(snap, 'agent.json')).catch(() => null);
-      if (def?.name === name && def.version === version && (await digest(snap)) !== want) {
-        throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
-      }
+      if (def?.name !== name || def.version !== version) continue;
+      first = await digest(snap);
+      if (first !== want) break;
     }
+    await mkdir(dirname(record), { recursive: true });
+    await writeFile(record, first, { flag: 'wx' }).catch(() => undefined);
+    return (await readText(record)) ?? first;
   }
 
   // Copies the agent's bundle into the session dir; every later start loads that copy, never the agents dir (DEP-3).
@@ -259,7 +285,6 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
 
   // Only a submission that starts a run may change the role (see rebind); any other request must agree with the record.
-  // shortcut: two first requests naming different agents at once race on the record, last writer wins; serialize per key if that matters.
   async function bind(key: string, requested?: string): Promise<{ name: string; path: string | undefined }> {
     const dir = sessionDir(key);
     const snapshotDir = join(dir, SNAPSHOT);
@@ -285,11 +310,11 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   const agentOf = (key: string) => readText(join(sessionDir(key), 'agent'));
 
   // Rewrites the snapshot and record the next start reads, so a restart resumes with the role of the latest run.
-  async function rebind(key: string, name: string) {
+  const rebind = (key: string, name: string) => inTurn(lifecycle, key, async () => {
     const from = await source(name, await defaultName());
     if (from) await snapshot(name, from, sessionDir(key), true);
     await writeFile(join(sessionDir(key), 'agent'), name);
-  }
+  });
 
   async function start(key: string, agentPath: string | undefined): Promise<string> {
     const launched = await launch({ key, dir: sessionDir(key), agentPath });
@@ -308,16 +333,20 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return launched.url;
   }
 
+  // The start itself runs outside the turn (wrapped, so the turn does not wait on it), and every caller shares it, failure included.
   async function ensure(key: string, agent?: string): Promise<string> {
-    const { path } = await bind(key, agent);
-    const live = children.get(key);
-    if (live) return live.launched.url;
-    let pending = starting.get(key);
-    if (!pending) {
-      pending = start(key, path).finally(() => starting.delete(key));
-      starting.set(key, pending);
-    }
-    return pending;
+    const { url } = await inTurn(lifecycle, key, async () => {
+      const { path } = await bind(key, agent);
+      const live = children.get(key);
+      if (live) return { url: Promise.resolve(live.launched.url) };
+      let pending = starting.get(key);
+      if (!pending) {
+        pending = start(key, path).finally(() => starting.delete(key));
+        starting.set(key, pending);
+      }
+      return { url: pending };
+    });
+    return url;
   }
 
   const agents = async () => (await registry()).map(({ name, version, status, model, description }) => ({ name, version, status, ...(model && { model }), ...(description && { description }) }));
@@ -344,31 +373,36 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return 'promoted';
   }
 
+  // Retention is storage policy, so a session pinned before it existed follows its agent's current bundle.
+  const retentions = async () => new Map((await registry()).map((a) => [a.name, a.retention]));
+
+  async function row(d: string, current: Map<string, unknown>) {
+    const key = await readText(join(opts.dataDir, d, 'session-key'));
+    if (key === undefined) return undefined;
+    const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
+    const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
+    const { version } = pinned ?? {};
+    const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
+    const title = cachedTitle(join(opts.dataDir, d));
+    return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), ...((await exists(join(opts.dataDir, d, 'archived'))) && { archived: true }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
+  }
+  const info = ({ at, created, ...s }: NonNullable<Awaited<ReturnType<typeof row>>>): SessionInfo => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() });
+
   async function sessions(): Promise<SessionInfo[]> {
-    const dirs = await readdir(opts.dataDir).catch(() => []);
-    // Retention is storage policy, so a session pinned before it existed follows its agent's current bundle.
-    const current = new Map((await registry()).map((a) => [a.name, a.retention]));
-    const all = await Promise.all(dirs.map(async (d) => {
-      const key = await readText(join(opts.dataDir, d, 'session-key'));
-      if (key === undefined) return undefined;
-      const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
-      const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
-      const { version } = pinned ?? {};
-      const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
-      const title = cachedTitle(join(opts.dataDir, d));
-      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), ...((await exists(join(opts.dataDir, d, 'archived'))) && { archived: true }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
-    }));
-    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
+    const [dirs, current] = await Promise.all([readdir(opts.dataDir).catch(() => []), retentions()]);
+    const all = await Promise.all(dirs.map((d) => row(d, current)));
+    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(info);
+  }
+
+  // One session's row from its own directory; a hash collision with another key reads as no such session.
+  async function session(key: string): Promise<SessionInfo | undefined> {
+    const found = await row(sessionDirName(key), await retentions());
+    return found?.key === key ? info(found) : undefined;
   }
 
   // Touches of one session run in turn, so an older read can never be written over a newer one.
   const touching = new Map<string, Promise<unknown>>();
-  const touch = (key: string, at: number) => {
-    const next = (touching.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
-    touching.set(key, next);
-    void next.finally(() => touching.get(key) === next && touching.delete(key)).catch(() => {});
-    return next;
-  };
+  const touch = (key: string, at: number) => inTurn(touching, key, async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
 
   async function setWake(key: string, at: number | undefined) {
     if (at === undefined) await rm(join(sessionDir(key), 'wake'), { force: true });
@@ -384,12 +418,14 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return found.filter((w) => w !== undefined);
   }
 
-  async function remove(key: string) {
+  // A process still running or starting for the session is stopped first, so none is left bound to a deleted directory.
+  const remove = (key: string) => inTurn(lifecycle, key, async () => {
     const dir = sessionDir(key);
     if ((await readText(join(dir, 'session-key'))) === undefined) return false;
+    await stopNow(key);
     await rm(dir, { recursive: true, force: true });
     return true;
-  }
+  });
 
   // A title or flag is a file in the session's directory, like `wake`; setting one never starts a process.
   async function setTitle(key: string, title: string | undefined) {
@@ -406,23 +442,36 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return true;
   }
 
-  async function stop(key: string) {
+  // A start in flight is waited out, then stopped, so a stop never leaves a process that comes up afterwards.
+  async function stopNow(key: string) {
+    await starting.get(key)?.catch(() => {});
     const child = children.get(key);
     if (!child) return;
     child.stopping = true;
     children.delete(key);
     await child.launched.stop();
   }
+  const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
+  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
-export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number }): HostDriver {
+export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }
 
-function processLauncher(opts: { command: string[]; inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number }): Launch {
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
+
+// Below the distributor's 20 s drain, so a drain still finishes after a kill.
+const STOP_TIMEOUT_MS = 10_000;
+const unrefTimer = (fn: () => void, ms: number) => {
+  const t = setTimeout(fn, ms);
+  t.unref();
+  return () => clearTimeout(t);
+};
+
+function processLauncher(opts: LauncherOptions): Launch {
   return async ({ key, dir, agentPath }) => {
     const [cmd, ...args] = opts.command;
     // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
@@ -446,9 +495,13 @@ function processLauncher(opts: { command: string[]; inherit?: (agentPath: string
         pid: proc.pid,
         onExit: (cb) => (proc.exitCode !== null || proc.signalCode ? cb() : void proc.once('exit', cb)),
         stop: async () => {
+          if (proc.exitCode !== null || proc.signalCode) return;
           const exited = new Promise((r) => proc.once('exit', r));
           proc.kill('SIGTERM');
+          // A process that ignores SIGTERM or never finishes closing must not wedge every request for its key.
+          const cancel = (opts.setTimer ?? unrefTimer)(() => proc.kill('SIGKILL'), opts.stopTimeoutMs ?? STOP_TIMEOUT_MS);
           await exited;
+          cancel();
         },
       };
     } catch (err) {

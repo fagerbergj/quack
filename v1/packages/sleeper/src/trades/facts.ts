@@ -1,6 +1,5 @@
 import type { Json, SleeperClient } from '../client.ts';
-import { ownerTeam, ptsKey, type LineupInput, type NewsItem } from '../lineup/facts.ts';
-import type { Searchable } from '../lineup/news.ts';
+import { ownerTeam, ptsKey, type LineupInput } from '../lineup/facts.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
 import { byeWeeks, COVER, POSITIONS, teamNeeds, UNAVAILABLE, wplayer, type Bye, type WPlayer } from '../waivers/facts.ts';
 
@@ -38,10 +37,10 @@ export type TradeFacts = {
 export type TradeInput = LineupInput & { partner: string; give: string[]; get: string[] };
 export type FinderInput = LineupInput;
 export type TradeDeps = { client: SleeperClient };
-export type NewsSearch = (p: Searchable, at: number) => Promise<NewsItem[]>;
+export type { NewsSearch } from '../ports.ts';
 
 // Kickers and defenses are streamed, not traded.
-const TRADEABLE = POSITIONS.filter((p) => p !== 'K' && p !== 'DEF');
+export const TRADEABLE = POSITIONS.filter((p) => p !== 'K' && p !== 'DEF');
 const byProj = (a: WPlayer, b: WPlayer) => b.proj - a.proj || a.id.localeCompare(b.id);
 
 /** Healthy players left once each position keeps its starting slots plus one skill-position cover, best projection first. */
@@ -118,12 +117,11 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   return { ...facts, partners: [partner], offer: { partner: partner.rosterId, give: input.give, get: input.get } };
 }
 
+/** The players a finder deal can name: your active tradeable players and every partner's surplus. */
+export const dealable = (f: TradeFacts): TPlayer[] => [
+  ...Object.values(f.mine.players).filter((p) => p.role !== 'ir' && TRADEABLE.includes(p.pos)),
+  ...f.partners.flatMap((s) => s.surplus.map((id) => s.players[id])),
+];
+
 /** Looks a player up on any team in the facts; ids are unique across rosters. */
 export const playerOf = (f: TradeFacts, id: string): TPlayer | undefined => [f.mine, ...f.partners].map((s) => s.players[id]).find(Boolean);
-
-/** Searches news for each player once; a missing source means no links, not an error. */
-export async function fetchNews(search: NewsSearch | undefined, players: TPlayer[], at: number): Promise<Record<string, NewsItem[]>> {
-  const out: Record<string, NewsItem[]> = {};
-  if (search) for (const p of players) out[p.id] ??= await search(p, at);
-  return out;
-}
