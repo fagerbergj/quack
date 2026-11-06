@@ -3,8 +3,9 @@ import { SessionKeyContext } from '../../extension.ts';
 import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
+import { DiffContext, opUnits, useAnyMark, useMark } from './diff.ts';
 import { choicesAt, Info, Inline, unplaced } from './Info.tsx';
-import { SchemaTree } from './SchemaTree.tsx';
+import { MARKED, MarkTag, SchemaTree } from './SchemaTree.tsx';
 import { fields, operations, paramFields, resolve, restPointers, toYaml, type Choice, type ContractSpec, type Json, type Operation } from './spec.ts';
 
 const METHOD: Record<string, string> = { GET: 'bg-link-bg text-link', POST: 'bg-success-bg text-success', DELETE: 'bg-danger-bg text-danger' };
@@ -81,6 +82,7 @@ function Schema({ ctx, schema, at }: { ctx: Ctx; schema: Json | undefined; at: s
 }
 
 function Responses({ o, ctx }: { o: Operation; ctx: Ctx }) {
+  const marks = useContext(DiffContext);
   return (
     <Section title="Responses">
       {Object.entries((o.op.responses ?? {}) as Json).map(([code, res]) => {
@@ -93,6 +95,7 @@ function Responses({ o, ctx }: { o: Operation; ctx: Ctx }) {
             <div className="flex items-center gap-2">
               <code className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs ${ok ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{code}</code>
               <span className="min-w-0 flex-1 text-[13.5px] [overflow-wrap:anywhere]">{res.description}</span>
+              <MarkTag m={marks?.get(at)} />
               <Info choices={ctx.at(at)} />
             </div>
             {schema && <div className="mt-2"><Schema ctx={ctx} schema={schema.schema} at={schema.ptr} /></div>}
@@ -124,6 +127,7 @@ function Detail({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }
     <div className={`${card} flex min-w-0 flex-col gap-4 p-4`}>
       <h3 className="m-0 flex items-center gap-2.5 font-sans">
         <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto font-mono text-[15px] font-normal whitespace-nowrap">{o.path}</span>
+        <MarkTag m={useMark(o.ptr)} />
         <Info choices={ctx.at(o.ptr)} />
       </h3>
       {o.op.summary && <div className="text-sm leading-relaxed"><Markdown text={o.op.summary} /></div>}
@@ -136,19 +140,26 @@ function Detail({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }
   );
 }
 
+// A dot marks a route with anything changed in it.
+function Route({ o, doc, current, onPick }: { o: Operation; doc: Json; current: boolean; onPick: () => void }) {
+  const changed = useAnyMark(opUnits(doc, o).keys());
+  return (
+    <button type="button" aria-current={current ? 'true' : undefined} onClick={onPick} className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-3 text-left text-[13px] text-ink-2 aria-[current=true]:bg-soft aria-[current=true]:text-ink">
+      <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span>
+      {changed && <span role="img" aria-label="Changed" className="h-2 w-2 flex-none rounded-full bg-warning" />}
+    </button>
+  );
+}
+
 // Routes grouped by tag; the selected one is highlighted.
-function Routes({ ops, sel, onPick }: { ops: Operation[]; sel: number; onPick: (i: number) => void }) {
+function Routes({ ops, doc, sel, onPick }: { ops: Operation[]; doc: Json; sel: number; onPick: (i: number) => void }) {
   const tagOf = (o: Operation) => (o.op.tags?.[0] as string | undefined) ?? 'Other';
   return (
     <nav aria-label="Routes" className="flex flex-col gap-1">
       {[...new Set(ops.map(tagOf))].map((t) => (
         <div key={t} className="flex flex-col gap-1">
           <span className={`px-3 pt-2 ${label}`}>{t}</span>
-          {ops.map((o, i) => tagOf(o) === t && (
-            <button key={o.ptr} type="button" aria-current={i === sel ? 'true' : undefined} onClick={() => onPick(i)} className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-3 text-left text-[13px] text-ink-2 aria-[current=true]:bg-soft aria-[current=true]:text-ink">
-              <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span>
-            </button>
-          ))}
+          {ops.map((o, i) => tagOf(o) === t && <Route key={o.ptr} o={o} doc={doc} current={i === sel} onPick={() => onPick(i)} />)}
         </div>
       ))}
     </nav>
@@ -181,6 +192,7 @@ export function Header({ spec, count, full, file, verdict, info = [] }: { spec: 
       <div className="flex min-w-0 flex-1 basis-48 flex-col">
         <h2 className="m-0 flex items-center gap-2 text-xl [overflow-wrap:anywhere]">
           <span className="min-w-0">{spec.title}</span>
+          <MarkTag m={useMark('#title')} />
           {verdict?.passed && <StatusIcon verdict={verdict} />}
           <Info choices={info} label={info.length === 1 ? undefined : `Why: ${info.length} decisions about the whole contract`} />
         </h2>
@@ -193,9 +205,10 @@ export function Header({ spec, count, full, file, verdict, info = [] }: { spec: 
 }
 
 export function Purpose({ spec }: { spec: ContractSpec }) {
+  const m = useMark('#purpose');
   return (
-    <section aria-label="What it does" className={`${card} flex flex-col gap-1.5 px-4 py-3.5`}>
-      <h3 className={`m-0 font-sans ${label}`}>What it does</h3>
+    <section aria-label="What it does" className={`${card} flex flex-col gap-1.5 px-4 py-3.5 ${m ? MARKED[m] : ''}`}>
+      <h3 className={`m-0 flex items-center gap-2 font-sans ${label}`}>What it does<MarkTag m={m} /></h3>
       <div className="text-[14.5px] leading-relaxed"><Markdown text={spec.intent.purpose} /></div>
     </section>
   );
@@ -230,7 +243,7 @@ export function RestView({ spec, full = false, verdict }: ViewProps) {
       <Compatibility spec={spec} />
       <Purpose spec={spec} />
       <div className={`grid grid-cols-1 items-start gap-4 ${many ? '@[900px]:grid-cols-[280px_minmax(0,1fr)]' : ''}`}>
-        {many && <Routes ops={ops} sel={sel} onPick={setSel} />}
+        {many && <Routes ops={ops} doc={doc} sel={sel} onPick={setSel} />}
         {o && <Detail o={o} spec={spec} ctx={ctx} />}
       </div>
     </div>

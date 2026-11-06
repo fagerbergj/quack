@@ -90,14 +90,16 @@ export const approvalOf = (a: IndexApproval): Approval => ({ id: a.id, tool: a.t
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 
-export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string) {
+/** False when the session answers 409: the approval is unknown or already decided, so the caller's view of it is stale. */
+export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string): Promise<boolean> {
   const res = await fetch(`${base(key)}/approvals/${encodeURIComponent(id)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
   });
-  // 409 means it is unknown or already decided: the caller's card is stale, not failed.
-  if (res.status !== 409) await json(res);
+  if (res.status === 409) return false;
+  await json(res);
+  return true;
 }
 
 // Starts the contracts agent on a description as the define_contract action does; the distributor creates the session on first use.

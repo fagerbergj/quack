@@ -8,7 +8,7 @@ import type { ContractSpec, Model } from './spec.ts';
 const CodeContract = lazy(() => import('./CodeContract.tsx').then((m) => ({ default: m.CodeContract })));
 
 // Undefined while the parser loads, null when it fails; both show the source as it stands.
-function useModel(src: string) {
+export function useModel(src: string) {
   const [model, setModel] = useState<Model | null>();
   useEffect(() => {
     if (!src) return;

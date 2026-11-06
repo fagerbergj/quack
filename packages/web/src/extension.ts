@@ -1,5 +1,5 @@
 import { createContext, type ComponentType, type ReactNode } from 'react';
-import type { ArtifactLink, SealedArtifact } from './api.ts';
+import type { Approval, ArtifactLink, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
 /** The session an artifact is shown from, for links that open it on its own page. */
@@ -24,6 +24,9 @@ export type SessionKind = {
   /** What an idle session delivered, with its outside link; undefined leaves the line to `words`. A running session always reads `words.run`. */
   delivered?: (r: Row) => Delivered | undefined;
 };
+
+/** What a studio pane is given: the session's live artifacts and pending approvals, whether a run works, and `decided` to drop an approval it settled. */
+export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void };
 
 /** What an extension's web module hands the shell; every field is optional. */
 export type Extension = {
@@ -50,6 +53,9 @@ export type Extension = {
   provider?: ComponentType<{ rows: Row[] | undefined; children: ReactNode }>;
   /** A line above the session list when the extension has something to say about it (its lookups failed). */
   notice?: ComponentType;
+  /** A live pane beside the transcript of the sessions it matches (a phone tabs between them, named `label`). The approvals it `owns` are decided
+   * there, not as transcript cards, and a message sent while one waits is steered into the run and declines it, so the agent reads it at once. */
+  studio?: { match: (key: string) => boolean; label: string; owns: (a: Approval) => boolean; Pane: ComponentType<StudioProps> };
   /** A section at the top of a session's context rail; it draws nothing for a session that is not its own. */
   rail?: ComponentType<{ sessionKey: string; title: string; opening?: string; meta: readonly Record<string, unknown>[] }>;
   /** An outside page for a session, shown as a header link. */

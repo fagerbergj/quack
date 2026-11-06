@@ -17,14 +17,14 @@ node tools/qa/run.ts --out /tmp/qa-out
 ## The stack
 
 ```
-node tools/qa/stack.ts up --web <dist dir|current> --seed <dir|demo|none> [--apps schedules,slots] [--model local|none|fake]
+node tools/qa/stack.ts up --web <dist dir|current> --seed <dir|demo|contracts|none> [--apps schedules,slots] [--model local|none|fake]
 node tools/qa/stack.ts down
 ```
 
 `up` prints the URL and stays in the foreground; Ctrl-C or `down` stops it. Everything runs on free ports with a temp data dir, and teardown kills the distributor's whole process group, so a crash leaves no session processes behind (a `kill -9` of `up` itself is the one case that can).
 
 - `--web`: a built `packages/web/dist`, or `current` to build this tree first.
-- `--seed`: a directory of session data dirs to copy in (`session.sqlite` and its wal/shm, `session-key`, `agent`, `agent-def`, `meta.json`, `title`, `created`, `touched`; the workspace is skipped), `demo` to create one session (`qa-review`) through a canned model, or `none`.
+- `--seed`: a directory of session data dirs to copy in (`session.sqlite` and its wal/shm, `session-key`, `agent`, `agent-def`, `meta.json`, `title`, `created`, `touched`; the workspace is skipped), `demo` to create one session (`qa-review`) through a canned model, `contracts` to write two Contract Studio sessions (`contracts:qa-schedule`, REST, and `contracts:qa-sdk`, TypeScript), each with version 1 approved and version 2 passed and waiting for approval, or `none`.
 - `--apps`: mounts the named extensions in the distributor under `/apps/<name>` (they are listed under `extensions` in the deployment file). Schedules is seeded with two sample schedules.
 - `--model`: `none` (default) points the deployment's providers at a refused port, but keeps the pinned model names so copied sessions load. `fake` is a canned OpenAI-compatible endpoint, implied by `--seed demo`. `local` uses `QA_MODEL_URL` (default `http://127.0.0.1:11436/v1`, llm-swap with `qwen3.8-27b`) for flows that need a real model; run such a scenario by hand against `up --model local` and click the suggested option on question cards.
 
@@ -35,6 +35,7 @@ node tools/qa/stack.ts down
 | `home-sessions` | Home, the Sessions list and the session view of a seeded review-style session, at 1280 and 400 px, light and dark |
 | `schedules` | The Schedules page against the schedules app with two sample schedules |
 | `contracts` | The Contracts empty state, and that New contract opens its dialog (nothing is submitted) |
+| `contract-studio` | A seeded contract beside its chat (tabs on a phone) with the changes since version 1 highlighted, the class diagram re-centring on a type, and approving the waiting version |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed <dir>` with a copied session to check a real artifact card.
 
