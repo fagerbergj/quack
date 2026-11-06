@@ -12,21 +12,19 @@ export type Answer = { met: boolean | null; resolver: string; note?: string };
 // Clef's tokenizer counted 9.6-10.6k tokens on code units the 4-byte rule put under 8,192 (spike #2190); code packs ~3 bytes a token.
 const BYTES_PER_TOKEN = 3;
 
-async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | undefined> {
+// null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
+async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | null | undefined> {
   const questions: Record<string, ClassifierQuestion> = Object.fromEntries(
     checks.map((c) => [c.id, { type: 'bool', instructions: c.question!, criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }]),
   );
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
-  if (JSON.stringify({ state: unit.state, questions }).length / BYTES_PER_TOKEN > ref.maxInputTokens) return undefined;
+  if (JSON.stringify({ state: unit.state, questions }).length / BYTES_PER_TOKEN > ref.maxInputTokens) return null;
   const model = api.models.getAllModels(ref.provider).find((m) => m.id === ref.modelId && m.type === 'classifier') as ClassifierModel<never> | undefined;
-  if (!model) return undefined;
-  try {
-    const result = await api.models.classify(model, { state: unit.state, questions }, { signal: ctx.abortSignal });
-    if (result.stopReason !== 'stop') return undefined;
-    return Object.fromEntries(Object.entries(result.answers).flatMap(([id, a]) => (a.type === 'bool' ? [[id, a.probability]] : [])));
-  } catch {
-    return undefined;
-  }
+  if (!model) return null;
+  const result = await api.models.classify(model, { state: unit.state, questions }, { signal: ctx.abortSignal }).catch(() => undefined);
+  ctx.abortSignal?.throwIfAborted();
+  if (result?.stopReason !== 'stop') return undefined;
+  return Object.fromEntries(Object.entries(result.answers).flatMap(([id, a]) => (a.type === 'bool' ? [[id, a.probability]] : [])));
 }
 
 /** Where uncertain checks go: a named judge model, or the agent's own model when none is set. */
@@ -44,7 +42,8 @@ async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined,
 export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | undefined, judgeModel: ModelRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, Answer>> {
   const key = `${memo}:${unit.id}:classifier`;
   const stored = await api.memo<Record<string, number> | null>(key, ctx);
-  const probabilities = stored !== undefined ? stored : await api.memo(key, (ref ? await classify(api, ref, unit, checks, ctx) : undefined) ?? null, ctx);
+  const fresh = stored !== undefined ? stored : ref ? await classify(api, ref, unit, checks, ctx) : null;
+  const probabilities = stored !== undefined || fresh === undefined ? fresh : await api.memo(key, fresh, ctx);
   const act = ref?.act ?? 0.8;
   const answers: Record<string, Answer> = {};
   for (const check of checks) {

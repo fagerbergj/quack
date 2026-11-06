@@ -22,6 +22,6 @@ export const manifest: ExtensionManifest = {
   env: (config, contributed) => contributed[bound(config)]?.env ?? [],
   session: (config, contributed) => {
     const name = bound(config);
-    return workflowSessionExtensions(config, name in contributed ? { [name]: contributed[name].build(config) as Workflow } : undefined);
+    return workflowSessionExtensions(config, name in contributed ? { [name]: contributed[name].build(config) as Workflow } : {});
   },
 };

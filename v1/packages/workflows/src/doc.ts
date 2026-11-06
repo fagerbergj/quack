@@ -1,5 +1,5 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { defineDoc, type DocumentWatch } from '@earendil-works/pi-durable';
+import { defineDoc } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
 export type StepRecord = {
@@ -28,19 +28,3 @@ export const WorkflowDoc = defineDoc<WorkflowState>({
   checkpointWhen: () => false,
 });
 
-const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
-
-/** Resolves once `pick` finds a value in the watched document, or rejects when the run is aborted. */
-export async function watchUntil<V>(watch: DocumentWatch<WorkflowState>, pick: (doc: Readonly<WorkflowState>) => V | undefined | null, signal?: AbortSignal): Promise<V> {
-  try {
-    return await new Promise<V>((resolve, reject) => {
-      const found = () => (watch.value ? pick(watch.value) : undefined) ?? undefined;
-      const now = found();
-      if (now !== undefined) return resolve(plain(now));
-      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-      watch.start(async () => { const v = found(); if (v !== undefined) resolve(plain(v)); });
-    });
-  } finally {
-    await watch.stop();
-  }
-}
