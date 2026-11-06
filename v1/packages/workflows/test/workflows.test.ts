@@ -237,13 +237,13 @@ test('a decision step waits for a person across a restart and resumes on the ans
   await running;
 
   const b = await open(dir, build());
-  assert.equal(await answerQuestion(b.root, ask.id, 'Maybe', 'jf', ctx), 'bad-choice', 'only a listed option answers');
-  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, 'jf', ctx), 'bad-choice', 'a decision step takes labels only');
-  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, 'jf', ctx), 'bad-choice', 'and no note');
-  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, 'jf', ctx), 'bad-choice', 'a decision step takes labels only');
-  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, 'jf', ctx), 'bad-choice', 'and no note');
-  assert.equal(await answerQuestion(b.root, ask.id, 'Pollard', 'jf', ctx), 'ok');
-  assert.equal(await answerQuestion(b.root, ask.id, 'Stevenson', 'jf', ctx), 'answered', 'the first answer stands');
+  assert.equal(await answerQuestion(b.root, ask.id, 'Maybe', { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'only a listed option answers');
+  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'a decision step takes labels only');
+  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'and no note');
+  assert.equal(await answerQuestion(b.root, ask.id, { text: 'Maybe' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'a decision step takes labels only');
+  assert.equal(await answerQuestion(b.root, ask.id, { choice: 'Pollard', note: 'x' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'and no note');
+  assert.equal(await answerQuestion(b.root, ask.id, 'Pollard', { kind: 'person', name: 'jf' }, ctx), 'ok');
+  assert.equal(await answerQuestion(b.root, ask.id, 'Stevenson', { kind: 'person', name: 'jf' }, ctx), 'answered', 'the first answer stands');
   const outcome = await runWorkflow(b.harness, b.root, build(), null);
   assert.equal(outcome.status === 'completed' && (outcome.result as { announce: string }).announce, 'start Pollard');
   await b.close();
@@ -275,7 +275,7 @@ test('a gated step waits for approval and runs its tool once with earlier result
   });
   await watch.stop();
   assert.deepEqual(posted, []);
-  assert.equal(await resolveApproval(s.root, id, { decision: 'approve', by: 'jf' }, ctx), true);
+  assert.equal(await resolveApproval(s.root, id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, ctx), true);
 
   const outcome = await running;
   assert.equal(outcome.status, 'completed');
@@ -431,11 +431,11 @@ test('a free-text decision takes a trimmed, bounded text or a note on a label, a
   const s = await open(await tmp(), build());
   const running = runWorkflow(s.harness, s.root, build(), null);
   const [ask] = await asked(s);
-  assert.equal(await answerQuestion(s.root, ask.id, { text: '   ' }, 'jf', ctx), 'bad-choice', 'empty text');
-  assert.equal(await answerQuestion(s.root, ask.id, { text: 'x'.repeat(2001) }, 'jf', ctx), 'bad-choice', 'too long');
-  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Pollard', text: 'both' }, 'jf', ctx), 'bad-choice', 'choice and text together');
-  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Maybe', note: 'x' }, 'jf', ctx), 'bad-choice', 'a note does not excuse an unlisted choice');
-  assert.equal(await answerQuestion(s.root, ask.id, { text: '  Neither, rest both  ' }, 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, ask.id, { text: '   ' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'empty text');
+  assert.equal(await answerQuestion(s.root, ask.id, { text: 'x'.repeat(2001) }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'too long');
+  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Pollard', text: 'both' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'choice and text together');
+  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Maybe', note: 'x' }, { kind: 'person', name: 'jf' }, ctx), 'bad-choice', 'a note does not excuse an unlisted choice');
+  assert.equal(await answerQuestion(s.root, ask.id, { text: '  Neither, rest both  ' }, { kind: 'person', name: 'jf' }, ctx), 'ok');
   const stored = (await s.harness.snapshot(Questions, s.root.id, ctx))!.items[ask.id]!.answer;
   assert.deepEqual([stored?.text, stored?.choice], ['Neither, rest both', 'Neither, rest both']);
   await running;
@@ -450,7 +450,7 @@ test('a note rides with a listed choice and is trimmed', async () => {
   const s = await open(await tmp(), build());
   const running = runWorkflow(s.harness, s.root, build(), null);
   const [ask] = await asked(s);
-  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Pollard', note: '  indoor game  ' }, 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, ask.id, { choice: 'Pollard', note: '  indoor game  ' }, { kind: 'person', name: 'jf' }, ctx), 'ok');
   const stored = (await s.harness.snapshot(Questions, s.root.id, ctx))!.items[ask.id]!.answer;
   assert.deepEqual([stored?.choice, stored?.note, stored?.text], ['Pollard', 'indoor game', undefined]);
   await running;

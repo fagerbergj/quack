@@ -42,3 +42,6 @@ export function declaredApps(definition: { extensions?: Record<string, any> } | 
   const names = list.filter((m) => m.app && (m.deployment || m.name in selected || workflow.startsWith(`${m.name}.`) || (selected.home && m.actions?.length))).map((m) => m.name);
   return new Set(names);
 }
+
+/** Whether a session's agent holds the grant to read and start other sessions: the home extension's tools and actions do, so agents selecting it get it and no other does. */
+export const crossSession = (definition: { extensions?: Record<string, unknown> } | null): boolean => Object.hasOwn(definition?.extensions ?? {}, 'home');

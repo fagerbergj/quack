@@ -12,7 +12,7 @@ import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachLink, attachVerdict, decide, gated, pendingApprovals, person, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
-import { createSessionServer, openSession } from '@quack/session';
+import { createSessionServer, openSession, PRINCIPAL_HEADER, principalHeader } from '@quack/session';
 import { defineWorkflow, outcomeOf, WorkflowDoc, workflowSessionExtensions } from '@quack/workflows';
 import pg from 'pg';
 import { DatabaseSync } from 'node:sqlite';
@@ -131,7 +131,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   const [row] = (await get('/index/sessions')).sessions;
   assert.deepEqual([row.key, row.agent, row.version, row.status], ['chat:1', 'reviewer', 4, 'running']);
 
-  assert.equal(await resolveApproval(session.root, approval.id, { decision: 'approve', by: 'jason' }, ctx), true);
+  assert.equal(await resolveApproval(session.root, approval.id, { decision: 'approve', by: { kind: 'person', name: 'jason' } }, ctx), true);
   const idle = await until(async () => (await publisher.flush(), (await get('/index/sessions')).sessions[0].status === 'idle' ? true : undefined));
   assert.ok(idle);
   assert.deepEqual((await get('/index/approvals?state=pending')).approvals, []);
@@ -307,7 +307,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decid
   const m = faux.getModel();
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'demo', tools: [escalate] })] } });
   const publisher = await startPublisher(session, { url: indexBase, token: TOKEN, meta: { key: 'chat:7', agent: 'flex', version: 1 }, pollMs: 20 });
-  const server = createSessionServer(session).listen(0);
+  const server = createSessionServer(session, { token: 'launch' }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const listed = async (state: string) => ((await (await fetch(`${indexBase}/index/questions?state=${state}`)).json()) as { questions: Array<Record<string, unknown>> }).questions;
@@ -316,10 +316,10 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decid
   const done = session.submit('Who starts?', 'q1', true);
   const [open] = await until(async () => { const d = await listed('pending'); return d.length ? d : undefined; });
   assert.deepEqual([open.session, open.question, open.evidence], ['chat:7', 'Who starts at flex?', 'Both are healthy']);
-  const res = await fetch(`${base}/questions/${encodeURIComponent(String(open.id))}`, { method: 'POST', body: JSON.stringify({ choice: 'Stevenson', by: 'evil' }), headers: { 'x-authentik-username': 'jason' } });
+  const res = await fetch(`${base}/questions/${encodeURIComponent(String(open.id))}`, { method: 'POST', body: JSON.stringify({ choice: 'Stevenson', by: 'evil' }), headers: { authorization: 'Bearer launch', [PRINCIPAL_HEADER]: principalHeader({ kind: 'person', name: 'jason' }), 'x-authentik-username': 'evil' } });
   assert.equal(res.status, 200);
   const [answered] = await until(async () => { const d = await listed('answered'); return d.length ? d : undefined; });
-  assert.equal(answered.by, 'jason', 'the header names the decider, not the body');
+  assert.equal(answered.by, 'jason', 'the distributor names the decider, not the body or an identity header');
   assert.deepEqual(await listed('pending'), []);
   await done;
   assert.deepEqual(started, ['Stevenson']);

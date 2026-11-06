@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
+import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
 
 const cleanups: Array<() => void> = [];
 after(() => cleanups.forEach((fn) => fn()));
@@ -24,13 +25,13 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
   const real = processDriver({ command: [], dataDir });
   const driver: HostDriver = { ...real, running: () => (opts.busy ? [opts.busy] : []), ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, touch: async () => {}, setWake: async () => {} };
   const forgotten: string[] = [];
-  const server = createDistributor(driver, { retire: { waiting: async (k) => (opts.waiting ?? []).includes(k), forget: async (k) => void forgotten.push(k) } }).listen(0);
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, retire: { waiting: async (k) => (opts.waiting ?? []).includes(k), forget: async (k) => void forgotten.push(k) } }).listen(0);
   await new Promise((r) => server.once('listening', r));
   cleanups.push(() => server.close());
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
   const call = async (method: string, path: string, body: unknown = {}, headers: Record<string, string> = { 'content-type': 'application/json' }) => {
     // The page reaches these routes through the proxy, which sets the caller's identity.
-    const res = await fetch(url(path), { method, headers: { 'x-authentik-username': 'jason', ...headers }, body: JSON.stringify(body) });
+    const res = await fetch(url(path), { method, headers: { ...PERSON, ...headers }, body: JSON.stringify(body) });
     return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as { error?: string; detail?: string; title?: string; status?: number } };
   };
   const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; archived?: boolean }> }).sessions;

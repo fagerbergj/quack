@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,10 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   if (missing.length) throw new Error(`no eval service for pinned ${missing.join(', ')}`);
   const doubles = await Promise.all(Object.entries(pins).map(([k, pin]) => services[k](pin)));
   const dir = await mkdtemp(join(tmpdir(), 'quack-eval-'));
-  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: `eval:${item.id}:${randomUUID().slice(0, 8)}`, PORT: '0' };
+  // The runtime's server answers only its launch token, which it reads from this file and removes.
+  const token = randomUUID();
+  await writeFile(join(dir, '.launch-token'), token, { mode: 0o600 });
+  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, QUACK_SESSION_TOKEN_FILE: join(dir, '.launch-token'), QUACK_SESSION_KEY: `eval:${item.id}:${randomUUID().slice(0, 8)}`, PORT: '0' };
   const child = spawn(process.execPath, [RUNTIME], { env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   let stderr = '';
   child.stderr?.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
@@ -41,7 +44,7 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
     // Only the first input replays: later turns were the operator's answers to what the recorded run said.
     const deadline = started + timeoutMs;
     const port = await childPort(child, 'runtime', deadline - Date.now());
-    await untilSettled(`http://127.0.0.1:${port}`, { input: inputs[0] ?? '', requestId: 'eval-1' }, deadline, child);
+    await untilSettled({ url: `http://127.0.0.1:${port}`, token }, { input: inputs[0] ?? '', requestId: 'eval-1' }, deadline, child);
   } catch (err) {
     error = `${(err as Error).message}${stderr ? `: ${crashLine(stderr)}` : ''}`;
   } finally {

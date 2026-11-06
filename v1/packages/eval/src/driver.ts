@@ -5,16 +5,18 @@ import { defineExtension, type ToolRegistration } from '@earendil-works/pi-durab
 import { openSession } from '@quack/session';
 
 export type Invocation = { input: string; requestId: string };
+/** A runtime's server and the launch token it answers. */
+export type Runtime = { url: string; token?: string };
 export type Settled = { status: 'done' | 'unanswered'; answer?: string; reason?: string; detail?: string };
 
 const POLL_MS = 5_000;
 const KILL_AFTER_MS = 10_000;
 
 // A dropped connection is retried (undefined); any non-2xx answer is the harness failing, never the run's outcome.
-async function invokeOnce(url: string, invocation: Invocation, signal: AbortSignal): Promise<{ status: string } | undefined> {
+async function invokeOnce({ url, token }: Runtime, invocation: Invocation, signal: AbortSignal): Promise<{ status: string } | undefined> {
   let res: Response;
   try {
-    res = await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify(invocation), signal });
+    res = await fetch(`${url}/invocations`, { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {}, body: JSON.stringify(invocation), signal });
   } catch (err) {
     if (signal.aborted) throw err;
     return undefined;
@@ -27,7 +29,7 @@ async function invokeOnce(url: string, invocation: Invocation, signal: AbortSign
 
 // Polls one invocation by its request id until the run settles: dedupe answers a repeat with the run's status, so no
 // request outlives fetch's header timeout. A runtime exit or the deadline ends the wait at once.
-export async function untilSettled(url: string, invocation: Invocation, deadline: number, child?: ChildProcess, pollMs = POLL_MS): Promise<Settled> {
+export async function untilSettled(runtime: Runtime, invocation: Invocation, deadline: number, child?: ChildProcess, pollMs = POLL_MS): Promise<Settled> {
   const stop = new AbortController();
   const exited = () => stop.abort(new Error(`runtime exited with ${child?.exitCode ?? child?.signalCode}`));
   child?.once('exit', exited);
@@ -35,7 +37,7 @@ export async function untilSettled(url: string, invocation: Invocation, deadline
   const timer = setTimeout(() => stop.abort(new Error('run timed out')), Math.max(0, deadline - Date.now()));
   try {
     for (;;) {
-      const r = await invokeOnce(url, invocation, stop.signal);
+      const r = await invokeOnce(runtime, invocation, stop.signal);
       if (r?.status === 'done' || r?.status === 'unanswered') return r as Settled;
       await sleep(pollMs, undefined, { signal: stop.signal });
     }

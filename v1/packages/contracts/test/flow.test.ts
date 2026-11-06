@@ -75,11 +75,11 @@ async function defineV1(s: Open) {
   assert.deepEqual([q1.header, q1.title, q1.detail, q1.suggested, q1.optionDescriptions], ['Versioning', 'Keep the route or add `/v1`?', 'The Sleeper page calls the route today.', 0, { 'Keep the existing unversioned route': 'No client change.', 'Add /v1 (AIP-185)': 'Room for a breaking change later, but the Sleeper page must move.' }]);
   assert.match(q1.evidence!, /Suggested: Keep the existing unversioned route[\s\S]*- Add \/v1 \(AIP-185\): Room for a breaking change/);
   assert.equal((await versions(s)).length, 0, 'nothing is sealed while a question is open');
-  assert.equal(await answerQuestion(s.root, q1.id, { choice: q1.options[0], note: 'Keep it boring.' }, 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, q1.id, { choice: q1.options[0], note: 'Keep it boring.' }, { kind: 'person', name: 'jf' }, ctx), 'ok');
   const q2 = (await nextQuestion(s, [q1.id]))[0];
   assert.equal(q2.question, 'How are run times written?');
-  assert.equal(await answerQuestion(s.root, q2.id, { text: 'ISO 8601, always UTC' }, 'jf', ctx), 'ok');
-  assert.equal(await answerQuestion(s.root, q2.id, 'You decide', 'jf', ctx), 'answered', 'the first answer stands');
+  assert.equal(await answerQuestion(s.root, q2.id, { text: 'ISO 8601, always UTC' }, { kind: 'person', name: 'jf' }, ctx), 'ok');
+  assert.equal(await answerQuestion(s.root, q2.id, 'You decide', { kind: 'person', name: 'jf' }, ctx), 'answered', 'the first answer stands');
   return { run, q1, q2 };
 }
 
@@ -183,7 +183,7 @@ test('propose_contract asks to approve the version, with its findings, and appro
   assert.equal(args.version, 1);
   assert.ok(Array.isArray(args.findings) && Array.isArray(args.breaks));
   assert.equal((await kindOf(s, 'contract.approved')).length, 0, 'nothing is approved before the person says so');
-  assert.equal(await resolveApproval(s.root, item.id, { decision: 'approve', by: 'jf' }, ctx), true);
+  assert.equal(await resolveApproval(s.root, item.id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, ctx), true);
   assert.equal((await run).status, 'done');
   const [approved] = await kindOf(s, 'contract.approved');
   assert.equal(approved.outcome, 'v1');
@@ -196,7 +196,7 @@ test('a rejected proposal records the change request and feeds the reason back t
   const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Revising.'))]);
   const { run } = await defineV1(s);
   const item = await pendingProposal(s);
-  await resolveApproval(s.root, item.id, { decision: 'reject', reason: 'Use cursor pagination', by: 'jf' }, ctx);
+  await resolveApproval(s.root, item.id, { decision: 'reject', reason: 'Use cursor pagination', by: { kind: 'person', name: 'jf' } }, ctx);
   await run;
   assert.match(seen, /Rejected by jf: Use cursor pagination/);
   assert.match(seen, /write version 2/);
@@ -211,7 +211,7 @@ test('a decision whose record was lost in a crash is written once when propose_c
   const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Done.'))]);
   const { run } = await defineV1(s);
   const first = await pendingProposal(s);
-  await resolveApproval(s.root, first.id, { decision: 'approve', by: 'jf' }, ctx);
+  await resolveApproval(s.root, first.id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, ctx);
   await run;
   // The crash window: the verdict is stored, the record is not.
   await s.root.commit(async (tx) => { (await tx.doc(Artifacts, s.root.id)).kinds['contract.approved'].versions.length = 0; }, ctx);
@@ -240,7 +240,7 @@ test('a change request after a passing version gets a fresh check budget in the 
   let seen = '';
   const s = await open([...v1Script.slice(0, -1), call('propose_contract', {}), write(retitled), call('submit_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Revised.'))], 0);
   const { run } = await defineV1(s);
-  await resolveApproval(s.root, (await pendingProposal(s)).id, { decision: 'reject', reason: 'Retitle it', by: 'jf' }, ctx);
+  await resolveApproval(s.root, (await pendingProposal(s)).id, { decision: 'reject', reason: 'Retitle it', by: { kind: 'person', name: 'jf' } }, ctx);
   await run;
   assert.doesNotMatch(seen, /the most it gets/);
   const [, v2] = await versions(s);

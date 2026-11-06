@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment } from '@quack/session';
+import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, takeLaunchToken } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -16,6 +16,8 @@ function readJson(path: string) {
     throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
+// Taken first, before a resumed run can start a shell.
+const token = await takeLaunchToken();
 const config = parseDeployment(readJson(env('QUACK_CONFIG')));
 const definition = readJson(env('QUACK_AGENT'));
 // Only the providers this agent names are asked for their models, so one that is down cannot slow an agent that never uses it.
@@ -29,8 +31,9 @@ const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
   : undefined;
 // Everything above read what it needs; dropping it keeps child processes (tool shells) from inheriting service secrets.
 for (const name of [...declaredEnv(extensions, catalog), ...deploymentEnv(deploymentExtensions), 'QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN']) delete process.env[name];
-const server = createSessionServer(session);
-listenReporting(server, Number(env('PORT', '8080')));
+const server = createSessionServer(session, { token });
+// Loopback unless the host says otherwise: a container listens on its own interface, where only its distributor can reach it.
+listenReporting(server, Number(env('PORT', '8080')), env('QUACK_SESSION_HOST', '127.0.0.1'));
 
 // A caller cut off mid-invocation re-sends the same requestId to rejoin the run.
 exitOnStop(server, async () => {

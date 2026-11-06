@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { answerQuestion, type AnswerInput, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, serviceHttp } from '@quack/sdk';
+import { answerQuestion, type AnswerInput, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
@@ -9,8 +9,19 @@ const { send, problem, json: readJson } = serviceHttp();
 // Routes say { error }; the wire speaks RFC 9457.
 const reply = (res: ServerResponse, status: number, body: unknown) => (status >= 400 ? problem(res, status, (body as { error: string }).error) : send(res, status, body));
 
-// The decider comes from the proxy's identity header, never the body; the tailnet port has no header and the tailnet is its auth boundary.
-const decider = (req: IncomingMessage): string => String(req.headers['x-authentik-username'] ?? '') || 'tailnet';
+/** Names who decided on a request from the distributor; the session trusts it only beside the launch token. */
+export const PRINCIPAL_HEADER = 'x-quack-principal';
+export const principalHeader = (p: Principal) => encodeURIComponent(JSON.stringify(p));
+
+function parsePrincipal(raw: string | string[] | undefined): Principal | undefined {
+  try {
+    const p = JSON.parse(decodeURIComponent(String(raw))) as Record<string, unknown>;
+    if (p?.kind === 'tailnet') return { kind: 'tailnet' };
+    return p?.kind === 'person' && typeof p.name === 'string' && p.name ? { kind: 'person', name: p.name } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?: string } | string {
   if (typeof body !== 'object' || body === null) return 'body must be a JSON object';
@@ -36,11 +47,15 @@ function parseInvocation(body: unknown): Invocation | string {
   return { input, requestId, wait, whenBusy, title, meta };
 }
 
-type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) => Promise<[number, unknown]>;
+// `who` is the principal the distributor named, or undefined when it named none.
+type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray, who: Principal | undefined) => Promise<[number, unknown]>;
+
+const NO_PRINCIPAL: [number, unknown] = [400, { error: 'the distributor names who decided' }];
 
 const ANSWER_STATUS = { ok: 200, 'not-asking': 404, answered: 409, 'bad-choice': 400 } as const;
 
-async function answer(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
+async function answer(session: Session, req: IncomingMessage, match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {
+  if (!who) return NO_PRINCIPAL;
   const body = (await readJson(req)) as Record<string, unknown> | null ?? {};
   const { choice, note, text } = body;
   if ([choice, note, text].some((v) => v !== undefined && typeof v !== 'string') || (choice === undefined && text === undefined)) return [400, { error: 'choice or text must be a string' }];
@@ -50,7 +65,7 @@ async function answer(session: Session, req: IncomingMessage, match: RegExpExecA
   } catch {
     return [400, { error: 'malformed question id' }];
   }
-  const result = await answerQuestion(session.root, id, { choice, note, text } as AnswerInput, decider(req), ctx);
+  const result = await answerQuestion(session.root, id, { choice, note, text } as AnswerInput, who, ctx);
   return [ANSWER_STATUS[result], result === 'ok' ? { answered: true } : { error: result }];
 }
 
@@ -64,7 +79,8 @@ async function invoke(session: Session, req: IncomingMessage): Promise<[number, 
   return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait, inv.whenBusy)];
 }
 
-async function decide(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
+async function decide(session: Session, req: IncomingMessage, match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {
+  if (!who) return NO_PRINCIPAL;
   const verdict = parseVerdict(await readJson(req));
   if (typeof verdict === 'string') return [400, { error: verdict }];
   let id: string;
@@ -73,7 +89,7 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   } catch {
     return [400, { error: 'malformed approval id' }];
   }
-  const ok = await resolveApproval(session.root, id, { ...verdict, by: decider(req) }, ctx);
+  const ok = await resolveApproval(session.root, id, { ...verdict, by: who }, ctx);
   return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
 }
 
@@ -122,14 +138,19 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/failures$/, async (s) => [200, { failures: failedRows(await s.harness.snapshot(Failures, s.root.id, ctx)) }]],
 ];
 
-export function createSessionServer(session: Session) {
+/** With `token` (every launch has one), each request and socket must carry it as a bearer, so only the distributor reaches the session and the principal it names decides. */
+// Without one (tests), anyone may call and every decision is the tailnet's.
+export function createSessionServer(session: Session, opts: { token?: string } = {}) {
+  const admitted = (req: IncomingMessage) => opts.token === undefined || safeEqual(req.headers.authorization ?? '', `Bearer ${opts.token}`);
+  const who = (req: IncomingMessage): Principal | undefined => (opts.token === undefined ? { kind: 'tailnet' } : parsePrincipal(req.headers[PRINCIPAL_HEADER]));
   const server = createServer(async (req, res) => {
     try {
+      if (!admitted(req)) return problem(res, 401, 'unauthorized');
       // Routes match the path; a query only matters to a route that reads it.
       const path = new URL(req.url ?? '', 'http://x').pathname;
       for (const [method, pattern, route] of ROUTES) {
         const match = req.method === method ? pattern.exec(path) : null;
-        if (match) return reply(res, ...(await route(session, req, match)));
+        if (match) return reply(res, ...(await route(session, req, match, who(req))));
       }
       problem(res, 404, 'not found');
     } catch (err) {
@@ -141,6 +162,7 @@ export function createSessionServer(session: Session) {
   const live = new Set<Duplex>();
   const upgrade = liveUpgrade(session);
   server.on('upgrade', (req, socket, head) => {
+    if (!admitted(req)) return socket.destroy();
     live.add(socket);
     socket.once('close', () => live.delete(socket));
     upgrade(req, socket, head);

@@ -1,10 +1,12 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
+import { principalName, type Principal } from './principal.ts';
 import { whileWaiting } from './signals.ts';
 import { defineDoc, type Conversation, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
-export type Verdict = { decision: 'approve' | 'reject'; reason: string | null; by: string; at: number };
+// `by` is a bare string in verdicts recorded before principals were typed.
+export type Verdict = { decision: 'approve' | 'reject'; reason: string | null; by: Principal | string; at: number };
 
 export type Approval = {
   tool: string;
@@ -66,7 +68,7 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
       const watch = await api.watchDoc(Approvals, api.conversationId, ctx);
       if (!watch) return errorResult('approval state is unavailable');
       const verdict = item.verdict ?? (await whileWaiting(() => waitForVerdict(watch as never, id, ctx)));
-      if (verdict.decision === 'reject') return errorResult(`Rejected by ${verdict.by}${verdict.reason ? `: ${verdict.reason}` : ''}`);
+      if (verdict.decision === 'reject') return errorResult(`Rejected by ${principalName(verdict.by)}${verdict.reason ? `: ${verdict.reason}` : ''}`);
 
       await api.commit(async (tx) => { (await tx.doc(Approvals, api.conversationId)).items[id].executing = true; }, ctx);
       const result = await tool.execute(args, api, ctx);
@@ -82,7 +84,7 @@ export async function pendingApprovals(conversation: Conversation, ctx: Context)
 }
 
 // Records a verdict; returns false when the approval is unknown or already decided.
-export async function resolveApproval(conversation: Conversation, id: string, verdict: { decision: Verdict['decision']; reason?: string; by: string }, ctx: Context): Promise<boolean> {
+export async function resolveApproval(conversation: Conversation, id: string, verdict: { decision: Verdict['decision']; reason?: string; by: Principal }, ctx: Context): Promise<boolean> {
   return conversation.commit(async (tx) => {
     const doc = await tx.doc(Approvals, conversation.id);
     const item = doc.items[id];
