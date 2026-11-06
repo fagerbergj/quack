@@ -13,11 +13,9 @@ export type View = {
   spend?: Spend;
   /** The tool call in flight. */
   tool?: { name: string; args: unknown; /** What the tool published while it ran (the judge's per-check progress). */ details?: unknown };
-  /** Changes when a tool starts or ends or the run starts or ends, which is when an approval can appear or clear. */
-  activity: string;
 };
 
-export const emptyView: View = { items: [], running: false, activity: '' };
+export const emptyView: View = { items: [], running: false };
 
 type Entry = Extract<TranscriptItem, { kind: 'entry' }>['entry'];
 
@@ -46,6 +44,5 @@ function argsOf(items: readonly TranscriptItem[], callId: string): unknown {
 export function applyView(prev: View, { items = prev.items, live, usage }: ViewFrame): View {
   const slot = live.tools?.findLast((t) => t.status === 'running');
   const running = live.run !== undefined;
-  const activity = JSON.stringify([running, live.tools?.map((t) => [t.callId, t.status])]);
-  return { items, running, partial: live.generation?.message as AssistantMessage | undefined, spend: spendOf(usage), tool: slot && { name: slot.name, args: argsOf(items, slot.callId), details: slot.details }, activity };
+  return { items, running, partial: live.generation?.message as AssistantMessage | undefined, spend: spendOf(usage), tool: slot && { name: slot.name, args: argsOf(items, slot.callId), details: slot.details } };
 }

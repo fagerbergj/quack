@@ -43,7 +43,7 @@ function factsPrompt(f: Facts): string {
   ].join('\n\n');
 }
 
-/** Lineup job (SL-1): facts, one model decision, a sealed card, then the judge's verdict on it. */
+/** Lineup job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function lineupWorkflow(deps: LineupDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
   const { rubric, notes } = newsGated(lineupRubric, ['close_call_news'], !!deps.news, 'close-call news');

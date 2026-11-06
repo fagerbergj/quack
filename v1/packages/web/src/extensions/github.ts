@@ -3,6 +3,9 @@ import { BLUE, cut, sentence, type Delivered, type Extension } from '../extensio
 import type { SealedArtifact } from '../api.ts';
 import type { Row } from '../sessions.ts';
 import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
+import { PrSection } from './PrRail.tsx';
+import { PrChip, PrStates, PrStatesNotice } from './prState.tsx';
+import { parseReview } from './review.ts';
 import { reviewCard } from './ReviewCard.tsx';
 
 const KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
@@ -24,6 +27,12 @@ function outdated(a: SealedArtifact, now: Parameters<NonNullable<Extension['card
 }
 const POSTED: Record<string, Delivered['tone']> = { 'Approved ✓': 'ok', 'Changes requested': 'bad', Commented: 'plain' };
 const VERDICT_WORDS: Record<string, string> = { approve: 'Approved ✓', request_changes: 'Changes requested', comment: 'Commented' };
+const DECISION: Record<string, string> = { approve: 'Approve', request_changes: 'Request changes', comment: 'Comment' };
+
+const postedTo = (a: SealedArtifact) => {
+  const decision = DECISION[parseReview(a.content)?.verdict ?? ''];
+  return `Posted to GitHub${decision ? ` as ${decision}` : ''}`;
+};
 
 // An idle review reads as the newest version that reached GitHub, with its verdict as posted (a limit-released one included), never the judge's result.
 function delivered(r: Row): Delivered | undefined {
@@ -46,7 +55,7 @@ export const github: Extension = {
     delivered,
     words: () => ({ kind: KIND, w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
   },
-  artifact: (a, running) => (a.kind === KIND ? { name: 'Review', titled: true, posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length) } : undefined),
+  artifact: (a, running) => (a.kind === KIND ? { name: 'Review', titled: true, posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length), postedTo: postedTo(a) } : undefined),
   card: (a, now) => (a.kind === KIND ? reviewCard(a, outdated(a, now)) : undefined),
   steps: { checkout_pr: () => 'Checking out the latest commit', submit_review: () => 'Waiting for the double-check' },
   // The card's extras are keyed by head sha; a review started by a comment has no head in its text and takes the newest.
@@ -56,6 +65,10 @@ export const github: Extension = {
     return o && createElement(PrCard, { o, meta: o.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head) });
   },
   start: { prefix: 'github', label: 'GitHub' },
+  chip: PrChip,
+  provider: PrStates,
+  notice: PrStatesNotice,
+  rail: PrSection,
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {
     const m = KEY.exec(key);

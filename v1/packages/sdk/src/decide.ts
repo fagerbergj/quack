@@ -82,7 +82,7 @@ async function completeTranscriptEnd(tx: Tx, conversationId: ToolExecutionApi['c
   return undefined;
 }
 
-// Default resolver (D18): the session's own model on a fork of the live transcript, tools off, so it sees everything and reuses the cache.
+// Default resolver: the session's own model on a fork of the live transcript, tools off, so it sees everything and reuses the cache.
 export const sessionModel: Resolver = {
   id: 'session',
   async resolve(point, api, ctx) {

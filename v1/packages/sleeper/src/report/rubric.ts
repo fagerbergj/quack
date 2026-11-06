@@ -20,6 +20,7 @@ export function digestEvidence(f: DigestFacts) {
 }
 
 // The card builder writes one row per game with its scores, margin and top scorers from the facts, and the model never sees a projection.
+// Digest weights are unreplayed: replay them before any weight gates delivery.
 export const digestRubric: Rubric = {
   name: 'sleeper.digest',
   version: 3,
@@ -60,6 +61,7 @@ export function retroEvidence(f: RetroFacts) {
 }
 
 // The card builder copies every figure and marks a row knowable only with an attached signal dated before its cutoff.
+// Retro weights are unreplayed: replay them before any weight gates delivery.
 export const retroRubric: Rubric = {
   name: 'sleeper.retro',
   version: 3,

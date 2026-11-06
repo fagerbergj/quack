@@ -51,7 +51,7 @@ export function factsPrompt(f: TrendsFacts): string {
   ].join('\n\n');
 }
 
-/** Trends job (SL-1): facts, one model step for prose, a sealed card, then the judge's verdict on it. */
+/** Trends job: facts, one model step for prose, a sealed card, then the judge's verdict on it. */
 export function trendsWorkflow(deps: TrendsDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
   const { rubric, notes } = newsGated(trendsRubric, NEWS_CHECKS, !!deps.news, 'source conflicts and original sources');

@@ -13,7 +13,7 @@ export type JudgeOptions = {
   rubric: Rubric;
   /** Builds the focused evidence units for a sealed version (the domain's job, e.g. diff excerpts per finding). */
   evidence: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Evidence>;
-  /** Revise-and-recheck rounds before a failing version may go out with its failures marked (J1). A round judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. A pass ends a round. */
+  /** Revise-and-recheck rounds before a failing version may go out with its failures marked. A round judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. A pass ends a round. */
   maxRevisions: number;
   /** Text when this run has nothing to submit (a checkout found no work); the submit is then refused and ends the run. */
   refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
@@ -129,7 +129,7 @@ export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: Seale
 
 /** What a caller is told when the judge model could not answer some checks. */
 export function undecidedMessage(ids: string[], toolName: string): string {
-  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again; checks already answered are kept.`;
+  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again.`;
 }
 
 function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
@@ -140,7 +140,7 @@ function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers =
   return `${head}, failed:\n${lines}\nRevise the file to address each point, then call ${toolName} again.`;
 }
 
-// The judge as an extension (D3): a durable tool seals and checks the artifact; the yield hook only refuses to finish too early.
+// The judge as an extension: a durable tool seals and checks the artifact; the yield hook only refuses to finish too early.
 export function judge(opts: JudgeOptions) {
   const toolName = opts.toolName ?? 'submit_artifact';
   // A cleared version reaches onCleared on every submit, so a delivery that failed is retried; the hook must be idempotent.
@@ -168,7 +168,7 @@ export function judge(opts: JudgeOptions) {
       // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
       if ((await judgedInRun(api, opts.kind.kind, ctx)) > opts.maxRevisions) return terminal(`${opts.kind.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.`);
       const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, (p) => api.details(p, ctx));
-      // A verdict missing checks would pass or fail on a model outage; the decided answers are memoized, so calling again asks only the rest.
+      // A verdict missing checks would pass or fail on a model outage; answers are memoized per call, so another submit asks again.
       if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };
       await attachVerdict(api, opts.kind.kind, sealed.version, verdict as never, ctx);
       return finish(sealed, verdict, api, ctx);

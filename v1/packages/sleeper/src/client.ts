@@ -1,4 +1,4 @@
-// Read-only Sleeper API client (SL-7): it only ever issues GET.
+// Read-only Sleeper API client: it only ever issues GET.
 import { limiter, sleepFor } from './limit.ts';
 import type { Json, SleeperClient } from './ports.ts';
 

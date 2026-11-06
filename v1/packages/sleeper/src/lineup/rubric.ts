@@ -50,6 +50,7 @@ export function lineupEvidence(f: Facts) {
 }
 
 // The card builder seats one player per slot, copies every figure and writes the summary from the changes, so only what the model can get wrong is gated.
+// Lineup weights are unreplayed: replay them before any weight gates delivery.
 export const lineupRubric: Rubric = {
   name: 'sleeper.lineup',
   version: 5,

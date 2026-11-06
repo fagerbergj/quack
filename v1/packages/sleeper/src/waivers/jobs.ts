@@ -43,7 +43,7 @@ export function nextProcessing(now: number, settings: WaiverSettings): number | 
   return null;
 }
 
-/** One run before the league's next waiver processing, due an hour ahead of it (SL-9); null when there is none to serve. */
+/** One run before the league's next waiver processing, due an hour ahead of it; null when there is none to serve. */
 export function waiversRun(now: number, settings: WaiverSettings | undefined) {
   const processing = settings && nextProcessing(now, settings);
   if (!processing) return null;
@@ -64,5 +64,5 @@ export async function registerWaiversSchedules(config: ScheduleConfig, client: S
   return [await registerSchedule(config, { id: `sleeper/waivers/${league}`, agent: WAIVERS_AGENT, at: run.at, deadline: run.deadline, sessionKey: waiversKey(league, state.week), input })];
 }
 
-/** On-demand start (SL-2): the "Run now" path; each call is its own submission under the week's session key. */
+/** On-demand start: the "Run now" path; each call is its own submission under the week's session key. */
 export const startWaivers = (config: StartConfig, input: LineupInput) => startJob(config, WAIVERS_AGENT, waiversKey(input.league, input.week), input);

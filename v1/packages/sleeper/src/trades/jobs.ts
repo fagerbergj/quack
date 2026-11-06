@@ -34,7 +34,7 @@ export async function registerFinderSchedules(config: ScheduleConfig, client: Sl
   return [await registerSchedule(config, { id: `sleeper/trade-finder/${league}/${etDate(run.at)}`, agent: FINDER_AGENT, ...run, sessionKey: finderKey(league, state.week), input })];
 }
 
-/** On-demand start (SL-2): each call is its own submission under the week's session key. */
+/** On-demand start: each call is its own submission under the week's session key. */
 export const startFinder = (config: StartConfig, input: FinderInput) => startJob(config, FINDER_AGENT, finderKey(input.league, input.week), input);
 export const startTrade = (config: StartConfig, input: TradeInput) => startJob(config, TRADE_AGENT, tradeKey(input.league, input.week, input), input);
 

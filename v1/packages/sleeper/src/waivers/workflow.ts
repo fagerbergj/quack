@@ -48,7 +48,7 @@ function factsPrompt(f: WaiverFacts): string {
   ].join('\n\n');
 }
 
-/** Waivers job (SL-1): facts, one model decision, a sealed card, then the judge's verdict on it. */
+/** Waivers job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function waiversWorkflow(deps: WaiversDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
   const { rubric, notes } = newsGated(waiversRubric, ['close_call_news'], !!deps.news, 'close-call news');

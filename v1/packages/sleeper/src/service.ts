@@ -88,7 +88,7 @@ export function createSleeperService(config: ServiceConfig): App & { stop(): voi
     return [200, { week: (await config.client.state()).week, runs: runs.sort((a, b) => a.at.localeCompare(b.at)) }];
   }
 
-  // POST /leagues/:id/jobs/(lineup|waivers|trends|digest|retro)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.
+  // POST /leagues/:id/jobs/(lineup|waivers|trends|digest|retro)[?week=N] starts a job on demand; the week defaults to Sleeper's current one.
   async function startOnDemand(start: (c: StartConfig, input: any) => ReturnType<typeof startLineup>, method: string, league: string | undefined, week: string | null, extra: object | string = {}): Promise<[number, unknown]> {
     if (league === undefined) return [400, { error: 'bad league id' }];
     if (method !== 'POST') return [405, { error: 'method not allowed' }];

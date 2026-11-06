@@ -24,6 +24,7 @@ export function historyEvidence(f: HistoryFacts) {
 }
 
 // Every figure, the declared rule and each cited pick's ranks are copied onto the card by code, so no figure is checked in prose.
+// History weights are unreplayed: replay them before any weight gates delivery.
 export const historyRubric: Rubric = {
   name: 'sleeper.history',
   version: 4,

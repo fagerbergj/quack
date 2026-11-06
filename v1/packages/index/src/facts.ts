@@ -16,6 +16,15 @@ export const Outbox = defineDoc<OutboxDoc>({
   initial: () => ({ acked: {}, status: { state: 'idle', seq: 0, at: 0 } }), checkpointWhen: () => false,
 });
 
+// Session, approval and question facts have a closed set of revisions, the first only while pending, so no rev can pin an ask pending past its answer.
+// The other kinds' revs grow without bound; a session publishes only its own, and a rebuild from its log replaces them.
+export function revFits(f: Fact): boolean {
+  if (f.rev < 1) return false;
+  if (f.kind === 'session') return f.rev === 1;
+  if (f.kind === 'approval' || f.kind === 'question') return f.rev === (f.data.state === 'pending' ? 1 : 2);
+  return true;
+}
+
 // limitReached marks a version released with its failures at the revision limit, which is final even though it did not pass.
 const verdictOf = (v: { verdict: unknown }) => {
   const d = v.verdict as { passed?: boolean; limitReached?: boolean } | null;

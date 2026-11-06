@@ -31,7 +31,7 @@ export type WaiversCard = {
   also_checked: Array<{ player: PlayerRef; why: string }>;
 };
 
-/** What the model decides (SL-6: no predictions in it); ids and a bid, never figures to copy. */
+/** What the model decides (no predictions in it); ids and a bid, never figures to copy. */
 export type WaiverDecision = { claims: Array<{ add: string; drop: string; bid?: number | null; why: string }>; passed: Array<{ playerId: string; why: string }>; summary: string };
 
 const ref = (p: WPlayer): PlayerRef => ({ id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj });

@@ -89,7 +89,7 @@ function implementTrigger(event: string | undefined, p: Payload): Trigger | unde
   return { sessionKey: `github:${owner}/${name}#${i.number}`, role: 'implementer', input, repo: { owner, name }, number: i.number, title: String(i.title ?? ''), issue: true };
 }
 
-// G1/G5: the review label starts the first review, and a push to a labelled PR starts one for the new head; `/review` from a trusted commenter starts later ones; a trusted mention is a question for the running session.
+// The review label starts the first review, and a push to a labelled PR starts one for the new head; `/review` from a trusted commenter starts later ones; a trusted mention is a question for the running session.
 export function triggerFor(event: string | undefined, p: Payload, label: string, slug: string): Trigger | undefined {
   if (event === 'pull_request' && p.action === 'labeled' && p.label?.name === label) return reviewTrigger(p, p.pull_request, `label ${label}`);
   // Without this a force-push after an approval left the new head unreviewed; checkout_pr ends a turn whose head was already posted.

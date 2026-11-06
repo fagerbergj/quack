@@ -45,6 +45,7 @@ export function trendsEvidence(f: TrendsFacts) {
 }
 
 // The card builder takes each link from that player's fetched news, so a link is never checked here.
+// Trends weights are unreplayed: replay them before any weight gates delivery.
 export const trendsRubric: Rubric = {
   name: 'sleeper.trends',
   version: 2,

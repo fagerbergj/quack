@@ -34,7 +34,7 @@ const CONVENTIONS = ['AGENTS.md', 'CLAUDE.md'];
 
 async function run(api: ToolExecutionApi, label: string, argv: string[], config: SessionConfig, remote: string, ctx: Context) {
   let output = '';
-  // The service secret reaches only this git child; credential helpers are off so nothing is stored (D56).
+  // The service secret reaches only this git child; credential helpers are off so nothing is stored.
   const env = { GIT_ASKPASS: ASKPASS, GIT_TERMINAL_PROMPT: '0', QUACK_GITHUB_URL: config.serviceUrl, QUACK_GITHUB_TOKEN: config.serviceToken, QUACK_GH_REMOTE: remote };
   const result = await api.env!.exec(argv, { env, onOutput: (t) => { output += t; } }, ctx);
   if (!result.ok || result.value.exitCode !== 0) throw new Error(`git ${label} failed: ${output.slice(-500)}`);

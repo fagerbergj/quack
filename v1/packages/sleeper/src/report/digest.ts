@@ -108,7 +108,7 @@ export type DigestCard = {
   source_note: string;
 };
 
-/** What the model decides: the story and one note per game (SL-6: no projections, no win probabilities). */
+/** What the model decides: the story and one note per game (no projections, no win probabilities). */
 export type DigestDecision = { summary: string; notes: Array<{ matchup: number; note: string }> };
 
 /** Sleeper has no home side; the lower roster id is listed first. */

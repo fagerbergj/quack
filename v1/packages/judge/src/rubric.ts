@@ -10,7 +10,7 @@ export type Evidence = Record<string, Unit[]>;
 /** `marks` names what in the artifact the result concerns (e.g. citation ids), so a renderer can flag it from the verdict alone. */
 export type CodeResult = { met: number; detail?: string; marks?: string[] };
 
-// One atomic check (D54): a gate holds in every unit it applies to; a positive weight earns its share of met units;
+// One atomic check: a gate holds in every unit it applies to; a positive weight earns its share of met units;
 // a negative weight is a pitfall that subtracts its share where present.
 export type Check = {
   id: string;

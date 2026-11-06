@@ -4,7 +4,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { ConversationTranscript, type TranscriptItem, type TranscriptView } from '@earendil-works/pi-durable';
 import { MAX_IMAGE_CHARS, MAX_IMAGES, parseImages } from './images.ts';
 import type { ImageContent } from '@earendil-works/pi-ai';
-import { failedRows, Failures, pendingQuestions, Questions } from '@quack/sdk';
+import { Approvals, Artifacts, failedRows, Failures, pendingQuestions, Questions } from '@quack/sdk';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Session } from './runtime.ts';
 
@@ -55,19 +55,30 @@ function requestIdOf(data: string): string | undefined {
   }
 }
 
-// Open questions and failures raise no stream event, so their documents ride the socket as a `standing` frame instead of being polled.
+// Open questions, approvals, failures and sealed artifacts raise no stream event, so their documents ride the socket instead of being polled:
+// what waits on a person as a `standing` frame and the artifacts as their own, each sent when its documents change.
 async function watchStanding(session: Session, ws: WebSocket) {
   const { harness, root } = session;
-  // watchDoc does not create a document, so touch both first; a session that never asked still gets its watch.
-  await root.commit(async (tx) => { await tx.doc(Questions, root.id); await tx.doc(Failures, root.id); }, BACKGROUND_CONTEXT);
-  const [questions, failures] = await Promise.all([harness.watchDoc(Questions, root.id, BACKGROUND_CONTEXT), harness.watchDoc(Failures, root.id, BACKGROUND_CONTEXT)]);
-  const push = () => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'standing', questions: pendingQuestions(questions?.value), failures: failedRows(failures?.value) }));
-  push();
-  for (const watch of [questions, failures]) watch?.start(async () => void push());
-  ws.on('close', () => void Promise.all([questions?.stop(), failures?.stop()]));
+  // watchDoc does not create a document, so touch each first; a session that never asked still gets its watch.
+  await root.commit(async (tx) => { await tx.doc(Questions, root.id); await tx.doc(Failures, root.id); await tx.doc(Approvals, root.id); await tx.doc(Artifacts, root.id); }, BACKGROUND_CONTEXT);
+  const [questions, failures, approvals, artifacts] = await Promise.all([
+    harness.watchDoc(Questions, root.id, BACKGROUND_CONTEXT), harness.watchDoc(Failures, root.id, BACKGROUND_CONTEXT),
+    harness.watchDoc(Approvals, root.id, BACKGROUND_CONTEXT), harness.watchDoc(Artifacts, root.id, BACKGROUND_CONTEXT),
+  ]);
+  const send = (frame: object) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(frame));
+  const standing = () => send({
+    type: 'standing', questions: pendingQuestions(questions?.value), failures: failedRows(failures?.value),
+    approvals: Object.entries(approvals?.value?.items ?? {}).filter(([, a]) => !a.verdict).map(([id, a]) => ({ id, tool: a.tool, args: a.args, requestedAt: a.requestedAt })),
+  });
+  const ledger = () => send({ type: 'artifacts', artifacts: Object.values(artifacts?.value?.kinds ?? {}).flatMap((k) => k.versions) });
+  standing();
+  ledger();
+  for (const watch of [questions, failures, approvals]) watch?.start(async () => void standing());
+  artifacts?.start(async () => void ledger());
+  ws.on('close', () => void Promise.all([questions?.stop(), failures?.stop(), approvals?.stop(), artifacts?.stop()]));
 }
 
-// Streams pi-durable's conversation view (A9): the transcript items when they change, the live, usage and inbox state on every change.
+// Streams pi-durable's conversation view: the transcript items when they change, the live, usage and inbox state on every change.
 async function stream(session: Session, ws: WebSocket) {
   const { root } = session;
   const transcript = new ConversationTranscript((query, limit, c) => root.entries(query, limit, undefined, c));

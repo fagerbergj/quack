@@ -9,7 +9,7 @@ export { citedIds };
 
 const SECTIONS = ['summary', 'assumptions', 'findings'];
 
-/** Structure problems, all at once (ART-2); whether the citations are real is the judge's gate, since it needs the session's fetch log. */
+/** Structure problems, all at once; whether the citations are real is the judge's gate, since it needs the session's fetch log. */
 export function validateReport(text: string): string[] {
   const headings = new Set([...text.matchAll(/^## (\w+)/gm)].map((m) => m[1].toLowerCase()));
   const problems = SECTIONS.filter((s) => !headings.has(s)).map((s) => `missing a "## ${s[0].toUpperCase()}${s.slice(1)}" section`);
@@ -152,7 +152,7 @@ const SELF_WEIGHT = -4;
 // The judge's own knowledge goes stale (a real 2025 fact flagged as invented, 86833b31), so every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
 
-// Weights are the audit's (docs/v1/audits/research.md); the Rubric v2 measurement there says which are scored or observe-only (weight 0).
+// Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
   version: 3,

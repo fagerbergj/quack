@@ -56,5 +56,5 @@ export const sleeper: Extension = {
       return { kind: 'sleeper.cards', w: { run: job.run, pass: job.pass(week), fail: "Didn't pass its checks", none: 'Nothing yet' } };
     },
   },
-  nav: { route: 'sleeper', label: 'Sleeper', icon: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3', page: Sleeper },
+  nav: { route: 'sleeper', label: 'Sleeper', icon: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3', page: Sleeper, pinned: true },
 };

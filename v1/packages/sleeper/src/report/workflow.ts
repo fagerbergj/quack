@@ -141,10 +141,10 @@ export function retroPrompt(f: RetroFacts): string {
 const call = obj({ index: int({ minimum: 0 }), why: str({ maxLength: 300 }), knowable: bool(), signalUrl: opt(str()) }, { open: true });
 const retroSchema = obj({ misses: arr(call), waiverMisses: arr(call), lessons: arr(str({ maxLength: 160 }), { maxItems: 3 }), summary: str({ maxLength: 400 }) }, { open: true });
 
-/** Digest job (SL-1): a preview before the week's first kickoff or a recap once its last game is final; code writes every number. */
+/** Digest job: a preview before the week's first kickoff or a recap once its last game is final; code writes every number. */
 export const digestWorkflow = (deps: ReportDeps) =>
   reportWorkflow<DigestFacts, DigestDecision>(deps, { name: DIGEST_WORKFLOW, ready: (p) => p !== 'live', rubric: digestRubric, newsChecks: ['preview_news_decides'], facts: buildDigestFacts, schema: digestSchema, prompt: digestPrompt, card: buildDigestCard, evidence: digestEvidence });
 
-/** Retro job (SL-1): the owner's week after its last game; code builds the best lineup and the miss rows, the model writes `why`, `lessons` and `summary`. */
+/** Retro job: the owner's week after its last game; code builds the best lineup and the miss rows, the model writes `why`, `lessons` and `summary`. */
 export const retroWorkflow = (deps: ReportDeps) =>
   reportWorkflow<RetroFacts, RetroDecision>(deps, { name: RETRO_WORKFLOW, ready: (p) => p === 'recap', rubric: retroRubric, newsChecks: ['signal_is_evidence'], facts: (d, snap, i) => buildRetroFacts(d, snap, i), schema: retroSchema, prompt: retroPrompt, card: buildRetroCard, evidence: retroEvidence });

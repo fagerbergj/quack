@@ -40,6 +40,7 @@ export function tradeEvidence(f: TradeFacts) {
 }
 
 // The schema fixes the verdict and the card builder takes every player, side and projection from the rosters, so no code gate is left to fail.
+// Trade weights are unreplayed: replay them before any weight gates delivery.
 export const tradeRubric: Rubric = {
   name: 'sleeper.trade',
   version: 4,

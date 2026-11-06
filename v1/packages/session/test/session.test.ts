@@ -69,7 +69,7 @@ test('answers over the container contract and survives a restart', async () => {
   await http.stop();
   await first.close();
 
-  // A new process on the same storage keeps the transcript and dedupes a retried request id (HAR-3, HAR-5).
+  // A new process on the same storage keeps the transcript and dedupes a retried request id.
   const second = await openSession({ dir, ...fakeModels() });
   const retried = await second.submit('Capital of France?', 'q-1', true);
   assert.equal(retried.submissionId, answered.body.submissionId);

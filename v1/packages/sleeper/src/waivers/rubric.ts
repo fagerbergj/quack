@@ -66,6 +66,7 @@ export function waiversEvidence(f: WaiverFacts) {
 }
 
 // The card builder copies the league context, each drop's roster role, each add's bye and the claim size from the facts, and refuses a bid where the league has none, so none is checked here.
+// Waivers weights are unreplayed: replay them before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
   version: 7,
