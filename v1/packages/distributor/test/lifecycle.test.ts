@@ -37,7 +37,7 @@ async function host(agents: string[] = []) {
     return { url: `http://launch-${launches.length}`, stop: async () => void (entry.stopped = true), onExit: () => {} };
   };
   const driver = sessionHost({ dataDir: join(root, 'data'), agentsDir, defaultAgent: '' }, launch);
-  return { driver, launches, hold: () => void (held = true), dataDir: join(root, 'data') };
+  return { driver, launches, hold: () => void (held = true), dataDir: join(root, 'data'), agentsDir };
 }
 
 test('a delete during a start waits for it, stops what came up, and a later session starts fresh', async () => {
@@ -103,4 +103,36 @@ test('a delete is refused while a request for the session is starting it, and no
   assert.equal((await read).status, 200);
   assert.equal((await fetch(base, { method: 'DELETE', headers: { authorization: 'Bearer t' } })).status, 200);
   assert.equal(launches[1].stopped, true);
+});
+
+test('a new session checks its agent version against the hash recorded at first use, not every session on disk', async () => {
+  const { driver, dataDir, agentsDir } = await host(['reviewer']);
+  await driver.ensure('github:a#1', 'reviewer');
+  assert.equal(await driver.remove('github:a#1'), true);
+  await writeFile(join(agentsDir, 'reviewer', 'prompt.md'), 'edited without a version bump');
+  await assert.rejects(driver.ensure('github:a#2', 'reviewer'), /changed since it was first used/, 'the record outlives the sessions that pinned it');
+  assert.deepEqual(await readdir(dataDir), ['agent-versions']);
+});
+
+test('a version pinned before hashes were recorded is checked once against its snapshots, then recorded', async () => {
+  const { driver, dataDir, agentsDir } = await host(['reviewer']);
+  const old = join(dataDir, sessionDirName('github:old'));
+  await mkdir(join(old, 'agent-def'), { recursive: true });
+  await writeFile(join(old, 'session-key'), 'github:old');
+  await writeFile(join(old, 'agent'), 'reviewer');
+  await writeFile(join(old, 'agent-def', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 1, prompt: 'prompt.md' }));
+  await writeFile(join(old, 'agent-def', 'prompt.md'), 'the prompt it first ran');
+  await assert.rejects(driver.ensure('github:new', 'reviewer'), /changed since it was first used/);
+  await writeFile(join(agentsDir, 'reviewer', 'prompt.md'), 'the prompt it first ran');
+  await rm(old, { recursive: true });
+  assert.equal(await driver.ensure('github:new', 'reviewer'), 'http://launch-1', 'the recorded hash is the snapshot it first ran');
+});
+
+test('one session reads from its own directory, the same row the listing shows', async () => {
+  const { driver } = await host(['reviewer']);
+  await driver.ensure('github:a#1', 'reviewer');
+  await driver.ensure('github:a#2', 'reviewer');
+  const [listed] = (await driver.sessions()).filter((s) => s.key === 'github:a#1');
+  assert.deepEqual(await driver.session('github:a#1'), listed);
+  assert.equal(await driver.session('github:none'), undefined);
 });

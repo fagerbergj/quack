@@ -52,7 +52,7 @@ const apps = appsGateway(mounted, broker.sessionOf, async (key) => declaredApps(
 // The page's rename, archive and delete always work; a token set also lets the retention sweep delete idle sessions.
 const retire = { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) };
 // VAPID keys are made on first boot under the data dir; QUACK_VAPID_PUBLIC_KEY, QUACK_VAPID_PRIVATE_KEY and QUACK_VAPID_SUBJECT override them.
-const push = openPush({ dataDir, env: process.env, artifacts: async (key) => (await store.artifacts()).filter((a) => a.session === key).map((a) => ({ kind: String(a.kind), version: Number(a.version), verdict: Boolean(a.verdict) })), title: async (key) => (await driver.sessions()).find((s) => s.key === key)?.title });
+const push = openPush({ dataDir, env: process.env, artifacts: async (key) => (await store.artifacts()).filter((a) => a.session === key).map((a) => ({ kind: String(a.kind), version: Number(a.version), verdict: Boolean(a.verdict) })), title: async (key) => (await driver.session(key))?.title });
 const turns = recordTurns(driver);
 const indexHttp = indexRoutes(store, (presented) => broker.sessionOf(presented) !== undefined, (session, facts) => Promise.all([turns(session, facts), push.notify(session, facts)]).then(() => {}));
 const server = createDistributor(driver, { retire, spend: () => store.sessions(), webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res)) || false }).listen(port);

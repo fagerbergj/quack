@@ -38,6 +38,8 @@ export type HostDriver = {
   promote(name: string, version: number): Promise<AgentStatus>;
   /** Every session on disk, newest-created first. */
   sessions(): Promise<SessionInfo[]>;
+  /** One session's row, read from its directory alone; undefined when it does not exist. */
+  session(key: string): Promise<SessionInfo | undefined>;
   /** Stops the session's process; a start in flight is waited out and then stopped. */
   stop(key: string): Promise<void>;
   /** Stops any process the session has, starting ones included, then deletes its directory (log, workspace, snapshot); false when no such session exists. The caller has checked it has no work. */
@@ -243,17 +245,29 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return defaultPath ? ((await readJson(defaultPath).catch(() => null))?.name as string | undefined) ?? '' : '';
   }
 
-  // A version is immutable: refuse a source whose name and version match a session snapshot with different content.
+  // A version is immutable: the first session pinned to it records its content hash beside the stored version, and a source that differs is refused.
   async function assertUnforked(name: string, source: string) {
     const version = (await readJson(source).catch(() => null))?.version;
+    if (typeof version !== 'number') return;
     const want = await digest(dirname(source));
+    const record = join(versionDir(opts.dataDir, name, version), 'digest');
+    const known = (await readText(record)) ?? (await recordDigest(record, name, version, want));
+    if (known !== want) throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
+  }
+
+  // Versions pinned before the record existed are scanned once; `wx` keeps the first writer's hash when two sessions race.
+  async function recordDigest(record: string, name: string, version: number, want: string): Promise<string> {
+    let first = want;
     for (const d of await readdir(opts.dataDir).catch(() => [])) {
       const snap = join(opts.dataDir, d, SNAPSHOT);
       const def = await readJson(join(snap, 'agent.json')).catch(() => null);
-      if (def?.name === name && def.version === version && (await digest(snap)) !== want) {
-        throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
-      }
+      if (def?.name !== name || def.version !== version) continue;
+      first = await digest(snap);
+      if (first !== want) break;
     }
+    await mkdir(dirname(record), { recursive: true });
+    await writeFile(record, first, { flag: 'wx' }).catch(() => undefined);
+    return (await readText(record)) ?? first;
   }
 
   // Copies the agent's bundle into the session dir; every later start loads that copy, never the agents dir (DEP-3).
@@ -359,21 +373,31 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return 'promoted';
   }
 
+  // Retention is storage policy, so a session pinned before it existed follows its agent's current bundle.
+  const retentions = async () => new Map((await registry()).map((a) => [a.name, a.retention]));
+
+  async function row(d: string, current: Map<string, unknown>) {
+    const key = await readText(join(opts.dataDir, d, 'session-key'));
+    if (key === undefined) return undefined;
+    const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
+    const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
+    const { version } = pinned ?? {};
+    const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
+    const title = cachedTitle(join(opts.dataDir, d));
+    return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), ...((await exists(join(opts.dataDir, d, 'archived'))) && { archived: true }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
+  }
+  const info = ({ at, created, ...s }: NonNullable<Awaited<ReturnType<typeof row>>>): SessionInfo => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() });
+
   async function sessions(): Promise<SessionInfo[]> {
-    const dirs = await readdir(opts.dataDir).catch(() => []);
-    // Retention is storage policy, so a session pinned before it existed follows its agent's current bundle.
-    const current = new Map((await registry()).map((a) => [a.name, a.retention]));
-    const all = await Promise.all(dirs.map(async (d) => {
-      const key = await readText(join(opts.dataDir, d, 'session-key'));
-      if (key === undefined) return undefined;
-      const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
-      const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
-      const { version } = pinned ?? {};
-      const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
-      const title = cachedTitle(join(opts.dataDir, d));
-      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), ...((await exists(join(opts.dataDir, d, 'archived'))) && { archived: true }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
-    }));
-    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
+    const [dirs, current] = await Promise.all([readdir(opts.dataDir).catch(() => []), retentions()]);
+    const all = await Promise.all(dirs.map((d) => row(d, current)));
+    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(info);
+  }
+
+  // One session's row from its own directory; a hash collision with another key reads as no such session.
+  async function session(key: string): Promise<SessionInfo | undefined> {
+    const found = await row(sessionDirName(key), await retentions());
+    return found?.key === key ? info(found) : undefined;
   }
 
   // Touches of one session run in turn, so an older read can never be written over a newer one.
@@ -429,7 +453,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, sessions, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
+  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid };
 }
 
 /** Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment. */

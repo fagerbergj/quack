@@ -310,7 +310,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   }
 
   async function exportRoute(key: string, agent: string | undefined, res: ServerResponse) {
-    const info = (await driver.sessions()).find((x) => x.key === key);
+    const info = await driver.session(key);
     if (!info) return sendProblem(res, 404, 'no such session');
     await withSession(key, agent, 'GET /export', async (url) => void (await exportSession(info, url, res)));
   }
@@ -333,7 +333,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
 
   async function sessionOne(key: string | undefined, res: ServerResponse) {
     if (!key || !KEY.test(key)) return sendProblem(res, 400, 'invalid session key');
-    const found = (await driver.sessions()).find((x) => x.key === key);
+    const found = await driver.session(key);
     if (found) send(res, 200, (await decorate([found]))[0]);
     else sendProblem(res, 404, 'no such session');
   }
@@ -420,8 +420,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return sendProblem(res, 409, "Can't archive a session that is running or waiting on you.");
     const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
     if (done.includes(false)) return sendProblem(res, 404, 'no such session');
-    const [row] = await decorate((await driver.sessions()).filter((x) => x.key === key));
-    return row ? send(res, 200, row) : sendProblem(res, 404, 'no such session');
+    const found = await driver.session(key);
+    return found ? send(res, 200, (await decorate([found]))[0]) : sendProblem(res, 404, 'no such session');
   }
 
   // Why a housekeeping request is refused before it runs, if it is: it needs the admin token or the proxy's identity (the legacy route only the identity), and a body must be JSON (a cross-site form cannot send it).
