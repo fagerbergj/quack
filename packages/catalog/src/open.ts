@@ -1,11 +1,15 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { StoreChoice } from '@quack/sdk';
+import { storeFor, type DeploymentFile, type StoreChoice } from '@quack/sdk';
 import { createCatalog } from './core.ts';
 import { fileJournal } from './journal.ts';
 import { postgresCatalog } from './postgres.ts';
 import { sqliteCatalog } from './sqlite.ts';
+
+// shortcut: deployment.json v6 names no catalog store, so this reads stores.catalog; v7's core section replaces this one line.
+/** The store the deployment file selects for the catalog; none selected is SQLite in the data dir. */
+export const catalogStore = (deployment: DeploymentFile, env: NodeJS.ProcessEnv = process.env): StoreChoice => storeFor(deployment, deployment.stores?.catalog && 'catalog', env);
 
 /** The deployment's catalog: Postgres when its store is, else `catalog.sqlite` in the data dir, so a fresh install needs nothing.
  * The action journal is always in the data dir, outside every session's directory. */

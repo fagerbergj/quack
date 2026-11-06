@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { storeFor, readDeploymentFile } from '@quack/sdk';
 import { fileURLToPath } from 'node:url';
 import { indexRoutes, openPush, openStore } from '@quack/index';
-import { eventsRoute, openCatalog } from '@quack/catalog';
+import { catalogStore, eventsRoute, openCatalog } from '@quack/catalog';
 import { parseDeployment, priceOf } from '@quack/session';
 import { backfillCatalog } from './catalog-sync.ts';
 import { createDistributor, recordTurns } from './server.ts';
@@ -30,7 +30,7 @@ const deployment = readDeploymentFile();
 const { store } = openStore({ dataDir, store: storeFor(deployment, deployment.stores?.index && 'index') });
 void store.ensure().catch((err) => console.error('index migrations will retry:', err.message));
 // The session catalog keeps a store named `catalog` when the deployment file has one, otherwise catalog.sqlite in the data dir.
-const catalog = openCatalog({ dataDir, store: storeFor(deployment, deployment.stores?.catalog && 'catalog') });
+const catalog = openCatalog({ dataDir, store: catalogStore(deployment) });
 const broker = credentialBroker();
 const manifests = await loadManifests();
 

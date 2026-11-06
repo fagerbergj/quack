@@ -130,8 +130,11 @@ test('a person\'s rename, archive and delete reach the catalog; a process exit r
   assert.deepEqual(await catalog.stopped('other'), { applied: true, state: 'stopped' });
 });
 
-test('the deployment file selects the catalog store as it did the index', async () => {
-  const { storeFor } = await import('@quack/sdk');
-  assert.deepEqual(storeFor({ stores: {} }, undefined), { kind: 'sqlite' });
-  assert.deepEqual(storeFor({ stores: { catalog: { kind: 'postgres', urlEnv: 'CAT_URL' } } }, 'catalog', { CAT_URL: 'postgres://x' }), { kind: 'postgres', url: 'postgres://x' });
+test('one function picks the catalog store from the deployment file, and one reads the launch env', async () => {
+  const { catalogStore } = await import('@quack/catalog');
+  const { launchEnv } = await import('@quack/session');
+  assert.deepEqual(catalogStore({}, {}), { kind: 'sqlite' });
+  assert.deepEqual(catalogStore({ stores: { catalog: { kind: 'postgres', urlEnv: 'CAT_URL' } } }, { CAT_URL: 'postgres://x' }), { kind: 'postgres', url: 'postgres://x' });
+  assert.deepEqual(launchEnv({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), { url: 'http://d', token: 't' });
+  assert.equal(launchEnv({ QUACK_INDEX_URL: 'http://d' }), undefined);
 });
