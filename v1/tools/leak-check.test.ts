@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fileOf, KNOWN, leakReport } from './leak-check.ts';
+import { fileOf, leakReport } from './leak-check.ts';
 
 const preload = join(import.meta.dirname, 'leak-check.ts');
 
@@ -27,8 +27,9 @@ test('a test file that cleans up exits on its own', () => {
 });
 
 test('a known leak is excused by its path under v1/, and only that file', () => {
-  const known = Object.keys(KNOWN)[0];
+  const known = 'packages/x/test/leaky.test.ts';
+  const list = { [known]: 'a fixture leak' };
   assert.equal(fileOf(['node', join(import.meta.dirname, '..', known)]), known);
-  assert.equal(leakReport(known, ['TCPServerWrap']).code, 0);
-  assert.equal(leakReport('packages/x/test/y.test.ts', ['TCPServerWrap']).code, 1);
+  assert.equal(leakReport(known, ['TCPServerWrap'], list).code, 0);
+  assert.equal(leakReport('packages/x/test/y.test.ts', ['TCPServerWrap'], list).code, 1);
 });
