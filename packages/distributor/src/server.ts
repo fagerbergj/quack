@@ -431,12 +431,13 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
 
 
   // `who` is the public caller's principal; a session caller has none, and the session listener lets it reach no route that would read one.
+  // The routes the distributor answers itself, before a request is forwarded to a session's process.
+  const ownRoute = async (req: IncomingMessage, res: ServerResponse, who: Principal | undefined) =>
+    (!!who && (await api?.(req, res, callerOf(who)))) || (await listing(req, res)) || (await agentRoutes(req, res, who)) || (await opts.routes?.(req, res)) || (await serveWeb(opts.webDir, req, res));
+
   async function route(req: IncomingMessage, res: ServerResponse, who: Principal | undefined) {
     try {
-      if (who && (await api?.(req, res, callerOf(who)))) return;
-      if (await listing(req, res) || await agentRoutes(req, res, who)) return;
-      if (await opts.routes?.(req, res)) return;
-      if (await serveWeb(opts.webDir, req, res)) return;
+      if (await ownRoute(req, res, who)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return sendProblem(res, 404, 'not found');
       const target = sessionPath(req.url);
       if (!target) return sendProblem(res, 400, 'invalid session key');
