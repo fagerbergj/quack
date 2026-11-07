@@ -9,47 +9,12 @@ import { afterEach, test } from 'node:test';
 import { observeGeneration, serveApp, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
-import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotCall, type SlotClient } from '../src/index.ts';
+import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type SlotCall, type SlotClient } from '../src/index.ts';
+import { FakeClock } from './fake-clock.ts';
 
 const TTL = 30_000;
 const GRACE = 60_000;
 const CAP = 600_000;
-
-// A hand-driven clock: time moves only in advance(), which fires due timers in order and lets promises settle between them.
-class FakeClock implements Clock {
-  t = 1_000_000;
-  #timers: Array<{ at: number; fn: () => void }> = [];
-  now = () => this.t;
-  setTimer = (fn: () => void, ms: number) => {
-    const timer = { at: this.t + ms, fn };
-    this.#timers.push(timer);
-    return () => void (this.#timers = this.#timers.filter((x) => x !== timer));
-  };
-  sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const cancel = this.setTimer(resolve, ms);
-    signal?.addEventListener('abort', () => (cancel(), reject(signal.reason)), { once: true });
-  });
-  reset() {
-    this.#timers = [];
-  }
-  async settle() {
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
-  }
-  async advance(ms: number) {
-    const end = this.t + ms;
-    for (;;) {
-      const next = this.#timers.filter((x) => x.at <= end).sort((a, b) => a.at - b.at)[0];
-      if (!next) break;
-      this.#timers = this.#timers.filter((x) => x !== next);
-      this.t = Math.max(this.t, next.at);
-      next.fn();
-      await this.settle();
-    }
-    this.t = end;
-    await this.settle();
-  }
-}
 
 const clock = new FakeClock();
 let table: SlotTable;

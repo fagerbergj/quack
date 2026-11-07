@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createSessionServer, openSession } from '@quack/session';
 import { SlotGate, SlotTable, slotsSessionExtensions, type SlotClient } from '@quack/slots';
+import { FakeClock } from '../../slots/test/fake-clock.ts';
 import { MAX_CHILDREN, subagentExtension } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-subagent-'));
@@ -124,17 +125,23 @@ test('the call past the fixed limit is refused and the others still answer', asy
 });
 
 test('parallel children each take a model slot, so a session never holds more than the provider gives', async () => {
-  const table = new SlotTable({ dbPath: ':memory:', limits: { faux: 2 }, ttlMs: 30_000, now: Date.now });
+  const clock = new FakeClock();
+  const table = new SlotTable({ dbPath: ':memory:', limits: { faux: 2 }, ttlMs: 30_000, now: clock.now });
   let peakHeld = 0;
   const client: SlotClient = {
     acquire: async (e, h) => { const r = table.acquire(e, h); peakHeld = Math.max(peakHeld, table.snapshot()[0].held.length); return r; },
     heartbeat: async (e, h) => table.heartbeat(e, h),
     release: async (e, h) => void table.release(e, h),
   };
-  const gate = new SlotGate({ client, holder: 's', pollMs: 5 });
+  const gate = new SlotGate({ client, holder: 's', clock });
   const s = scripted([{ task: 'child-1' }, { task: 'child-2' }, { task: 'child-3' }], 2);
   const session = await openSession({ dir: join(root, `s${n++}`), models: s.models, agent: { model: s.model, extensions: [...slotsSessionExtensions({}, gate), subagentExtension()] } });
-  const result = await session.submit('parent', 'r1', true);
+  let result: Awaited<ReturnType<typeof session.submit>> | undefined;
+  const running = session.submit('parent', 'r1', true).then((r) => (result = r));
+  // The third child polls for a slot on the fake clock, so time moves only here; the bound turns a wedge into a failure.
+  for (let polls = 0; !result && polls < 2_000; polls++) await clock.advance(1_000);
+  assert.ok(result, 'the run settled');
+  await running;
   assert.equal(result.status, 'done');
   assert.equal(s.seen.tools.length, 3);
   assert.equal(s.seen.peak, 2);
