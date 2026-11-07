@@ -14,13 +14,10 @@ export class Fail {
 export const notFound = new Fail(404);
 
 export type Routes = Record<string, unknown>;
-// The index and the build stamp are off unless a test turns them on; their 404 is how the app learns that.
-const OFF: Routes = {
-  'GET /index/approvals?state=pending': notFound, 'GET /index/questions?state=pending': notFound,
-  'GET /index/failures': notFound, 'GET /index/artifacts': notFound, 'GET /version': notFound,
-};
-// A session's own reads answer empty, and an extension's service is not connected, unless a test routes them.
-const QUIET = /^GET \/sessions\/[^/?]+\/(meta|questions|approvals)$/;
+// The build stamp is off unless a test turns it on; its 404 is how the app learns that.
+const OFF: Routes = { 'GET /version': notFound };
+// A session's own meta answers empty, and an extension's service is not connected, unless a test routes them.
+const QUIET = /^GET \/sessions\/[^/?]+\/meta$/;
 const APP = /^GET \/apps\//;
 
 /** The answers for this test; a test adds or deletes entries in place. */
@@ -37,7 +34,8 @@ const reply = (hit: unknown) => {
 // A request no test routed is a failure, not a silent 404: an extra fetch is a defect the test should see.
 export const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const route = `${init?.method ?? 'GET'} /${url}`;
-  const hit = routes[route] ?? routes[route.replace(/^GET \/sessions\?.*/, 'GET /sessions')] ?? OFF[route];
+  // A list routed without its query answers every query; a test that cares about q reads the call.
+  const hit = routes[route] ?? routes[route.replace(/^(GET [^?]+)\?.*/, '$1')] ?? OFF[route];
   if (hit !== undefined) return reply(hit);
   if (QUIET.test(route)) return reply({ [route.split('/').at(-1)!]: [] });
   if (APP.test(route)) return reply(notFound);
@@ -114,4 +112,12 @@ export const view = (o: { entries?: object[]; run?: boolean | object; message?: 
 });
 export const snapshot = (o: Parameters<typeof view>[0] = {}) => view({ entries: [], ...o });
 export const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
-export const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T01:00:00.000Z', ...over });
+/** A Sessions API row: stopped, nothing pending, nothing spent, unless `over` says otherwise. */
+export const sess = (key: string, over: object = {}) => ({
+  key, agent: 'reviewer', state: 'stopped', createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T01:00:00.000Z',
+  cost: { currencyCode: 'USD', amountMicros: '0' }, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, pendingAsks: 0, ...over,
+});
+/** A pending ask as GET /asks lists it. */
+export const ask = (session: string, id: string, over: object = {}) => ({ session, id, type: 'approval', state: 'pending', createdAt: '1970-01-01T00:00:00.001Z', toolCall: { tool: 'push', args: {} }, ...over });
+/** A session whose last run failed at `step`. */
+export const failedRun = (step: string, error: string) => ({ lastRun: { outcome: 'failed', endedAt: '2026-11-01T01:00:00.000Z', failedSteps: [{ step, error }] } });

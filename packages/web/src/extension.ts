@@ -1,14 +1,16 @@
 import { createContext, type ComponentType, type ReactNode } from 'react';
-import type { Approval, ArtifactLink, SealedArtifact } from './api.ts';
+import type { Approval, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
 /** The session an artifact is shown from, for links that open it on its own page. */
 export const SessionKeyContext = createContext<string | undefined>(undefined);
 
 export type Tone = 'plain' | 'muted' | 'warn' | 'ok' | 'bad';
-export type Words = { run: string; pass: string; fail: string; none: string; /** Newest artifact sealed without a verdict (kind is never judged). */ sealed?: string };
-export type Delivered = { line: string; tone: Tone; link?: ArtifactLink };
+/** A row's line while a run works, once its last run succeeded, and before any run ended. */
+export type Words = { run: string; done: string; none: string };
 export type Named = { title: string; full: string; num?: string; repo?: string };
+/** What naming a session reads: a header names one before its row has loaded. */
+export type Nameable = Pick<Row, 'key' | 'agent' | 'title'> & { multiRepo?: boolean };
 
 /** How one family of sessions reads in lists and headers; the first kind whose `match` hits names the row. */
 export type SessionKind = {
@@ -16,13 +18,11 @@ export type SessionKind = {
   /** What this kind's artifacts are called on the Artifacts page ("Review"), and the filter chip that groups them ("Reviews"). */
   noun?: (r: Row) => string;
   group?: string;
-  match: (r: Row) => boolean;
+  match: (r: Nameable) => boolean;
   icon: string;
   tint: string;
-  name: (r: Row) => Named;
-  words: (r: Row) => { kind: string; w: Words } | undefined;
-  /** What an idle session delivered, with its outside link; undefined leaves the line to `words`. A running session always reads `words.run`. */
-  delivered?: (r: Row) => Delivered | undefined;
+  name: (r: Nameable) => Named;
+  words: (r: Row) => Words | undefined;
 };
 
 /** What a studio pane is given: the session's live artifacts and pending approvals, whether a run works, `decided` to drop an approval it settled,

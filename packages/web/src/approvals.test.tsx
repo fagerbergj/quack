@@ -14,19 +14,19 @@ async function openSession() {
   return ws;
 }
 
-const lastPost = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string);
+const lastPost = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'PATCH').at(-1)![1]!.body as string);
 
-test('approving posts the verdict and clears the item', async () => {
+test('approving resolves the ask with approve and clears the item', async () => {
   const pending = { id: 'a/1', tool: 'bash', args: { cmd: 'rm x' }, requestedAt: 1 };
   (live['ui%3Au1'] ??= {}).approvals = [pending];
-  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
+  routes['PATCH /sessions/ui%3Au1/asks/a%2F1'] = { resolved: true };
   const ws = await openSession();
   ws.frame(snapshot());
   const approve = await screen.findByRole('button', { name: /^Approve/ });
   await userEvent.click(approve);
   await waitFor(() => expect(screen.queryByRole('button', { name: /^Approve/ })).toBeNull());
-  const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
-  expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve' });
+  const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')!;
+  expect(JSON.parse(post[1]!.body as string)).toEqual({ resolution: { choice: 'approve' } });
 });
 
 test('an approval a gated tool commits after it is already running shows its card, with no refetch', async () => {
@@ -42,7 +42,7 @@ test('an approval a gated tool commits after it is already running shows its car
 
 test('a pending approval from the session socket shows with the reason field, and the rail lists it', async () => {
   live['ui%3Au1'] = { approvals: [{ id: 'a/1', tool: 'propose_contract', args: { summary: 'Ship the contract' }, requestedAt: 1 }] };
-  routes['POST /sessions/ui%3Au1/approvals/a%2F1'] = { resolved: true };
+  routes['PATCH /sessions/ui%3Au1/asks/a%2F1'] = { resolved: true };
   stubViewport(true, true);
   const ws = await openSession();
   ws.frame(snapshot());
@@ -54,6 +54,6 @@ test('a pending approval from the session socket shows with the reason field, an
   await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'no');
   await userEvent.click(screen.getByRole('button', { name: /^Confirm reject/ }));
-  expect(lastPost()).toEqual({ decision: 'reject', reason: 'no' });
+  expect(lastPost()).toEqual({ resolution: { choice: 'reject', reason: 'no' } });
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
 });

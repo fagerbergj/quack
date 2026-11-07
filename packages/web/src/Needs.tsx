@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { decideApproval, resumeRun, type Approval } from './api.ts';
+import { approvalOf, decideApproval, listAsks, questionOf, resumeRun, type Approval, type Ask } from './api.ts';
 import { Args } from './JsonView.tsx';
 import { QuestionCard } from './Questions.tsx';
 import { age, failedLine, needId, titleOf, type Row } from './sessions.ts';
+import { useLoad } from './useLoad.ts';
 
 const btn = 'min-h-11 cursor-pointer rounded-lg px-3 text-xs lg:min-h-0 lg:py-1';
 const prim = `${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2 disabled:opacity-50`;
@@ -86,20 +87,38 @@ function FailedCard({ row, done }: { row: Row; done: () => void }) {
   );
 }
 
+const NO_ASKS: Ask[] = [];
+const askId = (a: Ask) => `${a.session}:${a.id}`;
+
+// The rows say which sessions wait and since when, so the asks are read again only when that changes.
+// shortcut: an ask swapped for another between ticks, at the same count and oldest, shows at the next change; carry the newest ask's time on the row if that bites.
+function usePending(rows: Row[]) {
+  const stamp = rows.filter((r) => r.pendingAsks).map((r) => `${r.key}:${r.pendingAsks}:${r.oldestAskAt}`).join(',');
+  return useLoad(() => (stamp ? listAsks('state:pending') : Promise.resolve(NO_ASKS)), [stamp], NO_ASKS);
+}
+
 /** Everything waiting on the person, answerable in place. A running session's failure is already being retried, so it is not listed. */
 export function Needs({ rows, now, reload }: { rows: Row[]; now: number; reload: () => void }) {
-  const asked = rows.flatMap((row) => row.questions.map((d) => ({ row, d })));
-  // A decided card stays gone: the index lags the session's own record, so the next read can still list it.
-  const [decided, setDecided] = useState<string[]>([]);
-  const waiting = rows.flatMap((row) => row.approvals.map((a) => ({ row, a }))).filter(({ row, a }) => !decided.includes(`${row.key}:${a.id}`));
-  const failed = rows.filter((r) => r.failures.length && !r.running);
-  const count = asked.length + waiting.length + failed.length;
-  if (!count) return null;
+  const { data: asks, error } = usePending(rows);
+  // A resolved card goes at once, before the next tick reads the rows again; a re-ask of the same id is newer, so it shows.
+  const [resolved, setResolved] = useState<string[]>([]);
+  const asked = (a: Ask) => `${askId(a)}@${a.createdAt}`;
+  const open = asks.filter((a) => !resolved.includes(asked(a)));
+  const done = (a: Ask) => () => (setResolved((d) => [...d, asked(a)]), reload());
+  const titled = (key: string) => {
+    const row = rows.find((r) => r.key === key);
+    return row ? titleOf(row) : key;
+  };
+  const failed = rows.filter((r) => r.failures.length);
+  const count = open.length + failed.length;
+  if (!count && !error) return null;
   return (
     <section aria-label="Needs you" className="flex flex-col gap-2">
       <h2 className="m-0 font-sans text-xs font-semibold tracking-[.06em] text-warning uppercase">{`Needs you · ${count}`}</h2>
-      {asked.map(({ row, d }) => <QuestionCard key={`${row.key}:${d.id}`} sessionKey={row.key} d={d} now={now} title={titleOf(row)} done={reload} />)}
-      {waiting.map(({ row, a }) => <ApprovalCard key={`${row.key}:${a.id}`} sessionKey={row.key} title={titleOf(row)} a={a} now={now} done={() => (setDecided((d) => [...d, `${row.key}:${a.id}`]), reload())} />)}
+      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+      {open.map((a) => a.type === 'question'
+        ? <QuestionCard key={askId(a)} sessionKey={a.session} d={questionOf(a)} now={now} title={titled(a.session)} done={done(a)} />
+        : <ApprovalCard key={askId(a)} sessionKey={a.session} title={titled(a.session)} a={approvalOf(a)} now={now} done={done(a)} />)}
       {failed.map((row) => <FailedCard key={row.key} row={row} done={reload} />)}
     </section>
   );

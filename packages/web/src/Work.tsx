@@ -30,6 +30,8 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
   const a = seen?.find((v) => versionOf(v) === picked) ?? artifact;
   const card = artifactCard(a);
   const [shown, setShown] = useState<'report' | 'checks'>('report');
+  // Only the session's own socket carries the judge's verdict; a version read over REST has no Checks tab.
+  const judged = a.verdict !== undefined;
   const id = useId();
   const arrows = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
@@ -41,11 +43,13 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
   return (
     <Dialog label="Work" onClose={onClose} className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-line bg-canvas shadow-lift sm:w-[min(560px,92vw)]">
         <div className="flex items-center gap-2 border-b border-line px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 sm:px-5">
-          <div role="tablist" aria-label="Session detail" onKeyDown={arrows} className="inline-flex rounded-full border border-line bg-soft p-[3px]">
-            {(['report', 'checks'] as const).map((t) => (
-              <button key={t} id={`${id}-tab-${t}`} type="button" role="tab" aria-selected={shown === t} aria-controls={`${id}-panel`} tabIndex={shown === t ? 0 : -1} onClick={() => setShown(t)} className={tab(shown === t)}>{t === 'report' ? 'Report' : 'Checks'}</button>
-            ))}
-          </div>
+          {judged && (
+            <div role="tablist" aria-label="Session detail" onKeyDown={arrows} className="inline-flex rounded-full border border-line bg-soft p-[3px]">
+              {(['report', 'checks'] as const).map((t) => (
+                <button key={t} id={`${id}-tab-${t}`} type="button" role="tab" aria-selected={shown === t} aria-controls={`${id}-panel`} tabIndex={shown === t ? 0 : -1} onClick={() => setShown(t)} className={tab(shown === t)}>{t === 'report' ? 'Report' : 'Checks'}</button>
+              ))}
+            </div>
+          )}
           <button data-autofocus type="button" aria-label="Close" onClick={onClose} className="ml-auto grid h-11 w-11 cursor-pointer place-items-center rounded-full text-ink-2 hover:bg-soft hover:text-ink">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
@@ -59,8 +63,8 @@ export function Work({ artifact, versions, session, onClose }: { artifact: Seale
               </select>
             </label>
           )}
-          <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${shown}`} className="rounded-[22px] border border-line bg-surface p-5 text-sm leading-relaxed text-ink-2 shadow-card [overflow-wrap:anywhere]">
-            {shown === 'report' ? (
+          <div role={judged ? 'tabpanel' : undefined} id={`${id}-panel`} aria-labelledby={judged ? `${id}-tab-${shown}` : undefined} className="rounded-[22px] border border-line bg-surface p-5 text-sm leading-relaxed text-ink-2 shadow-card [overflow-wrap:anywhere]">
+            {shown === 'report' || !judged ? (
               card ? <SessionKeyContext value={session}>{card}</SessionKeyContext> : <>
                 <p className="m-0 mb-3 flex items-center gap-2">
                   <span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{artifactName(a)}</span>

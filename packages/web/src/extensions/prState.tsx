@@ -9,7 +9,7 @@ const NONE: Pulls = {};
 
 /** The github service's PR states for every listed review session, read once per set of keys; empty when the service is not connected. */
 export function PrStates({ rows, children }: { rows: Row[] | undefined; children: ReactNode }) {
-  const keys = (rows ?? []).filter((r) => !r.archived && GITHUB_KEY.test(r.key)).map((r) => r.key).sort().join(',');
+  const keys = (rows ?? []).filter((r) => r.state !== 'archived' &&GITHUB_KEY.test(r.key)).map((r) => r.key).sort().join(',');
   const pulls = useLoad(async () => (keys ? ((await lookupPulls(keys.split(','))) ?? NONE) : NONE), [keys], NONE);
   return <PrStateContext value={pulls}>{children}</PrStateContext>;
 }

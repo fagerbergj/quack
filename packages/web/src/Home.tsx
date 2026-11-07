@@ -1,3 +1,4 @@
+import { escapeTerm } from '@quack/sdk/query';
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { listSessions, startSession } from './api.ts';
 import { AttachButton, Pending, useAttachments } from './Attach.tsx';
@@ -38,7 +39,7 @@ function Ask({ failed }: { failed: boolean }) {
   const start = async () => {
     let text = input;
     try {
-      if (!(await listSessions(`key:${JSON.stringify(HOME_KEY)}`)).length) {
+      if (!(await listSessions(`key:${escapeTerm(HOME_KEY)}`)).length) {
         // The distributor refuses a socket for an unknown key, so the first message creates the session; its images follow over the socket.
         if (!input.trim()) return setError('Write a message to start the conversation.');
         await startSession(HOME_KEY, HOME_AGENT, input);
