@@ -4,13 +4,12 @@ import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
-import { authorized, type Fact } from '@quack/index';
+import { sessionsApi, type Caller, type Catalog } from '@quack/catalog';
 import { principalName, safeEqual, sendProblem, serviceHttp, type Principal } from '@quack/sdk';
 import { PRINCIPAL_HEADER, principalHeader } from '@quack/session';
 import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver, type SessionInfo } from './process-driver.ts';
 import { sessionRefusal, type SessionCaller } from './session-access.ts';
-import { listQuery, paged } from './session-list.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
@@ -129,21 +128,14 @@ export const PING_TIMEOUT_MS = 2_000;
 // A failed wake is retried after 1 s, doubling to at most this.
 const WAKE_RETRY_MAX_MS = 5 * 60_000;
 
-type Spend = { key: string; cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
-
-/** A session's `status` fact turning idle is a completed turn, dated when it ended; sessions resend unacknowledged facts, so a run that ended while this process was down still lands. */
-export const recordTurns = (driver: Pick<HostDriver, 'touch'>) => async (session: string, facts: Fact[]): Promise<void> => {
-  for (const f of facts) if (f.kind === 'status' && f.data.state === 'idle') await driver.touch(session, f.at).catch(() => {});
-};
-
 type SessionAuth = { sessionOf(token: string): string | undefined; crossSession(key: string): Promise<boolean>; events?: (req: IncomingMessage, res: ServerResponse, key: string) => Promise<boolean> };
-type CatalogWrites = { rename(key: string, title: string | null): Promise<unknown>; archive(key: string): Promise<unknown>; unarchive(key: string): Promise<unknown>; remove(key: string): Promise<unknown> };
-const mirrored = (what: string, write: Promise<unknown> | undefined) => write?.catch((err) => console.error(`catalog: ${what} not recorded:`, err instanceof Error ? err.message : err));
+// The Sessions API's caller: the catalog's Principal names a person by id, the session's by name.
+const callerOf = (who: Principal): Caller => (who.kind === 'person' ? { kind: 'person', id: who.name } : who);
 
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables rename, archive and delete (PATCH, DELETE /sessions/:key and the legacy POST .../delete); each needs `token` as a bearer or the proxy's identity header (the legacy route only the identity); `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token?: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; /** Spend per session from the session index, merged into session rows; a rejection means the index is off and rows omit it. */ spend?: () => Promise<Spend[]>; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog's person writes, mirrored while the index still serves reads; a failure is logged, never the request's. */ catalog?: CatalogWrites; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
@@ -342,37 +334,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     await withSession(key, agent, 'GET /export', async (url) => void (await exportSession(info, url, res)));
   }
 
-  // Stored values plus what the last sweep saw and the index's spend; the index being off only drops cost and tokens.
-  async function decorate(found: SessionInfo[]) {
-    const spent = new Map((found.length ? await opts.spend?.().catch(() => []) ?? [] : []).map((x) => [x.key, x]));
-    return found.map((x) => {
-      const s = spent.get(x.key);
-      return { ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }), ...(s && { cost: s.cost, tokens: s.tokens }) };
-    });
-  }
-
-  async function sessionList(params: URLSearchParams, res: ServerResponse) {
-    const query = listQuery(params);
-    if (typeof query === 'string') return sendProblem(res, 400, query);
-    const { rows, next } = paged((await driver.sessions()).filter(query.keep), query);
-    send(res, 200, { sessions: await decorate(rows), ...(next && { nextPageToken: next }) });
-  }
-
-  async function sessionOne(key: string | undefined, res: ServerResponse) {
-    if (!key || !KEY.test(key)) return sendProblem(res, 400, 'invalid session key');
-    const found = await driver.session(key);
-    if (found) send(res, 200, (await decorate([found]))[0]);
-    else sendProblem(res, 404, 'no such session');
-  }
-
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const { pathname, searchParams } = new URL(req.url ?? '', 'http://distributor');
-    const one = /^\/sessions\/([^/]+)$/.exec(pathname);
-    if (req.method !== 'GET' || !(one || ['/sessions', '/agents', '/version'].includes(pathname))) return false;
+    const { pathname } = new URL(req.url ?? '', 'http://distributor');
+    if (req.method !== 'GET' || !['/agents', '/version'].includes(pathname)) return false;
     if (pathname === '/version') send(res, 200, { commit: process.env.QUACK_COMMIT || null, builtAt: process.env.QUACK_BUILT_AT || null });
-    else if (pathname === '/agents') send(res, 200, { agents: await driver.agents() });
-    else if (one) await sessionOne(safeDecode(one[1]!), res);
-    else await sessionList(searchParams, res);
+    else send(res, 200, { agents: await driver.agents() });
     return true;
   }
 
@@ -395,11 +361,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   }
 
   // Mechanism only: which sessions are worth deleting is the caller's policy.
-  async function retire(key: string, res: ServerResponse) {
+  async function removeSession(key: string): Promise<'deleted' | 'absent' | { refused: string }> {
     let done = () => {};
     removing.set(key, new Promise<void>((r) => (done = r)));
     try {
-      await retireChecked(key, res);
+      return await removeChecked(key);
     } finally {
       removing.delete(key);
       done();
@@ -408,75 +374,48 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
 
   // Only work refuses a delete: a run in flight, a sleep with a wake time, a person's pending decision. An idle process, or a page watching it, is stopped first.
   // Marked in `removing` before the first await, so new requests wait for the delete; ones already proxied end when the process stops.
-  async function retireChecked(key: string, res: ServerResponse) {
+  async function removeChecked(key: string): Promise<'deleted' | 'absent' | { refused: string }> {
     await stopping.get(key);
     const live = driver.running().includes(key);
     const busy = live && (await ping(key).then((p) => p.status === 'HealthyBusy', () => true));
     const why = busy ? 'is running'
       : serving.has(key) ? 'is handling a request'
       : !marked.has(key) && (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
-        : (await opts.retire!.waiting(key)) ? 'is waiting on a person' : undefined;
-    if (why) return sendProblem(res, 409, `session ${why}`);
+        : ((await opts.catalog?.getSession(key))?.pendingAsks ?? 0) > 0 ? 'is waiting on a person' : undefined;
+    if (why) return { refused: why };
     for (const s of sockets.get(key) ?? []) s.destroy();
     if (live) await driver.stop(key);
     marked.delete(key);
     wakeFailures.delete(key);
-    if (!(await driver.remove(key))) return sendProblem(res, 404, 'no such session');
+    if (!(await driver.remove(key))) return 'absent';
     arm(key, undefined);
-    await opts.retire!.forget(key);
-    await mirrored('delete', opts.catalog?.remove(key));
     active.delete(key);
     notes.delete(key);
-    send(res, 200, { key });
+    console.log(`session ${key} deleted`);
+    return 'deleted';
   }
 
-  const TITLE_MAX = 120;
+  // A free answer arrives as text (its choice the same text, not an option); a reason is the session's note.
+  const questionAnswer = (ask: { prompt?: { options: string[] } }, r: { choice: string; text?: string; reason?: string }) => ({
+    ...(r.text === undefined || ask.prompt?.options.includes(r.choice) ? { choice: r.choice } : {}),
+    ...(r.text !== undefined && { text: r.text }), ...(r.reason !== undefined && { note: r.reason }),
+  });
 
-  // A title is text of bounded length and archived a boolean; the string is an error for the caller.
-  function parsePatch(body: unknown): { title?: string; archived?: boolean } | string {
-    const { title, archived } = (body ?? {}) as Record<string, unknown>;
-    if (title !== undefined && (typeof title !== 'string' || title.length > TITLE_MAX)) return `title must be text of at most ${TITLE_MAX} characters`;
-    if (archived !== undefined && typeof archived !== 'boolean') return 'archived must be true or false';
-    return title === undefined && archived === undefined ? 'nothing to change' : { title, archived };
+  // A person's answer goes to the session's own gate or question, which is what the waiting run reads.
+  async function answer(key: string, ask: { id: string; type: 'approval' | 'question'; prompt?: { options: string[] } }, r: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string }): Promise<boolean | string> {
+    const who: Principal = r.by.kind === 'person' ? { kind: 'person', name: r.by.id } : r.by;
+    const [path, body] = ask.type === 'approval'
+      ? [`/approvals/${encodeURIComponent(ask.id)}`, { decision: r.choice, ...(r.reason !== undefined && { reason: r.reason }) }]
+      : [`/questions/${encodeURIComponent(ask.id)}`, questionAnswer(ask, r)];
+    let out: boolean | string = false;
+    await withSession(key, undefined, `POST ${path}`, async (url) => {
+      const res = await fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', ...upstream(key, who) }, body: JSON.stringify(body) });
+      const reply = (await res.json().catch(() => ({}))) as { error?: string };
+      out = res.ok || (res.status === 400 ? reply.error ?? 'the session refused the answer' : false);
+    });
+    return out;
   }
-
-  // Archiving hides a session from the lists, so one mid-run or waiting on a person is refused.
-  async function patch(key: string, req: IncomingMessage, res: ServerResponse) {
-    const change = parsePatch(await json(req).catch(() => null));
-    if (typeof change === 'string') return sendProblem(res, 400, change);
-    const { title, archived } = change;
-    if (archived && (active.get(key) || (await opts.retire!.waiting(key)))) return sendProblem(res, 409, "Can't archive a session that is running or waiting on you.");
-    const done = [title === undefined || (await driver.setTitle(key, title.trim() || undefined)), archived === undefined || (await driver.setArchived(key, archived))];
-    if (done.includes(false)) return sendProblem(res, 404, 'no such session');
-    if (title !== undefined) await mirrored('rename', opts.catalog?.rename(key, title.trim() || null));
-    if (archived !== undefined) await mirrored('archive', archived ? opts.catalog?.archive(key) : opts.catalog?.unarchive(key));
-    const found = await driver.session(key);
-    return found ? send(res, 200, (await decorate([found]))[0]) : sendProblem(res, 404, 'no such session');
-  }
-
-  // Why a housekeeping request is refused before it runs, if it is: it needs the admin token or the proxy's identity (the legacy route only the identity), and a body must be JSON (a cross-site form cannot send it).
-  function refusal(req: IncomingMessage, who: Principal | undefined, key: string | undefined, legacy: boolean): [number, string] | undefined {
-    const proxied = who?.kind === 'person';
-    if (legacy || !req.headers.authorization ? !proxied : !authorized(req, opts.retire!.token ?? '')) return [401, 'unauthorized'];
-    if (!key || !KEY.test(key)) return [400, 'invalid session key'];
-    return req.method !== 'DELETE' && !req.headers['content-type']?.startsWith('application/json') ? [legacy ? 400 : 415, 'send JSON'] : undefined;
-  }
-
-  // Rename, archive and delete change what a person sees, so each needs a credential; reads stay perimeter-trusted.
-  async function housekeeping(req: IncomingMessage, res: ServerResponse, who: Principal | undefined): Promise<boolean> {
-    const match = opts.retire && /^\/sessions\/([^/]+)(\/delete)?$/.exec(new URL(req.url ?? '', 'http://distributor').pathname);
-    const legacy = Boolean(match?.[2]);
-    if (!match || !(legacy ? req.method === 'POST' : req.method === 'PATCH' || req.method === 'DELETE')) return false;
-    const key = safeDecode(match[1]!);
-    const refused = refusal(req, who, key, legacy);
-    if (refused) sendProblem(res, ...refused);
-    else if (req.method === 'PATCH') await patch(key!, req, res);
-    else {
-      console.log(`session ${key} deleted by ${who?.kind === 'person' ? who.name : 'the admin token'}`);
-      await retire(key!, res);
-    }
-    return true;
-  }
+  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer });
 
   // A submission naming another agent changes the session's role if no run is active; an open run, a pending approval or a sleep is still a run.
   // shortcut: a busy session is refused (409) rather than queued as the next run; queue it if callers need follow-ups across roles.
@@ -490,13 +429,13 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     await stopSession(key, undefined);
   }
 
-  const removal = async (req: IncomingMessage, res: ServerResponse, who: Principal | undefined) => (await housekeeping(req, res, who)) || (await agentRoutes(req, res, who));
 
   // `who` is the public caller's principal; a session caller has none, and the session listener lets it reach no route that would read one.
   async function route(req: IncomingMessage, res: ServerResponse, who: Principal | undefined) {
     try {
-      if (await listing(req, res) || await removal(req, res, who)) return;
-      if (await opts.index?.(req, res)) return;
+      if (who && (await api?.(req, res, callerOf(who)))) return;
+      if (await listing(req, res) || await agentRoutes(req, res, who)) return;
+      if (await opts.routes?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return sendProblem(res, 404, 'not found');
       const target = sessionPath(req.url);
@@ -538,13 +477,13 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       socket.destroy();
     }
   });
-  const sessions = sessionListener(route, opts.sessions);
+  const sessions = sessionListener(route, opts.sessions, api);
   server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); if (sessions.listening) sessions.close(); });
   return Object.assign(server, { drain, sweep: () => maintain(sweepOnce), sessions });
 }
 
 /** The only listener a session's environment names: every request needs a current launch credential, identity headers count for nothing, and the credential reaches only what sessionRefusal allows. */
-function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who: undefined) => Promise<unknown>, auth: SessionAuth | undefined) {
+function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who: undefined) => Promise<unknown>, auth: SessionAuth | undefined, api?: (req: IncomingMessage, res: ServerResponse, caller: Caller) => Promise<boolean>) {
   const caller = async (req: IncomingMessage): Promise<SessionCaller | undefined> => {
     const token = sessionToken(req);
     const key = token === undefined ? undefined : auth?.sessionOf(token);
@@ -558,6 +497,8 @@ function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who:
       const { pathname, search } = new URL(req.url ?? '', 'http://distributor');
       req.url = pathname + search;
       if (await auth?.events?.(req, res, who.key)) return;
+      // The Sessions API holds a session to its own key and the home agent's grant itself.
+      if (await api?.(req, res, { kind: 'session', ...who })) return;
       const refused = sessionRefusal(req.method ?? 'GET', pathname, who);
       if (refused) return sendProblem(res, ...refused);
       await route(req, res, undefined);

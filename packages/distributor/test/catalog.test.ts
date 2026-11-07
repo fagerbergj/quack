@@ -92,7 +92,7 @@ async function distributor() {
   const driver: HostDriver = { ...real, running: () => [], ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, touch: async () => {}, setWake: async () => {} };
   const tokens = new Map([['tok-idle', 'idle']]);
   const sessions = { sessionOf: (t: string) => tokens.get(t), crossSession: async () => false, events: eventsRoute(catalog) };
-  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, sessions, catalog, setTimer: () => () => {}, retire: { waiting: async () => false, forget: async () => {} } });
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, sessions, catalog, setTimer: () => () => {} });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   await new Promise<void>((r) => server.sessions.listen(0, '127.0.0.1', r));
   cleanups.push(() => void server.close());
@@ -115,14 +115,14 @@ test('the channel answers only on the session listener, for the credential\'s ow
   assert.equal((await catalog.getSession('other'))?.title, undefined, 'the public listener never applies events');
 });
 
-test('a person\'s rename, archive and delete reach the catalog; a process exit records stopped', async () => {
+test('the Sessions API writes a person\'s rename, archive and delete through the catalog; a process exit records stopped', async () => {
   const { catalog, base } = await distributor();
   const call = (method: string, key: string, body?: unknown) => fetch(`${base}/sessions/${key}`, { method, headers: { ...PERSON, 'content-type': 'application/json' }, ...(body !== undefined && { body: JSON.stringify(body) }) });
   assert.equal((await call('PATCH', 'idle', { title: 'Mine' })).status, 200);
   assert.equal((await catalog.getSession('idle'))?.title, 'Mine');
-  assert.equal((await call('PATCH', 'idle', { archived: true })).status, 200);
+  assert.equal((await call('PATCH', 'idle', { state: 'archived' })).status, 200);
   assert.equal((await catalog.getSession('idle'))?.state, 'archived');
-  assert.equal((await call('PATCH', 'idle', { archived: false })).status, 200);
+  assert.equal((await call('PATCH', 'idle', { state: 'stopped' })).status, 200);
   assert.equal((await call('DELETE', 'idle')).status, 200);
   assert.equal(await catalog.getSession('idle'), undefined);
   await catalog.publish('other', [{ seq: 2, id: 'run:1:started', at: 1, type: 'run.started', data: { run: 1 } }]);
@@ -147,4 +147,18 @@ test('the root catalog section names the catalog store; the loader checks it and
   assert.throws(() => parseDeployment({ ...base, extensions: { index: {} } }), /extensions\.index is refused: the catalog is core, so name its store at catalog\.store/);
   assert.deepEqual(launchEnv({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), { url: 'http://d', token: 't' });
   assert.equal(launchEnv({ QUACK_INDEX_URL: 'http://d' }), undefined);
+});
+
+test('no /index route answers on either listener: the index is retired', async () => {
+  // The package that served them is gone, so nothing can mount them again.
+  assert.equal(existsSync(new URL('../../index/package.json', import.meta.url)), false);
+  const { base, sessionBase } = await distributor();
+  const routes = ['GET /index/sessions', 'GET /index/approvals?state=pending', 'GET /index/questions?state=pending', 'GET /index/failures', 'GET /index/artifacts', 'POST /index/facts'];
+  for (const route of routes) {
+    const [method, path] = route.split(' ') as [string, string];
+    const init = { method, headers: { 'content-type': 'application/json', authorization: 'Bearer tok-idle' }, ...(method === 'POST' && { body: '{"session":"idle","facts":[]}' }) };
+    const [pub, own] = [await fetch(base + path, init), await fetch(sessionBase + path, init)];
+    assert.equal(pub.status, 404, `public ${route}`);
+    assert.ok(own.status === 403 || own.status === 404, `session listener ${route} answered ${own.status}`);
+  }
 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { openCatalog } from '@quack/catalog';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -24,63 +25,57 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
   cleanups.push(() => upstream.close());
   const real = processDriver({ command: [], dataDir });
   const driver: HostDriver = { ...real, running: () => (opts.busy ? [opts.busy] : []), ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, touch: async () => {}, setWake: async () => {} };
-  const forgotten: string[] = [];
-  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, retire: { waiting: async (k) => (opts.waiting ?? []).includes(k), forget: async (k) => void forgotten.push(k) } }).listen(0);
+  // The catalog the session channels would have filled: each key known, `busy` running, `waiting` with a pending ask.
+  const catalog = openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-house-catalog-')) });
+  cleanups.push(() => void catalog.close());
+  for (const key of ['idle', 'busy', 'asking']) {
+    await catalog.publish(key, [
+      { seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'quack', createdAt: 0 } },
+      ...(key === opts.busy ? [{ seq: 2, id: 'run:1', at: 1, type: 'run.started' as const, data: { run: 1 } }] : []),
+      ...((opts.waiting ?? []).includes(key) ? [{ seq: 2, id: 'ask', at: 1, type: 'ask.opened' as const, data: { id: 'a1', type: 'approval' as const, createdAt: 1, toolCall: { tool: 't', args: {} } } }] : []),
+    ]);
+  }
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, catalog }).listen(0);
   await new Promise((r) => server.once('listening', r));
   cleanups.push(() => server.close());
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
   const call = async (method: string, path: string, body: unknown = {}, headers: Record<string, string> = { 'content-type': 'application/json' }) => {
     // The page reaches these routes through the proxy, which sets the caller's identity.
-    const res = await fetch(url(path), { method, headers: { ...PERSON, ...headers }, body: JSON.stringify(body) });
-    return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as { error?: string; detail?: string; title?: string; status?: number } };
+    const res = await fetch(url(path), { method, headers: { ...PERSON, ...headers }, ...(method !== 'GET' && { body: JSON.stringify(body) }) });
+    return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as { error?: string; detail?: string; title?: string; status?: number; state?: string } };
   };
-  const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; archived?: boolean }> }).sessions;
-  return { url, call, listed, forgotten, dataDir, sweep: () => server.sweep() };
+  const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; state: string }> }).sessions;
+  return { url, call, listed, catalog, dataDir, sweep: () => server.sweep() };
 }
 
-test('renaming sets the title, and an empty title restores the default', async () => {
+test('the public listener serves the Sessions API from the catalog: rename, archive and unarchive', async () => {
   const { call, listed } = await start();
   assert.equal((await call('PATCH', '/sessions/idle', { title: '  Nightly review  ' })).status, 200);
   assert.equal((await listed()).find((s) => s.key === 'idle')?.title, 'Nightly review');
-  await call('PATCH', '/sessions/idle', { title: '' });
-  assert.equal((await listed()).find((s) => s.key === 'idle')?.title, undefined);
+  assert.equal((await call('PATCH', '/sessions/idle', { state: 'archived' })).body.state, 'archived');
+  assert.equal((await call('PATCH', '/sessions/idle', { state: 'stopped' })).body.state, 'stopped');
+  assert.equal((await call('PATCH', '/sessions/idle', { archived: true })).status, 200, 'v1 archived is no longer a field; the write changes nothing');
 });
 
-test('archive flags the session in the listing and unarchive clears it', async () => {
-  const { call, listed } = await start();
-  assert.equal((await call('PATCH', '/sessions/idle', { archived: true })).status, 200);
-  assert.equal((await listed()).find((s) => s.key === 'idle')?.archived, true);
-  await call('PATCH', '/sessions/idle', { archived: false });
-  assert.equal((await listed()).find((s) => s.key === 'idle')?.archived, undefined);
+test('archive is refused for a running session, and the title stays as it was', async () => {
+  const { call, listed } = await start({ busy: 'busy' });
+  assert.equal((await call('PATCH', '/sessions/busy', { title: 'Never', state: 'archived' })).status, 409);
+  assert.equal((await listed()).find((s) => s.key === 'busy')?.title, undefined);
 });
 
-test('archive is refused for a session mid-run or waiting on a person, and rename still works', async () => {
-  const { call, listed, sweep } = await start({ busy: 'busy', waiting: ['asking'] });
-  await sweep();
-  for (const key of ['busy', 'asking']) {
-    const res = await call('PATCH', `/sessions/${key}`, { archived: true });
-    assert.deepEqual([res.status, res.body.error], [409, "Can't archive a session that is running or waiting on you."]);
-    assert.deepEqual([res.type, res.body.title, res.body.status, res.body.detail], ['application/problem+json', 'Conflict', 409, res.body.error]);
-  }
-  assert.equal((await call('PATCH', '/sessions/busy', { title: 'Still renamable' })).status, 200);
-  assert.deepEqual((await listed()).filter((s) => s.archived), []);
+test('delete removes the directory and the catalog rows, and is refused while running or waiting on a person', async () => {
+  const { call, catalog, dataDir } = await start({ busy: 'busy', waiting: ['asking'] });
+  assert.equal((await call('DELETE', '/sessions/busy')).status, 409);
+  assert.match(String((await call('DELETE', '/sessions/asking')).body.detail), /waiting on a person/);
+  assert.equal((await call('DELETE', '/sessions/idle')).status, 200);
+  assert.deepEqual([await catalog.getSession('idle'), await readdir(dataDir).then((d) => d.includes(sessionDirName('idle')))], [undefined, false]);
+  assert.equal((await call('GET', '/sessions/idle')).status, 404);
 });
 
-test('delete removes the directory and index rows, and is refused while running', async () => {
-  const { call, forgotten, dataDir } = await start({ busy: 'busy' });
-  assert.equal((await call('POST', '/sessions/busy/delete')).status, 409);
-  assert.equal((await call('POST', '/sessions/idle/delete')).status, 200);
-  assert.deepEqual(forgotten, ['idle']);
-  assert.equal((await readdir(dataDir)).includes(sessionDirName('idle')), false);
-});
-
-test('an unknown key is 404, a bad body 400, and a non-JSON caller 415 (400 on the legacy delete route)', async () => {
+test('an unknown key is 404, a bad state 422, and a non-JSON body 415', async () => {
   const { call } = await start();
   assert.equal((await call('PATCH', '/sessions/nope', { title: 'x' })).status, 404);
-  assert.equal((await call('POST', '/sessions/nope/delete')).status, 404);
-  assert.equal((await call('PATCH', '/sessions/idle', { title: 5 })).status, 400);
-  assert.equal((await call('PATCH', '/sessions/idle', {})).status, 400);
-  assert.equal((await call('POST', '/sessions/idle/delete', {}, { 'content-type': 'text/plain' })).status, 400);
+  assert.equal((await call('PATCH', '/sessions/idle', { state: 'running' })).status, 422);
   assert.equal((await call('PATCH', '/sessions/idle', { title: 'x' }, { 'content-type': 'text/plain' })).status, 415);
 });
 

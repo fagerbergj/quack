@@ -4,22 +4,22 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { serviceHttp } from '@quack/sdk';
 import webpush from 'web-push';
-import type { Fact } from './facts.ts';
+import type { CatalogEvent } from '@quack/catalog';
 
 export type Subscription = { endpoint: string; keys: { p256dh: string; auth: string } };
 type Send = (sub: Subscription, payload: string) => Promise<unknown>;
 export type PushOptions = {
   dataDir: string;
   env?: { QUACK_VAPID_PUBLIC_KEY?: string; QUACK_VAPID_PRIVATE_KEY?: string; QUACK_VAPID_SUBJECT?: string };
-  /** The session's sealed artifacts, read when a run ends to find versions that will never get a verdict. */
-  artifacts?: (session: string) => Promise<Array<{ kind: string; version: number; verdict: boolean }>>;
+  /** The session's sealed versions, read when a run ends: the newest of each kind is the run's report. */
+  artifacts?: (session: string) => Promise<Array<{ kind: string; version: number }>>;
   /** The session's display title, for the notification; undefined when it has none. */
   title?: (session: string) => Promise<string | undefined>;
   send?: Send;
   now?: () => number;
 };
 
-// A fact older than this is a rebuild or a long outage catching up, not something new to wake a phone for.
+// An event older than this is a replay or a long outage catching up, not something new to wake a phone for.
 const RECENT_MS = 6 * 3600_000;
 const { send: reply, problem, json: readJson } = serviceHttp({ maxBody: 16 * 1024 });
 const ROUTES = new Set(['GET /push/key', 'POST /push/subscribe', 'POST /push/unsubscribe', 'POST /push/test']);
@@ -35,12 +35,14 @@ function vapidKeys(dataDir: string, env: NonNullable<PushOptions['env']>) {
 
 const oneLine = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 140) : '');
 
-/** What a fact asks of the operator in plain words, or undefined when it asks nothing. */
-function ask(f: Fact): { what: string; body?: string } | undefined {
-  const d = f.data as Record<string, unknown>;
-  if (f.kind === 'approval' && d.state === 'pending') return { what: 'Approval waiting', body: oneLine((d.args as { summary?: unknown } | null)?.summary) || undefined };
-  if (f.kind === 'question' && d.state === 'pending') return { what: 'Question waiting', body: oneLine(d.question) };
-  if (f.kind === 'failure' && d.state === 'failed') return { what: 'Session failed' };
+/** What an event asks of the operator in plain words, and the key it is sent once under; undefined when it asks nothing. */
+function ask(e: CatalogEvent): { what: string; body?: string; id: string } | undefined {
+  if ('extension' in e) return undefined;
+  if (e.type === 'ask.opened') {
+    const body = e.data.type === 'approval' ? oneLine((e.data.toolCall?.args as { summary?: unknown } | null)?.summary) : oneLine(e.data.prompt?.question);
+    return { what: e.data.type === 'approval' ? 'Approval waiting' : 'Question waiting', body: body || undefined, id: `ask:${e.data.id}` };
+  }
+  if (e.type === 'run.ended' && e.data.outcome === 'failed') return { what: 'Session failed', id: `run:${e.data.run}:failed` };
   return undefined;
 }
 
@@ -49,8 +51,8 @@ const isSubscription = (s: unknown): s is Subscription => {
   return typeof x?.endpoint === 'string' && x.endpoint.length < 2048 && x.endpoint.startsWith('https://') && typeof x.keys?.p256dh === 'string' && typeof x.keys.auth === 'string';
 };
 
-/** Web push: subscriptions and the record of what was already sent live beside the index, in the data dir. */
-export function openPush(opts: PushOptions) {
+/** Web push, fed by the catalog's applied events: subscriptions and the record of what was sent live in the data dir. */
+export function openNotifications(opts: PushOptions) {
   mkdirSync(opts.dataDir, { recursive: true });
   const now = opts.now ?? Date.now;
   const keys = vapidKeys(opts.dataDir, opts.env ?? {});
@@ -74,27 +76,20 @@ export function openPush(opts: PushOptions) {
 
   type Item = { key: string; what: string; body?: string };
 
-  // A report is ready once, when final: a judged version that passed or hit the revision limit, or at the end of a run the newest
-  // version of a kind that got no verdict (unjudged kinds, carried-forward approvals). A failed draft that will be revised is never one.
-  async function reports(session: string, facts: Fact[]): Promise<Item[]> {
-    const item = (kind: string, version: number): Item => ({ key: `${session}\nreport:${kind}:${version}`, what: 'Report ready' });
-    const items = facts.flatMap((f) => {
-      const v = (f.data as { verdict?: { passed?: boolean; limitReached?: boolean } | null }).verdict;
-      return f.kind === 'artifact' && (v?.passed || v?.limitReached) ? [item(String(f.data.kind), Number(f.data.version))] : [];
-    });
-    if (!facts.some((f) => f.kind === 'status' && (f.data as { state?: string }).state === 'idle')) return items;
+  // A run's end is when its reports are final: the newest version of each kind the session holds, each pushed once.
+  async function reports(session: string, events: CatalogEvent[]): Promise<Item[]> {
+    if (!events.some((e) => !('extension' in e) && e.type === 'run.ended' && e.data.outcome !== 'failed')) return [];
     const newest = new Map<string, number>();
-    for (const a of (await opts.artifacts?.(session)) ?? []) if (!a.verdict) newest.set(a.kind, Math.max(a.version, newest.get(a.kind) ?? 0));
-    return [...items, ...[...newest].map(([kind, version]) => item(kind, version))];
+    for (const a of (await opts.artifacts?.(session)) ?? []) newest.set(a.kind, Math.max(a.version, newest.get(a.kind) ?? 0));
+    return [...newest].map(([kind, version]) => ({ key: `${session}\nreport:${kind}:${version}`, what: 'Report ready' }));
   }
 
   // The sent row is written before the send, so a crash can lose a push but never repeat one.
-  async function notify(session: string, facts: Fact[]) {
-    const recent = facts.filter((f) => now() - f.at <= RECENT_MS);
-    const asks = recent.flatMap((f): Item[] => {
-      const what = ask(f);
-      // A failure id is its step, so a later run's failure is a new one; the others are once per id.
-      return what ? [{ ...what, key: `${session}\n${f.id}${f.kind === 'failure' ? `@${f.rev}` : ''}` }] : [];
+  async function notify(session: string, events: CatalogEvent[]) {
+    const recent = events.filter((e) => now() - e.at <= RECENT_MS);
+    const asks = recent.flatMap((e): Item[] => {
+      const what = ask(e);
+      return what ? [{ what: what.what, ...(what.body && { body: what.body }), key: `${session}\n${what.id}` }] : [];
     });
     for (const it of [...asks, ...(await reports(session, recent))]) {
       if (db.prepare('insert or ignore into sent (key, at) values (?, ?)').run(it.key, now()).changes === 0) continue;
@@ -123,7 +118,7 @@ export function openPush(opts: PushOptions) {
     reply(res, 200, { ok: true });
   }
 
-  // shortcut: like the index reads, takes no credential though sessions bypass the proxy; the Sessions API must authorize it.
+  // shortcut: takes no credential though sessions bypass the proxy; the push contract's revision authorizes it.
   const routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = new URL(req.url ?? '', 'http://distributor').pathname;
     if (!path.startsWith('/push/')) return false;

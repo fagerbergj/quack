@@ -6,43 +6,48 @@ import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
+import { openCatalog, type CatalogEvent } from '@quack/catalog';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
-
-const TOKEN = 'admin';
 const servers: Array<() => void> = [];
 after(() => servers.forEach((close) => close()));
 
+const created = (key: string): CatalogEvent => ({ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'a', createdAt: 0 } });
+const asked: CatalogEvent = { seq: 2, id: 'ask:1', at: 0, type: 'ask.opened', data: { id: 'a1', type: 'approval', createdAt: 0, toolCall: { tool: 't', args: {} } } };
+
+// A catalog that knows the sessions, with a pending ask on each that waits on a person.
+async function catalogOf(keys: string[], waiting: string[] = []) {
+  const catalog = openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-retire-catalog-')) });
+  servers.push(() => void catalog.close());
+  for (const key of keys) await catalog.publish(key, [created(key), ...(waiting.includes(key) ? [asked] : [])]);
+  return catalog;
+}
+
 async function start(opts: { running?: string[]; sleeping?: string[]; waiting?: string[] }) {
   const existing = new Set(['idle', 'busy', 'asleep', 'asking']);
-  const forgotten: string[] = [];
+  const catalog = await catalogOf([...existing], opts.waiting);
   const driver = {
     running: () => opts.running ?? [], wakes: async () => (opts.sleeping ?? []).map((key) => ({ key, at: 1 })),
     remove: async (key: string) => existing.delete(key), stop: async () => {}, setWake: async () => {}, touch: async () => {},
   } as unknown as HostDriver;
-  const server = createDistributor(driver, { retire: { token: TOKEN, waiting: async (k) => (opts.waiting ?? []).includes(k), forget: async (k) => void forgotten.push(k) } }).listen(0);
+  const server = createDistributor(driver, { catalog }).listen(0);
   await new Promise((r) => server.once('listening', r));
   servers.push(() => server.close());
-  const del = (key: string, token = TOKEN) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/${encodeURIComponent(key)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } }).then((r) => r.status);
-  return { del, forgotten, existing };
+  const del = (key: string) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/${encodeURIComponent(key)}`, { method: 'DELETE' }).then((r) => r.status);
+  return { del, catalog, existing };
 }
 
-test('deleting an idle session removes its directory and index rows', async () => {
-  const { del, forgotten, existing } = await start({});
+test('deleting an idle session removes its directory and its catalog rows', async () => {
+  const { del, catalog, existing } = await start({});
   assert.equal(await del('idle'), 200);
-  assert.deepEqual([forgotten, existing.has('idle')], [['idle'], false]);
+  assert.deepEqual([await catalog.getSession('idle'), existing.has('idle')], [undefined, false]);
   assert.equal(await del('idle'), 404);
 });
 
 test('a running, sleeping or person-waiting session is refused and kept', async () => {
-  const { del, forgotten, existing } = await start({ running: ['busy'], sleeping: ['asleep'], waiting: ['asking'] });
+  const { del, catalog, existing } = await start({ running: ['busy'], sleeping: ['asleep'], waiting: ['asking'] });
   for (const key of ['busy', 'asleep', 'asking']) assert.equal(await del(key), 409, key);
-  assert.deepEqual([forgotten, existing.size], [[], 4]);
-});
-
-test('deleting needs the admin token', async () => {
-  const { del, existing } = await start({});
-  assert.equal(await del('idle', 'wrong'), 401);
-  assert.equal(existing.has('idle'), true);
+  assert.equal(existing.size, 4);
+  assert.ok(await catalog.getSession('asking'), 'a refused delete keeps the catalog rows');
 });
 
 test('a session pinned before retention existed follows its agent current bundle', async () => {
@@ -75,13 +80,13 @@ test('an invocation racing a delete waits for it and then starts a fresh session
     ensure: async () => { log.push('ensure'); return `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`; },
   } as unknown as HostDriver;
   const server = createDistributor(driver, {
-    retire: { token: TOKEN, waiting: async () => false, forget: async () => {} },
-    index: async (req) => { if (req.method === 'POST') sawInvoke(); return false; },
+    catalog: await catalogOf(['old']),
+    routes: async (req) => { if (req.method === 'POST') sawInvoke(); return false; },
   }).listen(0);
   await new Promise((r) => server.once('listening', r));
   servers.push(() => server.close());
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/old`;
-  const deleted = fetch(url, { method: 'DELETE', headers: { authorization: `Bearer ${TOKEN}` } });
+  const deleted = fetch(url, { method: 'DELETE' });
   const invoked = fetch(`${url}/invocations`, { method: 'POST', body: '{}' });
   // setImmediate runs after the request's microtask path has reached its wait on the delete.
   await seen;

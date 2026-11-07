@@ -1,11 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import { storeFor, readDeploymentFile } from '@quack/sdk';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { readDeploymentFile } from '@quack/sdk';
 import { fileURLToPath } from 'node:url';
-import { indexRoutes, openPush, openStore } from '@quack/index';
 import { catalogStore, eventsRoute, openCatalog } from '@quack/catalog';
 import { parseDeployment, priceOf } from '@quack/session';
 import { backfillCatalog } from './catalog-sync.ts';
-import { createDistributor, recordTurns } from './server.ts';
+import { createDistributor } from './server.ts';
+import { openNotifications } from './notifications.ts';
 import { pinnedAgentPath } from './process-driver.ts';
 import { credentialBroker } from './credentials.ts';
 import { sessionDriver } from './session-driver.ts';
@@ -25,11 +26,8 @@ const port = Number(env('PORT', '8080'));
 // The listener sessions are given; the public PORT serves the reverse proxy and the tailnet.
 const sessionPort = Number(env('QUACK_SESSION_PORT', String(port + 1)));
 const dataDir = env('QUACK_DATA_DIR');
-// The index keeps a store named `index` when the deployment file has one, otherwise a sqlite file in the data dir.
 const deployment = readDeploymentFile();
-const { store } = openStore({ dataDir, store: storeFor(deployment, deployment.stores?.index && 'index') });
-void store.ensure().catch((err) => console.error('index migrations will retry:', err.message));
-// The session catalog keeps a store named `catalog` when the deployment file has one, otherwise catalog.sqlite in the data dir.
+// The catalog's store is the one the deployment file's catalog.store names, otherwise catalog.sqlite in the data dir.
 const catalog = openCatalog({ dataDir, store: catalogStore(deployment) });
 const broker = credentialBroker();
 const manifests = await loadManifests();
@@ -45,15 +43,15 @@ if (backfilled !== undefined) console.log(`catalog: backfilled ${backfilled} ses
 const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.emit('request', req, res) });
 const pinnedDefinition = (key: string) => readFile(pinnedAgentPath(dataDir, key), 'utf8').then(JSON.parse, () => null);
 const apps = appsGateway(mounted, broker.sessionOf, async (key) => declaredApps(await pinnedDefinition(key), manifests));
-// The page's rename, archive and delete always work; a token set also lets the retention sweep delete idle sessions.
-const retire = { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) };
 // VAPID keys are made on first boot under the data dir; QUACK_VAPID_PUBLIC_KEY, QUACK_VAPID_PRIVATE_KEY and QUACK_VAPID_SUBJECT override them.
-const push = openPush({ dataDir, env: process.env, artifacts: async (key) => (await store.artifacts()).filter((a) => a.session === key).map((a) => ({ kind: String(a.kind), version: Number(a.version), verdict: Boolean(a.verdict) })), title: async (key) => (await driver.session(key))?.title });
-const turns = recordTurns(driver);
-const indexHttp = indexRoutes(store, broker.sessionOf, (session, facts) => Promise.all([turns(session, facts), push.notify(session, facts)]).then(() => {}));
+const push = openNotifications({
+  dataDir, env: process.env, title: async (key) => (await catalog.getSession(key))?.title,
+  artifacts: async (key) => (await catalog.listArtifacts({ session: key, pageSize: 1000 })).rows,
+});
 // QUACK_PROXY_SECRET is the value the reverse proxy sends in x-quack-proxy-secret; without it no identity header is believed.
-const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)), events: eventsRoute(catalog) };
-const server = createDistributor(driver, { retire, refuse, sessions, catalog, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, spend: () => store.sessions(), webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res)) || false }).listen(port);
+const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)), events: eventsRoute(catalog, (key, events) => push.notify(key, events)) };
+const routes = async (req: IncomingMessage, res: ServerResponse) => (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res));
+const server = createDistributor(driver, { refuse, sessions, catalog, routes, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
 server.sessions.listen(sessionPort, listenAddress);
 // A failed start (the GitHub app finding its agent unpromoted, say) exits so compose restarts it, as the separate service did.
 for (const [name, app] of Object.entries(mounted)) {
