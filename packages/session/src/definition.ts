@@ -16,7 +16,7 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
 /** Per agent: its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
@@ -105,7 +105,17 @@ function deployedExtensionProblems(extensions: unknown, stores: unknown): string
   });
 }
 
-const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions'];
+const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions', 'catalog'];
+
+// The catalog is core: its store is named at the root, checked against stores like an extension's.
+function catalogProblems(catalog: unknown, stores: unknown, extensions: unknown): string[] {
+  const problems = isObject(extensions) && Object.hasOwn(extensions, 'index') ? ['extensions.index is refused: the catalog is core, so name its store at catalog.store'] : [];
+  if (catalog === undefined) return problems;
+  if (!isObject(catalog)) return [...problems, 'catalog must be an object'];
+  problems.push(...Object.keys(catalog).filter((k) => k !== 'store').map((k) => `catalog.${k} is not a catalog key`));
+  if (catalog.store !== undefined && !(typeof catalog.store === 'string' && isObject(stores) && Object.hasOwn(stores, catalog.store))) problems.push(`catalog.store ${String(catalog.store)} is not in stores`);
+  return problems;
+}
 
 function rootProblems(raw: Record<string, unknown>): string[] {
   const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => (k === 'services' ? 'unknown top-level key services: it was renamed extensions, and an entry takes only store and settings' : `unknown top-level key ${k}`));
@@ -113,7 +123,7 @@ function rootProblems(raw: Record<string, unknown>): string[] {
   else problems.push(...Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p)));
   if (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be "provider/model"');
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
-  problems.push(...storeProblems(raw.stores), ...deployedExtensionProblems(raw.extensions, raw.stores));
+  problems.push(...storeProblems(raw.stores), ...deployedExtensionProblems(raw.extensions, raw.stores), ...catalogProblems(raw.catalog, raw.stores, raw.extensions));
   if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
   return problems;
 }

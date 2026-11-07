@@ -4,7 +4,7 @@ import { join } from 'node:path';
 export type StoreEntry = { kind: 'sqlite' } | { kind: 'postgres'; urlEnv: string };
 export type ExtensionEntry = { store?: string; settings?: unknown };
 /** The parts of the deployment file an extension reads; the loader and `validate` check the whole shape. */
-export type DeploymentFile = { providers?: Record<string, { slots?: number }>; stores?: Record<string, StoreEntry>; extensions?: Record<string, ExtensionEntry> };
+export type DeploymentFile = { providers?: Record<string, { slots?: number }>; stores?: Record<string, StoreEntry>; extensions?: Record<string, ExtensionEntry>; catalog?: { store?: string } };
 export type StoreChoice = { kind: 'sqlite' } | { kind: 'postgres'; url: string };
 
 export function readDeploymentFile(env: NodeJS.ProcessEnv = process.env): DeploymentFile {

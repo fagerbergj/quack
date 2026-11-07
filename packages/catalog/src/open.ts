@@ -7,9 +7,12 @@ import { fileJournal } from './journal.ts';
 import { postgresCatalog } from './postgres.ts';
 import { sqliteCatalog } from './sqlite.ts';
 
-// shortcut: deployment.json v6 names no catalog store, so this reads stores.catalog; v7's core section replaces this one line.
-/** The store the deployment file selects for the catalog; none selected is SQLite in the data dir. */
-export const catalogStore = (deployment: DeploymentFile, env: NodeJS.ProcessEnv = process.env): StoreChoice => storeFor(deployment, deployment.stores?.catalog && 'catalog', env);
+/** The store the deployment file's root `catalog.store` names; an absent section or store is SQLite in the data dir.
+ * An unknown name throws, as the loader refuses it. */
+export function catalogStore(deployment: DeploymentFile, env: NodeJS.ProcessEnv = process.env): StoreChoice {
+  if (deployment.extensions && Object.hasOwn(deployment.extensions, 'index')) throw new Error('extensions.index is refused: the catalog is core, so name its store at catalog.store');
+  return storeFor(deployment, deployment.catalog?.store, env);
+}
 
 /** The deployment's catalog: Postgres when its store is, else `catalog.sqlite` in the data dir, so a fresh install needs nothing.
  * The action journal is always in the data dir, outside every session's directory. */

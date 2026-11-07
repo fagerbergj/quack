@@ -130,11 +130,21 @@ test('a person\'s rename, archive and delete reach the catalog; a process exit r
   assert.deepEqual(await catalog.stopped('other'), { applied: true, state: 'stopped' });
 });
 
-test('one function picks the catalog store from the deployment file, and one reads the launch env', async () => {
+test('the root catalog section names the catalog store; the loader checks it and refuses an index extension', async () => {
   const { catalogStore } = await import('@quack/catalog');
-  const { launchEnv } = await import('@quack/session');
-  assert.deepEqual(catalogStore({}, {}), { kind: 'sqlite' });
-  assert.deepEqual(catalogStore({ stores: { catalog: { kind: 'postgres', urlEnv: 'CAT_URL' } } }, { CAT_URL: 'postgres://x' }), { kind: 'postgres', url: 'postgres://x' });
+  const { launchEnv, parseDeployment } = await import('@quack/session');
+  const stores = { cat: { kind: 'postgres' as const, urlEnv: 'CAT_URL' } };
+  assert.deepEqual(catalogStore({ stores, catalog: { store: 'cat' } }, { CAT_URL: 'postgres://x' }), { kind: 'postgres', url: 'postgres://x' }, 'a named store');
+  assert.deepEqual(catalogStore({}, {}), { kind: 'sqlite' }, 'no section is sqlite in the data dir');
+  assert.deepEqual(catalogStore({ catalog: {} }, {}), { kind: 'sqlite' }, 'a section without a store too');
+  assert.deepEqual(catalogStore({ stores: { catalog: stores.cat } }, { CAT_URL: 'postgres://x' }), { kind: 'sqlite' }, 'a store merely named catalog is not the catalog\'s');
+  assert.throws(() => catalogStore({ stores, catalog: { store: 'nope' } }, {}), /store nope is missing/);
+  assert.throws(() => catalogStore({ extensions: { index: { store: 'cat' } } }, {}), /extensions\.index is refused.*catalog\.store/);
+  const base = { providers: { local: { baseUrl: 'http://x', models: { m: { contextWindow: 1000 } } } }, defaultModel: 'local/m', stores };
+  assert.doesNotThrow(() => parseDeployment({ ...base, catalog: { store: 'cat' } }));
+  assert.throws(() => parseDeployment({ ...base, catalog: { store: 'nope' } }), /catalog\.store nope is not in stores/);
+  assert.throws(() => parseDeployment({ ...base, catalog: { store: 'cat', path: 'x' } }), /catalog\.path is not a catalog key/);
+  assert.throws(() => parseDeployment({ ...base, extensions: { index: {} } }), /extensions\.index is refused: the catalog is core, so name its store at catalog\.store/);
   assert.deepEqual(launchEnv({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), { url: 'http://d', token: 't' });
   assert.equal(launchEnv({ QUACK_INDEX_URL: 'http://d' }), undefined);
 });
