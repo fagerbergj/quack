@@ -12,16 +12,22 @@ export type Answer = { met: boolean | null; resolver: string; note?: string };
 // Clef's tokenizer counted 9.6-10.6k tokens on code units the 4-byte rule put under 8,192 (spike #2190); code packs ~3 bytes a token.
 const BYTES_PER_TOKEN = 3;
 
+const request = (unit: Unit, checks: Check[]) => ({
+  state: unit.state,
+  questions: Object.fromEntries(checks.map((c) => [c.id, { type: 'bool', instructions: c.question!, criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }])) as Record<string, ClassifierQuestion>,
+});
+
+/** The decision model's input tokens for one unit and its checks, as the cap is judged. */
+export const classifierTokens = (unit: Unit, checks: Check[]) => JSON.stringify(request(unit, checks)).length / BYTES_PER_TOKEN;
+
 // null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
 async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | null | undefined> {
-  const questions: Record<string, ClassifierQuestion> = Object.fromEntries(
-    checks.map((c) => [c.id, { type: 'bool', instructions: c.question!, criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }]),
-  );
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
-  if (JSON.stringify({ state: unit.state, questions }).length / BYTES_PER_TOKEN > ref.maxInputTokens) return null;
+  if (classifierTokens(unit, checks) > ref.maxInputTokens) return null;
+  const { state, questions } = request(unit, checks);
   const model = api.models.getAllModels(ref.provider).find((m) => m.id === ref.modelId && m.type === 'classifier') as ClassifierModel<never> | undefined;
   if (!model) return null;
-  const result = await api.models.classify(model, { state: unit.state, questions }, { signal: ctx.abortSignal }).catch(() => undefined);
+  const result = await api.models.classify(model, { state, questions }, { signal: ctx.abortSignal }).catch(() => undefined);
   ctx.abortSignal?.throwIfAborted();
   if (result?.stopReason !== 'stop') return undefined;
   return Object.fromEntries(Object.entries(result.answers).flatMap(([id, a]) => (a.type === 'bool' ? [[id, a.probability]] : [])));

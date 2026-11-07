@@ -1,0 +1,1627 @@
+{
+ "kind": "rest",
+ "title": "Quack session lifecycle channel",
+ "version": 1,
+ "intent": {
+  "purpose": "The per-session channel through which a session reports its lifecycle changes to the distributor's session catalog (Sessions API): session created; run started or ended with outcome and failed steps; ask opened, resolved or cancelled; artifact sealed; spend; title; state. One operation \u2014 POST /sessions/{key}/events on the credentialed session listener \u2014 takes batches of events derived from the session's own durable log, authenticated by the session's launch credential, ordered by a per-session sequence number and acked by a watermark. The session's log is the outbox: while the distributor is down, events wait in the log and replay on reconnect, and replaying the whole log recovers the session's rows. The channel replaces the index's fact publishing (POST /index/facts), deleted with the index package, and feeds the notifications adapter that takes over index.push's notification behaviour.",
+  "nonGoals": [
+   "The catalog and its reads and person writes (rename, resolve, archive, delete): the Sessions API contract (quack v2), which defers this channel as 'specified separately' and records what the catalog stores as a result.",
+   "index.push (web push): its routes and payloads stay their own contract; this channel only carries what that notifications adapter needs.",
+   "The catalog rebuild itself: an internal recovery operation of the distributor, not an API; the channel provides the replay it rides on.",
+   "State writes a person makes: archived/stopped and title via PATCH /sessions/{key}, ask resolution via PATCH /sessions/{key}/asks/{id} \u2014 those are written by the Sessions API, not reported here (the session reports the resolutions it itself recorded).",
+   "Session transcripts, messages, sockets and invocations: those routes drive the session's process and are not part of this channel.",
+   "Cross-session reporting: a launch credential never reports another session's key."
+  ],
+  "audience": "Internal to one quack deployment: every session process talks to its own distributor's credentialed session listener.",
+  "consumers": [
+   "Every session process \u2014 the runtime publisher that today posts index facts to {QUACK_INDEX_URL}/index/facts, targeting this route instead with the same launch token (QUACK_INDEX_TOKEN)",
+   "The distributor \u2014 applies each batch to the session catalog (SQLite by default, Postgres when the deployment configures it)",
+   "The distributor's notifications adapter \u2014 the successor to index.push's notification behaviour, fed by the same applied events"
+  ],
+  "guarantees": [
+   "Per-session authentication: the session's launch credential, minted per launch and revoked when the session process exits, on the credentialed session listener #2220 introduces; a credential reaches only its own key \u2014 404 on a foreign key, 401 on a missing, unknown or revoked one.",
+   "Idempotency: a stable event id plus a per-session sequence number; a retried batch applies nothing twice, an event at or below the catalog's watermark is skipped, and a higher seq with the same id supersedes the earlier one, so an older revision never overwrites a newer one.",
+   "The log is the outbox: unsent events are the derived events beyond the last ack; a crash, an outage or a restart loses nothing, and a down distributor simply holds them in the session's log until reconnect.",
+   "Deterministic replay: the event stream is a pure function of the session's log, so replaying the whole log \u2014 triggered implicitly when the distributor's watermark drops \u2014 converges to the same state as live publishing.",
+   "At most one event stale: a catalog row reflects the session's latest applied events (Sessions API).",
+   "Errors are application/problem+json; 401 and 400 are permanent (the session logs them and does not retry the same body), 409 carries the watermark to resync, 413 splits the batch, and 503 and timeouts retry on bounded backoff.",
+   "Money is never a float: spend is { currencyCode, amountMicros }, an int64 count of millionths encoded as a decimal string."
+  ]
+ },
+ "document": {
+  "openapi": "3.1.0",
+  "info": {
+   "title": "Quack session lifecycle channel",
+   "version": "1.0.0",
+   "description": "The Sessions API's deferred channel: one session reports its lifecycle changes to the distributor's session catalog \u2014 session created; run started or ended with outcome and failed steps; ask opened, resolved or cancelled; artifact sealed; spend; title; state. This replaces the index's fact publishing (POST /index/facts), which is deleted with the whole index package: the distributor keeps no index store; it writes the catalog (SQLite by default, Postgres when configured) directly.\n\nTransport: REST on the separate credentialed session listener #2220 introduces, apart from the person/proxy listener. One operation: POST /sessions/{key}/events. A batch POST is the house pattern \u2014 the session already holds a per-launch credential minted for exactly this boundary (the distributor mints QUACK_INDEX_TOKEN at launch and revokes it when the process exits) and already publishes to the distributor over plain HTTP \u2014 and it keeps the distributor a pure push receiver that never has to reach the session's process, which does not exist while the session is stopped.\n\nIdentity and ordering: every event carries a stable `id` \u2014 derived from the session's log, so the same logical event re-derives with the same id \u2014 and a per-session strictly increasing `seq`, an ordinal in the session's derived event stream. Within a batch, `seq` strictly increases. The catalog keeps one watermark per session, the highest seq it has applied. The distributor applies a batch in seq order, skips events at or below the watermark (a retried batch applies nothing twice), answers 409 carrying the watermark when a batch starts more than one past it, and answers 200 with the new watermark. An event with the same id at a higher seq supersedes the earlier one (spend, state and run outcome derive cumulatively), so an older revision never overwrites a newer one.\n\nOutbox and outage: the session's own durable log is the outbox. The session derives its event set from the log; its unsent set is the derived events with seq beyond the last ack, so a crash, an outage or a restart loses nothing. While the distributor is down, events wait in the log: the publisher retries on bounded backoff (503 and timeouts retry; 401 and 400 are logged as permanent and not retried as the same body; 413 splits the batch at a seq boundary, which is safe because resume is seq-driven).\n\nReplay and recovery: the event stream is a deterministic function of the session's log \u2014 replaying the log yields the same events as live publishing. Whole-log replay needs no operation of its own: every 200 carries the watermark, so when the distributor is rebuilt and its watermark resets, the session sees the drop on its next flush and re-sends from seq 0. The catalog rebuild that orchestrates this across sessions is an internal distributor operation, not an API (a Sessions API non-goal).\n\nNotifications: the distributor's notifications adapter \u2014 the successor to index.push's notification behaviour, whose web push routes and payloads stay a separate contract \u2014 is fed by these same applied events: ask.opened (the approval's toolCall.args or the question's prompt), run.ended (an outcome of failed wakes a phone, and a run's end is when versions that will never get a verdict are found among the session's artifacts), artifact.sealed (its verdict), title.set (the notification's title) and each event's `at` (an event older than six hours is a replay or a long outage catching up, not news).\n\nCutover: the index package is deleted when this channel ships. The runtime publisher that today posts facts to {QUACK_INDEX_URL}/index/facts with QUACK_INDEX_TOKEN targets POST /sessions/{key}/events instead, with the same launch token. v1 facts ({id, kind, rev, at, data}) become events ({seq, id, at, type, data}): kind 'session' \u2192 session.created; 'status' \u2192 run.started, run.ended and state.changed; 'approval' and 'question' \u2192 ask.opened, ask.resolved and ask.cancelled; 'artifact' \u2192 artifact.sealed; 'failure' folds into run.ended.failedSteps; 'cost' \u2192 spend.recorded. Money is { currencyCode, amountMicros } (ISO 4217; int64 millionths as a decimal string), never a float. The route is unversioned and is mounted at the deployment's root (locally) or under /v1/ behind the reverse proxy, exactly as today."
+  },
+  "tags": [
+   {
+    "name": "events"
+   }
+  ],
+  "security": [
+   {
+    "session": []
+   }
+  ],
+  "paths": {
+   "/sessions/{key}/events": {
+    "post": {
+     "tags": [
+      "events"
+     ],
+     "operationId": "publishSessionEvents",
+     "summary": "Report this session's lifecycle events",
+     "description": "One batch of this session's derived lifecycle events, in seq order. The key must be the credential's own session: a launch credential reaches only its own key and answers 404 on a foreign one. Rules: `events[].seq` strictly increases within the batch; the first event's seq must be at most one past the catalog's watermark for this session, else the reply is 409 whose problem body carries the watermark as `acked`, and the session resumes from there; events at or below the watermark are skipped, so a retried batch applies nothing twice; an event with the same id at a higher seq supersedes the earlier one. A successful batch answers 200 with { acked }, the highest applied seq \u2014 the session's outbox is its derived events beyond it. Batches cap at 500 events, and a body over the 1 MiB limit answers 413, which the session answers by splitting the batch at a seq boundary. The session reports only what it observes: state.changed is running or idle \u2014 stopped and archived are set by the distributor itself (a process it stopped, the retention sweep) or through the Sessions API (PATCH /sessions/{key}). An ask resolved through the Sessions API is written there directly; the ask.resolved events this channel carries are the resolutions the session itself recorded, and their `by` is the Principal the session saw (the person behind the session route's identity header, or the tailnet), never a value invented from the request.",
+     "security": [
+      {
+       "session": []
+      }
+     ],
+     "parameters": [
+      {
+       "name": "key",
+       "in": "path",
+       "required": true,
+       "schema": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9:/#._@-]{1,200}$"
+       },
+       "description": "The session key. Must be the credential's own session: the listener answers 404 for a foreign key, never 403 \u2014 the key is an object boundary the credential may not reach, not a permission it lacks."
+      }
+     ],
+     "requestBody": {
+      "required": true,
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/EventBatch"
+        },
+        "example": {
+         "events": [
+          {
+           "seq": 12,
+           "id": "run:3:started",
+           "at": "2026-11-06T09:12:01Z",
+           "type": "run.started",
+           "data": {
+            "run": 3
+           }
+          },
+          {
+           "seq": 13,
+           "id": "run:3:ended",
+           "at": "2026-11-06T09:12:47Z",
+           "type": "run.ended",
+           "data": {
+            "run": 3,
+            "outcome": "failed",
+            "failedSteps": [
+             {
+              "step": "submit-lineup",
+              "error": "deadline passed 18:00"
+             }
+            ]
+           }
+          },
+          {
+           "seq": 14,
+           "id": "spend",
+           "at": "2026-11-06T09:12:47Z",
+           "type": "spend.recorded",
+           "data": {
+            "cost": {
+             "currencyCode": "USD",
+             "amountMicros": "1250000"
+            },
+            "tokens": {
+             "input": 84120,
+             "output": 12930,
+             "cacheRead": 204800,
+             "cacheWrite": 5120
+            }
+           }
+          },
+          {
+           "seq": 15,
+           "id": "state:15",
+           "at": "2026-11-06T09:12:47Z",
+           "type": "state.changed",
+           "data": {
+            "state": "idle"
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     "responses": {
+      "200": {
+       "description": "The batch was applied in seq order, events at or below the watermark skipped, and each applied event superseding any earlier one with its id. `acked` is this session's new watermark \u2014 the highest applied seq \u2014 and the session's outbox is its derived events beyond it.",
+       "content": {
+        "application/json": {
+         "schema": {
+          "$ref": "#/components/schemas/Ack"
+         },
+         "example": {
+          "acked": 15
+         }
+        }
+       }
+      },
+      "400": {
+       "description": "The batch is malformed: not an object, events not an array of well-formed events, a seq not a positive integer, a seq not strictly increasing within the batch, or an unknown event type. Permanent for the session \u2014 it logs the rejection and does not retry the same body.",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      },
+      "401": {
+       "description": "The credential is missing, unknown or revoked (the launch is over, so its token is). Permanent for the session \u2014 a launch credential never recovers by retrying.",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      },
+      "404": {
+       "description": "The key is not the credential's own session: a launch credential reaches only its own key. Permanent for the session \u2014 a credential is never granted another session's key on this channel.",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      },
+      "409": {
+       "description": "A gap: the batch's first seq is more than one past the catalog's watermark for this session. The problem body carries the watermark as `acked`; the session resumes from there (its log is the outbox, so the missing events are still in it).",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      },
+      "413": {
+       "description": "The body is over the 1 MiB limit. The session splits the batch at a seq boundary and re-sends the halves \u2014 safe because resume is seq-driven and the halves share the watermark.",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      },
+      "503": {
+       "description": "The catalog is unavailable (the store is down). The session retries on bounded backoff; the events wait in the session's log, which is the outbox.",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      },
+      "default": {
+       "description": "An unexpected error; the session retries on bounded backoff, as for 503.",
+       "content": {
+        "application/problem+json": {
+         "schema": {
+          "$ref": "#/components/schemas/Problem"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "components": {
+   "securitySchemes": {
+    "session": {
+     "type": "http",
+     "scheme": "bearer",
+     "description": "The session's launch credential: an opaque token the distributor mints for each launch of the session and revokes when the session process exits. On the credentialed session listener #2220 introduces, it reaches only its own session's key \u2014 a POST for any other key answers 404 \u2014 and a missing, unknown or revoked credential answers 401. This channel has no cross-session grant: a credential never reports another session's events (the Sessions API's home-agent grant covers reads there, not reporting here)."
+    }
+   },
+   "schemas": {
+    "EventBatch": {
+     "type": "object",
+     "required": [
+      "events"
+     ],
+     "properties": {
+      "events": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 500,
+       "description": "The batch, in strictly increasing seq order. The cap keeps one request under the 1 MiB body limit; above it the reply is 413 and the session splits at a seq boundary.",
+       "items": {
+        "$ref": "#/components/schemas/Event"
+       }
+      }
+     }
+    },
+    "Event": {
+     "description": "One lifecycle event of a session: a stable `id` (derived from the session's log, so re-derivation \u2014 replay included \u2014 yields the same id), a per-session strictly increasing `seq` (its ordinal in the derived stream), an RFC 3339 `at`, its `type`, and the typed `data`. An event with the same id at a higher seq supersedes the earlier one, so an older revision never overwrites a newer one.",
+     "oneOf": [
+      {
+       "$ref": "#/components/schemas/EventSessionCreated"
+      },
+      {
+       "$ref": "#/components/schemas/EventRunStarted"
+      },
+      {
+       "$ref": "#/components/schemas/EventRunEnded"
+      },
+      {
+       "$ref": "#/components/schemas/EventAskOpened"
+      },
+      {
+       "$ref": "#/components/schemas/EventAskResolved"
+      },
+      {
+       "$ref": "#/components/schemas/EventAskCancelled"
+      },
+      {
+       "$ref": "#/components/schemas/EventArtifactSealed"
+      },
+      {
+       "$ref": "#/components/schemas/EventSpendRecorded"
+      },
+      {
+       "$ref": "#/components/schemas/EventTitleSet"
+      },
+      {
+       "$ref": "#/components/schemas/EventStateChanged"
+      }
+     ]
+    },
+    "EventSessionCreated": {
+     "type": "object",
+     "description": "The session exists: its key is the path's, its identity is here. Reported once, first in the stream.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1,
+       "description": "The event's ordinal in the session's derived stream; strictly increasing per session."
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `session`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "session.created"
+      },
+      "data": {
+       "$ref": "#/components/schemas/SessionCreatedData"
+      }
+     }
+    },
+    "SessionCreatedData": {
+     "type": "object",
+     "required": [
+      "agent",
+      "createdAt"
+     ],
+     "properties": {
+      "agent": {
+       "type": "string",
+       "description": "The agent bound to the session."
+      },
+      "version": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "minimum": 0,
+       "description": "The agent's version, when the definition carries one."
+      },
+      "createdAt": {
+       "type": "string",
+       "format": "date-time",
+       "description": "When the session was created (RFC 3339); the catalog row's createdAt."
+      }
+     }
+    },
+    "EventRunStarted": {
+     "type": "object",
+     "description": "The session began a run: state moves to running and any asks pending into the run are the run's to answer or cancel.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `run:3:started`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "run.started"
+      },
+      "data": {
+       "type": "object",
+       "required": [
+        "run"
+       ],
+       "properties": {
+        "run": {
+         "type": "integer",
+         "minimum": 1,
+         "description": "The run's number within the session, starting at 1."
+        }
+       }
+      }
+     }
+    },
+    "EventRunEnded": {
+     "type": "object",
+     "description": "The session's current run ended: the catalog's lastRun { outcome, endedAt, failedSteps } is written from it (endedAt is the event's `at`), and the asks the run raised that are still pending are cancelled by it.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `run:3:ended`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "run.ended"
+      },
+      "data": {
+       "$ref": "#/components/schemas/RunEndedData"
+      }
+     }
+    },
+    "RunEndedData": {
+     "type": "object",
+     "required": [
+      "run",
+      "outcome",
+      "failedSteps"
+     ],
+     "properties": {
+      "run": {
+       "type": "integer",
+       "minimum": 1,
+       "description": "The run's number within the session."
+      },
+      "outcome": {
+       "type": "string",
+       "enum": [
+        "succeeded",
+        "failed",
+        "aborted"
+       ],
+       "description": "How the run ended."
+      },
+      "failedSteps": {
+       "type": "array",
+       "description": "The run's steps that ended failed, with their error text; empty on a clean run. This is the catalog row's lastRun.failedSteps.",
+       "items": {
+        "$ref": "#/components/schemas/FailedStep"
+       }
+      }
+     }
+    },
+    "FailedStep": {
+     "type": "object",
+     "required": [
+      "step",
+      "error"
+     ],
+     "properties": {
+      "step": {
+       "type": "string",
+       "description": "The run step that failed."
+      },
+      "error": {
+       "type": "string",
+       "description": "The error's text."
+      }
+     }
+    },
+    "EventAskOpened": {
+     "type": "object",
+     "description": "The session raised an ask \u2014 approval or question, the Sessions API's one Ask type \u2014 moving it to pending. The data is the Ask's fields apart from state, which the catalog sets to pending.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `ask:open:42`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "ask.opened"
+      },
+      "data": {
+       "$ref": "#/components/schemas/AskOpenedData"
+      }
+     }
+    },
+    "AskOpenedData": {
+     "type": "object",
+     "description": "The Ask's fields apart from state: toolCall is present for type approval and prompt for type question, so the notifications adapter sees what waits without touching the session.",
+     "required": [
+      "id",
+      "type",
+      "createdAt"
+     ],
+     "properties": {
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The ask's id within its session."
+      },
+      "type": {
+       "type": "string",
+       "enum": [
+        "approval",
+        "question"
+       ],
+       "description": "What kind of ask: a gated tool call, or a prompt to a person."
+      },
+      "createdAt": {
+       "type": "string",
+       "format": "date-time",
+       "description": "When the ask was raised (RFC 3339); the catalog's oldestAskAt while pending."
+      },
+      "toolCall": {
+       "$ref": "#/components/schemas/ToolCall"
+      },
+      "prompt": {
+       "$ref": "#/components/schemas/Prompt"
+      }
+     }
+    },
+    "ToolCall": {
+     "type": "object",
+     "description": "The gated tool call; present for type approval, and kept by the catalog after resolution \u2014 the record of what was approved.",
+     "required": [
+      "tool",
+      "args"
+     ],
+     "properties": {
+      "tool": {
+       "type": "string",
+       "description": "The tool that was gated."
+      },
+      "args": {
+       "description": "The gated arguments, retained on resolution. A summary member, when present, is what the notifications adapter shows.",
+       "type": [
+        "object",
+        "array",
+        "string",
+        "number",
+        "boolean",
+        "null"
+       ],
+       "items": {}
+      }
+     }
+    },
+    "Prompt": {
+     "type": "object",
+     "description": "The prompt; present for type question.",
+     "required": [
+      "question",
+      "options",
+      "freeText"
+     ],
+     "properties": {
+      "question": {
+       "type": "string",
+       "description": "The question text; what the notifications adapter shows."
+      },
+      "options": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "description": "The option labels."
+      },
+      "optionDescriptions": {
+       "type": "object",
+       "additionalProperties": {
+        "type": "string"
+       },
+       "description": "A per-option description, keyed by the option's label."
+      },
+      "suggested": {
+       "type": [
+        "integer",
+        "null"
+       ],
+       "description": "The suggested option's index."
+      },
+      "freeText": {
+       "type": "boolean",
+       "description": "Whether a free-text answer was allowed."
+      },
+      "evidence": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "Evidence the question stands on."
+      },
+      "header": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "A short chip naming the topic."
+      },
+      "title": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "The question as a headline."
+      },
+      "detail": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "Context for the question."
+      }
+     }
+    },
+    "EventAskResolved": {
+     "type": "object",
+     "description": "The session recorded an answer to one of its asks (a person through the session's own routes). An ask resolved through the Sessions API is written there directly and does not come over this channel.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `ask:resolve:42`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "ask.resolved"
+      },
+      "data": {
+       "$ref": "#/components/schemas/AskResolvedData"
+      }
+     }
+    },
+    "AskResolvedData": {
+     "type": "object",
+     "description": "The answer. `by` is the Principal the session itself recorded from whoever answered in its own UI \u2014 the person behind the session route's identity header, or the tailnet \u2014 and the distributor stores it as given; the channel's credential is the session, not the resolver, so it is not the request's credential as on the Sessions API's PATCH.",
+     "required": [
+      "id",
+      "choice",
+      "by"
+     ],
+     "properties": {
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The ask's id within its session."
+      },
+      "choice": {
+       "type": "string",
+       "description": "The chosen option's label, or approve/reject for an approval ask."
+      },
+      "text": {
+       "type": "string",
+       "description": "A free-text answer; present when the prompt offered freeText."
+      },
+      "reason": {
+       "type": "string",
+       "description": "The resolver's reason."
+      },
+      "by": {
+       "$ref": "#/components/schemas/Principal"
+      }
+     }
+    },
+    "EventAskCancelled": {
+     "type": "object",
+     "description": "An ask the session raised is cancelled \u2014 because the run that raised it ended or aborted, which is what keeps the catalog's pendingAsks from leaking.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `ask:cancel:42`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "ask.cancelled"
+      },
+      "data": {
+       "type": "object",
+       "required": [
+        "id",
+        "run"
+       ],
+       "properties": {
+        "id": {
+         "type": "string",
+         "minLength": 1,
+         "description": "The ask's id within its session."
+        },
+        "run": {
+         "type": "integer",
+         "minimum": 1,
+         "description": "The run that ended or aborted, cancelling it."
+        }
+       }
+      }
+     }
+    },
+    "EventArtifactSealed": {
+     "type": "object",
+     "description": "The session sealed an artifact version; the catalog's artifact row is written from it (createdAt is the event's `at`). The notifications adapter reads the verdict from it, so a run's end can find versions that will never get one.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `artifact:sleeper.cards:7`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "artifact.sealed"
+      },
+      "data": {
+       "$ref": "#/components/schemas/ArtifactSealedData"
+      }
+     }
+    },
+    "ArtifactSealedData": {
+     "type": "object",
+     "required": [
+      "kind",
+      "version",
+      "hash"
+     ],
+     "properties": {
+      "kind": {
+       "type": "string",
+       "description": "The artifact kind, e.g. `sleeper.cards`."
+      },
+      "version": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "hash": {
+       "type": "string",
+       "description": "The content's hash."
+      },
+      "sealedAt": {
+       "type": "string",
+       "format": "date-time",
+       "description": "When the version was sealed; defaults to the event's `at`."
+      },
+      "verdict": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "description": "The judge's verdict, when the version was checked; null while unchecked. A higher seq with the same event id supersedes with the verdict filled in.",
+       "allOf": [
+        {
+         "$ref": "#/components/schemas/Verdict"
+        }
+       ]
+      },
+      "links": {
+       "type": "array",
+       "items": {
+        "$ref": "#/components/schemas/Link"
+       },
+       "description": "Where the sealed content lives."
+      },
+      "summary": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "A one-line summary of the version."
+      }
+     }
+    },
+    "Verdict": {
+     "type": "object",
+     "description": "The judge's verdict, when the version was checked.",
+     "required": [
+      "passed"
+     ],
+     "properties": {
+      "passed": {
+       "type": "boolean"
+      },
+      "limitReached": {
+       "type": "boolean",
+       "description": "The judge released it unpassed after its revision limit."
+      },
+      "gatesFailed": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "score": {
+       "type": "number"
+      },
+      "checks": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "required": [
+         "criterion",
+         "id",
+         "weight",
+         "met",
+         "notes"
+        ],
+        "properties": {
+         "criterion": {
+          "type": "string"
+         },
+         "id": {
+          "type": "string"
+         },
+         "label": {
+          "type": "string"
+         },
+         "weight": {
+          "type": [
+           "number",
+           "string"
+          ],
+          "description": "A weight, or `gate`."
+         },
+         "met": {
+          "type": [
+           "number",
+           "null"
+          ]
+         },
+         "notes": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "scope": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "Link": {
+     "type": "object",
+     "required": [
+      "label",
+      "url"
+     ],
+     "properties": {
+      "label": {
+       "type": "string"
+      },
+      "url": {
+       "type": "string"
+      }
+     }
+    },
+    "EventSpendRecorded": {
+     "type": "object",
+     "description": "The session's spend, as cumulative totals since the session's start \u2014 never per-call deltas \u2014 so a later seq with the same id simply supersedes and the catalog row's cost and tokens always show the whole session. Unpriced spend is amountMicros \"0\", never absent.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `spend` \u2014 one logical quantity, superseded in place."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "spend.recorded"
+      },
+      "data": {
+       "$ref": "#/components/schemas/SpendData"
+      }
+     }
+    },
+    "SpendData": {
+     "type": "object",
+     "required": [
+      "cost",
+      "tokens"
+     ],
+     "properties": {
+      "cost": {
+       "$ref": "#/components/schemas/Money"
+      },
+      "tokens": {
+       "$ref": "#/components/schemas/Tokens"
+      }
+     }
+    },
+    "Money": {
+     "type": "object",
+     "description": "A money amount, google.type.Money style: never a float, so nothing loses precision in JavaScript. Unpriced spend is amountMicros \"0\" with the deployment's currency, never null.",
+     "required": [
+      "currencyCode",
+      "amountMicros"
+     ],
+     "properties": {
+      "currencyCode": {
+       "type": "string",
+       "pattern": "^[A-Z]{3}$",
+       "description": "ISO 4217 currency code \u2014 the deployment's currency."
+      },
+      "amountMicros": {
+       "type": "string",
+       "pattern": "^\\d+$",
+       "description": "An int64 count of millionths of the currency unit, encoded as a decimal string so values past 2^53 survive JavaScript clients; \"1250000\" is 1.25 of the unit."
+      }
+     }
+    },
+    "Tokens": {
+     "type": "object",
+     "description": "Tokens by kind, cumulative since the session's start; always present.",
+     "required": [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite"
+     ],
+     "properties": {
+      "input": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "output": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "cacheRead": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "cacheWrite": {
+       "type": "integer",
+       "minimum": 0
+      }
+     }
+    },
+    "EventTitleSet": {
+     "type": "object",
+     "description": "The session's display title changed: the default derived from the session's first message, or the title an invocation carried. A person's rename through the Sessions API is written there directly.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, e.g. `title` \u2014 one logical quantity, superseded in place."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "title.set"
+      },
+      "data": {
+       "type": "object",
+       "required": [
+        "title"
+       ],
+       "properties": {
+        "title": {
+         "type": "string",
+         "maxLength": 120,
+         "description": "The session's title; at most 120 characters."
+        }
+       }
+      }
+     }
+    },
+    "EventStateChanged": {
+     "type": "object",
+     "description": "The session observed its own lifecycle state: running when a run starts (or it waits on a person) and idle when it ends. Only these two values come over the channel \u2014 stopped is set by the distributor when the process stops, and archived through the Sessions API \u2014 so a session never reports a state it cannot observe.",
+     "required": [
+      "seq",
+      "id",
+      "at",
+      "type",
+      "data"
+     ],
+     "properties": {
+      "seq": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "id": {
+       "type": "string",
+       "minLength": 1,
+       "description": "The event's stable id, one per occurrence, e.g. `state:15`."
+      },
+      "at": {
+       "type": "string",
+       "format": "date-time"
+      },
+      "type": {
+       "type": "string",
+       "const": "state.changed"
+      },
+      "data": {
+       "type": "object",
+       "required": [
+        "state"
+       ],
+       "properties": {
+        "state": {
+         "type": "string",
+         "enum": [
+          "running",
+          "idle"
+         ],
+         "description": "The state the session observed: running or idle \u2014 never stopped or archived, which are set by the distributor or the Sessions API."
+        }
+       }
+      }
+     }
+    },
+    "Principal": {
+     "type": "object",
+     "description": "Who an ask's answer came from, as the session recorded it: `person` when the answer arrived with a trusted identity (the session route's identity header), `tailnet` when it did not. On this channel it is data the session reports about itself \u2014 the channel's credential is the session, not the resolver.",
+     "required": [
+      "kind"
+     ],
+     "properties": {
+      "kind": {
+       "type": "string",
+       "enum": [
+        "person",
+        "tailnet"
+       ]
+      },
+      "id": {
+       "type": "string",
+       "description": "The person's username; present when kind is person, absent when kind is tailnet."
+      }
+     }
+    },
+    "Ack": {
+     "type": "object",
+     "required": [
+      "acked"
+     ],
+     "properties": {
+      "acked": {
+       "type": "integer",
+       "minimum": 0,
+       "description": "This session's new watermark: the highest seq the catalog has applied. The session's outbox is its derived events beyond it; a watermark lower than the session's own last ack means the catalog was reset, and the session re-sends from seq 0."
+      }
+     }
+    },
+    "Problem": {
+     "type": "object",
+     "description": "An RFC 9457 problem; `error` repeats `detail` for readers that predate problem+json. On 409 the problem carries the session's current watermark as `acked`, so the session resumes from it without another round trip.",
+     "required": [
+      "type",
+      "title",
+      "status",
+      "detail"
+     ],
+     "properties": {
+      "type": {
+       "type": "string",
+       "example": "about:blank"
+      },
+      "title": {
+       "type": "string"
+      },
+      "status": {
+       "type": "integer"
+      },
+      "detail": {
+       "type": "string"
+      },
+      "error": {
+       "type": "string"
+      },
+      "acked": {
+       "type": "integer",
+       "minimum": 0,
+       "description": "Present on 409 only: this session's current watermark, where the session resumes."
+      }
+     }
+    }
+   }
+  }
+ },
+ "choices": [
+  {
+   "id": "transport",
+   "pointer": "/paths/~1sessions~1{key}~1events/post",
+   "decision": "The channel is REST on the credentialed session listener: one batch POST of events the session already builds and already sends over plain HTTP to the distributor.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "What transport should the session \u2192 distributor lifecycle channel use?",
+     "text": "REST on the credentialed session listener (batch POST of events)"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/publisher.ts:26",
+     "text": "the session already posts its unacknowledged facts to the distributor as a plain batch POST with a bearer token"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/distributor/src/credentials.ts:51",
+     "text": "the distributor mints one opaque launch token per session launch"
+    }
+   ]
+  },
+  {
+   "id": "route-shape",
+   "pointer": "/paths/~1sessions~1{key}~1events/post",
+   "decision": "The channel is exactly one operation, POST /sessions/{key}/events, on the separate credentialed session listener \u2014 the same listener the Sessions API puts session credentials on \u2014 with the session key in the path and no collection route, because a credential can never enumerate or reach another key.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'per-session authentication: the session's launch credential on the credentialed session listener from #2220, so a session can only report its own key'"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:1112",
+     "text": "the approved Sessions API's session credential scheme: on the separate credentialed listener #2220 introduces, reaching only its own session's key, 404 on a foreign one"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/distributor/src/main.ts:57",
+     "text": "the distributor already accepts the launch tokens as the publisher's credential, checked against the minting broker"
+    }
+   ]
+  },
+  {
+   "id": "per-session-auth",
+   "pointer": "/components/securitySchemes/session",
+   "decision": "Authentication is the session's launch credential: an opaque bearer token the distributor mints per launch and revokes when the process exits; missing, unknown or revoked is 401, and a key other than the credential's own session is 404; this channel grants no cross-session access.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'the session's launch credential on the credentialed session listener from #2220, so a session can only report its own key'"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/distributor/src/process-driver.ts:431",
+     "text": "the launch token is minted when the session process starts and handed to it as QUACK_INDEX_TOKEN"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/distributor/src/process-driver.ts:435",
+     "text": "the launch token is revoked when the session process exits"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:1112",
+     "text": "the approved Sessions API's session credential scheme: on the separate credentialed listener #2220 introduces, reaching only its own session's key, 404 on a foreign one"
+    }
+   ]
+  },
+  {
+   "id": "key-object-boundary",
+   "pointer": "/paths/~1sessions~1{key}~1events/post",
+   "decision": "A foreign key answers 404, never 403: the key is an object boundary the credential cannot reach, and it matches the house session-key pattern.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/http.ts:10",
+     "text": "the house session-key pattern, reused for the path parameter"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:2305",
+     "text": "the approved Sessions API's key pattern, reused for the path parameter"
+    }
+   ]
+  },
+  {
+   "id": "event-set",
+   "pointer": "/components/schemas/Event",
+   "decision": "Ten event types cover the catalog's session-reported write set: session.created, run.started, run.ended, ask.opened, ask.resolved, ask.cancelled, artifact.sealed, spend.recorded, title.set, state.changed \u2014 one type per lifecycle change the Sessions API names the catalog written on.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'the event types: session created, run started or ended with outcome and failed steps, ask opened, resolved or cancelled, artifact sealed, spend, title or state change'"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:6",
+     "text": "the approved Sessions API names the catalog's write set: created, run started or ended, ask opened, answered or cancelled, artifact sealed, spend, archived, renamed, deleted"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:6",
+     "text": "the index fact's identity is { id, kind, rev } with rev only ever growing, so an older copy never overwrites a newer one \u2014 the event's { id, seq } keeps the rule"
+    }
+   ]
+  },
+  {
+   "id": "event-identity",
+   "pointer": "/components/schemas/Event",
+   "decision": "Every event carries a stable id derived from the session's log plus a per-session strictly increasing seq; an event with the same id at a higher seq supersedes the earlier one, so an older revision never overwrites a newer one.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'idempotency: event ids and per-session ordering, so retries and restarts never double-apply'"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:6",
+     "text": "the index fact's identity is { id, kind, rev } with rev only ever growing, so an older copy never overwrites a newer one \u2014 the event's { id, seq } keeps the rule"
+    }
+   ]
+  },
+  {
+   "id": "ordering-and-gap",
+   "pointer": "/paths/~1sessions~1{key}~1events/post/responses/409",
+   "decision": "seq strictly increases within a batch and the batch's first seq must be at most one past the catalog's per-session watermark; a gap answers 409 carrying the watermark so the session resumes from it, and events at or below the watermark are skipped, so a retried batch applies nothing twice.",
+   "why": [
+    {
+     "source": "guide",
+     "ref": "rest#idempotency",
+     "text": "the guide's idempotency rule: a secondary unique key or conditional key for retried POSTs \u2014 here the event id plus the per-session seq watermark"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:11",
+     "text": "the session's outbox document records the acknowledged tail and a per-run status seq \u2014 the watermark and per-session ordering the channel formalizes"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/http.ts:39",
+     "text": "the index's publish answered 200 with an ack after applying the batch \u2014 the watermark 200 keeps that reply shape"
+    }
+   ]
+  },
+  {
+   "id": "ack-watermark",
+   "pointer": "/paths/~1sessions~1{key}~1events/post/responses/200",
+   "decision": "A successful batch answers 200 with { acked }, the highest applied seq \u2014 the session's outbox is its derived events beyond it, the same acknowledged-tail property the index outbox has.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'the session's own log is the outbox, and it replays on reconnect'"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:11",
+     "text": "the session's outbox document records the acknowledged tail and a per-run status seq \u2014 the watermark and per-session ordering the channel formalizes"
+    }
+   ]
+  },
+  {
+   "id": "outbox-outage",
+   "pointer": "/paths/~1sessions~1{key}~1events/post/responses/503",
+   "decision": "The session's own durable log is the outbox: 503 and timeouts retry on bounded backoff, 401 and 400 are permanent (logged, not retried as the same body), and 413 splits the batch at a seq boundary \u2014 so while the distributor is down, events simply wait in the log and replay on reconnect.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'what happens while the distributor is down: the session's own log is the outbox, and it replays on reconnect'"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/publisher.ts:30",
+     "text": "a 4xx from the distributor is logged as permanent and not retried"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/publisher.ts:31",
+     "text": "a failed send schedules a retry on a 5 s bounded backoff while the events wait in the log"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/http.ts:81",
+     "text": "a down store answers 503 and the session retries \u2014 the house behaviour for an unavailable sink"
+    }
+   ]
+  },
+  {
+   "id": "replay-implicit",
+   "pointer": "/paths/~1sessions~1{key}~1events/post",
+   "decision": "Replaying a whole session log needs no operation of its own: every 200 carries the watermark, so when the catalog's watermark drops (a rebuilt distributor), the session sees the drop on its next flush and re-sends from seq 0 \u2014 the deterministic event stream converges to the same state as live publishing.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "How should full-session-log replay be exposed by the channel?",
+     "text": "Implicit: watermark in every 200, re-send from seq 0"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:78",
+     "text": "the fact stream is derived from the log's current documents, so a replay of the log yields the same events as live publishing"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:11",
+     "text": "the approved Sessions API keeps the rebuild from session logs an internal recovery operation, not an API \u2014 so the channel carries no replay trigger"
+    }
+   ]
+  },
+  {
+   "id": "state-values",
+   "pointer": "/components/schemas/EventStateChanged",
+   "decision": "state.changed carries only running or idle \u2014 the states a session observes about itself; stopped is set by the distributor when the process stops and archived through the Sessions API, so the channel cannot write a state it cannot see.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:11",
+     "text": "the session's outbox document records the acknowledged tail and a per-run status seq \u2014 the watermark and per-session ordering the channel formalizes"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:1883",
+     "text": "the approved Sessions API's state values: running, idle, stopped, archived \u2014 the channel reports only the two a session observes"
+    }
+   ]
+  },
+  {
+   "id": "run-ended-payload",
+   "pointer": "/components/schemas/RunEndedData",
+   "decision": "run.ended carries run, outcome (succeeded, failed, aborted) and failedSteps [{ step, error }] \u2014 exactly the catalog row's lastRun, with the run's failures folded in instead of the index's separate failure facts.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'run started or ended with outcome and failed steps'"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:1944",
+     "text": "the approved Sessions API's row carries lastRun { outcome, endedAt, failedSteps } \u2014 run.ended's payload is that shape"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:55",
+     "text": "v1's failure facts were per-step { step, error } rows, folded into run.ended.failedSteps"
+    }
+   ]
+  },
+  {
+   "id": "ask-payloads",
+   "pointer": "/components/schemas/EventAskOpened",
+   "decision": "ask.opened carries the Ask's fields apart from state (toolCall for approvals, prompt for questions, createdAt for oldestAskAt); ask.resolved carries choice, text, reason and by; ask.cancelled carries the ask's id and the run that ended or aborted \u2014 the events keep pendingAsks consistent and give the notifications adapter what waits, without touching the session.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'ask opened, resolved or cancelled'"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:1964",
+     "text": "the approved Sessions API's Ask resource: type approval|question, toolCall and prompt, state pending|resolved|cancelled"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/push.ts:39",
+     "text": "the notification's ask mapping reads the approval's args summary and the question's text off the fact \u2014 the fields ask.opened's toolCall and prompt carry"
+    }
+   ]
+  },
+  {
+   "id": "principal-on-channel",
+   "pointer": "/components/schemas/AskResolvedData",
+   "decision": "ask.resolved's by is the Principal the session itself recorded from whoever answered in its own UI (the person behind the session route's identity header, or the tailnet), stored as given \u2014 unlike the Sessions API's PATCH, where the distributor fills by from the request's credential, because on this channel the credential is the session, not the resolver.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "app/packages/session/src/server.ts:12",
+     "text": "the session's own decider: the person behind the identity header, or the tailnet \u2014 the Principal a session-recorded resolution carries"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:1998",
+     "text": "the approved Sessions API's Principal: { kind: person|tailnet, id } filled from the request's credential on its PATCH \u2014 the channel adapts it to session-recorded data"
+    }
+   ]
+  },
+  {
+   "id": "spend-cumulative",
+   "pointer": "/components/schemas/EventSpendRecorded",
+   "decision": "spend.recorded is the session's cumulative totals since its start \u2014 Money plus tokens \u2014 superseded in place at a higher seq, never per-call deltas, so the catalog row's cost and tokens always show the whole session.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:74",
+     "text": "v1's cost fact was cumulative (tokens plus micros as the revision), which is why spend is cumulative, superseded in place"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:2042",
+     "text": "the approved Sessions API's Money: currencyCode plus amountMicros, int64 millionths as a decimal string, never a float"
+    }
+   ]
+  },
+  {
+   "id": "money",
+   "pointer": "/components/schemas/Money",
+   "decision": "Spend is Money \u2014 { currencyCode (ISO 4217), amountMicros (an int64 count of millionths as a decimal string) } \u2014 never a float, and unpriced spend is amountMicros \"0\", never absent.",
+   "why": [
+    {
+     "source": "guide",
+     "ref": "rest#payload",
+     "text": "the guide's payload rule: objects open for extension, ids opaque, RFC 3339 dates \u2014 and the house convention that money is never a float"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:2042",
+     "text": "the approved Sessions API's Money: currencyCode plus amountMicros, int64 millionths as a decimal string, never a float"
+    }
+   ]
+  },
+  {
+   "id": "title-payload",
+   "pointer": "/components/schemas/EventTitleSet",
+   "decision": "title.set carries the session's title (at most 120 characters), superseded in place: the default derived from the session's first message, or the title an invocation carried; a person's rename is written through the Sessions API, not here.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "app/packages/session/src/server.ts:22",
+     "text": "an invocation can carry a title \u2014 the other source of title.set"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:2227",
+     "text": "the approved Sessions API's title: at most 120 characters, written by a person via PATCH or restored from the session's first message"
+    }
+   ]
+  },
+  {
+   "id": "notifications-adapter",
+   "pointer": "/info/description",
+   "decision": "The payloads carry what the notifications adapter \u2014 the successor to index.push's notification behaviour, whose web push contract is unchanged \u2014 needs: the approval's args or the question's text, a failed outcome, the artifact's verdict, the title, and each event's at for its six-hour staleness.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'index.push (web push) keeps its own contract\u2026 this channel must carry what that adapter needs'"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/push.ts:39",
+     "text": "the notification's ask mapping reads the approval's args summary and the question's text off the fact \u2014 the fields ask.opened's toolCall and prompt carry"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/push.ts:23",
+     "text": "push's six-hour staleness \u2014 an event older than that is a replay or a long outage catching up, not news \u2014 read off each event's at"
+    }
+   ]
+  },
+  {
+   "id": "cutover",
+   "pointer": "/info/description",
+   "decision": "The channel ships with the index package's deletion: the runtime publisher's target moves from POST /index/facts to this route with the same launch token, and v1's fact kinds map onto the event types as recorded in the description.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "the request's words: 'it replaces the index's fact publishing (POST /index/facts), which is being deleted with the whole index package'"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/runtime/src/main.ts:24",
+     "text": "the publisher starts from QUACK_INDEX_URL and QUACK_INDEX_TOKEN and targets /index/facts today \u2014 the cutover moves only the route"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:2144",
+     "text": "the approved Sessions API retires POST /index/facts in the same cutover this channel ships in"
+    }
+   ]
+  },
+  {
+   "id": "errors",
+   "pointer": "/components/schemas/Problem",
+   "decision": "Every error is application/problem+json in the house shape { type, title, status, detail, error }, with an optional acked member on 409 carrying the watermark; no stack traces leave the distributor.",
+   "why": [
+    {
+     "source": "guide",
+     "ref": "rest#errors",
+     "text": "the guide's error rule: application/problem+json, no stack traces"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/sdk/src/http.ts:14",
+     "text": "the house RFC 9457 problem shape: { type, title, status, detail, error }"
+    }
+   ]
+  },
+  {
+   "id": "batch-limit",
+   "pointer": "/components/schemas/EventBatch",
+   "decision": "A batch carries at most 500 events and the body stays under the house 1 MiB limit; over it the reply is 413 and the session splits at a seq boundary, which is safe because resume is seq-driven.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "app/packages/sdk/src/http.ts:29",
+     "text": "the house 1 MiB request-body limit the batch's 413 defers to"
+    }
+   ]
+  },
+  {
+   "id": "field-case",
+   "pointer": "/components/schemas/EventBatch",
+   "decision": "JSON members are camelCase and event types are dotted lowercase (run.ended, spend.recorded) \u2014 the house shapes for fields and for kinds.",
+   "why": [
+    {
+     "source": "guide",
+     "ref": "rest#naming",
+     "text": "the guide's naming rule: one property case, one enum case"
+    },
+    {
+     "source": "code",
+     "ref": "app/packages/index/src/facts.ts:11",
+     "text": "the session's outbox document records the acknowledged tail and a per-run status seq \u2014 the watermark and per-session ordering the channel formalizes"
+    }
+   ]
+  },
+  {
+   "id": "no-version-segment",
+   "pointer": "/paths",
+   "decision": "The route is unversioned, /sessions/{key}/events, mounted at the deployment's root (locally) or under /v1/ behind the reverse proxy, exactly as today.",
+   "why": [
+    {
+     "source": "guide",
+     "ref": "rest#versioning",
+     "text": "the guide's versioning rule: the house convention first \u2014 an existing unversioned route keeps its shape"
+    },
+    {
+     "source": "code",
+     "ref": "reference/sessions-api-v4.json:2322",
+     "text": "the approved Sessions API keeps its routes unversioned, at the deployment root or under /v1/ behind the proxy"
+    }
+   ]
+  }
+ ]
+}

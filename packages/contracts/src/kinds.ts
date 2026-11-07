@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import Parsers from '@stoplight/spectral-parsers';
+import { jsonSchemaDefinitions, openApiDefinitions, typeScriptDefinitions, type Definition } from './definitions.ts';
 import { schemaBreaks } from './json-schema-diff.ts';
 import { lintJsonSchema } from './json-schema-rules.ts';
 import { breakingChanges, type Break } from './oasdiff.ts';
@@ -19,6 +20,8 @@ export type ContractKind = {
   check(document: unknown): Promise<Finding[]>;
   /** Changes between two versions' documents that break callers. */
   diff(prev: unknown, next: unknown): Promise<Break[]>;
+  /** The document cut into its top-level definitions, each judged on its own; together they hold the whole document. */
+  definitions(document: unknown): Definition[];
   renderHints: { layout: string; export: { format: string; filename: string } };
 };
 
@@ -29,6 +32,7 @@ export const restKind: ContractKind = {
   extract: (source) => Parsers.Yaml.parse(source).data,
   check: lintOpenApi,
   diff: breakingChanges,
+  definitions: openApiDefinitions,
   renderHints: { layout: 'rest', export: { format: 'openapi', filename: 'openapi.yaml' } },
 };
 
@@ -38,6 +42,7 @@ export const jsonSchemaKind: ContractKind = {
   extract: (source) => Parsers.Yaml.parse(source).data,
   check: lintJsonSchema,
   diff: schemaBreaks,
+  definitions: jsonSchemaDefinitions,
   renderHints: { layout: 'json-schema', export: { format: 'json-schema', filename: 'schema.json' } },
 };
 
@@ -48,6 +53,7 @@ export const typescriptKind: ContractKind = {
   extract: (source) => source,
   check: lintTypeScript,
   diff: typeScriptBreaks,
+  definitions: typeScriptDefinitions,
   renderHints: { layout: 'typescript', export: { format: 'typescript', filename: 'contract.d.ts' } },
 };
 

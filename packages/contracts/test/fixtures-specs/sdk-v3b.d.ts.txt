@@ -1,0 +1,1075 @@
+/**
+ * quack v2 extension SDK surface: core's domain model and its extension points.
+ *
+ * The session's core loop is a typed event stream: core emits core events, extensions register
+ * processors on them (observers that react, gates that can stop a turn or a tool call), and
+ * processors emit their own namespaced events, which other extensions' processors react to.
+ * Each extension owns its state and its API; core stores only core facts and never interprets
+ * extension data.
+ *
+ * What extension packages export as `manifest`, what core passes them, and the generic points
+ * both sides name in code: the event stream, processors, durable asks, artifacts, generation
+ * observation, failures, the app mount, the dispatch it hosts, and the query terms the
+ * Sessions API names. Compiles standalone under --strict.
+ */
+import type { AssistantMessage, Models } from '@earendil-works/pi-ai';
+import type { JsonValue } from '@earendil-works/chord';
+import type { Context } from '@earendil-works/chord/context';
+import type {
+  Conversation,
+  ConversationDocToken,
+  Extension,
+  JsonObject,
+  ToolExecutionApi,
+  Harness,
+  ToolRegistration,
+} from '@earendil-works/pi-durable';
+import type { Schema, Static } from '@earendil-works/pi-schema';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+
+// ── core domain ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A person, identified, not named: who decided an ask or answered a question — or the tailnet as a
+ * whole, for decisions made over the tailnet (the approved Sessions API carries both).
+ * Provided by core (the session's routes validate the presenting person before calling the sdk);
+ * consumed by `resolveApproval` and `answerQuestion`, and by the `ask.resolved` event.
+ */
+export type Principal = { kind: 'person'; id: string } | { kind: 'tailnet' };
+
+/**
+ * A session's identity: the agent it runs and the version of that agent's definition.
+ * Provided by core when the session opens; consumed by the `session.created` event and the Sessions API.
+ */
+export type Session = { agent: string; version?: number | null };
+
+/**
+ * The ordinal of a run in a session: 1 for the first, counting each new run started by placed input.
+ * Provided by core's loop; consumed by the `run.*`, `ask.cancelled` and `turn.ended` events.
+ */
+export type Run = number;
+
+/**
+ * A model-issued call as the stream carries it (validate against the Sessions API's nested shape).
+ * Provided by core's loop; consumed by the `tool.call.*` events and by the `ask.opened` approval.
+ */
+export type ToolCall = { id: string; name: string; args: JsonValue };
+
+/**
+ * The card copy of a question put to a person: what was asked, what was offered, and how it reads.
+ * Provided by whichever extension escalates (through `person`); consumed by the `ask.opened` event
+ * and the Sessions API.
+ */
+export type Prompt = {
+  question: string;
+  options: string[];
+  evidence: string | null;
+  header?: string | null;
+  title?: string | null;
+  detail?: string | null;
+  optionDescriptions?: Record<string, string>;
+  suggested?: number | null;
+  freeText?: boolean;
+};
+
+/**
+ * One ask, either kind: the single resource approvals and questions share.
+ * Provided by core's ask machinery; consumed by the `ask.*` events and the Sessions API.
+ */
+export type Ask =
+  | { id: string; type: 'approval'; createdAt: number; toolCall: ToolCall }
+  | { id: string; type: 'question'; createdAt: number; prompt: Prompt };
+
+/**
+ * The money a completion cost, as the owner decided it: a big integer of micro-units plus a
+ * currency code. It is a bigint in code and a decimal string on the wire (the channel and the
+ * Sessions API serialize it). Provided by core's spend accounting; consumed by the
+ * `spend.recorded` event (validate against the Sessions API's nested shape).
+ */
+export type Money = { currencyCode: string; amountMicros: bigint };
+
+/**
+ * The tokens a completion moved, in and out, cached or not, matching the Sessions API: the
+ * prompt, the completion and the two cache counts, all present. Provided by core's spend
+ * accounting; consumed by the `spend.recorded` event and the `generation.*` events (validate
+ * against the Sessions API's nested shape).
+ */
+export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+/**
+ * What one completion cost. Provided by core's spend accounting; consumed by the `spend.recorded` event.
+ */
+export type Spend = { cost: Money; tokens: Tokens };
+
+/**
+ * One delivery of a sealed version: where it went and the link to it.
+ * Provided by the delivering extension (through `deliver`); consumed by the `artifact.delivered`
+ * event and read on the artifact.
+ */
+export type ArtifactDelivery = { where: string; link: string; at: number };
+
+/**
+ * A deliverable: a named, versioned thing an extension seals and that core carries through one
+ * lifecycle for every extension.
+ * - Declared: the producing extension registers its kind, workspace path and validation schema (`ArtifactKind`).
+ * - Sealed: `seal` commits the version; the core fields are kind, version, hash, content, sealedAt
+ *   and summary (a one-line summary any deliverable has, from the kind's `summarize`), and core
+ *   emits `artifact.sealed`.
+ * - Checked: gate processors on `artifact.sealed` return pass, deny or continue-with-feedback; the
+ *   check results are owned by the checking extension (the judge's verdict, scores and failed
+ *   gates live in the judge's state and its events), never on the artifact.
+ * - Delivered: delivery processors (observers) deliver however their extension does (github posts
+ *   a review, sleeper posts a card) and record it through `deliver`; the artifact's `deliveries`
+ *   list is the core record of that.
+ * What is not here: verdict (the judge's), basis and carriedFrom (github's), outcome (the kind's
+ * own reading, e.g. the reviewer's approve or request-changes), and links — those belong to the
+ * owning extension's state and events.
+ * Provided by core's sealing machinery; consumed by the `artifact.sealed` event, the Sessions
+ * API, and extensions that read sealed versions.
+ */
+export type Artifact = {
+  kind: string;
+  version: number;
+  hash: string;
+  content: string;
+  sealedAt: number;
+  /** A one-line summary of the content; absent for versions sealed before the kind gained `summarize`. */
+  summary?: string;
+  /** The core record of where the version has been delivered; rows sealed before deliveries existed lack the field and read as empty. */
+  deliveries?: ArtifactDelivery[];
+};
+
+// ── the loop's events ────────────────────────────────────────────────────────────────────────
+
+/**
+ * The names of core's events. The first eleven ride the lifecycle channel (contracts:233d9ccf,
+ * revised to this stream); the last five are in-process only.
+ */
+export type CoreEventType =
+  | 'session.created'
+  | 'run.started'
+  | 'run.ended'
+  | 'turn.ended'
+  | 'tool.call.before'
+  | 'tool.call.after'
+  | 'generation.before'
+  | 'generation.after'
+  | 'ask.opened'
+  | 'ask.resolved'
+  | 'ask.cancelled'
+  | 'artifact.sealed'
+  | 'artifact.delivered'
+  | 'spend.recorded'
+  | 'title.set'
+  | 'state.changed';
+
+/**
+ * An event type a processor registers on: a core event, or a namespaced extension event
+ * (`<extension>.<event>`). Core event names are closed (`CoreEventType`); extension names are
+ * open but validated on emit.
+ */
+export type EventType = CoreEventType | (string & {});
+
+/**
+ * The points where a gate may wait the loop: a tool call, a generation request, the end of a
+ * turn, or the sealing of an artifact. Every other event type accepts observers only.
+ *
+ * Backed by pi-durable's own hooks, and by the effect each verdict has:
+ * - `tool.call.before` — pi-durable `ToolHooks.beforeTool`: the call waits. Deny blocks the call
+ *   with the reason; continue blocks it with the feedback, which the model acts on; pass runs it.
+ * - `generation.before` — pi-durable `GenerationHooks.beforeRequest`: the request waits. Deny
+ *   fails the request with the reason; continue sends the request with the feedback appended to
+ *   its messages, which the model sees; pass sends it unchanged.
+ * - `turn.ended` — pi-durable `GenerationHooks.afterTools` (with `onYield` for continue): the run
+ *   waits before its next request. Deny aborts the run with the reason (`run.ended` reports
+ *   `denied`); continue appends the feedback as a user message and the run continues; pass
+ *   continues the run.
+ * - `artifact.sealed` — core's sealing machinery, inside the sealing tool call: the seal waits.
+ *   Deny fails the call with the reason; continue resolves the call with the feedback as its
+ *   error result, so the model revises the content and re-seals; pass completes the seal.
+ *
+ * When several gates apply at one point they run in the session's load order (the deployment's
+ * `requires` before `optional`, core before foundation before feature), then registration order
+ * within an extension; the first decisive verdict (deny or continue) wins and the later gates do
+ * not run. A gate is bounded by the `timeoutMs` it declared at registration (default 300000),
+ * and a timeout is a deny with the reason "gate timed out" — fail-closed; a gate that can
+ * legitimately wait longer (slots' capacity wait on `generation.before`) declares its own bound,
+ * and the one wait exempt from any bound is a person, through an ask the gate opened, which
+ * lives by the ask's own lifecycle, including its cancellation.
+ *
+ * A gate verdict is recorded under the gate's task before the run proceeds, so a replay or crash
+ * recovery returns the recorded verdict without re-running the processor: a gate decision survives
+ * replay, a person is not asked twice, and a judge does not re-check with different inputs.
+ *
+ * Provided by core's loop; consumed by extensions registering gate processors (judge on
+ * `turn.ended` and `artifact.sealed`, approvals on `tool.call.before`, slots on `generation.before`).
+ */
+export type GatePoint = 'tool.call.before' | 'generation.before' | 'turn.ended' | 'artifact.sealed';
+
+/**
+ * One event on the session's stream. `seq` is monotonic per session, `id` is unique per session,
+ * and `at` is epoch milliseconds.
+ *
+ * - `session.created`: core emits it when the session opens; no pi-durable hook (core's open path).
+ * - `run.started`: core emits it when it places a run's first input; no pi-durable hook (core's
+ *   submit path).
+ * - `turn.ended`: pi-durable `GenerationHooks.afterTools` — after every tool of the model's round
+ *   is terminal, before the run's next request. In-process only.
+ * - `tool.call.before`: pi-durable `ToolHooks.beforeTool` — before intent. In-process only.
+ * - `tool.call.after`: pi-durable `ToolHooks.afterTool` — before the result commits. In-process only.
+ * - `generation.before`: pi-durable `GenerationHooks.beforeRequest` for the session's own
+ *   generations, and `observeGeneration` for a direct completion, which names its model.
+ *   In-process only.
+ * - `generation.after`: pi-durable `GenerationHooks.afterResponse` — every terminal provider
+ *   message, before classification; `start` is when the request began, so a gate's wait shows.
+ *   In-process only.
+ * - `ask.opened` / `ask.resolved` / `ask.cancelled`: core's ask machinery, on the transition —
+ *   no pi-durable hook; cancellation rides `closeQuestions` on an abort.
+ * - `artifact.sealed`: core's sealing machinery, when `seal` commits a version; no pi-durable hook.
+ * - `artifact.delivered`: core, when `deliver` appends to the artifact's deliveries.
+ * - `spend.recorded`: core's spend accounting — pi-durable's usage totals as they change, and a
+ *   direct completion's cost through `observeGeneration`.
+ * - `run.ended`: pi-durable `GenerationHooks.afterRun` for a settled answer, and core's failure
+ *   reports for a fault or an abort; a gate's deny reports `denied`. `failedSteps` are the
+ *   conversation's `Failures` rows for the run.
+ * - `title.set`: core's title machinery, when the session's title is set.
+ * - `state.changed`: core watching the session's state — the one vocabulary the sdk, the
+ *   Sessions API and the channel share: `running`, `idle`, `stopped`, `archived`. `run.started`
+ *   sets `running`. Every run end (succeeded, denied, failed, aborted) sets `idle`, unless
+ *   queued input starts the next run, which keeps it `running`. `stopped` means the session's
+ *   process stopped (the stop operation, retention, a crash), never an abort. `archived` is
+ *   set only by the archive operation. Waiting on a person is not a state: the session is
+ *   `running` with a pending ask, and processors that need the facet (slots) observe
+ *   `ask.opened`, `ask.resolved` and `ask.cancelled`.
+ *
+ * Provided by core's loop; consumed by registered processors and by the lifecycle channel, which
+ * is the session leg of this stream: it carries the channel events above plus namespaced
+ * extension events, and is revised to this shape.
+ */
+export type CoreEvent =
+  | { seq: number; id: string; at: number; type: 'session.created'; data: Session & { createdAt: number } }
+  | { seq: number; id: string; at: number; type: 'run.started'; data: { run: Run } }
+  | { seq: number; id: string; at: number; type: 'run.ended'; data: { run: Run; outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; failedSteps: ReadonlyArray<{ step: string; error: string }>; lastMessage?: string } }
+  | { seq: number; id: string; at: number; type: 'turn.ended'; data: { run: Run; index: number } }
+  | { seq: number; id: string; at: number; type: 'tool.call.before'; data: ToolCall }
+  | { seq: number; id: string; at: number; type: 'tool.call.after'; data: ToolCall & { result: JsonValue | null; error: string | null; durationMs: number } }
+  | { seq: number; id: string; at: number; type: 'generation.before'; data: { provider?: string; modelId?: string } }
+  | { seq: number; id: string; at: number; type: 'generation.after'; data: { provider?: string; modelId?: string; start: number; message: AssistantMessage } }
+  | { seq: number; id: string; at: number; type: 'ask.opened'; data: Ask }
+  | { seq: number; id: string; at: number; type: 'ask.resolved'; data: { id: string; choice: string; text?: string; reason?: string; by: Principal } }
+  | { seq: number; id: string; at: number; type: 'ask.cancelled'; data: { id: string; run: Run } }
+  | { seq: number; id: string; at: number; type: 'artifact.sealed'; data: Artifact }
+  | { seq: number; id: string; at: number; type: 'artifact.delivered'; data: ArtifactDelivery }
+  | { seq: number; id: string; at: number; type: 'spend.recorded'; data: Spend }
+  | { seq: number; id: string; at: number; type: 'title.set'; data: { title: string } }
+  | { seq: number; id: string; at: number; type: 'state.changed'; data: { state: 'running' | 'idle' | 'stopped' | 'archived' } };
+
+/**
+ * A namespaced extension event: `<extension>.<event>`, whose payload is whatever that extension
+ * declared for it — core never interprets it. Emits are validated against the emitting
+ * extension's manifest `events` schemas, so other extensions' processors read a declared shape.
+ * Rides the lifecycle channel, the session leg of the stream.
+ * Provided by the emitting extension's processor; consumed by other extensions' processors and
+ * by the channel.
+ */
+export type ExtensionEvent = {
+  seq: number;
+  id: string;
+  at: number;
+  type: `${string}.${string}`;
+  data: JsonValue;
+};
+
+/**
+ * One event on the session's stream: a core event, or a namespaced extension event.
+ * Provided by core's loop; consumed by registered processors and by the lifecycle channel.
+ */
+export type LoopEvent = CoreEvent | ExtensionEvent;
+
+/**
+ * What a gate processor returns: pass (or returning nothing), deny with the reason, or
+ * continue-with-feedback, which re-enters the session the way each gate point states it
+ * (see `GatePoint`).
+ * Provided by the gate processor; consumed by core's loop.
+ */
+export type GateVerdict =
+  | { kind: 'pass' }
+  | { kind: 'deny'; reason: string }
+  | { kind: 'continue'; feedback: string };
+
+/**
+ * What a session-side processor is given: the session it runs in, and the calls a processor
+ * makes. The processor reads committed state, writes only its own documents, runs its own
+ * completions through `observeGeneration` (so the `generation.*` events fire and the
+ * `generation.before` gates apply), emits its own events, and records deliveries.
+ * Provided by core's loop; consumed by the extension's registered processors.
+ */
+export type ProcessorContext = {
+  /** The session's harness and root: committed reads and this extension's own durable writes. */
+  harness: Harness;
+  root: Conversation;
+  /** The session's models, for the processor's own completions. */
+  models: Models;
+  /** A decision memo shared with the asking task: computed once per name, and replay-stable. */
+  memo<T extends JsonValue>(name: string, candidate: T): Promise<T>;
+  /**
+   * Emits this extension's namespaced event into the session's stream. The namespace is fixed to
+   * the extension the registration came from — core attributes the registration to the extension
+   * whose `manifest.session` setup called `observe` or `gate` — and the payload must satisfy the manifest
+   * `events` schema, so an extension cannot emit under another's name or with an undeclared shape.
+   */
+  emit(event: string, data: JsonValue): Promise<'ok' | 'invalid'>;
+  /**
+   * Records a delivery of a sealed version: appends `{ where, link, at }` to the artifact's
+   * deliveries and emits `artifact.delivered`.
+   */
+  deliver(kind: string, version: number, where: string, link: string): Promise<void>;
+  now(): number;
+};
+
+/**
+ * Registers an observer on an event type: any core event or a namespaced extension event.
+ * The observer runs after the event without the loop waiting for it, so it cannot affect the
+ * turn; a throw is reported to the harness and never fails the run.
+ *
+ * Delivery is at-least-once. A session-side observer's events are recorded with the session's
+ * task, so a replay re-delivers them from the durable position; an app-side observer's come over
+ * the channel from the app's per-app cursor, so an app that was down catches up (see
+ * `AppContext.subscribe`). Either way the processor uses the event's `id` as its idempotency
+ * key: a delivery may arrive twice, and a side effect (a delivery, a post) must run once per id.
+ *
+ * Returns an unsubscriber.
+ * Provided by the extension's `manifest.session` setup (called while the session installs it);
+ * consumed by core's loop, which dispatches the event to it.
+ */
+export declare function observe(
+  type: EventType,
+  run: (event: LoopEvent, p: ProcessorContext) => void | Promise<void>,
+): () => void;
+
+/**
+ * Registers a gate on one of the four gate points: the loop waits for the verdict there, and the
+ * verdict acts the way `GatePoint` describes. Gates run in load order with the first decisive
+ * verdict winning; a verdict is recorded under the gate's task so a replay returns it without
+ * re-running the processor. Returning nothing passes. Returns an unsubscriber.
+ *
+ * A gate is bounded by the `timeoutMs` it declares, defaulting to 300000: a timeout is a deny
+ * with the reason "gate timed out", fail-closed. A gate that can legitimately wait longer than
+ * the default declares its own bound at registration — slots' capacity wait on
+ * `generation.before` can exceed five minutes under load, and a fail-closed default would fail
+ * the run rather than the wait. The one wait exempt from any bound is a person, through an ask
+ * the gate opened, which lives by the ask's own lifecycle.
+ *
+ * Provided by the extension's `manifest.session` setup; consumed by core's loop at the gate point.
+ */
+export declare function gate(
+  type: GatePoint,
+  run: (event: LoopEvent, p: ProcessorContext) => Promise<GateVerdict | void>,
+  opts?: { timeoutMs?: number },
+): () => void;
+
+// ── durable asks ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * An approval: the gated tool call and its verdict. Written by `awaitApproval` when a gate
+ * processor waits on it; read by the person or agent that decides it.
+ * Provided by core's ask machinery; consumed by whoever escalates (a person, an agent).
+ */
+export type Approval = {
+  tool: string;
+  args: JsonValue;
+  requestedAt: number;
+  verdict: { decision: 'approve' | 'reject'; reason: string | null; by: Principal | string; at: number } | null;
+  /** Set once execution starts, so a crash mid-execution is reported instead of re-running a side effect. */
+  executing: boolean;
+  done: boolean;
+};
+
+/**
+ * The conversation-scoped log of approvals: one entry per gated tool call, keyed by a stable id a
+ * gate processor chooses (its tool call's), so a rerun after a crash finds its approval.
+ * Provided by the sdk; consumed by `awaitApproval`, by whoever decides an approval, and by the
+ * `ask.opened` / `ask.resolved` events.
+ */
+export declare const Approvals: ConversationDocToken<{ items: Record<string, Approval> }>;
+
+/**
+ * Waits durably for the approval with a stable key: the gate processor's primitive for
+ * `tool.call.before` gates (it replaces `gated`). Records the ask idempotently by key, so a
+ * rerun or replay finds its ask instead of opening a new one; fires `ask.opened`, and
+ * `ask.resolved` or `ask.cancelled`; the run shows waiting on a person while it waits, and that
+ * wait is exempt from the gate's timeout — it lives by the ask's own lifecycle. Resolves to the
+ * decision, or null when the ask was cancelled because the run ended.
+ * Provided by the sdk; consumed by extensions registering approval gates (github, home,
+ * contracts, workflows).
+ */
+export declare function awaitApproval(
+  p: ProcessorContext,
+  key: string,
+  tool: string,
+  args: JsonValue,
+): Promise<{ decision: 'approve' | 'reject'; reason: string | null; by: Principal | string } | null>;
+
+/**
+ * The approvals with no verdict yet, keyed by their task id.
+ * Provided by core's ask machinery; consumed by extensions serving and resuming them (home, github)
+ * and by the session's ask routes.
+ */
+export declare function pendingApprovals(conversation: Conversation, ctx: Context): Promise<Array<Approval & { id: string }>>;
+
+/**
+ * Records a verdict on an approval; returns false when the approval is unknown or already
+ * decided. The session's routes validate the presenting person before calling it.
+ * Provided by the person or agent that decides; consumed by `awaitApproval`, which resumes the
+ * waiting gate.
+ */
+export declare function resolveApproval(
+  conversation: Conversation,
+  id: string,
+  verdict: { decision: 'approve' | 'reject'; reason?: string; by: Principal },
+  ctx: Context,
+): Promise<boolean>;
+
+/**
+ * A question put to a person: what was asked, what was offered, and the answer that stands.
+ * Provided by whichever extension escalates (through `person`); consumed by the session's ask
+ * routes and by the `ask.*` events.
+ */
+export type Question = {
+  question: string;
+  options: string[];
+  evidence: string | null;
+  /** Absent in questions stored before these existed; readers treat undefined as null / {}. */
+  header?: string | null;
+  title?: string | null;
+  detail?: string | null;
+  optionDescriptions?: Record<string, string>;
+  suggested?: number | null;
+  freeText?: boolean;
+  askedAt: number;
+  answer: { choice: string; by: Principal | string; at: number; note?: string; text?: string } | null;
+  /** The run that asked ended without an answer, so nobody is waiting on it. */
+  closed: boolean;
+};
+
+/**
+ * Pending human questions, beside Approvals: written by whichever extension escalates, served
+ * and queried generically.
+ * Provided by the sdk; consumed by the session's ask routes and by extensions that resume
+ * questions.
+ */
+export declare const Questions: ConversationDocToken<{ items: Record<string, Question> }>;
+
+/**
+ * A person's answer to a question: a listed choice, or free text when the question opted in; a
+ * note rides with a choice.
+ * Provided by the person, through the session's routes; consumed by `answerQuestion` and the
+ * waiting `person` resolver.
+ */
+export type AnswerInput = { choice?: string; note?: string; text?: string };
+
+/**
+ * Records a person's answer; the first answer stands. The session's routes validate the
+ * presenting person and parse the body into `AnswerInput` before calling it.
+ * Provided by the session's ask routes; consumed by the waiting `person` resolver.
+ */
+export declare function answerQuestion(
+  conversation: Conversation,
+  id: string,
+  input: AnswerInput,
+  by: Principal,
+  ctx: Context,
+): Promise<'ok' | 'not-asking' | 'answered' | 'bad-choice'>;
+
+/**
+ * The questions with no answer that are not closed.
+ * Provided by core's question machinery; consumed by the session's ask routes.
+ */
+export declare function pendingQuestions(
+  doc: Readonly<{ items: Record<string, Question> }> | null | undefined,
+): Array<Question & { id: string }>;
+
+/**
+ * Closes the unanswered questions after an abort: nobody waits on them any more; each closure
+ * fires `ask.cancelled`.
+ * Provided by the session that aborted; consumed by extensions that resume questions.
+ */
+export declare function closeQuestions(conversation: Conversation, ctx: Context): Promise<void>;
+
+/**
+ * Last resolver of a decision chain: records the question and waits for a person, firing
+ * `ask.opened` / `ask.resolved` / `ask.cancelled` as the question lives.
+ * Provided by the sdk; consumed by extensions that end a decision chain with a person (contracts,
+ * workflows, judge).
+ */
+export declare function person(signal?: AbortSignal): Resolver;
+
+// ── decide ────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A point in an extension's work where a decision is needed: what to choose between, with the
+ * evidence and card copy.
+ * Provided by the extension deciding; consumed by the resolvers of `decide` (model resolvers,
+ * `person`).
+ */
+export type DecisionPoint = {
+  /** Unique within the calling task; the decision is memoized under it, so a replay returns the same answer. */
+  name: string;
+  question: string;
+  options: string[];
+  evidence?: string;
+  /** Card copy; `options` stay the plain labels an answer must match, so these only change how the question reads. */
+  header?: string;
+  title?: string;
+  detail?: string;
+  /** One-line description (the trade-off) per option label. */
+  optionDescriptions?: Record<string, string>;
+  /** Index into `options` of the recommended one. */
+  suggested?: number;
+  /** Lets the person answer in their own words, or add a note to an option; only for callers that read `text` and `note`. */
+  freeText?: boolean;
+  /** Below this confidence a resolver's answer escalates to the next resolver. */
+  minConfidence?: number;
+};
+
+/**
+ * A decision's answer: which option, how sure, why, and who (and how) decided it.
+ * Provided by a resolver in `decide`'s chain; consumed by the extension that asked.
+ */
+export type Decision = { choice: string; confidence: number; reason: string; resolver: string; note?: string; text?: string };
+
+/**
+ * One link in a decision chain: answers a point, or returns undefined to escalate.
+ * Provided by the sdk (the model resolvers and `person`) and by extensions (judge, workflows);
+ * consumed by `decide`.
+ */
+export type Resolver = {
+  id: string;
+  /** Returns undefined to escalate. */
+  resolve(point: DecisionPoint, api: ToolExecutionApi, ctx: Context): Promise<Omit<Decision, 'resolver'> | undefined>;
+};
+
+/**
+ * Runs a decision chain until a resolver answers with enough confidence; undefined when every
+ * resolver escalated.
+ * Provided by the sdk; consumed by extensions making decisions (judge, workflows, contracts,
+ * remarkable).
+ */
+export declare function decide(api: ToolExecutionApi, point: DecisionPoint, resolvers: Resolver[], ctx: Context): Promise<Decision | undefined>;
+
+/**
+ * Default resolver: the session's own model on a fork of the live transcript, tools off, so it
+ * sees everything and reuses the cache.
+ * Provided by the sdk; consumed by extensions ending a chain with the session model.
+ */
+export declare const sessionModel: Resolver;
+
+/**
+ * A named model asked with only the question and evidence, such as a dedicated decision model.
+ * Provided by the sdk; consumed by extensions using a dedicated decision model (judge).
+ */
+export declare function modelResolver(provider: string, modelId: string): Resolver;
+
+/**
+ * The agent's own model asked with only the question and evidence: an independent view, as a
+ * checker should have.
+ * Provided by the sdk; consumed by extensions checking with the agent's model (judge).
+ */
+export declare const agentModel: Resolver;
+
+// ── artifacts ─────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A declared artifact kind: the name extensions and core agree on, where the producing
+ * extension keeps its source, and the checks that run before a version is sealed. `validate`
+ * returns the problems (undefined when the content is fine); `summarize` returns the one-line
+ * summary any deliverable has. A kind holds no reading of its own content beyond those — an
+ * outcome (the kind's own verdict) is the producing extension's state, not the kind's.
+ * Provided by the producing extension (through `artifactsExtension`); consumed by core's sealing
+ * machinery and by other extensions that name the kind (judge, workflows).
+ */
+export type ArtifactKind = {
+  kind: string;
+  /** The workspace-relative path the producing extension reads and writes the content at. */
+  path: string;
+  /** Problems with the proposed content; undefined is fine. Runs on a write at the kind's path, and again before a seal. */
+  validate?(text: string, ctx: Context): Promise<string | undefined>;
+  /** The one-line summary a sealed version carries. */
+  summarize?(text: string, ctx: Context): Promise<string>;
+};
+
+/**
+ * The conversation-scoped log of sealed artifact versions, by kind. Core stores only the core
+ * fields of an artifact (see `Artifact`); check results and readings belong to the extensions
+ * that produce and check them.
+ * Provided by core's sealing machinery; consumed by extensions that seal or read versions
+ * (github, judge, remarkable, workflows) and by the `artifact.sealed` event.
+ */
+export declare const Artifacts: ConversationDocToken<{ kinds: Record<string, { versions: Artifact[] }> }>;
+
+/**
+ * Seals the workspace content of a declared kind as the next version: validates it, commits it,
+ * and emits `artifact.sealed`. The emit runs the `artifact.sealed` gate chain — a deny or
+ * continue verdict fails this call the way `GatePoint` describes, so the model sees the check's
+ * reason or feedback and may revise and re-seal; a pass resolves the sealed version.
+ * Provided by the sdk; consumed by extensions producing deliverables (github, judge, remarkable,
+ * workflows).
+ */
+export declare function seal(api: ToolExecutionApi, kind: string, ctx: Context): Promise<Artifact>;
+
+/**
+ * Records a delivery of a sealed version, from a tool context: appends `{ where, link, at }` to
+ * the artifact's deliveries and emits `artifact.delivered`. The tool call's id keys the record,
+ * so a replay records it once.
+ * Provided by the sdk; consumed by extensions that deliver their sealed work (github posts a
+ * review, remarkable posts a card).
+ */
+export declare function deliver(
+  api: ToolExecutionApi,
+  kind: string,
+  version: number,
+  where: string,
+  link: string,
+  ctx: Context,
+): Promise<void>;
+
+/**
+ * Returns the pi-durable extension a producer installs for its kinds: it installs the seal tool
+ * — the explicit act of sealing, which the agent calls to seal the next version of a declared
+ * kind (it reads the workspace content, validates it, commits it, runs the `artifact.sealed`
+ * gate chain and emits `artifact.sealed`) — and it validates the session's writes at a kind's
+ * path against the kind's `validate`, so a draft write is checked but never sealed: every
+ * sealed version is the producing extension's submit, not a side effect of writing.
+ * Provided by the producing extension's session setup; consumed by core (the session installs
+ * it) and by the agent (the seal tool).
+ */
+export declare function artifactsExtension(kinds: readonly ArtifactKind[]): Extension;
+
+// ── generation ────────────────────────────────────────────────────────────────────────────────
+
+type GenerationRequest = {
+  messages: readonly unknown[];
+  model?: { provider?: string; modelId?: string };
+};
+type Generation = { message: AssistantMessage; start: number };
+
+/**
+ * Runs a direct model completion (outside the session's own loop) on the stream: fires
+ * `generation.before` and `generation.after` around it, runs the `generation.before` gate chain
+ * first, and records the completion's spend on `spend.recorded`. A gate's deny fails the
+ * completion with the reason; a continue runs it with the feedback appended to the request's
+ * messages. This is how a processor or a tool's own completion gets the same events, gates and
+ * spend as the session's generations (it replaces `observeGeneration`'s gate wrapper and the
+ * extension-side `onGeneration`).
+ * Provided by the sdk; consumed by extensions and processors running direct completions
+ * (remarkable, workflows, judge, research).
+ */
+export declare function observeGeneration(
+  request: GenerationRequest,
+  complete: (request: GenerationRequest) => Promise<Generation>,
+  ctx: Context,
+): Promise<Generation>;
+
+// ── failures ──────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One step of a run that failed: which step, and why. Core writes the rows for a runaway tool
+ * call and a model fault; the workflow runtime writes the rows for its steps. The run's rows are
+ * what `run.ended` reports as `failedSteps`.
+ * Provided by core's failure machinery; consumed by the `run.ended` event and the Sessions API.
+ */
+export type FailureRow = { step: string; error: string; at: number };
+
+/**
+ * The conversation-scoped log of a run's failed steps.
+ * Provided by core's failure machinery; consumed by the `run.ended` event and the Sessions API.
+ */
+export declare const Failures: ConversationDocToken<{ items: Record<string, FailureRow> }>;
+
+/**
+ * The failed steps of a run, oldest first.
+ * Provided by core's failure machinery; consumed by the `run.ended` event and the Sessions API.
+ */
+export declare function failedRows(
+  doc: Readonly<{ items: Record<string, FailureRow> }> | null | undefined,
+  run: Run,
+): FailureRow[];
+
+// ── query ─────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Escapes a value for a quoted-free Sessions API `q` term: backslash-escapes every character that
+ * is not a letter, digit or underscore, and guards a term that would read as the AND / OR / NOT
+ * keyword. Exported from the `@quack/sdk/query` subpath, which re-exports nothing else.
+ * Provided by the sdk; consumed by clients building `q` terms (the Sessions API contract,
+ * contracts:eda8542f).
+ */
+export declare function escapeTerm(value: string): string;
+
+/**
+ * The inverse of the Sessions API's term escaping, as the server applies it: unescapes the
+ * backslash pairs and reports where the `*` and `?` wildcards sit, as offsets into `text`.
+ * Exported from the `@quack/sdk/query` subpath.
+ * Provided by the sdk; consumed by the session that serves `q` (core).
+ */
+export declare function unescapeTerm(raw: string): { text: string; wildcards: number[] };
+
+// ── eval ──────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A replay's stand-in for an extension's service half: it serves the pinned world and captures
+ * deliveries.
+ * Provided by the extension's `manifest.evalAdapters`; consumed by core (`@quack/eval`'s replay).
+ */
+export type EvalService = { env: Record<string, string>; captured: unknown[]; close(): Promise<void> };
+
+/**
+ * What a recorded session holds that an adapter may build evidence from: its durable documents
+ * and its sealed versions.
+ * Provided by core (`@quack/eval`'s recording); consumed by the extension's `manifest.evalAdapters`.
+ */
+export type RecordedSession = { docs: Record<string, JsonObject>; artifacts: Record<string, Artifact[]> };
+
+/**
+ * How eval replays and scores one artifact kind; the extension that owns the kind contributes it,
+ * so eval names no extension. Whether the final artifact blocks what it judged is the reviewer's
+ * rubric, not an sdk field: the eval reads the owning extension's contract directly.
+ * `judge.rubric` and `judge.evidence` are typed `unknown` on purpose: their shape is the judge's
+ * evidence contract, defined separately.
+ * Provided by the extension's `manifest.evalAdapters`; consumed by core (`@quack/eval` and
+ * `@quack/distributor`'s rubrics).
+ */
+export type EvalAdapter = {
+  kind: string;
+  /** Stubs by the document kind they stand in for; a pinned document of that kind is served by one during replay. */
+  services?: Record<string, (pin: JsonObject) => Promise<EvalService>>;
+  /** The kind's rubric (a @quack/judge Rubric, untyped here so sdk stays below judge) and its evidence rebuilt from a recording, or undefined when the artifact is not one this rubric judges. */
+  judge?: { rubric: unknown; evidence: (session: RecordedSession, content: string) => Promise<unknown> };
+};
+
+// ── app ───────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * An extension's in-process half: it answers /apps/<name>/* with the path relative to its mount,
+ * and runs its background loops between start and stop. Its processors subscribe through
+ * `AppContext.subscribe`, emit through `AppContext.emit`, and record deliveries through
+ * `AppContext.deliver`.
+ * Provided by the extension's `manifest.app`; consumed by core (`@quack/distributor`), which
+ * mounts it in-process.
+ */
+export type App = {
+  handle(req: IncomingMessage, res: ServerResponse): Promise<unknown>;
+  start?(): void | Promise<void>;
+  stop?(): void | Promise<void>;
+};
+
+/**
+ * A route a credential-free request may reach: the app's UI routes and its public ingress (a
+ * webhook that signs its payload). `path` is relative to the mount.
+ * Provided by the extension's `manifest.pages`; consumed by core (`@quack/distributor`'s app
+ * gateway).
+ */
+export type PageRoute = { method: string; path: string | RegExp };
+
+/**
+ * The store an app's state lives in, as the resolved choice: its kind and its target — the
+ * sqlite file path, or the postgres URL. The app opens its own adapter for its own state from
+ * the choice; core never opens or reads it, and the sdk names no database client type.
+ * Provided by core (`@quack/distributor`, from the deployment); consumed by the extension's
+ * `manifest.app`.
+ */
+export type AppStore = { kind: 'sqlite'; path: string } | { kind: 'postgres'; url: string };
+
+/**
+ * What an app may see of the deployment: its own entry, nothing more. The app reaches its own
+ * store through `AppContext.store` and its own variables through `AppContext.env`; nothing else
+ * of the deployment is restated here. Per-model capabilities (the `images` flag a vision check
+ * reads) are not part of the minimal view — a check that needs one validates its own config
+ * against its own manifest (workflows' `visionProblems`), not against the deployment.
+ * Provided by core (`@quack/distributor`, from the deployment); consumed by the extension's
+ * `manifest.app` and `manifest.validate`.
+ */
+export type AppDeployment = {
+  app: string;
+  store: string;
+};
+
+/**
+ * What the distributor gives an app: its settings, its resolved store, the variables its
+ * manifest declares, in-process access to the rest, and the session leg of the stream. `fetch`
+ * calls the distributor's own routes and `peerFetch(name)` another mounted app, neither over a
+ * socket or with a credential; `distributorUrl` is only the base those URLs resolve against.
+ * `subscribe` receives the stream restricted to the manifest's `listen` types and to the
+ * sessions that have this extension installed, from the app's per-app cursor — app-side
+ * processors are observers only, because a gate waits the loop and so runs in the session
+ * process; an app that must gate registers a session-side gate that calls its own service.
+ * `emit` and `deliver` are the app-side entries onto the stream, validated by core as the
+ * session-side ones are.
+ * Provided by core (`@quack/distributor`); consumed by the extension's `manifest.app`.
+ */
+export type AppContext = {
+  settings: unknown;
+  /** The app's resolved store. */
+  store: AppStore;
+  distributorUrl: string;
+  fetch: typeof fetch;
+  peerFetch(name: string): typeof fetch;
+  /** The app's own deployment entry, plus the minimal cross-app view. */
+  deployment: AppDeployment;
+  /** Only the variables the manifest's `appEnv` lists, resolved from the deployment's env; a declared variable that is unset reads undefined. */
+  env: Record<string, string | undefined>;
+  /**
+   * Subscribes the app to the session leg of the stream (the lifecycle channel), restricted to
+   * the event types the manifest's `listen` declares (its own namespace when `listen` is absent)
+   * and to the sessions that have this extension installed. Delivery is at-least-once from a
+   * per-app cursor core keeps on the stream: an app that was down or restarted catches up from
+   * the cursor, and the app uses the event's `id` as its idempotency key. App-side processors
+   * are observers only — a gate waits the loop and so runs in the session process; an app that
+   * must gate registers a session-side gate that calls its own service. Returns an unsubscriber.
+   */
+  subscribe(on: (session: string, event: LoopEvent) => void): () => void;
+  /**
+   * Emits this extension's namespaced event into a session's stream from the app side. The
+   * namespace is fixed to this app's extension, and the payload must satisfy the manifest
+   * `events` schema.
+   */
+  emit(session: string, event: string, data: JsonValue): Promise<'ok' | 'unknown-session' | 'invalid'>;
+  /**
+   * Records a delivery into a session's artifact core record from the app side: appends
+   * `{ where, link, at }` and emits `artifact.delivered` there.
+   */
+  deliver(session: string, kind: string, version: number, where: string, link: string): Promise<'ok' | 'unknown-session'>;
+};
+
+/**
+ * What an extension package exports as `manifest`. `session` installs it for agents selecting
+ * `name` (every session if `deployment`) and is where the extension registers its processors;
+ * `events` declares the namespaced events it emits, each with the schema its payload must
+ * satisfy — core rejects an emit with another extension's namespace or an undeclared shape, and
+ * other extensions' processors read the declared shape from the channel. `appEnv` lists the
+ * variables the app reads; the app gets those and only those.
+ * Provided by the extension package; consumed by core (`@quack/runtime` loads it,
+ * `@quack/distributor` mounts it, `@quack/eval` replays it).
+ */
+export type ExtensionManifest = {
+  name: string;
+  version: string;
+  description?: string;
+  /** Installs the extension's session half, and registers its processors (through `observe` and `gate`). */
+  session?: (config: unknown, workflows: ContributedWorkflows) => Extension[] | Promise<Extension[]>;
+  /** Problems with an agent's config for this extension, given the deployment; empty when it is fine. */
+  validate?: (config: unknown, deployment: DeploymentView) => string[];
+  /** Mounts the extension's app when the deployment lists it under `extensions`. */
+  app?: (ctx: AppContext) => App | Promise<App>;
+  /** The routes of the app a credential-free request reaches; every other route needs a launch credential. */
+  pages?: PageRoute[];
+  /** Other apps this app calls through `peerFetch`; mounting refuses a deployment that lists it without them. */
+  peers?: string[];
+  /** Extensions this one cannot work without; an agent selecting it gets them too, loaded first. */
+  requires?: string[];
+  /** Extensions it uses when the agent also enables them (judge: results are checked); loaded before it, never added. */
+  optional?: string[];
+  /** The work this extension's sessions can start on a person's behalf. */
+  actions?: Action<Schema>[];
+  /** The workflows this extension contributes, built from an agent's binding; `dispatch` submits to a session. */
+  workflows?: (api: { dispatch: Dispatch }) => readonly ContributedWorkflow[];
+  /** The namespaced events this extension emits, keyed by full name (like `<name>.cleared`); the payload must satisfy the schema. */
+  events?: Record<string, Schema>;
+  /** The event types the app's `subscribe` receives on the channel; absent means this extension's own namespace only. */
+  listen?: readonly string[];
+  /** The variables the app reads; the app's `env` is limited to these. */
+  appEnv?: readonly string[];
+  /** Problems with `extensions.<name>.settings` of the deployment file, where name is this manifest's; the app checks the same settings at boot. Absent means it takes none. */
+  settings?: (settings: unknown) => string[];
+  /** The eval adapters this extension contributes, one per artifact kind it owns. */
+  evalAdapters?: EvalAdapter[];
+};
+
+// ── dispatch ──────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A workflow an extension contributes: how to build it from an agent's binding, and the variables
+ * it reads from the session process.
+ * Provided by the extension's `manifest.workflows`; consumed by core (`@quack/runtime`) which
+ * merges them and by the agent's binding.
+ */
+export type ContributedWorkflow = { build: (config: unknown) => unknown; env: readonly string[] };
+
+/**
+ * The workflows an extension contributes, keyed by their binding name.
+ * Provided by the extension's `manifest.workflows`; consumed by core (`@quack/runtime`), which
+ * merges them, and by the extension's `manifest.session` (its sessions may run them).
+ */
+export type ContributedWorkflows = Record<string, ContributedWorkflow>;
+
+/**
+ * The result of a submission to a session: queued behind the run in hand, placed to start one,
+ * answered already (the run was idle), or unanswered with the reason.
+ * Provided by the session it was submitted to; consumed by the caller that submitted (a
+ * workflow's `dispatch`, an extension's `submitToSession`) — moved into the sdk from
+ * `packages/session`, retiring the workflows → session boundary entry.
+ */
+export type SubmitResult =
+  | { submissionId: string; status: 'queued' | 'placed' }
+  | { submissionId: string; status: 'done'; answer: string }
+  | { submissionId: string; status: 'unanswered'; reason: string; detail?: string };
+
+/**
+ * Submits input to a session: the session's extension half registers it in `manifest.workflows`
+ * so a workflow step can reach any session the deployment defines. `wait` asks the session to
+ * hold until the input's run settles, returning its answer or why it did not.
+ * Provided by the session process; consumed by a workflow's steps (moved into the sdk from
+ * `packages/session`).
+ */
+export type Dispatch = (
+  session: { harness: Harness; root: Conversation },
+  input: string,
+  requestId: string | undefined,
+  wait: boolean,
+) => Promise<SubmitResult | undefined>;
+
+/**
+ * Resumes a session's unanswered input, if it has one: a workflow step that waits for the
+ * session to finish what a submission started.
+ * Provided by the session process; consumed by a workflow's steps (moved into the sdk from
+ * `packages/session`).
+ */
+export type Resume = (
+  session: { harness: Harness; root: Conversation },
+) => Promise<SubmitResult | null>;
+
+/**
+ * An extension that can also dispatch: its session half may name `dispatch` and `resume`.
+ * Provided by the session process; consumed by core (`@quack/runtime`) when it builds a
+ * workflow's steps.
+ */
+export type DispatchingExtension = Extension & {
+  dispatch?: Dispatch;
+  resume?: Resume;
+};
+
+// ── actions ───────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What an action's `start` is given: the distributor to submit to, and the variables the action
+ * declared, read before the session process drops them.
+ * Provided by core (`@quack/runtime`/`@quack/home`); consumed by the extension's action `start`.
+ */
+export type ActionContext = { distributorUrl: string; fetch: typeof fetch; env: Record<string, string | undefined> };
+
+/**
+ * Work an extension can start on a person's behalf. The home agent offers `summary` to the model
+ * and to the person who confirms; `start` calls the owner's own service or the distributor.
+ * Provided by the extension's `manifest.actions`; consumed by core (`@quack/home`,
+ * `@quack/runtime`) and by core's own actions.
+ */
+export type Action<P extends Schema = Schema> = {
+  name: string;
+  /** One line: what starting it does. */
+  summary: string;
+  params: P;
+  /** Variables `start` reads from `ctx.env`. */
+  env?: readonly string[];
+  start(params: Static<P>, ctx: ActionContext): Promise<{ session: string; title: string }>;
+};
+
+// ── http ──────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Compares two tokens in constant time, so a credential check does not time out faster on a
+ * shorter right prefix.
+ * Provided by the sdk; consumed by extensions and core checking a launch credential.
+ */
+export declare function safeEqual(a: string, b: string): boolean;
+
+/**
+ * Sends a problem detail: an RFC 9457 `application/problem+json` body whose `detail` is the
+ * problem and whose `status` is the code. The caller's body is not echoed back.
+ * Provided by the sdk; consumed by every extension service that returns an error.
+ */
+export declare function sendProblem(res: ServerResponse, status: number, detail: string): void;
+
+/**
+ * Whether a body read failed on the app's own size limit, which the app answers 413.
+ * Provided by the sdk; consumed by extensions' services (github, remarkable, schedules).
+ */
+export declare function tooLarge(err: unknown): boolean;
+
+/**
+ * The half of an HTTP service that does not depend on the store: send a response, send a
+ * problem, and read a body up to the limit. The service's own launch credential is what the
+ * distributor presents on its behalf; the service checks it with `safeEqual`.
+ * Provided by the sdk; consumed by extension services (github, remarkable, schedules, sleeper,
+ * slots) and by core (the distributor's and the session's routes).
+ */
+export declare function serviceHttp(opts?: { maxBody?: number }): {
+  send(res: ServerResponse, status: number, body: unknown): void;
+  problem(res: ServerResponse, status: number, detail: string): void;
+  readBody(req: IncomingMessage): Promise<Buffer>;
+  json(req: IncomingMessage): Promise<unknown>;
+};
+
+/**
+ * A server around an in-process app, for tests and dev stacks (the distributor mounts apps
+ * itself); `stop` closes it and the app.
+ * Provided by the sdk; consumed by extension tests and dev stacks.
+ */
+export declare function serveApp(app: App): Server & { stop: () => void | Promise<void> };
+
+/**
+ * A `fetch` that hands the request to an HTTP handler in this process: no socket, no credential.
+ * Only what the sdk's apps and the distributor use of the response API is supported.
+ * Provided by the sdk; consumed by core (the distributor mounts apps through it) and extension
+ * tests.
+ */
+export declare function inProcessFetch(dispatch: (req: IncomingMessage, res: ServerResponse) => unknown): typeof fetch;
+
+/**
+ * Where a session reaches an app: the distributor that started the session. The launch
+ * credential the session presents is what the distributor hands it; the service checks it with
+ * `safeEqual`.
+ * Provided by the sdk; consumed by extensions whose sessions reach apps (github, remarkable).
+ */
+export declare function appEndpoint(name: string, env?: Record<string, string | undefined>): { url: string; token: string };
+
+type SessionSubmission = {
+  key: string;
+  agent: string;
+  input: string;
+  requestId: string;
+  title?: string;
+  meta?: object;
+  whenBusy?: 'followUp';
+  wait?: boolean;
+};
+
+/**
+ * The distributor's invocation request for a session: the encoded-key URL and the JSON body.
+ * Provided by the sdk; consumed by extensions and core that submit to sessions (contracts,
+ * github, research, schedules).
+ */
+export declare function invocationRequest(distributorUrl: string, submission: SessionSubmission): { url: string; body: string };
+
+/**
+ * Submits input to a session at the distributor.
+ * Provided by the sdk; consumed by extensions' actions and services (contracts, github,
+ * research, schedules) and by `Action.start`.
+ */
+export declare function submitToSession(distributorUrl: string, submission: SessionSubmission, doFetch?: typeof fetch): Promise<Response>;
+
+// ── deployment ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The slice of a deployment's config an extension may check its own config against: which
+ * providers are reachable and which models they serve. The app's own entry, store and variables
+ * are not restated here — the app reaches them through `AppContext.store` and `AppContext.env`.
+ * Provided by core (`@quack/runtime`'s validation); consumed by the extension's `manifest.validate`.
+ */
+export type DeploymentView = { providers: Record<string, { models?: string[] }> };
+
+/**
+ * The extension's settings after its own check; throws with every problem.
+ * Provided by the sdk; consumed by extensions that check their settings at boot (github,
+ * schedules).
+ */
+export declare function checkedSettings<T>(name: string, settings: unknown, problems: (settings: unknown) => string[]): T;

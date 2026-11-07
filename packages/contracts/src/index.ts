@@ -17,7 +17,7 @@ export { lintJsonSchema } from './json-schema-rules.ts';
 export { schemaBreaks } from './json-schema-diff.ts';
 export { lintTypeScript } from './typescript-rules.ts';
 export { typeScriptBreaks } from './typescript-diff.ts';
-export { contractRubric, guideAnchors, recordedSpecEvidence, specEvidence } from './rubric.ts';
+export { contractRubric, guideAnchors, guideRules, recordedSpecEvidence, specEvidence } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { manifest } from './manifest.ts';
 

@@ -6,7 +6,7 @@ import { answerUnit, type ClassifierRef, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type Check, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
-export type { ClassifierRef, ModelRef } from './resolve.ts';
+export { classifierTokens, type ClassifierRef, type ModelRef } from './resolve.ts';
 
 export type JudgeOptions = {
   kind: ArtifactKind;
@@ -74,6 +74,8 @@ export function settled(results: Map<string, CheckResult>, left: Map<string, num
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evidence, memo: string, ctx: Context, code: CheckResult[], report?: Report): Promise<CheckResult[]> {
   const { byUnit, results } = planModelChecks(opts.rubric, ev);
   const left = new Map([...results].map(([k, r]) => [k, r.units]));
+  // Met units are counted, not summed as fractions: 23 sums of 1/23 fall short of 1 and would read as a miss.
+  const hits = new Map<string, number>();
   // A model check is final once every unit it applies to is judged; one with no unit is final at once.
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(results, left)]));
   await publish();
@@ -85,7 +87,8 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
       r.resolvers[a.resolver] = (r.resolvers[a.resolver] ?? 0) + 1;
       // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
       if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
-      if (a.met) r.met! += 1 / r.units;
+      if (a.met) hits.set(key, (hits.get(key) ?? 0) + 1);
+      r.met = (hits.get(key) ?? 0) / r.units;
       // A note explains a defect: a "no" on a gate or a positive check, a "yes" on a pitfall.
       if (a.note && a.met === (typeof r.weight === 'number' && r.weight < 0)) r.notes.push(unit.whole ? a.note : `${unit.id}: ${a.note}`);
     }
