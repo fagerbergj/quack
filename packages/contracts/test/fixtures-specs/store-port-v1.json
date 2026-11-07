@@ -1,0 +1,392 @@
+{
+ "kind": "typescript",
+ "title": "Session catalog store port",
+ "version": 1,
+ "intent": {
+  "purpose": "The store port of the session catalog: the TypeScript contract of the interface the catalog core (distributor) depends on, implemented by a PostgreSQL adapter and a SQLite adapter that must pass one shared conformance suite. It carries every write and read the approved Sessions API needs - sessions (create, lifecycle changes, rename, archive and unarchive, a run's outcome and spend, delete), asks (open, resolve, read one, list), and artifacts (seal, judge's verdict, attached links, list) - and nothing transport-shaped: no SQL, no HTTP, no driver types.",
+  "nonGoals": [
+   "No SQL, no HTTP shapes, no node:sqlite or pg types: the adapters are the only code that knows the storage engine, and the HTTP adapter is the only code that knows the wire shapes (amountMicros as a decimal string, nextPageToken, problem documents).",
+   "Not a Lucene parser: the core parses q with a maintained parser and validates it against the collection's field set; this port carries the parsed, typed AST, and the adapters compile it to their own SQL.",
+   "Not the lifecycle channel: the channel that delivers a session's events is the core's business; this port is where the core writes them down.",
+   "Not the conformance suite itself: the suite's code is not exported here; the port's header states what the suite must prove.",
+   "Not process control or transcripts: no read starts a session's process, and the session's directory is the driver's, not the store's."
+  ],
+  "audience": "The distributor's catalog core, the PostgreSQL and SQLite adapter packages, and the shared conformance suite that must run both adapters.",
+  "consumers": [
+   "The catalog core calls every method: it parses q into the AST, validates it against the field set, orders writes per session, caps pageSize, and maps each session's log events to these calls on rebuild.",
+   "The PostgreSQL adapter implements it over PostgreSQL (tsvector for full text; int8 or numeric for the micros).",
+   "The SQLite adapter implements it over SQLite (FTS5 for full text; INTEGER for the micros, read back as bigint).",
+   "The shared conformance suite drives both adapters on one shared corpus and asserts they agree."
+  ],
+  "guarantees": [
+   "Idempotent replay: every write is guarded by a per-session watermark - the highest sequence applied - updated in the same transaction, and a write at or below it is a no-op that provably changes no row and no count.",
+   "Atomic lifecycle writes: a lifecycle write applies the row and its derived counts in one transaction, and a refused write changes nothing.",
+   "Integer money: micros are bigint from the core through the port; exact sums past 2^53 are preserved and asserted on both adapters by the conformance suite.",
+   "Stable pages: every list is a keyset with the list's key as the final tiebreak, and a cursor is bound to the (where, orderBy) that issued it.",
+   "Adapter parity: on the shared corpus both adapters agree on rows, order, and full-text matches.",
+   "Rebuild: deleting a session's rows and replaying its log through this port reproduces the live rows exactly.",
+   "Adapter-owned migrations: append-only, applied by migrate(), which the core calls at startup and memoizes once it succeeds."
+  ]
+ },
+ "document": "// The session catalog's store port.\n//\n// Hexagonal (owner): an HTTP adapter serves the approved Sessions API over the catalog\n// core, and the core depends only on this port. The PostgreSQL adapter and the SQLite\n// adapter implement it, and they must pass one shared conformance suite. Nothing\n// transport-shaped crosses this boundary: no SQL, no HTTP shapes, no driver types. The\n// HTTP adapter owns the approved wire shapes (amountMicros as a decimal string,\n// nextPageToken, problem documents); this port speaks the domain values (bigint micros,\n// epoch ms, opaque cursors).\n//\n// Idempotency — every write takes a Write: the reporting event's id and its position in\n// the session's ordered write stream. The store holds a per-session watermark, the\n// highest sequence applied, updated in the same transaction as the write it guards; a\n// write at or below the watermark is a no-op that moves no row and no count. Spend and\n// counts are deltas, so a replay provably changes nothing. The channel orders events per\n// session, so the watermark is a sequence, not a set of ids. Delete and rebuild reset a\n// session's watermark with its rows.\n//\n// Transactions — a lifecycle write applies the row and its derived counts (state,\n// lastRun, cost, tokens, pendingAsks, oldestAskAt, lastActivity) in one atomic\n// transaction: recordRunOutcome cancels the session's pending asks and sums the run's\n// spend and tokens with the state and lastRun it writes; openAsk and resolveAsk move the\n// ask and the session's counts together. A refused write changes nothing.\n//\n// Schema migration — the adapters own the schema: append-only migrations, never edited\n// once released. The core calls migrate() at startup, memoizes success, and retries\n// while the database is down, so the distributor can start before Postgres does. This\n// port carries no schema knowledge.\n//\n// Rebuild — recovery replays each session's log through this same port: the core deletes\n// the session's rows (deleteSession, which resets its watermark) and re-applies the\n// session's recorded writes in order. The mapping from log events to these methods lives\n// in the core, never in an adapter.\n//\n// Conformance — one shared suite runs against both adapters on one shared corpus and\n// must prove: (1) every write lands exactly the row it documents, all counts included;\n// (2) replaying any write is a no-op — every row and count unchanged; (3) the state\n// machine applies, no-ops and refuses exactly as documented, and a refusal changes\n// nothing; (4) recordRunOutcome is a single point of consistency — no torn row is\n// ever visible; (5) lists — every orderBy, and a battery of ASTs covering every leaf\n// kind and every field — return the same rows in the same order as the reference,\n// paging to the end without gaps or duplicates, stable under interleaved writes, with\n// the list's key as final tiebreak; (6) a cursor is bound to the (where, orderBy) that\n// issued it — a changed query, order, or a token the adapter would not re-issue is\n// refused; (7) bare terms and phrases full-text search the documented fields (sessions:\n// title, key, lastMessage; asks: prompt question, tool name; artifacts: summary,\n// outcome), with SQLite FTS5 and PostgreSQL tsvector agreeing on the corpus; (8) sums\n// stay integers — an exact sum past 2^53 micros on both adapters; (9) deleting a\n// session's rows and replaying its log through this port reproduces the live rows\n// exactly.\n\n/** A JSON value of any shape: the recursive set the catalog stores in open fields,\n * such as a resolved approval's tool arguments, which are kept as the audit trail.\n * Supplied by the session (the gated tool's arguments) and the judge; carried as-is and\n * serialized at the adapters' edge. */\nexport type Json = null | boolean | number | string | Json[] | { [field: string]: Json };\n\n/** A money amount: an ISO 4217 currency code and its int64 count of millionths. The\n * port and the core carry the micros as bigint so sums stay exact past 2^53; only the\n * HTTP adapter encodes the approved wire shape (a decimal string), and the adapters\n * convert at their edge (SQLite INTEGER, PostgreSQL int8 or numeric). Unpriced spend is\n * 0n in the deployment's currency, never absent. */\nexport type Money = { currencyCode: string; micros: bigint };\n\n/** The server-set actor: who made the decision. Supplied by the core from the request's\n * credential — never from a body — and served back on the resolution. A person the\n * reverse proxy authenticated (id present) or the tailnet itself (no id), mirroring the\n * Sessions API's Principal. */\nexport type Principal = { kind: 'person'; id: string } | { kind: 'tailnet' };\n\n/** Token counts by kind, integer and non-negative. Supplied by the session on run end,\n * as the run's own delta; the store sums it into the session row's lifetime totals. */\nexport type TokenUsage = { input: number; output: number; cacheRead: number; cacheWrite: number };\n\n/** The idempotency header every write takes: the reporting event's id (for a\n * person-driven write, the core's action id) and its position in the session's ordered\n * write stream, assigned by the core. The store compares seq against the session's\n * watermark inside the write's own transaction: at or below, the write is a no-op;\n * above, it applies and the watermark becomes seq. */\nexport type Write = { id: string; seq: number };\n\n/** The session's lifecycle state. running: the process has an active run or waits on a\n * person. idle: the process is up with no active work. stopped: no process. archived:\n * hidden, and left only by invoking the session, which reactivates it (running). */\nexport type SessionState = 'running' | 'idle' | 'stopped' | 'archived';\n\n/** How a run ended. */\nexport type RunOutcome = 'succeeded' | 'failed' | 'aborted';\n\n/** One step of a run that ended failed, with its error text. Supplied by the session on\n * run end; served on the row's lastRun. */\nexport type FailedStep = { step: string; error: string };\n\n/** One session's catalog row: what lists, Home and the session pages need. Written by\n * the core through this port; served by the HTTP adapter as the Sessions API's session.\n * Dates are epoch ms — the wire speaks RFC 3339 and the HTTP adapter converts. */\nexport type SessionRow = {\n  /** The session key: the address of one agent's durable conversation. */\n  key: string;\n  /** The agent bound to the session. */\n  agent: string;\n  /** The session's title; absent when it has none beyond the default. */\n  title?: string;\n  state: SessionState;\n  /** When the session was created. */\n  createdAt: number;\n  /** When the session last did work, written when a run ends. */\n  lastActivity: number;\n  /** The session's lifetime cost; the store sums run deltas in integer micros. */\n  cost: Money;\n  /** The session's lifetime token counts; the store sums run deltas. */\n  tokens: TokenUsage;\n  /** Asks still pending, approvals and questions alike; 0 when none. */\n  pendingAsks: number;\n  /** When the session's oldest pending ask was raised; present while pendingAsks > 0. */\n  oldestAskAt?: number;\n  /** The session's latest run; present once a run has ended. */\n  lastRun?: { outcome: RunOutcome; endedAt: number; failedSteps: FailedStep[] };\n  /** The text of the session's last message, present once a run has ended with one; a\n   * full-text source of the session list only, never otherwise surfaced. */\n  lastMessage?: string;\n};\n\n/** What kind of ask: a gated tool call awaiting approval, or a prompt to a person. */\nexport type AskType = 'approval' | 'question';\n\n/** The ask's lifecycle: pending until answered, resolved by a person, or cancelled\n * when the run that raised it ends or aborts. */\nexport type AskState = 'pending' | 'resolved' | 'cancelled';\n\n/** The prompt a question ask carries. Supplied by the session when it raises the ask;\n * kept on the row in every state. */\nexport type AskPrompt = {\n  question: string;\n  options: string[];\n  /** A per-option description, keyed by the option's label. */\n  optionDescriptions?: Record<string, string>;\n  /** The suggested option's index into options. */\n  suggested?: number | null;\n  /** Whether a free-text answer was allowed. */\n  freeText: boolean;\n  evidence?: string | null;\n  header?: string | null;\n  title?: string | null;\n  detail?: string | null;\n};\n\n/** One ask of a session: approvals and questions as one resource. Written by the core\n * through this port; served by the HTTP adapter as the Sessions API's ask. Dates are\n * epoch ms. A resolved approval keeps its tool arguments: the record of what was\n * approved is the audit trail. */\nexport type AskRow = {\n  /** The session key the ask belongs to; carried by every row and queryable. */\n  session: string;\n  /** The ask's id within its session. */\n  id: string;\n  type: AskType;\n  state: AskState;\n  /** When the ask was raised. */\n  createdAt: number;\n  /** When the ask was resolved; present once resolved. */\n  resolvedAt?: number;\n  /** The answer; present once resolved. by is the server-set actor. */\n  resolution?: { by: Principal; choice: string; text?: string; reason?: string };\n  /** The gated tool call; present for type approval and kept after resolution. */\n  toolCall?: { tool: string; args: Json };\n  /** The prompt; present for type question. */\n  prompt?: AskPrompt;\n};\n\n/** The judge's verdict on a sealed version. Supplied by the judge after the seal,\n * through updateArtifactVerdict; served on the artifact row and queryable as\n * verdict.passed. */\nexport type Verdict = {\n  passed: boolean;\n  /** The judge gave up before the version passed, having reached its revision limit. */\n  limitReached?: boolean;\n  gatesFailed?: string[];\n  score?: number;\n  checks?: Array<{\n    criterion: string;\n    id: string;\n    label?: string;\n    /** A weight, or 'gate' for a pass/fail gate. */\n    weight: number | 'gate';\n    /** The check's numeric reading, when it has one. */\n    met: number | null;\n    notes: string[];\n    scope?: string;\n  }>;\n};\n\n/** One sealed artifact version. Written by the core through this port — the seal, then\n * the judge's verdict and attached links — and served by the HTTP adapter as the\n * Sessions API's artifact. The row always carries the content: the per-session list\n * serves it in full and the cross-session list projects it away. Dates are epoch ms. */\nexport type ArtifactRow = {\n  /** The session key the version belongs to; carried by every row and queryable. */\n  session: string;\n  kind: string;\n  version: number;\n  hash: string;\n  content: string;\n  /** When the version was sealed. */\n  createdAt: number;\n  /** The judge's verdict, present when the version was checked. */\n  verdict?: Verdict | null;\n  /** Pointers extensions attached to the version after the fact, e.g. where it was\n   * delivered. */\n  links?: Array<{ label: string; url: string }>;\n  /** The kind's own one-word reading of the content, when it has one. */\n  outcome?: string;\n  /** A summary of the version's content. */\n  summary?: string;\n  /** What the version was written against, e.g. a review's head commit. */\n  basis?: string;\n  /** Set on a version that carried an earlier approval forward instead of being\n   * judged: the sha it came from and that review's link. */\n  carriedFrom?: { sha: string; url?: string };\n};\n\n/** The fields the session list's query may name: exactly the approved list's q field\n * set. Supplied by the core (the maintained Lucene parser, validated against this set\n * there, so an unknown field is a 400 that never reaches a store); consumed by the\n * adapters, which compile each to its own column. */\nexport type SessionField = 'key' | 'agent' | 'title' | 'state' | 'createdAt' | 'lastActivity' | 'cost.currencyCode' | 'cost.amountMicros' | 'tokens.input' | 'tokens.output' | 'tokens.cacheRead' | 'tokens.cacheWrite' | 'pendingAsks' | 'oldestAskAt' | 'lastRun.outcome';\n\n/** The fields both ask lists' queries may name. The per-session list is the same\n * operation as the cross-session list with the session term folded in, so its field\n * set is this one with session; the store exposes the one set. */\nexport type AskField = 'session' | 'type' | 'state' | 'createdAt' | 'resolvedAt' | 'tool';\n\n/** The fields both artifact lists' queries may name, likewise. */\nexport type ArtifactField = 'session' | 'kind' | 'version' | 'createdAt' | 'verdict.passed';\n\n// The value a leaf carries, per field, one mapping per collection: strings for the\n// text fields and currency code, enums for states and outcomes, bigint for the micros,\n// epoch ms for the dates, and integer numbers for the counts.\ntype ValueOf<F extends string> =\n  F extends SessionField\n    ? F extends 'key' | 'agent' | 'title' | 'cost.currencyCode' ? string\n    : F extends 'state' ? SessionState\n    : F extends 'lastRun.outcome' ? RunOutcome\n    : F extends 'cost.amountMicros' ? bigint\n    : number\n    : F extends AskField\n    ? F extends 'session' | 'tool' ? string\n    : F extends 'type' ? AskType\n    : F extends 'state' ? AskState\n    : number\n    : F extends ArtifactField\n    ? F extends 'session' | 'kind' ? string\n    : F extends 'verdict.passed' ? boolean\n    : number\n    : never;\n\n// The collection's full-text fields, where bare terms search: the documented text\n// fields only.\ntype TextFieldsOf<F extends string> =\n  F extends SessionField ? Extract<F, 'key' | 'agent' | 'title'>\n  : F extends AskField ? Extract<F, 'session' | 'tool'>\n  : F extends ArtifactField ? Extract<F, 'session' | 'kind'>\n  : never;\n\n// One fielded leaf, precise per field: the value type is ValueOf<F>, and prefix and\n// wildcard leaves are unconstructible on any field the collection does not document as\n// text.\ntype FieldLeaf<F extends string> =\n  | { kind: 'match'; field: F; value: ValueOf<F> }\n  | { kind: 'prefix'; field: F & TextFieldsOf<F>; value: string }\n  | { kind: 'wildcard'; field: F & TextFieldsOf<F>; pattern: string }\n  | { kind: 'compare'; field: F; op: 'gt' | 'gte' | 'lt' | 'le'; value: ValueOf<F> }\n  | { kind: 'range'; field: F; from?: { value: ValueOf<F>; inclusive: boolean }; to?: { value: ValueOf<F>; inclusive: boolean } };\n\n/** The parsed Lucene query of one list. The core parses q into this AST with a\n * maintained Lucene parser — never hand-rolled, and never in an adapter — and the\n * adapters compile it to their own SQL, full text included (SQLite FTS5, PostgreSQL\n * tsvector). A store never sees a field its collection lacks, because the core\n * validated it against the field set; an adapter that meets an unknown kind has a core\n * bug and must fail loudly, not guess. F is the collection's field set, and it fixes\n * each leaf's field type and value type. An absent or empty q is { kind: 'all' }. */\nexport type QueryAst<F extends string> =\n  | { kind: 'all' }\n  | { kind: 'and'; terms: QueryAst<F>[] }\n  | { kind: 'or'; terms: QueryAst<F>[] }\n  | { kind: 'not'; term: QueryAst<F> }\n  /** A bare term or bare quoted phrase, no field: a full-text search over the\n   * collection's documented text fields. phrase marks a quoted phrase; wildcard marks\n   * a * or ? inside the term. */\n  | { kind: 'text'; value: string; phrase?: boolean; wildcard?: boolean }\n  | (F extends string ? FieldLeaf<F> : never);\n\n/** The session list's allowed orders, each with its fixed direction: lastActivity\n * (the default, newest first), createdAt (newest first), oldestAskAt (oldest wait\n * first). The list's key is always the final tiebreak, so pages are a stable keyset,\n * and the choice is part of what a cursor is bound to. */\nexport type SessionOrder = 'lastActivity' | 'createdAt' | 'oldestAskAt';\n\n/** The ask lists' allowed order: createdAt, newest first (the per-session list's\n * default) or oldest first (the cross-session list's default — the needs-you queue).\n * The ask's (session, id) is the final tiebreak. */\nexport type AskOrder = 'createdAt:newest' | 'createdAt:oldest';\n\n/** The artifact lists' allowed order: createdAt, newest first. The artifact's\n * (session, kind, version) is the final tiebreak. */\nexport type ArtifactOrder = 'createdAt:newest';\n\n/** One list request. where is the parsed query — { kind: 'all' } when q was absent or\n * empty; orderBy is the list's allowed order; pageSize is a positive integer (the core\n * caps it as the REST surface does); cursor is the opaque keyset cursor a previous page\n * returned, bound to the (where, orderBy) pair that issued it. Supplied by the core;\n * consumed by the adapters, which compile it to one page of their own SQL. */\nexport type ListOptions<F extends string, O extends string> = {\n  where: QueryAst<F>;\n  orderBy: O;\n  pageSize: number;\n  cursor?: string;\n};\n\n/** One keyset page. rows are in the requested order, the list's key the final\n * tiebreak; cursor is present while more rows remain after this page and is bound to\n * the (where, orderBy) pair that produced it. An adapter must refuse a cursor it would\n * not re-issue for that pair, and a core presenting a cursor under a changed query or\n * order is the 400 the REST surface answers. */\nexport type ListPage<T> = { rows: T[]; cursor?: string };\n\n/** The session catalog's store port: the interface the catalog core depends on,\n * implemented by the PostgreSQL adapter and the SQLite adapter, which must pass one\n * shared conformance suite. The core supplies every argument — it parses q into\n * QueryAst, validates it against the collection's field set, orders writes per session,\n * caps pageSize, and maps each session's log events to these calls on rebuild; the\n * adapters supply only storage, and they compile the typed AST to their own SQL — they\n * never parse a query and never coerce a value.\n *\n * Idempotency: every write takes the reporting event's Write, and the store records a\n * per-session watermark — the highest sequence applied — in the same transaction as the\n * write, so a replay is a no-op that provably changes no row and no count.\n *\n * Transactions: a lifecycle write applies the row and its derived counts in one atomic\n * transaction, and a refused write changes nothing.\n *\n * Reads are pure: they read stored rows, create nothing, and never start a session's\n * process; an absent row is undefined, and a list answers a page. */\nexport interface SessionCatalogStore {\n  /** Applies the store's schema migrations. The adapter owns the schema — append-only\n   * migrations, never edited once released — and the core calls this at startup,\n   * memoizes success, and retries while the database is down, so the distributor can\n   * start before the store's database does. */\n  migrate(): Promise<void>;\n\n  /** Closes the store's connection to its database; the core calls it on shutdown. */\n  close(): Promise<void>;\n\n  // --- sessions ---\n\n  /** Records a created session: the row starts stopped, with zero cost and tokens and\n   * no pending asks. Replaying the create at or below the session's watermark is a\n   * no-op. */\n  createSession(write: Write, row: { key: string; agent: string; createdAt: number }): Promise<void>;\n\n  /** Applies a lifecycle change driven by the session's lifecycle channel. `to` is\n   * 'running' (a run starts, or invoking reactivates an archived session — the only way\n   * out of archived), 'idle' (a run ends and the process is up) or 'stopped' (the\n   * process stops). The table, checked and applied atomically in the write's own\n   * transaction: to the target state is a no-op; 'idle' applies from running only;\n   * 'stopped' applies from running or idle, not from archived; 'running' applies from\n   * idle, stopped or archived. Returns whether the state moved and the session's state.\n   */\n  transitionSession(write: Write, change: { key: string; to: 'running' | 'idle' | 'stopped' }): Promise<{ applied: boolean; state?: SessionState }>;\n\n  /** Renames the session (the person's title write). A null title restores the default.\n   * Renaming to the current title is a no-op; the core 404s an absent key before\n   * calling. */\n  renameSession(write: Write, change: { key: string; title: string | null }): Promise<void>;\n\n  /** Archives the session (the person's state:archived write). Applies from idle or\n   * stopped; refused while the session is running or waits on a person — the REST\n   * surface's 409 — and a no-op when it is already archived — the REST surface's 200\n   * no-op. The check and the write are one atomic transaction. Returns whether the\n   * state moved and the session's state. */\n  archiveSession(write: Write, change: { key: string }): Promise<{ applied: boolean; state?: SessionState }>;\n\n  /** Unarchives the session (the person's state:stopped write): archived back to\n   * stopped. A no-op when the session is not archived. Returns whether the state moved\n   * and the session's state. */\n  unarchiveSession(write: Write, change: { key: string }): Promise<{ applied: boolean; state?: SessionState }>;\n\n  /** Records a run's outcome and spend — the atomic heart of the catalog. In one\n   * transaction the store cancels the session's pending asks (the run that raised them\n   * has ended), zeroes pendingAsks and clears oldestAskAt, sums the run's spend and\n   * tokens into the row's lifetime totals as integers, sets lastActivity to endedAt,\n   * lastRun to the outcome and lastMessage when supplied, and moves the state to the\n   * process's post-run state. A torn row is never visible. */\n  recordRunOutcome(write: Write, outcome: {\n    key: string;\n    /** The process's post-run state: idle while it stays up, stopped while it goes\n     * down. */\n    state: 'idle' | 'stopped';\n    outcome: RunOutcome;\n    endedAt: number;\n    failedSteps: FailedStep[];\n    /** The run's spend delta; the store sums it into the row's lifetime cost. */\n    spend: Money;\n    /** The run's token delta; the store sums it into the row's lifetime totals. */\n    tokens: TokenUsage;\n    /** The text of the run's last message, when it has one. */\n    lastMessage?: string;\n  }): Promise<void>;\n\n  /** Deletes the session's catalog rows — its session, asks and artifacts — and its\n   * watermark, so a rebuild can replay the session's log through this same port.\n   * Idempotent in effect: it answers whether the session had rows, and deleting the\n   * same key again answers false — the REST surface's 404. The session's directory is\n   * the driver's, not the store's. */\n  deleteSession(write: Write, change: { key: string }): Promise<boolean>;\n\n  /** Reads one session's row; undefined when the deployment knows no such key. Reads\n   * create nothing and never start the session's process. */\n  getSession(key: string): Promise<SessionRow | undefined>;\n\n  /** One keyset page of the session list. This is the one list operation of the\n   * collection; the core composes the per-session views from it — a session's asks is\n   * listAsks with the session term folded into where. */\n  listSessions(options: ListOptions<SessionField, SessionOrder>): Promise<ListPage<SessionRow>>;\n\n  // --- asks ---\n\n  /** Opens a pending ask — approvals and questions as one resource. In one\n   * transaction the store records the ask, increments pendingAsks, and sets oldestAskAt\n   * to the oldest pending ask's createdAt; a session that is not running becomes\n   * running, because waiting on a person is running. */\n  openAsk(write: Write, ask: {\n    key: string;\n    id: string;\n    type: AskType;\n    createdAt: number;\n    /** The gated tool call; present for type approval. */\n    toolCall?: { tool: string; args: Json };\n    /** The prompt; present for type question. */\n    prompt?: AskPrompt;\n  }): Promise<void>;\n\n  /** Resolves a pending ask: the person's answer. Applies only while the ask is\n   * pending; in one transaction it sets the ask's state, resolvedAt and resolution —\n   * by is the server-set actor, never a value the store invents — decrements\n   * pendingAsks and recomputes oldestAskAt. Returns whether it applied and the ask's\n   * row; the core 404s an absent ask and 409s a non-pending one. */\n  resolveAsk(write: Write, change: {\n    key: string;\n    id: string;\n    by: Principal;\n    choice: string;\n    text?: string;\n    reason?: string;\n    resolvedAt: number;\n  }): Promise<{ applied: boolean; ask?: AskRow }>;\n\n  /** Reads one ask of a session, in whatever state it has: pending, resolved or\n   * cancelled; undefined when no such session or ask exists. */\n  getAsk(key: string, id: string): Promise<AskRow | undefined>;\n\n  /** One keyset page of asks — the one list operation of the collection. Every row\n   * carries its session's key, so the per-session list is this operation with the\n   * session term folded into where, and the cross-session list answers 'needs you'\n   * (q=state:pending, oldest first) in one page. */\n  listAsks(options: ListOptions<AskField, AskOrder>): Promise<ListPage<AskRow>>;\n\n  // --- artifacts ---\n\n  /** Records a sealed artifact version: the only write that creates an artifact row.\n   * The judge's verdict and attached links arrive after the fact, through\n   * updateArtifactVerdict and addArtifactLink. */\n  sealArtifact(write: Write, artifact: {\n    key: string;\n    kind: string;\n    version: number;\n    hash: string;\n    content: string;\n    createdAt: number;\n    /** The judge's verdict, present when the version was checked at the seal. */\n    verdict?: Verdict | null;\n    /** Pointers attached at the seal; more arrive through addArtifactLink. */\n    links?: Array<{ label: string; url: string }>;\n    outcome?: string;\n    summary?: string;\n    basis?: string;\n    carriedFrom?: { sha: string; url?: string };\n  }): Promise<void>;\n\n  /** Attaches or replaces the judge's verdict on a sealed version — the write the REST\n   * surface serves and filters on (verdict.passed). A no-op when the version is absent.\n   */\n  updateArtifactVerdict(write: Write, change: {\n    key: string;\n    kind: string;\n    version: number;\n    verdict: Verdict | null;\n  }): Promise<void>;\n\n  /** Attaches one pointer to a sealed version after the fact, e.g. where it was\n   * delivered. A no-op when the version is absent. */\n  addArtifactLink(write: Write, change: {\n    key: string;\n    kind: string;\n    version: number;\n    link: { label: string; url: string };\n  }): Promise<void>;\n\n  /** One keyset page of sealed artifact versions, content included — the one list\n   * operation of the collection; the REST surface serves the per-session list in full\n   * and projects the content away on the cross-session list. */\n  listArtifacts(options: ListOptions<ArtifactField, ArtifactOrder>): Promise<ListPage<ArtifactRow>>;\n}\n",
+ "choices": [
+  {
+   "id": "surface",
+   "pointer": "/SessionCatalogStore",
+   "decision": "The port is one interface of named methods grouped by the Sessions API's resources - sessions, asks, artifacts - each mirroring an HTTP verb (create, transition, rename, archive, run outcome, delete; open, resolve, read, list; seal, verdict, links, list), with no generic apply() and no per-key rev rules.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "Named methods per resource, or one apply(event) union?",
+     "text": "Named methods; event writes take the event id"
+    },
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Named methods grouped by the same resources as the approved Sessions API, mirroring the HTTP verbs per resource, not RPC-style verbs or one generic apply()."
+    }
+   ]
+  },
+  {
+   "id": "idempotency",
+   "pointer": "/Write",
+   "decision": "Every write takes the reporting event's id and its position in the session's ordered write stream; the store holds a per-session watermark - the highest sequence applied - updated in the same transaction as the write, and a write at or below it is a no-op; delete and rebuild reset the watermark with the rows.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "How does the store decide a write is a replay, so it can no-op it?",
+     "text": "You decide: use the suggested \"Record applied event ids per session\" and say in the why that the person delegated it"
+    },
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Idempotency: every write keyed by the reporting event's id; a replayed event is a no-op. Uniform idempotency, recorded by the store, never per-key rev rules."
+    }
+   ]
+  },
+  {
+   "id": "atomic-writes",
+   "pointer": "/SessionCatalogStore",
+   "decision": "A lifecycle write applies the row and its derived counts in one atomic transaction: recordRunOutcome cancels the session's pending asks, sums the run's spend and tokens, and sets lastActivity, lastRun and state together; a refused write changes nothing and no torn row is ever visible.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Transactions: a lifecycle change updates the row and its counts atomically."
+    },
+    {
+     "source": "answer",
+     "ref": "Does a run report its spend as a delta to sum, or the lifetime total to replace?",
+     "text": "Per-run delta; the store sums it in"
+    }
+   ]
+  },
+  {
+   "id": "state-machine",
+   "pointer": "/SessionCatalogStore",
+   "decision": "State writes split by provenance: transitionSession carries the channel's running|idle|stopped changes, archiveSession and unarchiveSession carry the person's archived|stopped writes, with the approved 409-while-running, 200-no-op and reactivation table; archived is left only by the transition to running.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Keep it RESTful: state moves as writes on the session resource, with the approved semantics."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:273",
+     "text": "PATCH: state accepts exactly archived (archive) and stopped (unarchive); 409 while running or waiting on a person; a write that changes nothing is a 200 no-op; invoking an archived session reactivates it (state -> running)."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:39",
+     "text": "state is running, idle, stopped or archived; the lifecycle and the person's state writes are distinct channels of the same state."
+    }
+   ]
+  },
+  {
+   "id": "money",
+   "pointer": "/Money",
+   "decision": "Money is an ISO 4217 currency code with int64 micros carried as bigint in the port and the core; only the HTTP adapter encodes the approved wire shape (a decimal string), and the adapters convert at their edge.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "Money micros cross the port as what?",
+     "text": "bigint"
+    }
+   ]
+  },
+  {
+   "id": "spend-deltas",
+   "pointer": "/SessionCatalogStore",
+   "decision": "Spend and tokens are per-run deltas that the store sums, as integers, into the row's lifetime totals, so the row is a running sum and a replay is provably a no-op.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "Does a run report its spend as a delta to sum, or the lifetime total to replace?",
+     "text": "Per-run delta; the store sums it in"
+    },
+    {
+     "source": "answer",
+     "ref": "Money micros cross the port as what?",
+     "text": "bigint"
+    }
+   ]
+  },
+  {
+   "id": "ast",
+   "pointer": "/QueryAst",
+   "decision": "q is parsed in the core with a maintained Lucene parser - never hand-rolled, never in an adapter - into a typed AST with one value type per field (strings, enums, bigint micros, epoch-ms numbers, booleans); the adapters compile typed leaves to their own SQL, full text included, and fail loudly on a kind they do not know.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "Typed per-field values in the query AST, or parser-native strings?",
+     "text": "Typed per field, one value type per collection"
+    },
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "One list operation per collection takes a parsed query AST (Lucene grammar, parsed in the core, never in an adapter); adapters compile the AST to their own SQL."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:1042",
+     "text": "q is a Lucene query parsed by a maintained Lucene parser - never hand-rolled; bare terms full-text search the list's documented fields; money compares in micros as an integer."
+    },
+    {
+     "source": "guide",
+     "ref": "typescript#unions",
+     "text": "Discriminate unions with a kind, and say whether consumers must handle unknown members: an adapter meeting an unknown AST kind must fail loudly, since the core validated the query."
+    }
+   ]
+  },
+  {
+   "id": "fields",
+   "pointer": "/SessionField",
+   "decision": "The three field sets are exactly the approved lists' q field sets, and the core validates a parsed query against them, so an unknown field is a 400 that never reaches a store.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:54",
+     "text": "Session list q field set: key, agent, title, state, createdAt, lastActivity, cost.currencyCode, cost.amountMicros, tokens.*, pendingAsks, oldestAskAt, lastRun.outcome; wildcards on key, agent, title and bare terms; bare terms full-text over title, key, last message."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:460",
+     "text": "Per-session ask list q field set: type, state, createdAt, resolvedAt, tool; bare terms full-text over the prompt question and the tool name."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:844",
+     "text": "Cross-session ask list q field set: session, type, state, createdAt, resolvedAt, tool."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:750",
+     "text": "Per-session artifact list q field set: kind, version, createdAt, verdict.passed; bare terms full-text over summary and outcome."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:947",
+     "text": "Cross-session artifact list q field set: session, kind, version, createdAt, verdict.passed."
+    }
+   ]
+  },
+  {
+   "id": "lists",
+   "pointer": "/SessionCatalogStore",
+   "decision": "There is one list operation per collection, taking the parsed AST, the list's allowed order, a page size and an opaque keyset cursor; the core composes the per-session views by folding the session term into where, since every row carries its session's key.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "One list operation per collection taking a parsed query AST, an orderBy, a pageSize and a keyset cursor."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:947",
+     "text": "Every row carries its session's key, and session is a queryable field - so the per-session view is the one list operation with the session term folded in."
+    }
+   ]
+  },
+  {
+   "id": "orders",
+   "pointer": "/SessionOrder",
+   "decision": "Each list has a small allowed set of orders with a fixed direction, the list's key is always the final tiebreak so pages are a stable keyset, and the order choice is part of what a cursor is bound to.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:1050",
+     "text": "The session list accepts lastActivity (default, newest first), createdAt (newest first), oldestAskAt (oldest wait first); the ask lists createdAt (newest first per-session, oldest first cross-session); the artifact lists createdAt newest first. The list's key is always the final tiebreak, and the order choice is part of what a pageToken is bound to."
+    }
+   ]
+  },
+  {
+   "id": "cursors",
+   "pointer": "/ListPage",
+   "decision": "The cursor is opaque and bound to the (where, orderBy) pair that issued it, and an adapter must refuse a cursor it would not re-issue for that pair; presenting one under a changed query or order is the core's 400.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:1075",
+     "text": "pageToken is an opaque keyset token bound to the (q, orderBy) pair that issued it; presenting it with a different query or order, or a token not issued by this deployment, is a 400."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/distributor/src/session-list.ts:55",
+     "text": "Only a token this server would have issued: it must re-encode to itself - the self-verification an adapter must keep at the store port."
+    }
+   ]
+  },
+  {
+   "id": "migrations",
+   "pointer": "/SessionCatalogStore",
+   "decision": "The adapters own the schema - append-only migrations, never edited once released - and the core calls migrate() at startup, memoizes success, and retries while the database is down, so the distributor can start before Postgres does.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Must decide and state: schema migration ownership."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/index/src/store-sqlite.ts:4",
+     "text": "Append-only: a released migration is never edited; the applied count lives in user_version - the adapter owns the schema."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/index/src/store-postgres.ts:20",
+     "text": "The Postgres adapter takes pg_advisory_xact_lock(7461) around its migration - the adapter's own locking, invisible to the core."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/index/src/store.ts:25",
+     "text": "Memoized once it succeeds, retried while the database is down, so the distributor can start before Postgres does."
+    }
+   ]
+  },
+  {
+   "id": "rebuild",
+   "pointer": "/SessionCatalogStore",
+   "decision": "Rebuild replays each session's log through the same port: deleteSession removes the session's rows and its watermark, and the core re-applies the session's recorded writes in order, mapping log events to these methods in the core, with the writer stopped first.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Must decide and state: rebuild - replay the log through the same port."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/index/src/rebuild.ts:13",
+     "text": "Replays every session log into the index; a log has one owner, so stop the distributor first."
+    }
+   ]
+  },
+  {
+   "id": "conformance",
+   "pointer": "",
+   "decision": "One shared conformance suite proves, on one shared corpus: every write lands exactly its documented row, replays are no-ops with every row and count unchanged, the state machine applies, no-ops and refuses as documented, recordRunOutcome is one point of consistency, lists agree across every orderBy and a battery of ASTs covering every leaf kind and field, pages stay gap- and duplicate-free under interleaved writes, cursors are bound to (where, orderBy), FTS5 and tsvector agree on the documented text fields, integer sums stay exact past 2^53 micros, and rebuild reproduces the live rows exactly.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "The two adapters must pass one shared conformance suite; decide and state what the suite must prove."
+    },
+    {
+     "source": "answer",
+     "ref": "Money micros cross the port as what?",
+     "text": "bigint"
+    },
+    {
+     "source": "answer",
+     "ref": "How does the store decide a write is a replay, so it can no-op it?",
+     "text": "You decide: use the suggested \"Record applied event ids per session\" and say in the why that the person delegated it"
+    }
+   ]
+  },
+  {
+   "id": "reads",
+   "pointer": "/SessionCatalogStore",
+   "decision": "Reads are pure: they read stored rows, create nothing, never start a session's process, and answer undefined for an absent row; a stopped session answers its stored rows instead of an empty list.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "The port carries everything the REST surface needs; every read in that surface comes from the catalog and no read starts a session's process."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:1771",
+     "text": "Every read in this API is served from the session catalog; no read scans session directories or starts a process."
+    }
+   ]
+  },
+  {
+   "id": "dates",
+   "pointer": "/SessionRow",
+   "decision": "Dates are epoch ms in the port and the core; the HTTP adapter converts to the wire's RFC 3339.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "repo/packages/index/src/store.ts:17",
+     "text": "Facts keep epoch ms and the wire speaks RFC 3339 - the same split: the port and the core keep epoch ms, the HTTP adapter converts."
+    }
+   ]
+  },
+  {
+   "id": "principal",
+   "pointer": "/Principal",
+   "decision": "resolution.by is the server-set actor - a person (id present) or the tailnet (no id) - filled by the core from the request's credential, never from a body, and never invented by the store.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:648",
+     "text": "The server sets the ask's state to resolved, stamps resolvedAt, and fills resolution.by from the request's credential - the body never carries an identity."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/sdk/src/principal.ts:2",
+     "text": "A person the reverse proxy authenticated (the username its identity header carries) or the tailnet itself (no header): { kind: person|tailnet, id } with id present only for a person."
+    }
+   ]
+  },
+  {
+   "id": "artifact-updates",
+   "pointer": "/SessionCatalogStore",
+   "decision": "The judge's verdict and attached links arrive after the seal, through their own writes - updateArtifactVerdict and addArtifactLink - because the REST surface serves and filters on verdict.passed and extensions attach links after the fact.",
+   "why": [
+    {
+     "source": "code",
+     "ref": "repo/packages/judge/src/index.ts:173",
+     "text": "The judge attaches its verdict to a sealed version after the seal (attachVerdict)."
+    },
+    {
+     "source": "code",
+     "ref": "repo/packages/github/src/post.ts:45",
+     "text": "An extension attaches a link to a sealed version after the fact (attachLink)."
+    },
+    {
+     "source": "code",
+     "ref": "refs/sessions-api-v4.json:947",
+     "text": "The REST surface serves links on the row and filters on verdict.passed - so both must be writable through the port."
+    }
+   ]
+  },
+  {
+   "id": "json",
+   "pointer": "/Json",
+   "decision": "Open fields that carry arbitrary JSON - a resolved approval's tool arguments, kept as the audit trail - use a named recursive Json, keeping the port free of any.",
+   "why": [
+    {
+     "source": "answer",
+     "ref": "request",
+     "text": "Resolved asks keep their tool arguments: the record of what was approved is the audit trail."
+    },
+    {
+     "source": "guide",
+     "ref": "typescript#types",
+     "text": "Name types and export only the ones that live in a public signature: the recursive Json value is named and exported because it appears in AskRow and openAsk."
+    }
+   ]
+  }
+ ]
+}

@@ -1,4 +1,4 @@
-import { limiter } from '../limit.ts';
+import { limiter } from '@quack/judge';
 import type { NewsSearch, Searchable } from '../ports.ts';
 import type { NewsItem } from './facts.ts';
 

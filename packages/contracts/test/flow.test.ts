@@ -26,11 +26,11 @@ const refIn = (c: Msgs) => /ref "([^"]+)"/.exec(text(c))?.[1] ?? assert.fail(`no
 const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: 'artifacts/spec.json', content: JSON.stringify(spec(), null, 2) })(c);
 const jf = { kind: 'person', name: 'jf' } as const;
 
-// A stub model: judge questions ("Decision: ...") get "yes", except the pitfall question; everything else follows the script in order.
+// A stub model: judge questions ("Decision: ...") get "yes", except the pitfall questions; everything else follows the script in order.
 async function open(script: Step[], maxRevisions = 2, evidence?: ReturnType<typeof specEvidence>) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });
   const queue = [...script];
-  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: text(c).includes('never asked for') ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
+  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /never asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -195,12 +195,12 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   const record = await readSession(dirname(s.workspace));
   const adapter = manifest.evalAdapters![0].judge!;
   assert.deepEqual(await Promise.all(all.map((v) => adapter.evidence(record, v.content))), live);
-  assert.deepEqual(live.map((ev) => (ev.spec[0].state as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
+  assert.deepEqual(live.map((ev) => (ev.facts[0].state as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
   // Had the answers come after version 1 was sealed, its answer refs could not have resolved when it was judged.
   const items = JSON.parse(JSON.stringify(record.docs['quack.questions'].items)) as Record<string, { answer: { at: number } }>;
   for (const q of Object.values(items)) q.answer.at = all[0].sealedAt + 1;
   const late = await adapter.evidence({ ...record, docs: { ...record.docs, 'quack.questions': { items } as never } }, all[0].content) as Evidence;
-  assert.match((late.spec[0].state as { unresolved: string[] }).unresolved.join(' '), /answer ref .* does not resolve/);
+  assert.match((late.facts[0].state as { unresolved: string[] }).unresolved.join(' '), /answer ref .* does not resolve/);
 });
 
 test('a version that passes is put up for approval in the same submit, and approving records that exact artifact', async () => {

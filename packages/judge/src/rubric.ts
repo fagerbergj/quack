@@ -1,8 +1,8 @@
 import type { JsonObject } from '@earendil-works/pi-durable';
 
-/** A focused piece of evidence a check is judged on; small enough for a decision model where possible. */
-/** `whole` marks a unit that is the entire artifact, so its notes carry no unit prefix. */
-export type Unit = { id: string; state: JsonObject; whole?: true };
+/** Focused evidence a check is judged on; `whole` marks the entire artifact, so its notes carry no unit prefix.
+ * `shared` is context common to many units (an intent, a guide), sent once per decision-model request that packs them. */
+export type Unit = { id: string; state: JsonObject; whole?: true; shared?: JsonObject };
 
 /** Evidence units by scope name; the domain defines its scopes (e.g. the review alone, the review with its diff, each finding). */
 export type Evidence = Record<string, Unit[]>;
