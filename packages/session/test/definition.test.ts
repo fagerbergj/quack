@@ -138,15 +138,6 @@ test('an images: true model sends the image block; a text-only model sends a pla
   assert.match(textOnly, /image/i);
 });
 
-test('subagent limits are validated in the deployment and an agent may only switch the tool off', () => {
-  assert.deepEqual(parseDeployment({ ...deployment, subagents: { maxConcurrent: 2, maxTotal: 8 } }).subagents, { maxConcurrent: 2, maxTotal: 8 });
-  assert.throws(() => parseDeployment({ ...deployment, subagents: { maxConcurrent: 0, depth: 1 } }), /subagents must map maxConcurrent, maxTotal to positive integers/);
-  const d = parseDeployment(deployment);
-  const base = { name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {} };
-  assert.equal(parseDefinition({ ...base, subagents: false }, d, catalog).subagents, false);
-  assert.throws(() => parseDefinition({ ...base, subagents: true }, d, catalog), /subagents must be false/);
-});
-
 test('an agent receives only the variables its extensions declare, and exec settings are validated', async () => {
   const entry = Object.assign(() => [], { env: ['A_TOKEN'] });
   const withEnv: Catalog = { coding: () => [], github: entry, flow: Object.assign(() => [], { env: (c: unknown) => [`${(c as { w: string }).w}_KEY`] }) };

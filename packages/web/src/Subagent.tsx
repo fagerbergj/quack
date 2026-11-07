@@ -1,26 +1,36 @@
 import { useContext, useEffect, useState } from 'react';
-import type { TranscriptItem } from '@earendil-works/pi-durable';
 import { json } from './api.ts';
 import { SessionKeyContext } from './extension.ts';
-import { Transcript } from './Transcript.tsx';
-import { emptyView } from './view.ts';
+import { Markdown } from './Markdown.tsx';
+
+type Message = { role: 'user' | 'assistant'; text: string };
 
 const idOf = (details: unknown) => (details as { conversationId?: unknown } | null | undefined)?.conversationId;
 
 function Child({ sessionKey, id }: { sessionKey: string; id: string }) {
-  const [items, setItems] = useState<readonly TranscriptItem[]>();
+  const [messages, setMessages] = useState<Message[]>();
   const [error, setError] = useState<string>();
   useEffect(() => {
-    fetch(`sessions/${encodeURIComponent(sessionKey)}/transcript?conversation=${encodeURIComponent(id)}`)
-      .then((r) => json<{ transcript: Array<{ id: number; kind: string; model: unknown }> }>(r))
-      .then(({ transcript }) => setItems(transcript.map((entry) => ({ kind: 'entry', entry }) as unknown as TranscriptItem)))
+    fetch(`sessions/${encodeURIComponent(sessionKey)}/messages?conversation=${encodeURIComponent(id)}&limit=50`)
+      .then((r) => json<{ messages: Message[] }>(r))
+      .then((body) => setMessages(body.messages))
       .catch((err: Error) => setError(err.message));
   }, [sessionKey, id]);
   if (error) return <p className="m-0 text-[13px] text-danger">{`Could not load the subagent: ${error}`}</p>;
-  return items ? <Transcript view={{ ...emptyView, items }} load={() => undefined} /> : <p className="m-0 text-[13px] text-muted">Loading…</p>;
+  if (!messages) return <p className="m-0 text-[13px] text-muted">Loading…</p>;
+  return (
+    <ol className="m-0 flex list-none flex-col gap-3 p-0">
+      {messages.map((m, i) => (
+        <li key={i}>
+          <p className="m-0 text-[12px] text-muted">{m.role === 'user' ? 'Task' : 'Subagent'}</p>
+          <Markdown text={m.text} />
+        </li>
+      ))}
+    </ol>
+  );
 }
 
-/** A subagent call's child transcript, nested under the call; fetched when opened. Nothing when the call recorded no child. */
+/** A subagent call's child messages, nested under the call; fetched when opened. Nothing when the call recorded no child. */
 export function SubagentTranscript({ details }: { details: unknown }) {
   const sessionKey = useContext(SessionKeyContext);
   const [opened, setOpened] = useState(false);

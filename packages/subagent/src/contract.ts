@@ -1,26 +1,13 @@
-/** The `subagent` tool every session has and the limits that bound it. Its result reaches the model as text: the child's final answer. */
-
-/** The deployment file's `subagents` key. Limits are per session; each takes the default shown when absent. */
-export type SubagentsConfig = {
-  /** Subagents running at once. A call past it waits for one to finish. Default 4. */
-  maxConcurrent?: number;
-  /** Subagents a session may ever start. A call past it is refused. Default 20. */
-  maxTotal?: number;
-};
+/** The `subagent` tool: an ordinary extension an agent selects with `"extensions": { "subagent": {} }`. A child is a conversation of the calling session owned by the call, running the parent's agent minus `subagent`; viewers read its transcript through the session API by the id in the details. */
 
 /** Arguments of the `subagent` tool. Several calls in one turn run in parallel. */
 export type SubagentArgs = {
-  /** The child's whole brief. It sees none of the parent's conversation but copies the parent's instructions and tools, minus `subagent`. */
+  /** The child's whole brief, non-empty. The child sees none of the parent's conversation. */
   task: string;
-  /** Another agent whose model and prompt the child takes in place of the parent's. An unknown name is refused. */
-  agent?: string;
 };
 
 /** Details recorded on the call as it runs, so a viewer can attach to the child's conversation. */
 export type SubagentDetails = {
-  /** The child conversation, owned by the call. Aborting the call aborts it. */
+  /** The child conversation, owned by the call. A rerun after a restart reuses it; aborting the call aborts it. */
   conversationId: string;
 };
-
-/** An agent definition's `subagents` key. `false` leaves the session without the `subagent` tool. */
-export type AgentSubagents = false;

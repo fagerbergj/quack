@@ -24,14 +24,13 @@ test('a subagent call nests its child conversation, fetched from the session whe
   const urls: string[] = [];
   vi.stubGlobal('fetch', async (url: string) => {
     urls.push(url);
-    const child = { role: 'assistant', timestamp: 3, content: [{ type: 'text', text: 'child notes' }] };
-    return Response.json({ transcript: [{ id: 'c', kind: 'pi.assistant', model: [child] }] });
+    return Response.json({ messages: [{ role: 'user', text: 'look it up' }, { role: 'assistant', text: 'child notes' }] });
   });
   render(<SessionKeyContext value="research:one"><Transcript view={{ ...emptyView, items }} load={() => undefined} /></SessionKeyContext>);
   const sub = screen.getByText('Subagent transcript').closest('details')!;
   sub.open = true;
   fireEvent(sub, new Event('toggle'));
   expect(await screen.findByText('child notes')).toBeInTheDocument();
-  expect(urls).toEqual(['sessions/research%3Aone/transcript?conversation=child-1']);
+  expect(urls).toEqual(['sessions/research%3Aone/messages?conversation=child-1&limit=50']);
   vi.unstubAllGlobals();
 });

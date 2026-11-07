@@ -93,6 +93,14 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
 }
 
+// An unknown id and an unreadable one answer alike, so a guessed id does not reveal that it exists.
+async function messages(session: Session, req: IncomingMessage): Promise<[number, unknown]> {
+  const params = new URL(req.url ?? '', 'http://x').searchParams;
+  const conversation = params.get('conversation') ?? undefined;
+  if (conversation !== undefined && !(await session.readable(conversation))) return [404, { error: 'no such conversation' }];
+  return [200, { messages: await session.messages(Math.min(50, Number(params.get('limit')) || 10), conversation) }];
+}
+
 // Every sealed version of every kind, with its checker's verdict, oldest first within a kind.
 async function artifacts(session: Session): Promise<[number, unknown]> {
   const doc = await session.harness.snapshot(Artifacts, session.root.id, ctx);
@@ -125,15 +133,11 @@ const ROUTES: Array<[string, RegExp, Route]> = [
     return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
-  ['GET', /^\/messages$/, async (s, req) => [200, { messages: await s.messages(Math.min(50, Number(new URL(req.url ?? '', 'http://x').searchParams.get('limit')) || 10)) }]],
+  ['GET', /^\/messages$/, messages],
   ['GET', /^\/meta$/, async (s) => [200, { meta: await s.meta() }]],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],
   ['GET', /^\/export$/, exported],
-  ['GET', /^\/transcript$/, async (s, req) => {
-    const transcript = await s.transcript(new URL(req.url ?? '', 'http://x').searchParams.get('conversation') ?? undefined);
-    return transcript ? [200, { transcript }] : [404, { error: 'no such conversation' }];
-  }],
   ['POST', /^\/abort$/, abort],
   ['POST', /^\/resume$/, resume],
   ['POST', /^\/approvals\/([^/]+)$/, decide],

@@ -16,10 +16,10 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy; /** Per-session limits on the subagent tool every session has (see @quack/subagent). */ subagents?: { maxConcurrent?: number; maxTotal?: number } };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
 
 /** Per agent: its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
-export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number }; /** `false` leaves the session without the subagent tool. */ subagents?: false };
+export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** Model responses one run may take before it is failed; absent takes the default ceiling. */ turnCeiling?: number; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
 export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[] };
@@ -73,13 +73,6 @@ function retentionProblems(r: unknown): string[] {
   return r === undefined || (isObject(r) && positive(r.idleDays) && Object.keys(r).length === 1) ? [] : ['retention must be { idleDays: positive integer }'];
 }
 
-function subagentProblems(s: unknown): string[] {
-  if (s === undefined) return [];
-  const known = ['maxConcurrent', 'maxTotal'];
-  const ok = isObject(s) && Object.entries(s).every(([k, v]) => known.includes(k) && positive(v));
-  return ok ? [] : [`subagents must map ${known.join(', ')} to positive integers`];
-}
-
 const ceilingProblems = (c: unknown) => (c === undefined || positive(c) ? [] : ['turnCeiling must be a positive integer']);
 
 function validZone(z: unknown): boolean {
@@ -112,7 +105,7 @@ function deployedExtensionProblems(extensions: unknown, stores: unknown): string
   });
 }
 
-const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'subagents', 'stores', 'extensions'];
+const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions'];
 
 function rootProblems(raw: Record<string, unknown>): string[] {
   const problems = Object.keys(raw).filter((k) => !ROOT_KEYS.includes(k)).map((k) => (k === 'services' ? 'unknown top-level key services: it was renamed extensions, and an entry takes only store and settings' : `unknown top-level key ${k}`));
@@ -120,7 +113,6 @@ function rootProblems(raw: Record<string, unknown>): string[] {
   else problems.push(...Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p)));
   if (typeof raw.defaultModel !== 'string' || !/^[^/]+\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be "provider/model"');
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
-  problems.push(...subagentProblems(raw.subagents));
   problems.push(...storeProblems(raw.stores), ...deployedExtensionProblems(raw.extensions, raw.stores));
   if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
   return problems;
@@ -253,7 +245,6 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed and is ignored`);
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
   problems.push(...retentionProblems(raw.retention), ...ceilingProblems(raw.turnCeiling));
-  if (raw.subagents !== undefined && raw.subagents !== false) problems.push('subagents must be false (omit it to keep the subagent tool)');
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   problems.push(...extensionProblems(raw.extensions, deployment, catalog));
   if (problems.length) throw new Error(`invalid agent definition:\n- ${problems.join('\n- ')}`);

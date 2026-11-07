@@ -37,6 +37,7 @@
       "@quack/remarkable",
       "@quack/schedules",
       "@quack/slots",
+      "@quack/subagent",
       "@quack/traces"
     ]
   },

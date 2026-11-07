@@ -5,19 +5,20 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { contentText, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import type { AddressInfo } from 'node:net';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createSessionServer, openSession } from '@quack/session';
 import { SlotGate, SlotTable, slotsSessionExtensions, type SlotClient } from '@quack/slots';
-import { subagentExtension, type ResolveAgent } from '../src/index.ts';
+import { MAX_CHILDREN, subagentExtension } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-subagent-'));
 after(() => rm(root, { recursive: true, force: true }));
 
-type Seen = { running: number; peak: number; tools: string[][]; prompts: string[]; hold?: Promise<void> };
+type Seen = { running: number; peak: number; tools: string[][]; hold?: Promise<void> };
 
 // One scripted model for parent and children: a user message "parent" starts N subagent calls; "child-i" answers after
 // `barrier` children are generating at once (never, when the calls are serialized, so a serial run hangs and fails the test).
-function scripted(calls: Array<{ task: string; agent?: string }>, barrier: number) {
-  const seen: Seen = { running: 0, peak: 0, tools: [], prompts: [] };
+function scripted(calls: Array<{ task: string }>, barrier: number) {
+  const seen: Seen = { running: 0, peak: 0, tools: [] };
   let arrived = 0;
   let open!: () => void;
   let started!: () => void;
@@ -30,7 +31,6 @@ function scripted(calls: Array<{ task: string; agent?: string }>, barrier: numbe
     if (text === 'parent') return fauxAssistantMessage(calls.map((x) => fauxToolCall('subagent', x)), { stopReason: 'toolUse' });
     const system = c.messages[0] as unknown as { content: string; toolsAdded?: Array<{ name: string }> };
     seen.tools.push((system.toolsAdded ?? []).map((t) => t.name));
-    seen.prompts.push(JSON.stringify(system));
     seen.running += 1;
     seen.peak = Math.max(seen.peak, seen.running);
     started();
@@ -48,38 +48,52 @@ function scripted(calls: Array<{ task: string; agent?: string }>, barrier: numbe
 }
 
 let n = 0;
-async function run(calls: Array<{ task: string; agent?: string }>, opts: { barrier: number; limits?: { maxConcurrent?: number; maxTotal?: number }; resolve?: ResolveAgent }) {
-  const s = scripted(calls, opts.barrier);
-  const session = await openSession({ dir: join(root, `s${n++}`), models: s.models, agent: { model: s.model, extensions: [subagentExtension(opts.limits, opts.resolve)] } });
+async function run(calls: Array<{ task: string }>, barrier: number) {
+  const s = scripted(calls, barrier);
+  const session = await openSession({ dir: join(root, `s${n++}`), models: s.models, agent: { model: s.model, extensions: [subagentExtension()] } });
   const result = await session.submit('parent', 'r1', true);
   return { ...s, session, result };
 }
 
 test('calls in one turn run in parallel, each child answers, and a child has no subagent tool', async () => {
-  const { seen, result, session } = await run([{ task: 'child-1' }, { task: 'child-2' }, { task: 'child-3' }], { barrier: 3 });
+  const { seen, result, session } = await run([{ task: 'child-1' }, { task: 'child-2' }, { task: 'child-3' }], 3);
   assert.equal(result.status, 'done');
   assert.equal(seen.peak, 3);
   assert.deepEqual((result as { answer: string }).answer.split(' | ').sort(), ['done child-1', 'done child-2', 'done child-3']);
   assert.ok(seen.tools.every((t) => !t.includes('subagent')));
   // The call's details name the child, so a viewer can attach to it.
-  const tool = (await session.transcript())!.filter((e) => e.kind === 'pi.tool-result');
+  const tool = (await session.transcript()).filter((e) => e.kind === 'pi.tool-result');
   assert.equal(tool.length, 3);
   assert.ok(tool.every((e) => /conversationId/.test(JSON.stringify(e))));
   await session.close();
 });
 
-test('the session serves a child conversation\'s transcript by the id in the call\'s details, and only its own', async () => {
-  const { session } = await run([{ task: 'child-1' }], { barrier: 1 });
-  const results = (await session.transcript())!.filter((e) => e.kind === 'pi.tool-result');
-  const id = (results[0].model as Array<{ details: { conversationId: string } }>)[0].details.conversationId;
+test('the session serves a child conversation\'s messages by the id in the call\'s details, and not a fork or a stranger', async (t) => {
+  const s = scripted([{ task: 'child-1' }], 1);
+  let finish!: () => void;
+  s.seen.hold = new Promise<void>((r) => (finish = r));
+  const session = await openSession({ dir: join(root, `s${n++}`), models: s.models, agent: { model: s.model, extensions: [subagentExtension()] } });
+  await session.submit('parent', 'r1', false);
+  await s.started;
+  // A decision fork is task-owned like a child, so only creation tells them apart; it is made while the call's task is live.
+  const [id, fork] = await session.root.commit(async (tx) => {
+    const child = (await tx.scanConversations({ ownerConversationId: session.root.id }, 1)).items[0]!;
+    const forked = await tx.forkConversation(session.root.id, (await tx.latestEntryId(session.root.id))!, { ownership: { kind: 'task', taskId: child.owner!.taskId } });
+    return [String(child.id), String(forked.id)];
+  }, BACKGROUND_CONTEXT);
+  finish();
+  assert.equal((await session.submit('again', 'r2', true)).status, 'done');
   const server = createSessionServer(session).listen(0);
+  t.after(async () => { await new Promise((r) => server.close(r)); await session.close(); });
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const child = await fetch(`${base}/transcript?conversation=${id}`).then((r) => r.json()) as { transcript: Array<{ kind: string }> };
-  assert.deepEqual(child.transcript.map((e) => e.kind), ['pi.user', 'pi.assistant']);
-  assert.equal((await fetch(`${base}/transcript?conversation=nope`)).status, 404);
-  await new Promise((r) => server.close(r));
-  await session.close();
+  const child = await fetch(`${base}/messages?conversation=${id}`).then((r) => r.json()) as { messages: Array<{ role: string; text: string }> };
+  assert.deepEqual(child.messages, [{ role: 'user', text: 'child-1' }, { role: 'assistant', text: 'done child-1' }]);
+  const unknown = await fetch(`${base}/messages?conversation=nope`);
+  const forked = await fetch(`${base}/messages?conversation=${fork}`);
+  assert.deepEqual([unknown.status, forked.status], [404, 404]);
+  assert.deepEqual(await forked.json(), await unknown.json());
+  assert.equal((await fetch(`${base}/messages?conversation=${String(session.root.id)}`)).status, 200);
 });
 
 test('a restart mid-call reuses the same child and still returns its answer', async () => {
@@ -100,37 +114,12 @@ test('a restart mid-call reuses the same child and still returns its answer', as
   await b.close();
 });
 
-test('maxConcurrent queues the rest instead of exceeding it', async () => {
-  const { seen, result, session } = await run([{ task: 'child-1' }, { task: 'child-2' }, { task: 'child-3' }], { barrier: 1, limits: { maxConcurrent: 1 } });
-  assert.equal(result.status, 'done');
-  assert.equal(seen.peak, 1);
-  assert.equal(seen.tools.length, 3);
-  await session.close();
-});
-
-test('maxTotal refuses the call past it and the others still answer', async () => {
-  const { result, session } = await run([{ task: 'child-1' }, { task: 'child-2' }], { barrier: 1, limits: { maxTotal: 1 } });
+test('the call past the fixed limit is refused and the others still answer', async () => {
+  const calls = Array.from({ length: MAX_CHILDREN + 1 }, (_, i) => ({ task: `child-${i}` }));
+  const { result, session } = await run(calls, 1);
   const answer = (result as { answer: string }).answer;
-  assert.match(answer, /already started 1 subagents/);
-  assert.match(answer, /done child-\d/);
-  await session.close();
-});
-
-test('an agent name is resolved for the child\'s prompt and an unknown one is refused', async () => {
-  const resolve: ResolveAgent = async (name) => {
-    if (name !== 'researcher') throw new Error(`no agent named ${name}`);
-    return { model: { provider: 'faux', modelId: 'm' }, instructions: 'You are the researcher.' };
-  };
-  const { seen, result, session } = await run([{ task: 'child-1', agent: 'researcher' }, { task: 'child-2', agent: 'ghost' }], { barrier: 1, resolve });
-  assert.match((result as { answer: string }).answer, /no agent named ghost/);
-  assert.equal(seen.prompts.length, 1);
-  assert.match(seen.prompts[0], /You are the researcher\./);
-  await session.close();
-});
-
-test('a session that cannot look agents up refuses a named one', async () => {
-  const { result, session } = await run([{ task: 'child-1', agent: 'researcher' }], { barrier: 1 });
-  assert.match((result as { answer: string }).answer, /cannot look up other agents/);
+  assert.match(answer, new RegExp(`already started ${MAX_CHILDREN} subagents`));
+  assert.equal(answer.match(/done child-\d+/g)?.length, MAX_CHILDREN);
   await session.close();
 });
 
