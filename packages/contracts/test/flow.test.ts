@@ -229,6 +229,41 @@ test('a message sent while a version waits declines it and reaches the agent in 
   await s.close();
 });
 
+for (const decision of ['approve', 'reject'] as const) {
+  test(`a follow-up queued while submit_contract waits reaches the agent once the person decides (${decision})`, async () => {
+    const turns: string[] = [];
+    const seen = (next: Step): Step => (c) => ((turns.push(JSON.stringify(c.messages)), next(c)));
+    // Rejected, the passed version is not approved, so the agent puts it up again and the person approves it.
+    const after = decision === 'approve' ? [seen(() => fauxAssistantMessage('ok'))] : [seen(call('submit_contract', {})), seen(() => fauxAssistantMessage('ok'))];
+    const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...after, seen(() => fauxAssistantMessage('ok'))]);
+    const run = s.submit('Define the Sleeper settings file', 'r-1');
+    const waiting = await nextProposal(s);
+    const queued = await s.submit('Also cover the timezone field', 'r-2', false, 'followUp');
+    assert.equal(queued.status, 'queued');
+    await resolveApproval(s.root, waiting.id, { decision, by: jf }, ctx);
+    if (decision === 'reject') await approve(s, [waiting.id]);
+    await run;
+    assert.equal((await (await s.harness.submission(queued.submissionId as never, ctx))!.wait(ctx)).status, 'done');
+    const took = turns.filter((t) => t.includes('Also cover the timezone field'));
+    assert.ok(took.length && took.every((t) => t.split('Also cover the timezone field').length === 2), 'the follow-up reached the model, once');
+    assert.deepEqual(await s.queued(), []);
+    await s.close();
+  });
+}
+
+test('after a rejection, an agent that keeps answering without putting the version up again is asked once, then the run ends', async () => {
+  const asked: string[] = [];
+  const reply = (c: Msgs) => ((asked.push(text(c)), fauxAssistantMessage('I would rather discuss it first.')));
+  const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...Array.from({ length: 6 }, () => reply)]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  await resolveApproval(s.root, (await nextProposal(s)).id, { decision: 'reject', reason: 'Why a string?', by: jf }, ctx);
+  const done = await run;
+  assert.equal(done.status === 'done' && done.answer, 'I would rather discuss it first.');
+  assert.equal(asked.length, 2, `one answer to the rejection, one to the reminder: ${JSON.stringify(asked)}`);
+  assert.match(asked[1], /passed its checks but is not approved/);
+  await s.close();
+});
+
 test('a decision whose record was lost in a crash is written once when the proposal next runs', async () => {
   let seen = '';
   const s = await open([...v1Script.slice(0, -1), () => fauxAssistantMessage('Approved.'), call('propose_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('Done.'))]);
