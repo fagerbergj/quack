@@ -1,13 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import type { Readable, Writable } from 'node:stream';
-import { childPort, shellEnv } from '@quack/session';
+import { childPort, createdAt, firstInput, lastActivity, recordedTitle, shellEnv, TITLE_MAX } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
+import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
 
 export type AgentStatus = 'draft' | 'promoted';
@@ -17,8 +16,8 @@ export type SessionInfo = { key: string; agent: string; version?: number; retent
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a switch while a run is active or an agent named on a non-submission request. */
 export class AgentError extends Error {
-  status: 404 | 409;
-  constructor(status: 404 | 409, message: string) {
+  status: 400 | 404 | 409;
+  constructor(status: 400 | 404 | 409, message: string) {
     super(message);
     this.status = status;
   }
@@ -75,6 +74,9 @@ export async function writeLaunchToken(dir: string): Promise<string> {
   return token;
 }
 
+/** The one session-key pattern, shared with the Sessions API and the lifecycle channel. */
+export const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
+
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
 /** The agent definition a session was pinned to; the file does not exist for a session with no agent. */
@@ -98,67 +100,6 @@ export async function digest(dir: string): Promise<string> {
 }
 
 const SNAPSHOT = 'agent-def';
-
-// The session store records no wall-clock creation time, so `created` is written once with the session.
-// Older sessions backfill it once from their first logged message, else the session-key file's mtime.
-async function createdAt(dir: string): Promise<number> {
-  const recorded = Number(await readText(join(dir, 'created')));
-  if (recorded) return recorded;
-  const first = (await logTimes(dir, 'min')) || (await stat(join(dir, 'session-key')).then((s) => Math.floor(s.mtimeMs), () => 0));
-  if (first) await writeFile(join(dir, 'created'), String(first)).catch(() => undefined);
-  return first;
-}
-
-async function logTimes(dir: string, fn: 'min' | 'max'): Promise<number> {
-  try {
-    const db = new DatabaseSync(join(dir, 'session.sqlite'), { readOnly: true });
-    try {
-      const row = db.prepare(`SELECT ${fn}(json_extract(m.value, '$.timestamp')) AS at FROM entries, json_each(entries.record, '$.model') m`).get() as { at: number | null };
-      return row.at ?? 0;
-    } finally {
-      db.close();
-    }
-  } catch {
-    return 0;
-  }
-}
-
-// The stored `activity` file is written when a run completes; a session without one is backfilled once from its log (and the older `touched` file), like `created`.
-async function lastActivity(dir: string): Promise<number> {
-  const stored = Number(await readText(join(dir, 'activity')));
-  if (stored) return stored;
-  const at = Math.max(await logTimes(dir, 'max'), Number(await readText(join(dir, 'touched'))) || 0) || (await createdAt(dir));
-  // `wx`: a touch that lands during the backfill keeps its value.
-  if (at) await writeFile(join(dir, 'activity'), String(at), { flag: 'wx' }).catch(() => undefined);
-  return at;
-}
-
-const TITLE_MAX = 120;
-
-// A title the caller gave on the first submission (the session's `title` file) beats the first message.
-function recordedTitle(dir: string): string | undefined {
-  try {
-    return readFileSync(join(dir, 'title'), 'utf8').trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// The session's first user message, read straight from its store so listing never wakes a process.
-function firstInput(dir: string): string | undefined {
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(join(dir, 'session.sqlite'), { readOnly: true });
-    const row = db.prepare("SELECT json_extract(m.value, '$.content') AS c, json_type(m.value, '$.content') AS t FROM entries e, json_each(e.record, '$.model') m WHERE json_extract(m.value, '$.role') = 'user' ORDER BY e.id LIMIT 1").get() as { c?: string; t?: string } | undefined;
-    const parts: unknown = row?.t === 'array' && row.c ? JSON.parse(row.c) : row?.c;
-    const text = Array.isArray(parts) ? parts.map((p) => (p?.type === 'text' ? p.text : '')).join(' ') : parts;
-    return typeof text === 'string' && text.trim() ? text.trim().replace(/\s+/g, ' ').slice(0, TITLE_MAX) : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    db?.close();
-  }
-}
 
 const OUTPUT_TAIL = 4096;
 
@@ -208,7 +149,7 @@ const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
 // Shared host-driver logic: the session registry, directories and lifecycle bookkeeping; `launch` is the part that differs per host.
-export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string; /** The rubric each agent runs with, stored beside each version so diffs cover it. */ rubricFor?: RubricFor }, launch: Launch): HostDriver {
+export function sessionHost(opts: { dataDir: string; agentsDir?: string; defaultAgent?: string; /** The rubric each agent runs with, stored beside each version so diffs cover it. */ rubricFor?: RubricFor; /** Hears every session process that exits, stopped or crashed. */ onExit?: (key: string) => void }, launch: Launch): HostDriver {
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
@@ -299,6 +240,8 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     const dir = sessionDir(key);
     const snapshotDir = join(dir, SNAPSHOT);
     const recorded = await readText(join(dir, 'agent'));
+    // Where a key is born it must be one the Sessions API and the lifecycle channel can address.
+    if (recorded === undefined && !SESSION_KEY.test(key)) throw new AgentError(400, 'a session key is 1 to 200 of A-Z a-z 0-9 : / # . _ @ -');
     if (recorded !== undefined && requested && requested !== recorded) throw new AgentError(409, `session runs agent ${recorded}, not ${requested}`);
     // A recorded session with no snapshot (pre-upgrade, or a lost copy) deliberately re-pins to the current definition once.
     if (recorded !== undefined && (await stat(snapshotDir).catch(() => null))) return { name: recorded, path: join(snapshotDir, 'agent.json') };
@@ -332,6 +275,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     // A crash after startup restarts from the log, up to a budget so a process-level crash cannot loop;
     // past it the next request restarts the session. Startup crashes are reported to the caller instead.
     launched.onExit(() => {
+      opts.onExit?.(key);
       if (children.get(key) !== child) return;
       children.delete(key);
       if (child.stopping) return;
@@ -467,7 +411,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
-export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor }): HostDriver {
+export function processDriver(opts: LauncherOptions & { dataDir: string; agentsDir?: string; defaultAgent?: string; rubricFor?: RubricFor; onExit?: (key: string) => void }): HostDriver {
   return sessionHost(opts, processLauncher(opts));
 }
 
@@ -493,6 +437,9 @@ function processLauncher(opts: LauncherOptions): Launch {
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     if (token) proc.once('exit', () => opts.broker!.revoke(token));
+    // Recorded so a later distributor finds and stops it if this one dies first.
+    if (proc.pid !== undefined) await recordProcess(dir, proc.pid).catch(() => {});
+    proc.once('exit', () => void forgetProcess(dir).catch(() => {}));
     // Output still reaches this process's streams; the tail only rides along in a startup failure.
     let tail = '';
     const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));

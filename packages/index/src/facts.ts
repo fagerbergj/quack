@@ -1,5 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
+import { spendOf } from '@quack/session';
 import { Approvals, Artifacts, Failures, principalName, Questions, type Approval, type FailureRow, type Question, type SealedArtifact } from '@quack/sdk';
 
 /** One thing the index records about a session. `rev` only grows, so an older copy never overwrites a newer one. */
@@ -72,13 +73,7 @@ const none: PriceOf = () => undefined;
 // Cost is tokens at today's price, not the per-call cost stored when each call ran, so a price set or changed later reaches old calls.
 // Tool and direct spend carry no model key and stay as stored. A lower price does not republish: the index keeps the higher rev.
 function costFact(usage: Readonly<UsageState>, direct: Spend | undefined, priceOf: PriceOf): Fact[] {
-  const t: Spend = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, at: 0, ...direct };
-  const add = (u: Readonly<UsageState['tools'][string]>, p?: ReturnType<PriceOf>) => {
-    t.input += u.input; t.output += u.output; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite;
-    t.cost += p ? (u.input * (p.input ?? 0) + u.output * (p.output ?? 0) + u.cacheRead * (p.cacheRead ?? 0) + u.cacheWrite * (p.cacheWrite ?? 0)) / 1e6 : u.cost?.total ?? 0;
-  };
-  for (const [key, u] of Object.entries(usage.models)) add(u, priceOf(key));
-  for (const u of Object.values(usage.tools)) add(u);
+  const t = spendOf(usage, direct, priceOf);
   // Tokens plus micro-dollars as the revision: both only grow, so it moves only when the spend does, and a free model still publishes its tokens.
   const rev = t.input + t.output + t.cacheRead + t.cacheWrite + Math.round(t.cost * 1e6);
   return rev > 0 ? [{ id: 'cost', kind: 'cost', rev, at: t.at, data: { total: t.cost, input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite } }] : [];

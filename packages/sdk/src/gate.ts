@@ -2,6 +2,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
 import { principalName, type Principal } from './principal.ts';
 import { whileWaiting } from './signals.ts';
+import { approvalOpenedData, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
 import { defineDoc, type Conversation, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
@@ -58,6 +59,9 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
     replay: 'safe',
     async execute(args, api, ctx) {
       const id = String(api.taskId);
+      // An approval the lifecycle channel could not carry is refused here, never truncated: the agent sees why.
+      const size = eventBytes(`ask:open:${id}`, 'ask.opened', approvalOpenedData(id, tool.name, plain(args) as JsonValue, api.now()));
+      if (size > EVENT_MAX_BYTES) return errorResult(`${tool.name} was not run: its arguments are ${size} bytes as an approval, over the ${EVENT_MAX_BYTES}-byte cap; send less.`);
       const item = await api.commit(async (tx) => {
         const doc = await tx.doc(Approvals, api.conversationId);
         doc.items[id] ??= { tool: tool.name, args: plain(args) as JsonValue, requestedAt: api.now(), verdict: null, executing: false, done: false };
