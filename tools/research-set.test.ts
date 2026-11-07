@@ -10,6 +10,6 @@ test('the research set has its required mix and every case passes the code gates
   for (const word of ['unsupported', 'contradicted', 'unanswered', 'wrong-year']) assert.ok(cases.filter((c) => c.case.startsWith(word)).length >= 2, word);
   for (const c of cases) {
     assert.equal(c.good, c.targets.length === 0, c.case);
-    assert.deepEqual(codeResults(researchRubric, c.content, c.evidence).filter((r) => (r.met ?? 1) < 1).map((r) => r.id), [], c.case);
+    assert.deepEqual(codeResults(researchRubric, c.content, c.evidence).filter((r) => Number(r.met ?? 1) < 1).map((r) => r.id), [], c.case);
   }
 });

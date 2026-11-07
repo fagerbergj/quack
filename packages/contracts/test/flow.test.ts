@@ -10,8 +10,8 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession } from '@quack/eval';
-import type { Evidence } from '@quack/judge';
-import { contractsSessionExtensions, manifest, specEvidence, type ContractSpec } from '../src/index.ts';
+import type { Inputs } from '@quack/judge';
+import { contractsSessionExtensions, manifest, specInputs, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, settingsSpec, SLEEPER_PAGE } from './fixtures.ts';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -27,7 +27,7 @@ const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: '
 const jf = { kind: 'person', name: 'jf' } as const;
 
 // A stub model: judge questions ("Decision: ...") get "yes", except the pitfall questions; everything else follows the script in order.
-async function open(script: Step[], maxRevisions = 2, evidence?: ReturnType<typeof specEvidence>) {
+async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof specInputs>) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });
   const queue = [...script];
   faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /never asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
@@ -36,7 +36,7 @@ async function open(script: Step[], maxRevisions = 2, evidence?: ReturnType<type
   const m = faux.getModel();
   const dir = await mkdtemp(join(tmpdir(), 'quack-contracts-'));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({ maxRevisions }, evidence)] } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({ maxRevisions }, inputs)] } });
   for (const f of ['packages/sleeper/src/service.ts', 'packages/web/src/extensions/sleeper/api.ts']) {
     await mkdir(dirname(join(session.workspace, f)), { recursive: true });
     await cp(join(repo, f), join(session.workspace, f));
@@ -160,8 +160,8 @@ test('a spec citing a question nobody answered, or code that is not there, is se
 test('end to end: version 1, then a version 2 that names the Sleeper page, each put up for approval as it passes; its recording rebuilds what the judge read', async () => {
   const bareV2 = (): ContractSpec => scheduleSpecV2(refs, []);
   const v2 = (): ContractSpec => scheduleSpecV2(refs, [SLEEPER_PAGE]);
-  const live: Evidence[] = [];
-  const builder = specEvidence();
+  const live: Inputs[] = [];
+  const builder = specInputs();
   const s = await open([
     ...v1Script,
     // Version 2: the first attempt hides the breaking change, so oasdiff's finding sends it back; the second names the caller.
@@ -171,7 +171,7 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
     write(v2),
     call('submit_contract', {}),
     () => fauxAssistantMessage('Version 2 is approved.'),
-  ], 2, async (...a) => { const ev = await builder(...a); live.push(ev); return ev; });
+  ], 2, async (...a) => { const got = await builder(...a); live.push(got); return got; });
   const { run } = await defineV1(s);
   const one = await approve(s);
   await run;
@@ -194,13 +194,13 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   await s.close();
   const record = await readSession(dirname(s.workspace));
   const adapter = manifest.evalAdapters![0].judge!;
-  assert.deepEqual(await Promise.all(all.map((v) => adapter.evidence(record, v.content))), live);
-  assert.deepEqual(live.map((ev) => (ev.facts[0].state as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
+  assert.deepEqual(await Promise.all(all.map((v) => adapter.inputs!(record, v.content))), live);
+  assert.deepEqual(live.map((got) => (JSON.parse(got.facts) as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
   // Had the answers come after version 1 was sealed, its answer refs could not have resolved when it was judged.
   const items = JSON.parse(JSON.stringify(record.docs['quack.questions'].items)) as Record<string, { answer: { at: number } }>;
   for (const q of Object.values(items)) q.answer.at = all[0].sealedAt + 1;
-  const late = await adapter.evidence({ ...record, docs: { ...record.docs, 'quack.questions': { items } as never } }, all[0].content) as Evidence;
-  assert.match((late.facts[0].state as { unresolved: string[] }).unresolved.join(' '), /answer ref .* does not resolve/);
+  const late = await adapter.inputs!({ ...record, docs: { ...record.docs, 'quack.questions': { items } as never } }, all[0].content);
+  assert.match((JSON.parse(late.facts) as { unresolved: string[] }).unresolved.join(' '), /answer ref .* does not resolve/);
 });
 
 test('a version that passes is put up for approval in the same submit, and approving records that exact artifact', async () => {

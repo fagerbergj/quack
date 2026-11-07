@@ -10,7 +10,7 @@ const ids = (checks: Array<{ id: string }>) => checks.map((k) => k.id).sort();
 export async function replayed(record: SessionRecord, sealed: SealedArtifact) {
   const view = asJudged(record, sealed.kind, sealed.version);
   const adapters = manifest.evalAdapters!.filter((a) => a.kind === sealed.kind);
-  const all = await Promise.all(adapters.map(async (a) => ({ a, ev: await a.judge!.evidence(view, sealed.content) })));
+  const all = await Promise.all(adapters.map(async (a) => ({ a, ev: await a.judge!.evidence!(view, sealed.content) })));
   const hits = all.filter((h) => h.ev !== undefined);
   assert.equal(hits.length, 1, `${hits.length} adapters judge this card`);
   const rubric = hits[0].a.judge!.rubric as Rubric;

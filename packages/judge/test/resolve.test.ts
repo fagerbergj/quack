@@ -7,7 +7,7 @@ import { answerItems, classifierTokens, pack, type ClassifierRef } from '../src/
 
 const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
 const unit = { id: 'f1', state: { finding: '- nit: rename' } };
-const checks = [{ id: 'c.says_why', label: 'says why', weight: 2, question: 'Does it say why?' }];
+const checks = [{ id: 'c.says_why', question: { type: 'bool' as const, instructions: 'Does it say why?' } }];
 const memoKey = 'judge:github.review:v1:f1:classifier';
 // One unit judged alone, answers by check id.
 const answerUnit = async (api: unknown, r: ClassifierRef, ctx: Context) =>
@@ -38,12 +38,12 @@ test('a classifier that throws is not memoized: a rerun of the call asks it agai
   const outcomes = [() => Promise.reject(new Error('503 busy')), () => Promise.resolve({ stopReason: 'error', answers: {} }), () => Promise.resolve(confident)];
   const api = callApi(() => outcomes.shift()!());
   const first = await answerUnit(api, ref, BACKGROUND_CONTEXT);
-  assert.equal(first['c.says_why'].resolver, 'agent-model', 'an outage escalates this time');
+  assert.equal(first['c.says_why']!.resolver, 'agent-model', 'an outage escalates this time');
   assert.equal(api.memos.has(memoKey), false);
   await answerUnit(api, ref, BACKGROUND_CONTEXT);
   assert.equal(api.memos.has(memoKey), false, 'an error stop is an outage too');
   const third = await answerUnit(api, ref, BACKGROUND_CONTEXT);
-  assert.deepEqual([api.calls(), third['c.says_why'].resolver], [3, 'clef']);
+  assert.deepEqual([api.calls(), third['c.says_why']!.resolver], [3, 'clef']);
 });
 
 test('an over-cap unit is memoized: a rerun escalates without asking the classifier', async () => {
@@ -100,7 +100,7 @@ test('a packed request sends the context once and one question per unit; unsure 
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].state, { context: shared, items: units.map((u) => ({ id: u.id, text: u.id })) });
   assert.equal(sent[0].questions['c.says_why#2'].instructions, 'About items[2] (u2): Does it say why?');
-  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer.met, a.answer.resolver]), [['u0', true, 'clef'], ['u1', true, 'agent-model'], ['u2', true, 'agent-model'], ['u3', false, 'clef']]);
+  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver]), [['u0', true, 'clef'], ['u1', true, 'agent-model'], ['u2', true, 'agent-model'], ['u3', false, 'clef']]);
   assert.equal(peak, 1, 'the escalation limit holds');
   assert.ok(api.memos.has('m:u0+4:classifier'), 'a packed request is memoized under its first unit and size');
 });

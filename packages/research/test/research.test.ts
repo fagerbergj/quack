@@ -181,11 +181,11 @@ test('a recorded session rebuilds, for each sealed report, the evidence the live
   const versions = record.artifacts['research.report'];
   assert.equal(versions.length, 2);
   const adapter = manifest.evalAdapters![0].judge!;
-  const replayed = await Promise.all(versions.map((v) => adapter.evidence(record, v.content)));
+  const replayed = await Promise.all(versions.map((v) => adapter.evidence!(record, v.content)));
   assert.deepEqual(replayed, live);
   assert.deepEqual(live.map((ev) => ev.sources[0].state.ids), [['s1'], ['s1', 's2']]);
   assert.ok(live[1].claim.some((u) => JSON.stringify(u.state).includes('Mallards migrate')), 'claim units carry the kept source text');
-  await assert.rejects(adapter.evidence(record, 'never sealed'), /not a version this session sealed/);
+  await assert.rejects(adapter.evidence!(record, 'never sealed'), /not a version this session sealed/);
 });
 
 test('without the Exa key web_search says so, and a private URL is refused by default', async () => {

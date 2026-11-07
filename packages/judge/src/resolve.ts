@@ -1,8 +1,10 @@
 import type { Context } from '@earendil-works/chord/context';
-import type { ClassifierModel, ClassifierQuestion } from '@earendil-works/pi-ai';
+import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
-import { agentModel, decide, modelResolver } from '@quack/sdk';
-import type { Check, Unit } from './rubric.ts';
+import { agentModel, decide, modelResolver, observeGeneration } from '@quack/sdk';
+import type { ModelSplit, Question } from './declaration.ts';
+import { limiter } from './limit.ts';
+import type { Unit } from './rubric.ts';
 
 /** A decision model such as Clef, reached through pi-ai's classifier API. */
 export type ClassifierRef = { provider: string; modelId: string; maxInputTokens: number; act?: number };
@@ -12,29 +14,35 @@ export type Answer = { met: boolean | null; resolver: string; note?: string };
 // Clef's tokenizer counted 9.6-10.6k tokens on code units the 4-byte rule put under 8,192 (spike #2190); code packs ~3 bytes a token.
 const BYTES_PER_TOKEN = 3;
 
-/** A unit with the checks judged on it. */
-export type Item = { unit: Unit; checks: Check[] };
+/** One question asked of a unit: `id` is the check's key; a choice question holds when the answer is one of `pass` (its first option by default). */
+export type Ask = { id: string; question: Question; pass?: string[] };
 
-import { limiter } from './limit.ts';
+/** A unit with the questions asked of it. */
+export type Item = { unit: Unit; checks: Ask[] };
 
 export type Limit = ReturnType<typeof limiter>;
 
 const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
-const qid = (check: Check, i: number, packed: boolean) => (packed ? `${check.id}#${i}` : check.id);
+const qid = (ask: Ask, i: number, packed: boolean) => (packed ? `${ask.id}#${i}` : ask.id);
+const passing = (ask: Ask) => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ['yes']);
+
+function asked(ask: Ask, instructions: string): ClassifierQuestion {
+  return ask.question.type === 'choice' ? { type: 'choice', instructions, criteria: ask.question.options } : { type: 'bool', instructions, criteria: CRITERIA };
+}
 
 function request(items: Item[]) {
   const shared = items[0].unit.shared;
   const questions: Record<string, ClassifierQuestion> = Object.fromEntries(items.flatMap((it, i) => it.checks.map((c) => [
     qid(c, i, !!shared),
-    { type: 'bool', instructions: shared ? `About items[${i}] (${it.unit.id}): ${c.question!}` : c.question!, criteria: CRITERIA },
+    asked(c, shared ? `About items[${i}] (${it.unit.id}): ${c.question.instructions}` : c.question.instructions),
   ])));
   const state: JsonObject = shared ? { context: shared, items: items.map((it) => ({ id: it.unit.id, ...it.unit.state })) } : items[0].unit.state;
   return { state, questions };
 }
 
 /** The decision model's input tokens for one request (one unit, or units packed with their shared context), as the cap is judged. */
-export const classifierTokens = (unit: Unit | Unit[], checks: Check[]) =>
+export const classifierTokens = (unit: Unit | Unit[], checks: Ask[]) =>
   JSON.stringify(request((Array.isArray(unit) ? unit : [unit]).map((u) => ({ unit: u, checks })))).length / BYTES_PER_TOKEN;
 const tokensOf = (items: Item[]) => JSON.stringify(request(items)).length / BYTES_PER_TOKEN;
 
@@ -56,6 +64,13 @@ export function pack(items: Item[], cap: number | undefined): Item[][] {
   return out;
 }
 
+// A choice answer counts the probability of the options that hold; a bool answer is its own probability.
+function massOf(ask: Ask, a: { type: string; probability?: number; probabilities?: Record<string, number> }): number | undefined {
+  if (a.type === 'bool' && ask.question.type === 'bool') return a.probability;
+  if (a.type === 'choice' && ask.question.type === 'choice') return passing(ask).reduce((s, k) => s + (a.probabilities?.[k] ?? 0), 0);
+  return undefined;
+}
+
 // null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
 async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[], clef: Limit, ctx: Context): Promise<Record<string, number> | null | undefined> {
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
@@ -65,38 +80,88 @@ async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[]
   const result = await clef(() => api.models.classify(model, request(items), { signal: ctx.abortSignal }).catch(() => undefined));
   ctx.abortSignal?.throwIfAborted();
   if (result?.stopReason !== 'stop') return undefined;
-  return Object.fromEntries(Object.entries(result.answers).flatMap(([id, a]) => (a.type === 'bool' ? [[id, a.probability]] : [])));
+  const asks = new Map(items.flatMap((it, i) => it.checks.map((c) => [qid(c, i, !!items[0].unit.shared), c] as const)));
+  return Object.fromEntries(Object.entries(result.answers).flatMap(([id, a]) => {
+    const ask = asks.get(id);
+    const p = ask && massOf(ask, a as never);
+    return p === undefined ? [] : [[id, p]];
+  }));
 }
 
 /** Where uncertain checks go: a named judge model, or the agent's own model when none is set. */
 export type ModelRef = { provider: string; modelId: string };
 
-async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, unit: Unit, check: Check, ctx: Context): Promise<Answer> {
+function point(memo: string, unit: Unit, ask: Ask) {
   const state = unit.shared ? { context: unit.shared, ...unit.state } : unit.state;
-  const point = { name: `${memo}:${unit.id}:${check.id}`, question: check.question!, options: ['yes', 'no'], evidence: JSON.stringify(state, null, 1) };
+  const q = ask.question;
+  const question = q.type === 'choice' ? `${q.instructions}\n${Object.entries(q.options).map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : q.instructions;
+  return { name: `${memo}:${unit.id}:${ask.id}`, question, options: q.type === 'choice' ? Object.keys(q.options) : ['yes', 'no'], evidence: JSON.stringify(state, null, 1) };
+}
+
+async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, unit: Unit, ask: Ask, ctx: Context): Promise<Answer> {
   const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId), id: 'judge-model' } : agentModel;
-  const d = await decide(api, point, [resolver], ctx);
+  const d = await decide(api, point(memo, unit, ask), [resolver], ctx);
   if (!d) return { met: null, resolver: 'none', note: 'no resolver could decide' };
-  return { met: d.choice === 'yes', resolver: d.resolver, note: d.reason };
+  return { met: passing(ask).includes(d.choice), resolver: d.resolver, note: d.reason };
 }
 
 export type Settings = { ref?: ClassifierRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit };
-export type Answered = { unit: Unit; check: Check; answer: Answer };
+/** `answer` is absent when the item was not escalated because its check had already decided. */
+export type Answered = { unit: Unit; check: Ask; answer?: Answer };
+/** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
+export type Need = (unit: Unit, check: Ask) => boolean;
 
-// One decision-model request per packed group; confident answers stand, the rest escalate concurrently within the escalation limit.
-export async function answerItems(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context, onAnswer?: (a: Answered) => Promise<void>): Promise<Answered[]> {
-  const packed = !!items[0].unit.shared;
+async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context) {
   const key = items.length === 1 ? `${s.memo}:${items[0].unit.id}:classifier` : `${s.memo}:${items[0].unit.id}+${items.length}:classifier`;
   const stored = await api.memo<Record<string, number> | null>(key, ctx);
-  const fresh = stored !== undefined ? stored : s.ref ? await classify(api, s.ref, items, s.clef, ctx) : null;
-  const probabilities = stored !== undefined || fresh === undefined ? fresh : await api.memo(key, fresh, ctx);
+  if (stored !== undefined) return stored;
+  const fresh = s.ref ? await classify(api, s.ref, items, s.clef, ctx) : null;
+  return fresh === undefined ? undefined : api.memo(key, fresh, ctx);
+}
+
+// One decision-model request per packed group; confident answers stand, the rest escalate concurrently within the escalation limit.
+export async function answerItems(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context, onAnswer?: (a: Answered) => Promise<void>, need: Need = () => true): Promise<Answered[]> {
+  const packed = !!items[0].unit.shared;
+  const probabilities = await probabilitiesOf(api, s, items, ctx);
   const act = s.ref?.act ?? 0.8;
+  const unsure = (unit: Unit, check: Ask) => (need(unit, check) ? s.escalations(() => (need(unit, check) ? escalate(api, s.judgeModel, s.memo, unit, check, ctx) : Promise.resolve(undefined))) : undefined);
   const jobs = items.flatMap((it, i) => it.checks.map(async (check) => {
     const p = probabilities?.[qid(check, i, packed)];
-    const answer = p !== undefined && (p >= act || 1 - p >= act) ? { met: p >= act, resolver: s.ref!.modelId } : await s.escalations(() => escalate(api, s.judgeModel, s.memo, it.unit, check, ctx));
+    const answer = p !== undefined && (p >= act || 1 - p >= act) ? { met: p >= act, resolver: s.ref!.modelId } : await unsure(it.unit, check);
     const a = { unit: it.unit, check, answer };
     await onAnswer?.(a);
     return a;
   }));
   return Promise.all(jobs);
+}
+
+const ITEMS = /\[[\s\S]*\]/;
+
+function parseItems(text: string): Array<{ item: string; span: string }> | undefined {
+  try {
+    const list = JSON.parse(ITEMS.exec(text)?.[0] ?? 'null') as unknown;
+    if (!Array.isArray(list) || !list.every((x) => typeof x?.item === 'string' && typeof x?.span === 'string')) return undefined;
+    return list.map(({ item, span }) => ({ item, span }));
+  } catch {
+    return undefined;
+  }
+}
+
+const splitPrompt = (text: string, instruction = 'one distinct claim, ask or promise') =>
+  `Split the text below into items. An item is: ${instruction}.\nFor each item, state it in one sentence and quote the exact span of the text it comes from.\nAnswer with one JSON array and nothing else: [{"item": "<the item>", "span": "<exact quote from the text>"}]\n\nText:\n${text}`;
+
+/** The LLM splitter's model call: the judge model (the agent's own when unset), its split memoized per sealed version and scope. */
+export function modelSplit(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, ctx: Context): ModelSplit {
+  return async (text, o, role) => {
+    const key = `${memo}:split:${role}`;
+    const stored = await api.memo<Array<{ item: string; span: string }>>(key, ctx);
+    if (stored) return stored;
+    const ref = judgeModel ?? (await api.agent(ctx)).model;
+    const model = ref && api.models.getModel(ref.provider, ref.modelId);
+    if (!model) return undefined;
+    const messages = [{ role: 'user' as const, content: splitPrompt(text, o.instruction), timestamp: api.now() }];
+    const reply = await observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal }));
+    const items = reply.stopReason === 'error' ? undefined : parseItems(contentText(reply.content));
+    return items && api.memo(key, items, ctx);
+  };
 }

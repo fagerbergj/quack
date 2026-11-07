@@ -11,7 +11,7 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { feedback, judge, progressOf, score, settled, unitsFor, type CheckResult, type Evidence, type Rubric } from '../src/index.ts';
+import { feedback, judge, progressOf, score, settled, unitsFor, type CheckResult, type Evidence, type Plan, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -167,16 +167,16 @@ test('a check without a scope is an error, not a default scope', () => {
 });
 
 test('progress withholds a check until every unit is judged and decided, and passes code results through', () => {
-  const r = (id: string, over: Partial<CheckResult>): CheckResult => ({ criterion: 'c', id, label: id, weight: 2, met: 0, units: 2, resolvers: {}, notes: [], ...over });
-  const code = r('verdict_present', { met: 1, units: 1 });
-  const rubric2: Rubric = { name: 'x', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id: 'verdict_present', label: 'v', weight: 'gate' }, { id: 'a', label: 'a', weight: 2 }, { id: 'b', label: 'b', weight: 2 }, { id: 'u', label: 'u', weight: 2 }] }] };
-  const results = new Map([['c.a', r('a', { met: 0.5 })], ['c.b', r('b', { met: 1 })], ['c.u', r('u', { met: 0.5, undecided: 1 })]]);
-  const left = new Map([['c.a', 1], ['c.b', 0], ['c.u', 0]]);
-  const mets = () => progressOf(rubric2, [code, ...settled(results, left)]).checks.map((c) => c.met);
-  assert.deepEqual(mets(), [1, undefined, 1, undefined], 'a partial and an undecided check are still checking');
-  left.set('c.a', 0);
-  assert.deepEqual(mets(), [1, 0.5, 1, undefined], 'once every unit is judged the weighted fraction shows');
-  results.get('c.u')!.met = null;
-  results.get('c.u')!.undecided = undefined;
-  assert.deepEqual(mets(), [1, 0.5, 1, null], 'a check with no applicable unit is decided as null');
+  const r = (id: string, units: number): CheckResult => ({ criterion: 'c', id, label: id, weight: 2, met: units ? 0 : null, units, resolvers: {}, notes: [] });
+  const plan = (id: string, answers: Array<boolean | null>, left: number): Plan => ({
+    key: `c.${id}`, result: r(id, answers.length), ask: { id: `c.${id}`, question: { type: 'bool', instructions: '?' } }, pitfall: false, left,
+    units: answers.map((_, i) => ({ id: `u${i}`, state: {} })), answers: new Map(answers.map((met, i) => [`u${i}`, { met, resolver: 'clef' }])),
+  });
+  const code = { ...r('verdict_present', 1), met: 1 };
+  const rubric2: Rubric = { name: 'x', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: ['verdict_present', 'a', 'b', 'u', 'n'].map((id) => ({ id, label: id, weight: 2 })) }] };
+  const plans = [plan('a', [true, false], 1), plan('b', [true, true], 0), plan('u', [true, null], 0), plan('n', [], 0)];
+  const mets = () => progressOf(rubric2, [code, ...settled(plans)]).checks.map((c) => c.met);
+  assert.deepEqual(mets(), [1, undefined, 1, undefined, null], 'a partial and an undecided check are still checking; one with no unit is null');
+  plans[0].left = 0;
+  assert.deepEqual(mets(), [1, 0.5, 1, undefined, null], 'once every unit is judged the share shows');
 });

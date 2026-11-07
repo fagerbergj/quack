@@ -22,7 +22,7 @@ export function deliveredReport(content: string, v: Verdict | null | undefined):
   if (!v || !(v.passed || v.limitReached)) return undefined;
   if (v.passed) return content;
   // Marks come from what the check saw, not from the session's later state, so they always agree with the banner.
-  const failing = v.checks.filter((c) => c.met !== null && c.met < 1 && c.marks?.length && NOTES[c.id]);
+  const failing = v.checks.filter((c) => c.met !== null && Number(c.met) < 1 && c.marks?.length && NOTES[c.id]);
   const lines = content.split('\n').map((l) => {
     const notes = failing.map((c) => NOTES[c.id](l, new Set(c.marks))).filter(Boolean);
     return notes.length ? `${l} (${notes.join('; ')})` : l;
