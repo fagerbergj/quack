@@ -1,16 +1,14 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { arr, int, lit, nul, obj, opt, str, union } from '@earendil-works/pi-schema';
-import type { JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext, type Step } from '@quack/workflows';
 import { newsFor, newsLink } from '../lineup/news.ts';
-import { cardsKind } from '../lineup/card.ts';
 import { liveLeague } from '../snapshot.ts';
 import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildFinderCard, buildTradeCard, type FinderDecision, type TradeDecision } from './card.ts';
 import { buildTradeFacts, dealable, playerOf, type FinderInput, type Side, type TPlayer, type TradeFacts, type TradeInput } from './facts.ts';
 import { TRADE_NEWS, tradeEvidence, tradeRubric } from './rubric.ts';
-import { newsGated } from '../rubric-kit.ts';
+import { cardJudge } from '../job.ts';
 
 export const TRADE_WORKFLOW = 'sleeper.trade';
 export const FINDER_WORKFLOW = 'sleeper.trade-finder';
@@ -65,11 +63,6 @@ function tradePrompt(f: TradeFacts, news: News): string {
   ].join('\n\n');
 }
 
-const judgeOf = (deps: TradeJobDeps, f: TradeFacts) => {
-  const { rubric, notes } = newsGated(tradeRubric, TRADE_NEWS, !!deps.news);
-  const options: JudgeOptions = { kind: cardsKind, rubric, evidence: tradeEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier };
-  return { options, notes };
-};
 
 const prior = <T>(c: StepContext, step: string) => c.prior[step] as unknown as T;
 
@@ -85,7 +78,8 @@ function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Pick<Extr
     },
   };
   const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(deps.news, o.news(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
-  const card: Step = { name: 'card', kind: 'judged', ...o.decide, card: o.card, judge: (c) => judgeOf(deps, prior(c, 'facts')) };
+  const judgeOf = cardJudge(deps, tradeRubric, TRADE_NEWS, tradeEvidence);
+  const card: Step = { name: 'card', kind: 'judged', ...o.decide, card: o.card, judge: (c) => judgeOf(prior(c, 'facts')) };
   return [facts, news, card];
 }
 

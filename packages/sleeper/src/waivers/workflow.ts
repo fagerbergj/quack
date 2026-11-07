@@ -1,17 +1,15 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, type JsonObject } from '@earendil-works/pi-durable';
-import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { newsLink } from '../lineup/news.ts';
-import { cardsKind } from '../lineup/card.ts';
 import { liveLeague } from '../snapshot.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import type { LineupInput } from '../lineup/facts.ts';
 import { buildWaiversCard, type WaiverDecision } from './card.ts';
 import { buildWaiverFacts, type Valued, type WaiverFacts } from './facts.ts';
 import { WAIVERS_NEWS, waiversEvidence, waiversRubric } from './rubric.ts';
-import { newsGated } from '../rubric-kit.ts';
+import { cardSteps } from '../job.ts';
 
 export const WAIVERS_WORKFLOW = 'sleeper.waivers';
 
@@ -50,30 +48,13 @@ function factsPrompt(f: WaiverFacts): string {
 
 /** Waivers job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function waiversWorkflow(deps: WaiversDeps) {
-  const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(waiversRubric, WAIVERS_NEWS, !!deps.news);
-  const judgeOptions = (f: WaiverFacts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: waiversEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
+  const facts = async (c: StepContext, i: LineupInput, at: number) => {
+    const f = (await buildWaiverFacts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at)) as unknown as JsonObject;
+    await c.api.commit(async (tx) => { (await tx.doc(WaiversFactsDoc, c.api.conversationId)).facts = f; }, c.ctx);
+    return f as unknown as WaiverFacts;
+  };
   return defineWorkflow({
     name: WAIVERS_WORKFLOW,
-    steps: [
-      {
-        name: 'facts',
-        kind: 'code',
-        run: async (c) => {
-          const i = input(c);
-          const facts = (await buildWaiverFacts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonObject;
-          await c.api.commit(async (tx) => { (await tx.doc(WaiversFactsDoc, c.api.conversationId)).facts = facts; }, c.ctx);
-          return facts;
-        },
-      },
-      {
-        name: 'card',
-        kind: 'judged',
-        schema: decisionSchema,
-        prompt: (c) => factsPrompt(c.prior.facts as unknown as WaiverFacts),
-        card: (c, d) => buildWaiversCard(c.prior.facts as unknown as WaiverFacts, d as unknown as WaiverDecision),
-        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as WaiverFacts), notes }),
-      },
-    ],
+    steps: cardSteps<WaiverFacts, WaiverDecision>(deps, { facts, schema: decisionSchema, prompt: factsPrompt, card: buildWaiversCard, rubric: waiversRubric, news: WAIVERS_NEWS, evidence: waiversEvidence }),
   });
 }

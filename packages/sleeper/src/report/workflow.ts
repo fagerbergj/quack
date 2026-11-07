@@ -1,13 +1,12 @@
-import type { JsonValue } from '@earendil-works/chord';
 import type { Schema } from '@earendil-works/pi-schema';
 import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { type JudgeOptions, type Rubric } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { newsLink } from '../lineup/news.ts';
-import { cardsKind } from '../lineup/card.ts';
 import { liveLeague } from '../snapshot.ts';
 import { kickoffTimes } from '../games.ts';
-import { newsGated, type NewsGate } from '../rubric-kit.ts';
+import { cardSteps } from '../job.ts';
+import type { NewsGate } from '../rubric-kit.ts';
 import { round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { RECAP_LAG_MS, RECAP_STALE_MS } from './jobs.ts';
@@ -41,7 +40,6 @@ type Spec<F, D> = {
 /** facts (code), one model decision, a sealed card (code), then the judge's verdict on it: the lineup job's shape. */
 function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(spec.rubric, spec.news, !!deps.news);
   return defineWorkflow({
     name: spec.name,
     steps: [
@@ -63,22 +61,7 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
           return new Wait(Math.min(now + RECHECK_MS, give));
         },
       },
-      {
-        name: 'facts',
-        kind: 'code',
-        run: async (c) => {
-          const i = input(c);
-          return (await spec.facts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'card',
-        kind: 'judged',
-        schema: spec.schema,
-        prompt: (c) => spec.prompt(c.prior.facts as unknown as F),
-        card: (c, d) => spec.card(c.prior.facts as unknown as F, d as unknown as D),
-        judge: (c) => ({ options: { kind: cardsKind, rubric, evidence: spec.evidence(c.prior.facts as unknown as F), maxRevisions: 1, classifier: deps.classifier }, notes }),
-      },
+      ...cardSteps<F, D>(deps, { ...spec, facts: async (_c, i, at) => spec.facts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at) }),
     ],
   });
 }
