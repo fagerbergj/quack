@@ -80,6 +80,13 @@ function decisionsOn(d: Definition, choices: ContractSpec['choices']) {
   return choices.filter(on).map((c) => ({ choice: c.id, decision: c.decision }));
 }
 
+// The definitions that use one: a local $ref to it, or for TypeScript its name in their text; a shared shape is asked for by its users.
+function usersOf(d: Definition, defs: Definition[]): string[] {
+  const named = typeof d.definition === 'string' && d.name && new RegExp(`(?<![\\w$])${escRe(d.name)}(?![\\w$])`);
+  const uses = (o: Definition) => (named ? typeof o.definition === 'string' && named.test(o.definition) : !!d.pointer && JSON.stringify(o.definition).includes(`"#${d.pointer}"`));
+  return defs.filter((o) => o !== d && uses(o)).map((o) => o.id);
+}
+
 async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
   const spec = parseSpec(sealed.content) as ContractSpec;
   const kind = kinds[spec.kind];
@@ -101,7 +108,7 @@ async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
     facts: [{ id: 'facts', whole: true, state: json(facts) }],
     spec: [{ id: 'spec', whole: true, state: json({ intent, choices, document }) }],
     choice: choiceUnits(spec, guideRules(kind.skill)),
-    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition, decided: decisionsOn(d, choices) }) })),
+    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition, decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) }) })),
   };
 }
 

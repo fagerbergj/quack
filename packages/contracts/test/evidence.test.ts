@@ -91,7 +91,12 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   assert.ok(decided('/components/schemas/Problem').includes('errors'));
   assert.ok(decided('POST /sessions/{key}/events').includes('transport'), 'an operation is decided by a choice on its path');
   const port = await evidenceOf(storePort);
-  assert.ok((port.definition.find((u) => u.id === 'definition /Money')!.state.decided as Array<{ choice: string }>).some((d) => d.choice === 'money'));
+  const money = port.definition.find((u) => u.id === 'definition /Money')!.state as { decided: Array<{ choice: string }>; usedBy: string[] };
+  assert.ok(money.decided.some((d) => d.choice === 'money'));
+  // And the definitions that use it, so a shared shape reads as asked for: a local $ref, or a TypeScript name.
+  const usedBy = (id: string) => ev.definition.find((u) => u.id === `definition ${id}`)!.state.usedBy as string[];
+  assert.ok(usedBy('/components/schemas/Problem').includes('POST /sessions/{key}/events'));
+  assert.ok(money.usedBy.includes('/SessionCatalogStore'));
 });
 
 // A stand-in for Clef on its wire format: every pitfall question is a confident no.
