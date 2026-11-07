@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,7 +11,8 @@ import { defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durab
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { itemFrom, langfuse, publish, readSession, replay, scoresOf, summarize, type ReplayResult } from '../src/index.ts';
+import type { EvalAdapter } from '@quack/sdk';
+import { itemFrom, langfuse, publish, readSession, replay, replayJudge, scoresOf, summarize, type ReplayResult } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -31,13 +32,15 @@ const submit = defineTool({
   },
 });
 
-async function recordedSession() {
+async function recordedSession(notes = ['v1 note']) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-eval-test-'));
   dirs.push(dir);
   const faux = fauxProvider({ models: [{ id: 'w' }] });
   faux.setResponses([
-    fauxAssistantMessage(fauxToolCall('write', { path: 'artifacts/note.md', content: 'v1 note' }), { stopReason: 'toolUse' }),
-    fauxAssistantMessage(fauxToolCall('submit_note', {}), { stopReason: 'toolUse' }),
+    ...notes.flatMap((content) => [
+      fauxAssistantMessage(fauxToolCall('write', { path: 'artifacts/note.md', content }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('submit_note', {}), { stopReason: 'toolUse' }),
+    ]),
     fauxAssistantMessage('Noted.'),
   ]);
   const models = createModels();
@@ -51,8 +54,13 @@ async function recordedSession() {
 }
 
 test('a recorded session reads back without resuming it, and becomes a dataset item with its world pinned', async () => {
-  const record = await readSession(await recordedSession());
+  const dir = await recordedSession();
+  const record = await readSession(dir);
   assert.deepEqual(record.inputs, ['Write the note.']);
+  assert.equal(await record.readFile!('artifacts/note.md'), 'v1 note', 'workspace files read by their workspace path');
+  await writeFile(join(dir, 'outside.txt'), 'secret');
+  await symlink(join(dir, 'outside.txt'), join(dir, 'workspace', 'link.txt'));
+  assert.deepEqual([await record.readFile!('../outside.txt'), await record.readFile!('link.txt'), await record.readFile!('nope.md')], [undefined, undefined, undefined], 'nothing outside the workspace is read');
   assert.deepEqual(record.outcome, { status: 'done', answer: 'Noted.' });
   assert.equal(record.turns, 3);
   assert.deepEqual(record.artifacts['test.note'].map((v) => [v.version, v.content, v.verdict]), [[1, 'v1 note', { score: 0.9, passed: true, limitReached: false }]]);
@@ -62,6 +70,20 @@ test('a recorded session reads back without resuming it, and becomes a dataset i
   assert.deepEqual((item.expectedOutput as any).artifacts['test.note'], { version: 1, content: 'v1 note', score: 0.9, passed: true, limitReached: false });
   assert.equal((item.metadata as any).label, 'bad');
   assert.equal(item.id, itemFrom(record, { agent: 'noter' }).id, 'the id follows the inputs, so re-adding a session replaces its item');
+});
+
+test('a judge replay of an earlier version shows its adapter the session only up to that version, so equal content later is not mistaken for it', async () => {
+  const dir = await recordedSession(['A', 'B', 'A']);
+  const seen: number[][] = [];
+  const rubric = { name: 'n', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'k', label: 'k', weight: 'gate' as const, code: () => ({ met: 1 }) }] }] };
+  const adapter: EvalAdapter = { kind: 'test.note', judge: { rubric, evidence: async (s) => (seen.push(s.artifacts['test.note'].map((v) => v.version)), {}) } };
+  const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  const models = createModels();
+  models.setProvider(judge.provider);
+  const cases = [{ case: 'first', kind: 'test.note', session: dir, version: 1 }, { case: 'last', kind: 'test.note', session: dir }];
+  await replayJudge({ cases, arms: [{ label: 'a', adapters: [adapter] }], repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' } });
+  // Cases are prepared concurrently, so the order they are seen in is not fixed.
+  assert.deepEqual(seen.sort((a, b) => a.length - b.length), [[1], [1, 2, 3]]);
 });
 
 async function fakeLangfuse(answer: (method: string, path: string) => [number, unknown] | undefined = () => undefined) {
@@ -95,9 +117,10 @@ test('datasets are created once, items upsert, and every page of items is read',
 const result: ReplayResult = {
   item: { id: 'item-1', input: { inputs: ['x'], pins: {} } },
   seconds: 42,
-  record: { inputs: ['x'], outcome: { status: 'done', answer: 'ok' }, turns: 7, usage: { input: 100, output: 20, cacheRead: 900 }, docs: {},
+  record: { inputs: ['x'], outcome: { status: 'done', answer: 'ok' }, turns: 7, usage: { input: 100, output: 20, cacheRead: 900 }, docs: {}, runs: [],
     artifacts: { 'github.review': [{ kind: 'github.review', version: 1, hash: 'h', content: 'v1', sealedAt: 0, verdict: { score: 0.6, passed: false } }, { kind: 'github.review', version: 2, hash: 'h2', content: 'v2', sealedAt: 0, verdict: { score: 0.95, passed: true } }] } },
   captured: [{ event: 'APPROVE' }],
+  codeScores: {},
 };
 
 test('a replay is published as a trace with its scores and linked into the run', async () => {
@@ -124,7 +147,7 @@ test('an ingestion that partly fails is an error, not a silent gap in the experi
 
 test('a runtime that exits at startup ends the replay at once with its error, not at the deadline', async () => {
   const started = Date.now();
-  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/nonexistent/deployment.json', agent: '/nonexistent/agent.json' }, {});
+  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/nonexistent/deployment.json', agent: '/nonexistent/agent.json' }, []);
   assert.match(r.error ?? '', /^runtime exited with 1: .*nonexistent\/deployment\.json/);
   assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
   assert.deepEqual(r.record.outcome, { status: 'pending' });
@@ -132,7 +155,7 @@ test('a runtime that exits at startup ends the replay at once with its error, no
 
 test('a runtime killed by a signal also ends the replay at once', async () => {
   const started = Date.now();
-  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: '--import=data:text/javascript,process.kill(process.pid,9)' } }, {});
+  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: '--import=data:text/javascript,process.kill(process.pid,9)' } }, []);
   assert.match(r.error ?? '', /^runtime exited with SIGKILL/);
   assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
   assert.deepEqual(r.record.outcome, { status: 'pending' });
@@ -140,7 +163,7 @@ test('a runtime killed by a signal also ends the replay at once', async () => {
 
 test('every replay spawns its runtime with a session key of its own: the item id plus a per-run suffix', async () => {
   const report = 'process.stderr.write(`Error: key ${process.env.QUACK_SESSION_KEY}\\n`);process.exit(1)';
-  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(report)}` } }, {});
+  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(report)}` } }, []);
   assert.match(r.error ?? '', /key eval:x:[0-9a-f]{8}$/);
 });
 

@@ -2,7 +2,7 @@
 //        main.ts run [--concurrency=N] <dataset> <run-name> <deployment.json> <agent.json> [item-id...]
 import { resolve } from 'node:path';
 import { loadManifests } from '@quack/runtime/catalog';
-import { adapterScores, adaptersOf, blocksOf, servicesOf } from './adapters.ts';
+import { adaptersOf, blocksOf } from './adapters.ts';
 import { itemFrom, type Label } from './dataset.ts';
 import { langfuse } from './langfuse.ts';
 import { readSession } from './record.ts';
@@ -11,7 +11,6 @@ import { eachItem } from './pool.ts';
 import { publish, scoresOf, summarize } from './report.ts';
 
 const adapters = adaptersOf(await loadManifests());
-const services = servicesOf(adapters);
 const blocks = blocksOf(adapters);
 const MIN_CASES = 20;
 
@@ -45,8 +44,8 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
   // A benchmark that can promote an agent needs 20 real cases; a partial run still reports, it just cannot promote.
   if (!only.length && items.length < MIN_CASES) console.log(`note: ${dataset} has ${items.length} items; a promotion needs ${MIN_CASES}`);
   const { results: rows, failures } = await eachItem(items, concurrency, async (item) => {
-    const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, services);
-    const extra = await adapterScores(adapters, r.record);
+    const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, adapters);
+    const extra = r.codeScores;
     // A replay can take half an hour; a failed publish still prints its scores so the result is not lost.
     const scores = await publish(lf, runName, r, blocks, extra).catch((err: Error) => {
       throw new Error(`publish failed: ${err.message}; scores ${JSON.stringify({ ...scoresOf(r, blocks), ...extra })}`);

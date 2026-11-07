@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
-import { defineTool, GenerationTask, hook, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
+import { defineTool, GenerationTask, hook, LiveDoc, type ConversationId, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { Approvals, Artifacts, gated, type Approval, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
@@ -107,13 +107,24 @@ export const proposeContractTool: ToolRegistration = defineTool({
   },
 }) as ToolRegistration;
 
-/** A run may not end on a passed version that is neither approved nor up for approval: the person approves only what is put to them. */
-export const awaitingApproval = hook(GenerationTask, {
-  async onYield(_answer, api, ctx) {
-    const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
-    const newest = all[CONTRACT_KIND]?.versions.at(-1);
-    if (!newest || !passed(newest)) return undefined;
-    if (approvedSpec(all, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {})?.version === newest.version) return undefined;
-    return { continue: `Version ${(parseSpec(newest.content) as ContractSpec).version} passed its checks but is not approved. Call submit_contract to put it to the person before you finish.` };
-  },
-});
+/** A run may not end on a passed version that is neither approved nor up for approval: the person approves only what is put to them.
+ * It asks once per run and proposal, so an agent that answers again without putting the version up ends its run instead of looping. */
+export function awaitingApproval() {
+  // In memory like the cut-off streak: a restart only asks once more.
+  const asked = new Map<ConversationId, string>();
+  return hook(GenerationTask, {
+    async onYield(_answer, api, ctx) {
+      const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
+      const newest = all[CONTRACT_KIND]?.versions.at(-1);
+      if (!newest || !passed(newest)) return undefined;
+      const approvals = (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {};
+      if (approvedSpec(all, approvals)?.version === newest.version) return undefined;
+      const run = (await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0];
+      const proposals = Object.values(approvals).filter((a) => a.tool === 'propose_contract' && (a.args as Proposed).artifact === newest.version).length;
+      const key = `${String(run)}:${newest.version}:${proposals}`;
+      if (asked.get(api.conversationId) === key) return undefined;
+      asked.set(api.conversationId, key);
+      return { continue: `Version ${(parseSpec(newest.content) as ContractSpec).version} passed its checks but is not approved. Call submit_contract to put it to the person before you finish.` };
+    },
+  });
+}

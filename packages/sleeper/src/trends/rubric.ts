@@ -1,5 +1,5 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { factsOf as factsIn, parseCard, share } from '../rubric-kit.ts';
+import { factsOf as factsIn, parseCard, share, type NewsGate } from '../rubric-kit.ts';
 import { KINDS, type TrendItem, type TrendsCard } from './card.ts';
 import type { TrendsFacts } from './facts.ts';
 
@@ -67,3 +67,6 @@ export const trendsRubric: Rubric = {
 
 /** Checks that need dated web reports; without a news source there is nothing for them to read. */
 export const NEWS_CHECKS = ['conflict_stated', 'original_source_named', 'aggregator_only'];
+
+/** The trends job's news checks, gated by the live judge and its replay alike. */
+export const TRENDS_NEWS: NewsGate = { checks: NEWS_CHECKS, what: 'source conflicts and original sources' };

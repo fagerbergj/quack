@@ -1,5 +1,5 @@
 import type { Evidence, Rubric } from '@quack/judge';
-import { parseCard } from '../rubric-kit.ts';
+import { parseCard, type NewsGate } from '../rubric-kit.ts';
 import type { FinderCard, Offered, TradeCard, TRef } from './card.ts';
 import type { TradeFacts } from './facts.ts';
 
@@ -58,3 +58,6 @@ export const tradeRubric: Rubric = {
     ] },
   ],
 };
+
+/** The trade jobs' news checks, gated by the live judge and its replay alike. */
+export const TRADE_NEWS: NewsGate = { checks: ['news_per_traded_player'], what: 'news' };

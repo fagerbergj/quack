@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import ts from 'typescript';
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { Approvals, Artifacts, Questions, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
@@ -26,19 +26,19 @@ function pointerResolves(doc: unknown, pointer: string): boolean {
   return true;
 }
 
+type Reader = (path: string) => Promise<string | undefined>;
+
 // Why a code ref fails, or undefined when it resolves; refs are read relative to the session workspace, so say where.
-async function codeRefProblem(api: ToolExecutionApi, ref: string, ctx: Context): Promise<string | undefined> {
+async function codeRefProblem(read: Reader | undefined, ref: string): Promise<string | undefined> {
   const m = /^(.+?):(\d+)$/.exec(ref);
-  if (!m || !api.env) return 'is not path:line';
-  const read = await api.env.readTextFile(m[1], ctx);
-  if (!read.ok) return `names no file in the workspace (paths are read from the workspace, e.g. repo/${m[1]})`;
-  const lines = read.value.split('\n').length;
+  if (!m || !read) return 'is not path:line';
+  const text = await read(m[1]);
+  if (text === undefined) return `names no file in the workspace (paths are read from the workspace, e.g. repo/${m[1]})`;
+  const lines = text.split('\n').length;
   return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
 
-async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchors: Set<string>, ctx: Context): Promise<string[]> {
-  const questions = (await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {};
-  const answered = new Set(Object.values(questions).filter((q) => q.answer).map((q) => q.question));
+async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answered: Set<string>, read: Reader | undefined): Promise<string[]> {
   const out: string[] = [];
   for (const c of spec.choices) {
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
@@ -46,7 +46,7 @@ async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchor
     for (const w of c.why) {
       const ref = w.ref.replace(/^(rest|json-schema|typescript)#|^#/, '');
       // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
-      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(api, w.ref, ctx);
+      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(read, w.ref);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
   }
@@ -56,26 +56,54 @@ async function unresolvedLinks(api: ToolExecutionApi, spec: ContractSpec, anchor
 type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
 const state = (ev: Evidence) => ev.spec[0].state as unknown as SpecState;
 
+/** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, and its workspace. */
+type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined };
+
+async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
+  const spec = parseSpec(sealed.content) as ContractSpec;
+  const kind = kinds[spec.kind];
+  // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
+  const cleared = (w.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
+  // Breaks are against what callers were given: the approved spec, or before any approval the first that passed.
+  const base = approvedSpec(w.kinds, w.approvals, sealed.version) ?? cleared[0];
+  const prev = base && (parseSpec(base.content) as ContractSpec);
+  const [findings, unresolved, breaking] = await Promise.all([
+    kind.check(spec.document),
+    unresolvedLinks(spec, guideAnchors(kind.skill), w.answered, w.read),
+    prev ? kind.diff(prev.document, spec.document) : [],
+  ]);
+  const { intent, choices, document, version, compatibility } = spec;
+  const unit = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, intent, choices, document, guide: kind.skill };
+  return { spec: [{ id: 'spec', whole: true, state: JSON.parse(JSON.stringify(unit)) }] };
+}
+
+const answeredIn = (items: Record<string, Question>, by = Infinity) => new Set(Object.values(items).filter((q) => q.answer && q.answer.at <= by).map((q) => q.question));
+
 /** What the checks judge: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec itself with its guide for the judged checks. */
 export function specEvidence() {
   return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Evidence> => {
-    const spec = parseSpec(sealed.content) as ContractSpec;
-    const kind = kinds[spec.kind];
-    const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-    // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
-    const cleared = (doc?.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
-    // Breaks are against what callers were given: the approved spec, or before any approval the first that passed.
-    const base = approvedSpec(doc?.kinds ?? {}, (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {}, sealed.version) ?? cleared[0];
-    const prev = base && (parseSpec(base.content) as ContractSpec);
-    const [findings, unresolved, breaking] = await Promise.all([
-      kind.check(spec.document),
-      unresolvedLinks(api, spec, guideAnchors(kind.skill), ctx),
-      prev ? kind.diff(prev.document, spec.document) : [],
-    ]);
-    const { intent, choices, document, version, compatibility } = spec;
-    const unit = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, intent, choices, document, guide: kind.skill };
-    return { spec: [{ id: 'spec', whole: true, state: JSON.parse(JSON.stringify(unit)) }] };
+    const read = api.env && (async (path: string) => {
+      const r = await api.env!.readTextFile(path, ctx);
+      return r.ok ? r.value : undefined;
+    });
+    return evidenceIn(sealed, {
+      kinds: (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {},
+      approvals: (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {},
+      answered: answeredIn((await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {}),
+      read,
+    });
   };
+}
+
+/** The same evidence from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet. */
+export async function recordedSpecEvidence(session: RecordedSession, content: string): Promise<Evidence> {
+  const sealed = session.artifacts[CONTRACT_KIND]?.findLast((v) => v.content === content);
+  if (!sealed) throw new Error('the spec is not a version this session sealed, so what stood when it was judged is unknown');
+  if (!session.readFile) throw new Error('the recording keeps no workspace to resolve code refs in');
+  const kinds = Object.fromEntries(Object.entries(session.artifacts).map(([k, vs]) => [k, { versions: vs.filter((v) => v.sealedAt <= sealed.sealedAt) }]));
+  const approvals = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
+  const questions = (session.docs['quack.questions']?.items ?? {}) as unknown as Record<string, Question>;
+  return evidenceIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile });
 }
 
 const list = (items: string[]) => items.slice(0, 6).join('; ');

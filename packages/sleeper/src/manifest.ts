@@ -8,11 +8,12 @@ import { LINEUP_WORKFLOW, lineupFromEnv } from './lineup/index.ts';
 import { DIGEST_WORKFLOW, digestFromEnv, RETRO_WORKFLOW, retroFromEnv } from './report/index.ts';
 import { FINDER_WORKFLOW, finderFromEnv, TRADE_WORKFLOW, tradeFromEnv } from './trades/index.ts';
 import { TRENDS_WORKFLOW, trendsFromEnv } from './trends/index.ts';
-import { waiversEvalAdapter, WAIVERS_WORKFLOW, waiversFromEnv } from './waivers/index.ts';
+import { WAIVERS_WORKFLOW, waiversFromEnv } from './waivers/index.ts';
+import { cardAdapters } from './adapters.ts';
 
 const env = ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN', 'QUACK_EXA_API_KEY'];
 
-/** Sleeper contributes workflows and an eval adapter for its waivers card; an agent binds one through the workflows extension. */
+/** Sleeper contributes workflows and an eval adapter per judged card; an agent binds one through the workflows extension. */
 export const manifest: ExtensionManifest = {
   name: 'sleeper',
   requires: ['workflows'],
@@ -21,7 +22,7 @@ export const manifest: ExtensionManifest = {
   app: sleeperApp,
   peers: ['schedules'],
   pages: [{ method: 'GET', path: '/' }, { method: 'GET', path: '/schedule' }, { method: 'POST', path: /^\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/ }],
-  evalAdapters: [waiversEvalAdapter],
+  evalAdapters: cardAdapters,
   actions: [runJob],
   workflows: {
     [LINEUP_WORKFLOW]: { build: () => withChat(lineupFromEnv()), env },

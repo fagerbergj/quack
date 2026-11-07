@@ -1,0 +1,55 @@
+import type { Evidence, Rubric } from '@quack/judge';
+import type { EvalAdapter, RecordedSession } from '@quack/sdk';
+import { historyEvidence, historyRubric } from './history/rubric.ts';
+import { cardsKind } from './lineup/card.ts';
+import { LINEUP_NEWS, lineupEvidence, lineupRubric } from './lineup/rubric.ts';
+import { DIGEST_NEWS, digestEvidence, digestRubric, RETRO_NEWS, retroEvidence, retroRubric } from './report/rubric.ts';
+import { newsGated, type NewsGate } from './rubric-kit.ts';
+import { TRADE_NEWS, tradeEvidence, tradeRubric } from './trades/rubric.ts';
+import { TRENDS_NEWS, trendsEvidence, trendsRubric } from './trends/rubric.ts';
+import { WAIVERS_NEWS, waiversEvidence, waiversRubric } from './waivers/rubric.ts';
+import { WAIVERS_FACTS_KIND } from './waivers/workflow.ts';
+
+type Build = (facts: never) => (api: unknown, sealed: { content: string }) => Promise<Evidence>;
+
+// The live job gates its news checks on whether a news source is wired, and its verdict notes say when it was not; the replay gates on that note.
+function hadNews(session: RecordedSession, content: string, rubric: Rubric, gate: NewsGate): boolean {
+  const verdict = session.artifacts[cardsKind.kind]?.findLast((v) => v.content === content)?.verdict as { notes?: string[] } | null | undefined;
+  if (!verdict) throw new Error('the card has no recorded verdict, so whether its job had a news source is unknown');
+  return !(verdict.notes ?? []).includes(newsGated(rubric, gate, false).notes[0]);
+}
+
+// Every job seals onto sleeper.cards, so an adapter judges only the card kind it names, on the facts of the run that sealed it.
+// A job with news checks gets one adapter per gating, each with the rubric newsGated gives the live judge; the recording picks one.
+function adaptersFor(card: string, rubric: Rubric, evidence: Build, gate?: NewsGate): EvalAdapter[] {
+  const variants = gate ? [true, false].map((news) => ({ news, rubric: newsGated(rubric, gate, news).rubric })) : [{ news: true, rubric }];
+  return variants.map((v) => ({
+    kind: cardsKind.kind,
+    judge: {
+      rubric: v.rubric,
+      async evidence(session, content) {
+        if (JSON.parse(content).kind !== card) return undefined;
+        if (gate && hadNews(session, content, rubric, gate) !== v.news) return undefined;
+        const facts = session.results?.facts;
+        if (!facts) throw new Error(`the recording keeps no facts for this ${card} card: no workflow run that sealed it left step results`);
+        return evidence(facts as never)(null, { content });
+      },
+    },
+  }));
+}
+
+// The waivers facts pin only keeps a replay of an older dataset from refusing the recorded doc; the workflow rebuilds the facts live.
+const [waivers, ...waiversRest] = adaptersFor('waivers', waiversRubric, waiversEvidence, WAIVERS_NEWS);
+
+/** The adapters of every judged card; waivers comes first, as the rubric an agent shows. */
+export const cardAdapters: EvalAdapter[] = [
+  { ...waivers, services: { [WAIVERS_FACTS_KIND]: async () => ({ env: {}, captured: [], close: async () => {} }) } },
+  ...waiversRest,
+  ...adaptersFor('lineup', lineupRubric, lineupEvidence, LINEUP_NEWS),
+  ...adaptersFor('trade', tradeRubric, tradeEvidence, TRADE_NEWS),
+  ...adaptersFor('trade-finder', tradeRubric, tradeEvidence, TRADE_NEWS),
+  ...adaptersFor('trends', trendsRubric, trendsEvidence, TRENDS_NEWS),
+  ...adaptersFor('history', historyRubric, historyEvidence),
+  ...adaptersFor('digest', digestRubric, digestEvidence, DIGEST_NEWS),
+  ...adaptersFor('retro', retroRubric, retroEvidence, RETRO_NEWS),
+];

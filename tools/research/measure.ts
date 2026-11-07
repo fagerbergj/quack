@@ -70,7 +70,7 @@ if (import.meta.main) {
     for (const c of cases) {
       if (done.has(`${rep}\t${c.case}`)) continue;
       await whenIdle(metricsUrl);
-      const got = await replayJudge({ cases: [c], arms: [{ label: 'v2', adapters }], repeat: 1, concurrency: 1, models: buildModels(deployment), judgeModel: { provider: 'local', modelId } });
+      const { rows: got } = await replayJudge({ cases: [c], arms: [{ label: 'v2', adapters }], repeat: 1, concurrency: 1, models: buildModels(deployment), judgeModel: { provider: 'local', modelId } });
       for (const r of got) {
         appendFileSync(out, `${JSON.stringify({ ...r, rep })}\n`);
         rows.push({ ...r, rep });

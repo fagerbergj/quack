@@ -9,7 +9,9 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-work
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { contractsSessionExtensions, type ContractSpec } from '../src/index.ts';
+import { readSession } from '@quack/eval';
+import type { Evidence } from '@quack/judge';
+import { contractsSessionExtensions, manifest, specEvidence, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, settingsSpec, SLEEPER_PAGE } from './fixtures.ts';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -25,7 +27,7 @@ const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: '
 const jf = { kind: 'person', name: 'jf' } as const;
 
 // A stub model: judge questions ("Decision: ...") get "yes", except the pitfall question; everything else follows the script in order.
-async function open(script: Step[], maxRevisions = 2) {
+async function open(script: Step[], maxRevisions = 2, evidence?: ReturnType<typeof specEvidence>) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });
   const queue = [...script];
   faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: text(c).includes('never asked for') ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
@@ -34,7 +36,7 @@ async function open(script: Step[], maxRevisions = 2) {
   const m = faux.getModel();
   const dir = await mkdtemp(join(tmpdir(), 'quack-contracts-'));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({ maxRevisions })] } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({ maxRevisions }, evidence)] } });
   for (const f of ['packages/sleeper/src/service.ts', 'packages/web/src/extensions/sleeper/api.ts']) {
     await mkdir(dirname(join(session.workspace, f)), { recursive: true });
     await cp(join(repo, f), join(session.workspace, f));
@@ -155,9 +157,11 @@ test('a spec citing a question nobody answered, or code that is not there, is se
   await s.close();
 });
 
-test('end to end: version 1, then a version 2 that names the Sleeper page, each put up for approval as it passes', async () => {
+test('end to end: version 1, then a version 2 that names the Sleeper page, each put up for approval as it passes; its recording rebuilds what the judge read', async () => {
   const bareV2 = (): ContractSpec => scheduleSpecV2(refs, []);
   const v2 = (): ContractSpec => scheduleSpecV2(refs, [SLEEPER_PAGE]);
+  const live: Evidence[] = [];
+  const builder = specEvidence();
   const s = await open([
     ...v1Script,
     // Version 2: the first attempt hides the breaking change, so oasdiff's finding sends it back; the second names the caller.
@@ -167,7 +171,7 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
     write(v2),
     call('submit_contract', {}),
     () => fauxAssistantMessage('Version 2 is approved.'),
-  ]);
+  ], 2, async (...a) => { const ev = await builder(...a); live.push(ev); return ev; });
   const { run } = await defineV1(s);
   const one = await approve(s);
   await run;
@@ -188,6 +192,15 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   assert.match(spec.compatibility!.breaking[0].callers[0], /Sleeper page/);
   assert.deepEqual((await kindOf(s, 'contract.approved')).map((r) => JSON.parse(r.content).artifact), [1, 3]);
   await s.close();
+  const record = await readSession(dirname(s.workspace));
+  const adapter = manifest.evalAdapters![0].judge!;
+  assert.deepEqual(await Promise.all(all.map((v) => adapter.evidence(record, v.content))), live);
+  assert.deepEqual(live.map((ev) => (ev.spec[0].state as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
+  // Had the answers come after version 1 was sealed, its answer refs could not have resolved when it was judged.
+  const items = JSON.parse(JSON.stringify(record.docs['quack.questions'].items)) as Record<string, { answer: { at: number } }>;
+  for (const q of Object.values(items)) q.answer.at = all[0].sealedAt + 1;
+  const late = await adapter.evidence({ ...record, docs: { ...record.docs, 'quack.questions': { items } as never } }, all[0].content) as Evidence;
+  assert.match((late.spec[0].state as { unresolved: string[] }).unresolved.join(' '), /answer ref .* does not resolve/);
 });
 
 test('a version that passes is put up for approval in the same submit, and approving records that exact artifact', async () => {
@@ -226,6 +239,41 @@ test('a message sent while a version waits declines it and reaches the agent in 
   assert.equal((await versions(s)).length, 1, 'nothing new was sealed');
   assert.deepEqual((await kindOf(s, 'contract.changes')).map((r) => r.summary), ['Sent a message instead']);
   assert.equal((await kindOf(s, 'contract.approved')).length, 1);
+  await s.close();
+});
+
+for (const decision of ['approve', 'reject'] as const) {
+  test(`a follow-up queued while submit_contract waits reaches the agent once the person decides (${decision})`, async () => {
+    const turns: string[] = [];
+    const seen = (next: Step): Step => (c) => ((turns.push(JSON.stringify(c.messages)), next(c)));
+    // Rejected, the passed version is not approved, so the agent puts it up again and the person approves it.
+    const after = decision === 'approve' ? [seen(() => fauxAssistantMessage('ok'))] : [seen(call('submit_contract', {})), seen(() => fauxAssistantMessage('ok'))];
+    const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...after, seen(() => fauxAssistantMessage('ok'))]);
+    const run = s.submit('Define the Sleeper settings file', 'r-1');
+    const waiting = await nextProposal(s);
+    const queued = await s.submit('Also cover the timezone field', 'r-2', false, 'followUp');
+    assert.equal(queued.status, 'queued');
+    await resolveApproval(s.root, waiting.id, { decision, by: jf }, ctx);
+    if (decision === 'reject') await approve(s, [waiting.id]);
+    await run;
+    assert.equal((await (await s.harness.submission(queued.submissionId as never, ctx))!.wait(ctx)).status, 'done');
+    const took = turns.filter((t) => t.includes('Also cover the timezone field'));
+    assert.ok(took.length && took.every((t) => t.split('Also cover the timezone field').length === 2), 'the follow-up reached the model, once');
+    assert.deepEqual(await s.queued(), []);
+    await s.close();
+  });
+}
+
+test('after a rejection, an agent that keeps answering without putting the version up again is asked once, then the run ends', async () => {
+  const asked: string[] = [];
+  const reply = (c: Msgs) => ((asked.push(text(c)), fauxAssistantMessage('I would rather discuss it first.')));
+  const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...Array.from({ length: 6 }, () => reply)]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  await resolveApproval(s.root, (await nextProposal(s)).id, { decision: 'reject', reason: 'Why a string?', by: jf }, ctx);
+  const done = await run;
+  assert.equal(done.status === 'done' && done.answer, 'I would rather discuss it first.');
+  assert.equal(asked.length, 2, `one answer to the rejection, one to the reminder: ${JSON.stringify(asked)}`);
+  assert.match(asked[1], /passed its checks but is not approved/);
   await s.close();
 });
 

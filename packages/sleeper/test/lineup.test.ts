@@ -10,6 +10,8 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
+import { readSession } from '@quack/eval';
+import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
@@ -24,13 +26,16 @@ const fixtures = JSON.parse(readFileSync(new URL('./fixtures/lineup.json', impor
 const AT = Date.parse('2026-11-06T15:00:00Z');
 const INPUT = { league: 'L1', week: 9, owner: 'mallard' };
 
-const doFetch = (async (input: string) => {
+const fetchOf = (world: () => Record<string, unknown>) => (async (input: string) => {
   const path = new URL(input).pathname;
-  return path in fixtures ? new Response(JSON.stringify(fixtures[path])) : new Response('null');
+  const fx = world();
+  return path in fx ? new Response(JSON.stringify(fx[path])) : new Response('null');
 }) as unknown as typeof fetch;
-const client = () => createSleeperClient({ fetch: doFetch, now: () => AT });
-const snapshot = (league: string) => liveLeague(client(), league);
-const facts = async () => buildFacts({ client: client() }, await snapshot('L1'), INPUT, AT);
+const client = (fx = fixtures) => createSleeperClient({ fetch: fetchOf(() => fx), now: () => AT });
+const snapshot = (league: string, fx = fixtures) => liveLeague(client(fx), league);
+const facts = async (fx = fixtures) => buildFacts({ client: client(fx) }, await snapshot('L1', fx), INPUT, AT);
+// The same week after a projection update: a second run in one session decides from different facts.
+const updated = { ...fixtures, '/v1/projections/nfl/regular/2026/9': { ...(fixtures['/v1/projections/nfl/regular/2026/9'] as object), 100: { pts_ppr: 21 } } };
 
 // What a good model returns: the RB2 swap the baseline also makes, everything else kept.
 const decision = {
@@ -146,29 +151,36 @@ test('no_locked_swap fails a card that benches the locked kicker', async () => {
   assert.match(r.detail!, /K/);
 });
 
-async function runLineup(news?: LineupDeps['news']) {
+// One run per world, in one session; the model decides when asked for the lineup and answers the judge's questions otherwise.
+async function runLineup(news?: LineupDeps['news'], worlds = [fixtures]) {
   const judged: string[] = [];
-  const responses: FauxResponseStep[] = [
-    () => fauxAssistantMessage(JSON.stringify(decision)),
-    ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
-      const asked = String(c.messages.at(-1)!.content);
-      judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /bench a clearly better|mention weather/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
-    }),
-  ];
+  const responses: FauxResponseStep[] = Array.from({ length: 40 * worlds.length }, () => (c: { messages: Array<{ content: unknown }> }) => {
+    const asked = String(c.messages.at(-1)!.content);
+    if (!asked.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(decision));
+    judged.push(asked);
+    return fauxAssistantMessage(JSON.stringify({ choice: /bench a clearly better|mention weather/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+  });
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(responses);
   const models = createModels();
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-lineup-'));
-  const workflow = lineupWorkflow({ client: client(), now: () => AT, news });
+  // The client's cache clock moves a day between runs, so a later run reads its own world.
+  let world = worlds[0];
+  let cacheClock = AT;
+  const workflow = lineupWorkflow({ client: createSleeperClient({ fetch: fetchOf(() => world), now: () => cacheClock }), now: () => AT, news });
   const m = faux.getModel();
   const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the lineup analyst.', extensions: [workflowExtension([workflow])] } });
   try {
-    const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
-    assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
-    const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    for (world of worlds) {
+      const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
+      assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
+      cacheClock += 86_400_000;
+    }
+    const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions;
+    const sealed = versions[0];
+    await s.close();
+    return { record: await readSession(dir), sealed, versions, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -176,7 +188,8 @@ async function runLineup(news?: LineupDeps['news']) {
 }
 
 test('the workflow seals a lineup card from the recorded week and the judge passes it, saying close-call news was not checked', async () => {
-  const { sealed, judged, verdict } = await runLineup();
+  const { sealed, judged, verdict, record } = await runLineup();
+  assert.deepEqual(await replayed(record, sealed), await lineupEvidence(await facts())(null, sealed), 'the recording rebuilds the evidence the judge read');
   const card = JSON.parse(sealed.content) as LineupCard;
   assert.equal(card.kind, 'lineup');
   assert.equal(card.starters.length, 9);
@@ -188,8 +201,18 @@ test('the workflow seals a lineup card from the recorded week and the judge pass
   assert.ok(!judged.some((q) => /Questionable starter/.test(q)));
 });
 
+test('a session that ran the job twice replays each card on the facts of the run that sealed it', async () => {
+  const { versions, record } = await runLineup(undefined, [fixtures, updated]);
+  assert.equal(versions.length, 2);
+  const [first, second] = [await facts(), await facts(updated)];
+  assert.notDeepEqual(first, second, 'the runs decided from different facts');
+  assert.deepEqual(await replayed(record, versions[0]), await lineupEvidence(first)(null, versions[0]));
+  assert.deepEqual(await replayed(record, versions[1]), await lineupEvidence(second)(null, versions[1]));
+});
+
 test('with a news source wired the close calls are scored for news', async () => {
-  const { judged, verdict } = await runLineup(async () => [{ title: 'Practice report', url: 'https://www.nfl.com/n', date: hoursAgo(5) }]);
+  const { judged, verdict, record, sealed } = await runLineup(async () => [{ title: 'Practice report', url: 'https://www.nfl.com/n', date: hoursAgo(5) }]);
+  await replayed(record, sealed);
   assert.deepEqual(verdict.notes, []);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(judged.some((q) => /Questionable starter/.test(q)));

@@ -1,9 +1,9 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import type { ArtifactKind, SealedArtifact } from '@quack/sdk';
+import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
 import { citedIds } from './marks.ts';
-import { sourceText, SourcesDoc } from './tools.ts';
+import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 export { citedIds };
 
@@ -106,16 +106,35 @@ export function evidenceOf(report: string, request: string | undefined, texts: M
   };
 }
 
+/** The evidence from the fetch log, a reader of the kept source files and the request, wherever those come from. */
+async function evidenceFrom(report: string, sources: SourceRecord[], read: (path: string) => Promise<string | undefined>, request: string | undefined): Promise<Evidence> {
+  const texts = new Map<string, string>();
+  for (const id of citedIds(report)) {
+    const rec = sources.find((s) => s.id === id);
+    const t = rec && (await read(sourcePath(rec.hash)));
+    if (t !== undefined) texts.set(id, t);
+  }
+  return evidenceOf(report, request, texts, sources.map((s) => s.id));
+}
+
 export function reportEvidence() {
   return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Evidence> => {
     const fetched = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources ?? [];
-    const texts = new Map<string, string>();
-    for (const id of citedIds(sealed.content)) {
-      const t = await sourceText(api, id, ctx);
-      if (t !== undefined) texts.set(id, t);
-    }
-    return evidenceOf(sealed.content, await requestText(api, ctx), texts, fetched.map((s) => s.id));
+    const read = async (path: string) => {
+      const r = await api.env?.readTextFile(path, ctx);
+      return r?.ok ? r.value : undefined;
+    };
+    return evidenceFrom(sealed.content, fetched, read, await requestText(api, ctx));
   };
+}
+
+/** The same evidence from a recording, as it stood when the report was sealed: sources fetched later were not in the log yet. */
+export async function recordedReportEvidence(session: RecordedSession, content: string): Promise<Evidence> {
+  const sealed = session.artifacts[reportKind.kind]?.findLast((v) => v.content === content);
+  if (!sealed) throw new Error('the report is not a version this session sealed, so what it had fetched by then is unknown');
+  if (!session.readFile || !session.inputs) throw new Error('the recording keeps no workspace or no messages, so the fetched sources or the request are missing');
+  const sources = ((session.docs['research.sources']?.sources ?? []) as unknown as SourceRecord[]).filter((s) => s.fetchedAt <= sealed.sealedAt);
+  return evidenceFrom(content, sources, session.readFile, session.inputs[0]?.trim() || undefined);
 }
 
 type FindingState = { cited: boolean; first: string; misquotes: string[] };
