@@ -8,6 +8,8 @@ import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
+import { readSession } from '@quack/eval';
+import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -191,7 +193,8 @@ async function runTrends(d: TrendsDecision, news?: Parameters<typeof buildTrends
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    await s.close();
+    return { record: await readSession(dir), sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -200,14 +203,16 @@ async function runTrends(d: TrendsDecision, news?: Parameters<typeof buildTrends
 
 test('the workflow seals a trends card; with no news source the news checks are skipped and the verdict says so', async () => {
   const bare: TrendsDecision = { ...decision, items: decision.items.slice(1) };
-  const { sealed, verdict } = await runTrends(bare);
+  const { sealed, verdict, record } = await runTrends(bare);
+  await replayed(record, sealed);
   assert.deepEqual((JSON.parse(sealed.content) as TrendsCard).items.map((i) => i.player?.name), ['Will Wing', 'Fred Fresh']);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@2', [], true, ['source conflicts and original sources not checked: no news source']]);
   assert.deepEqual(verdict.checks.map((k) => k.id).filter((id) => !['item_shape', 'no_bare_ids'].includes(id)), []);
 });
 
 test('with a news source the conflict, original-source and aggregator checks are scored', async () => {
-  const { sealed, verdict, judged } = await runTrends(decision, async () => [item]);
+  const { sealed, verdict, judged, record } = await runTrends(decision, async () => [item]);
+  assert.deepEqual(await replayed(record, sealed), await trendsEvidence(await factsOf(async () => [item]))(null, sealed), 'the recording rebuilds the evidence the judge read');
   assert.equal((JSON.parse(sealed.content) as TrendsCard).items[0].link, item.url);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@2', [], true, []]);
   assert.deepEqual(verdict.checks.map((k) => k.id).sort(), ['aggregator_only', 'conflict_stated', 'item_shape', 'no_bare_ids', 'original_source_named']);

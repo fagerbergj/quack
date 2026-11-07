@@ -1,19 +1,18 @@
-import type { JsonValue } from '@earendil-works/chord';
 import type { Schema } from '@earendil-works/pi-schema';
 import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { type JudgeOptions, type Rubric } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { newsLink } from '../lineup/news.ts';
-import { cardsKind } from '../lineup/card.ts';
 import { liveLeague } from '../snapshot.ts';
 import { kickoffTimes } from '../games.ts';
-import { newsGated } from '../rubric-kit.ts';
+import { cardSteps } from '../job.ts';
+import type { NewsGate } from '../rubric-kit.ts';
 import { round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { RECAP_LAG_MS, RECAP_STALE_MS } from './jobs.ts';
 import { buildDigestCard, buildDigestFacts, type DigestDecision, type DigestFacts } from './digest.ts';
 import { buildRetroCard, buildRetroFacts, type RetroDecision, type RetroFacts } from './retro.ts';
-import { digestEvidence, digestRubric, retroEvidence, retroRubric } from './rubric.ts';
+import { DIGEST_NEWS, digestEvidence, digestRubric, RETRO_NEWS, retroEvidence, retroRubric } from './rubric.ts';
 import { weekPhase, type Phase } from './week.ts';
 
 export const DIGEST_WORKFLOW = 'sleeper.digest';
@@ -30,7 +29,7 @@ type Spec<F, D> = {
   ready: (phase: Phase) => boolean;
   rubric: Rubric;
   /** Checks that need a news source; they are scored only once one is wired, and the verdict says so. */
-  newsChecks: string[];
+  news: NewsGate;
   facts: (deps: FactsDeps, snap: any, input: LineupInput, at: number) => Promise<F>;
   schema: Schema;
   prompt: (f: F) => string;
@@ -41,7 +40,6 @@ type Spec<F, D> = {
 /** facts (code), one model decision, a sealed card (code), then the judge's verdict on it: the lineup job's shape. */
 function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(spec.rubric, spec.newsChecks, !!deps.news, spec.newsChecks.join(', '));
   return defineWorkflow({
     name: spec.name,
     steps: [
@@ -63,22 +61,7 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
           return new Wait(Math.min(now + RECHECK_MS, give));
         },
       },
-      {
-        name: 'facts',
-        kind: 'code',
-        run: async (c) => {
-          const i = input(c);
-          return (await spec.facts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'card',
-        kind: 'judged',
-        schema: spec.schema,
-        prompt: (c) => spec.prompt(c.prior.facts as unknown as F),
-        card: (c, d) => spec.card(c.prior.facts as unknown as F, d as unknown as D),
-        judge: (c) => ({ options: { kind: cardsKind, rubric, evidence: spec.evidence(c.prior.facts as unknown as F), maxRevisions: 1, classifier: deps.classifier }, notes }),
-      },
+      ...cardSteps<F, D>(deps, { ...spec, facts: async (_c, i, at) => spec.facts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at) }),
     ],
   });
 }
@@ -143,8 +126,8 @@ const retroSchema = obj({ misses: arr(call), waiverMisses: arr(call), lessons: a
 
 /** Digest job: a preview before the week's first kickoff or a recap once its last game is final; code writes every number. */
 export const digestWorkflow = (deps: ReportDeps) =>
-  reportWorkflow<DigestFacts, DigestDecision>(deps, { name: DIGEST_WORKFLOW, ready: (p) => p !== 'live', rubric: digestRubric, newsChecks: ['preview_news_decides'], facts: buildDigestFacts, schema: digestSchema, prompt: digestPrompt, card: buildDigestCard, evidence: digestEvidence });
+  reportWorkflow<DigestFacts, DigestDecision>(deps, { name: DIGEST_WORKFLOW, ready: (p) => p !== 'live', rubric: digestRubric, news: DIGEST_NEWS, facts: buildDigestFacts, schema: digestSchema, prompt: digestPrompt, card: buildDigestCard, evidence: digestEvidence });
 
 /** Retro job: the owner's week after its last game; code builds the best lineup and the miss rows, the model writes `why`, `lessons` and `summary`. */
 export const retroWorkflow = (deps: ReportDeps) =>
-  reportWorkflow<RetroFacts, RetroDecision>(deps, { name: RETRO_WORKFLOW, ready: (p) => p === 'recap', rubric: retroRubric, newsChecks: ['signal_is_evidence'], facts: (d, snap, i) => buildRetroFacts(d, snap, i), schema: retroSchema, prompt: retroPrompt, card: buildRetroCard, evidence: retroEvidence });
+  reportWorkflow<RetroFacts, RetroDecision>(deps, { name: RETRO_WORKFLOW, ready: (p) => p === 'recap', rubric: retroRubric, news: RETRO_NEWS, facts: (d, snap, i) => buildRetroFacts(d, snap, i), schema: retroSchema, prompt: retroPrompt, card: buildRetroCard, evidence: retroEvidence });

@@ -1,5 +1,5 @@
-// Judges recorded cases under one or more rubric arms, N times, and prints the met table; an arm's ref is "." or a git ref (docs/README.md).
-// Usage: node packages/eval/src/replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--classifier <provider/model>] [--arm label=ref]... [--repeat N] [--concurrency N]
+// Judges recorded cases under one or more arms, N times, and prints the met table; an arm is label=ref[:classifier] (docs/README.md).
+// Usage: node packages/eval/src/replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--classifier <provider/model>] [--arm label=ref[:none|:provider/model]]... [--repeat N] [--concurrency N]
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,7 +26,7 @@ async function adaptersAt(ref: string) {
   }
 }
 
-const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--classifier <provider/model>] [--arm label=ref]... [--repeat N] [--concurrency N]';
+const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--classifier <provider/model>] [--arm label=ref[:none|:provider/model]]... [--repeat N] [--concurrency N]';
 const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, classifier: { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' } } });
 if (!values.cases || !values.deployment || !values.judge?.includes('/')) throw new Error(usage);
 const repeat = Number(values.repeat);
@@ -35,12 +35,17 @@ if (!Number.isInteger(repeat) || repeat < 1 || !Number.isInteger(concurrency) ||
 
 const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(values.deployment, 'utf8'))));
 const ref = (s: string) => ({ provider: s.slice(0, s.indexOf('/')), modelId: s.slice(s.indexOf('/') + 1) });
-const classifierRef = values.classifier ? ref(values.classifier) : undefined;
-const classifier = classifierRef && { ...classifierRef, maxInputTokens: deployment.providers[classifierRef.provider]?.models?.[classifierRef.modelId]?.contextWindow ?? 8192 };
+const classifierOf = (s: string) => {
+  if (!s.includes('/')) throw new Error(`classifier "${s}" is neither provider/model nor none`);
+  const r = ref(s);
+  return { ...r, maxInputTokens: deployment.providers[r.provider]?.models?.[r.modelId]?.contextWindow ?? 8192 };
+};
 const arms: Arm[] = [];
+// A ref cannot contain ":", so what follows one names the arm's classifier: "none" or provider/model; absent, --classifier's.
 for (const spec of values.arm ?? ['current=.']) {
-  const [label, at] = spec.split('=');
-  arms.push({ label, adapters: await adaptersAt(at ?? '.') });
+  const [label, rest = '.'] = spec.split('=');
+  const [at, cls = values.classifier ?? 'none'] = rest.split(':');
+  arms.push({ label, adapters: await adaptersAt(at), classifier: cls === 'none' ? undefined : classifierOf(cls) });
 }
-const rows = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge), classifier });
-console.log(table(rows, arms.map((a) => a.label)));
+const result = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge) });
+console.log(table(result, arms.map((a) => a.label)));

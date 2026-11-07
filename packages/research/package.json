@@ -12,6 +12,7 @@
     "unpdf": "2.1.0"
   },
   "devDependencies": {
+    "@quack/eval": "*",
     "@quack/session": "*"
   }
 }

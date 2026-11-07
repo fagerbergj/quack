@@ -1,10 +1,13 @@
 import type { ExtensionManifest } from '@quack/sdk';
 import { defineContract } from './action.ts';
 import { contractsSessionExtensions, type ContractsConfig } from './index.ts';
+import { contractRubric, recordedSpecEvidence } from './rubric.ts';
+import { CONTRACT_KIND } from './spec.ts';
 
 export const manifest: ExtensionManifest = {
   name: 'contracts',
   optional: ['judge'],
   actions: [defineContract],
+  evalAdapters: [{ kind: CONTRACT_KIND, judge: { rubric: contractRubric, evidence: recordedSpecEvidence } }],
   session: (config) => contractsSessionExtensions(config as ContractsConfig),
 };

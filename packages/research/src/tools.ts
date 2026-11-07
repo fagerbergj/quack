@@ -25,7 +25,7 @@ export const SourcesDoc = defineDoc<{ sources: SourceRecord[] }>({
 
 const MAX_CHARS = 30_000;
 const MAX_STORED_CHARS = 500_000;
-const sourcePath = (hash: string) => `sources/${hash}.txt`;
+export const sourcePath = (hash: string) => `sources/${hash}.txt`;
 
 /** The text kept for a fetched source, looked up by its id and keyed by the recorded hash; best-effort per session directory, so undefined when none was kept (a failed write, a fork with a fresh directory). */
 export async function sourceText(api: ToolExecutionApi, id: string, ctx: Context): Promise<string | undefined> {

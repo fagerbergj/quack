@@ -1,16 +1,12 @@
-import type { JsonValue } from '@earendil-works/chord';
 import { arr, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
-import { type JudgeOptions } from '@quack/judge';
-import { defineWorkflow, type StepContext } from '@quack/workflows';
+import { defineWorkflow } from '@quack/workflows';
 import { newsLink } from '../lineup/news.ts';
 import type { Json } from '../client.ts';
-import { cardsKind } from '../lineup/card.ts';
-import type { LineupInput } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildTrendsCard, KINDS, when, type TrendsDecision } from './card.ts';
 import { buildTrendsFacts, type SnapshotRef, type TrendsFacts } from './facts.ts';
-import { NEWS_CHECKS, TEXT_MAX, trendsEvidence, trendsRubric } from './rubric.ts';
-import { newsGated } from '../rubric-kit.ts';
+import { TEXT_MAX, TRENDS_NEWS, trendsEvidence, trendsRubric } from './rubric.ts';
+import { cardSteps } from '../job.ts';
 
 export const TRENDS_WORKFLOW = 'sleeper.trends';
 
@@ -53,28 +49,11 @@ export function factsPrompt(f: TrendsFacts): string {
 
 /** Trends job: facts, one model step for prose, a sealed card, then the judge's verdict on it. */
 export function trendsWorkflow(deps: TrendsDeps) {
-  const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(trendsRubric, NEWS_CHECKS, !!deps.news, 'source conflicts and original sources');
-  const judgeOptions = (f: TrendsFacts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: trendsEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: TRENDS_WORKFLOW,
-    steps: [
-      {
-        name: 'facts',
-        kind: 'code',
-        run: async (c) => {
-          const i = input(c);
-          return (await buildTrendsFacts(deps, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'card',
-        kind: 'judged',
-        schema: decisionSchema,
-        prompt: (c) => factsPrompt(c.prior.facts as unknown as TrendsFacts),
-        card: (c, d) => buildTrendsCard(c.prior.facts as unknown as TrendsFacts, d as unknown as TrendsDecision),
-        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as TrendsFacts), notes }),
-      },
-    ],
+    steps: cardSteps<TrendsFacts, TrendsDecision>(deps, {
+      facts: async (_c, i, at) => buildTrendsFacts(deps, await deps.snapshot(i.league), i, at),
+      schema: decisionSchema, prompt: factsPrompt, card: buildTrendsCard, rubric: trendsRubric, news: TRENDS_NEWS, evidence: trendsEvidence,
+    }),
   });
 }

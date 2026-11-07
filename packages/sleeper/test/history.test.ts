@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { Artifacts, serveApp } from '@quack/sdk';
+import { readSession } from '@quack/eval';
+import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -113,7 +115,8 @@ async function run(d: HistoryDecision) {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[] } };
+    await s.close();
+    return { record: await readSession(dir), sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[] } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -121,7 +124,8 @@ async function run(d: HistoryDecision) {
 }
 
 test('the workflow seals a history card whose figures are the tools and the judge passes it', async () => {
-  const { sealed, verdict, judged } = await run(decision);
+  const { sealed, verdict, judged, record } = await run(decision);
+  assert.deepEqual(await replayed(record, sealed), await historyEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
   const c = JSON.parse(sealed.content) as HistoryCard;
   assert.deepEqual([c.kind, c.seasons.map((s) => s.season), c.seasons[1].draft!.length], ['history', ['2026', '2025'], 3]);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@4', [], true]);

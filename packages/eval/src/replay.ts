@@ -5,16 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonObject } from '@earendil-works/pi-durable';
-import type { EvalService } from '@quack/sdk';
+import type { EvalAdapter, EvalService } from '@quack/sdk';
 import { childPort } from '@quack/session';
 import type { DatasetItem } from './langfuse.ts';
 import { stopChild, untilSettled } from './driver.ts';
 import { readSession, type SessionRecord } from './record.ts';
+import { adapterScores, servicesOf } from './adapters.ts';
 
 export type { EvalService };
 export type EvalServices = Record<string, (pin: JsonObject) => Promise<EvalService>>;
 export type Candidate = { deployment: string; agent: string; env?: Record<string, string> };
-export type ReplayResult = { item: DatasetItem; seconds: number; record: SessionRecord; captured: unknown[]; error?: string };
+/** `codeScores` are the adapters' rubric code checks, scored while the session directory their evidence may read still exists. */
+export type ReplayResult = { item: DatasetItem; seconds: number; record: SessionRecord; captured: unknown[]; codeScores: Record<string, number>; error?: string };
 
 const RUNTIME = fileURLToPath(new URL('../../runtime/src/main.ts', import.meta.url));
 
@@ -25,7 +27,8 @@ const crashLine = (stderr: string) => {
 };
 
 /** Replays one item in a fresh session on the candidate definition; nothing it does is delivered (EVL-2). */
-export async function replay(item: DatasetItem, candidate: Candidate, services: EvalServices, timeoutMs = 30 * 60_000): Promise<ReplayResult> {
+export async function replay(item: DatasetItem, candidate: Candidate, adapters: EvalAdapter[], timeoutMs = 30 * 60_000): Promise<ReplayResult> {
+  const services = servicesOf(adapters);
   const { inputs, pins } = item.input as { inputs: string[]; pins: Record<string, JsonObject> };
   const missing = Object.keys(pins).filter((k) => !services[k]);
   if (missing.length) throw new Error(`no eval service for pinned ${missing.join(', ')}`);
@@ -53,6 +56,10 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   }
   const seconds = Math.round((Date.now() - started) / 1000);
   // The session dir holds a clone of the repository; it goes once read, so a 20-item run does not fill the disk.
-  const record = await readSession(dir).finally(() => rm(dir, { recursive: true, force: true }));
-  return { item, seconds, record, captured: doubles.flatMap((d) => d.captured), error };
+  try {
+    const record = await readSession(dir);
+    return { item, seconds, record, captured: doubles.flatMap((d) => d.captured), codeScores: await adapterScores(adapters, record), error };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }

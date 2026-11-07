@@ -17,7 +17,7 @@ export { lintJsonSchema } from './json-schema-rules.ts';
 export { schemaBreaks } from './json-schema-diff.ts';
 export { lintTypeScript } from './typescript-rules.ts';
 export { typeScriptBreaks } from './typescript-diff.ts';
-export { contractRubric, guideAnchors, specEvidence } from './rubric.ts';
+export { contractRubric, guideAnchors, recordedSpecEvidence, specEvidence } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { manifest } from './manifest.ts';
 
@@ -32,11 +32,11 @@ const onCleared = async (sealed: SealedArtifact, v: { passed: boolean }, api: To
 
 export type ContractsConfig ={ maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
 
-/** The contracts extension's session half: the question tool, the spec artifact and the judge that checks it against the kind's guide. */
-export function contractsSessionExtensions(config: ContractsConfig = {}): Extension[] {
+/** The contracts extension's session half: the question tool, the spec artifact and the judge that checks it against the kind's guide; `evidence` is a seam for tests to watch what the judge reads. */
+export function contractsSessionExtensions(config: ContractsConfig = {}, evidence = specEvidence()): Extension[] {
   return [
     defineExtension({ name: 'contracts', tools: contractTools, hooks: [awaitingApproval()] }),
     artifactsExtension([specKind]),
-    judge({ kind: specKind, rubric: contractRubric, evidence: specEvidence(), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_contract', onCleared }),
+    judge({ kind: specKind, rubric: contractRubric, evidence, maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_contract', onCleared }),
   ];
 }

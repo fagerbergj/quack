@@ -1,5 +1,5 @@
 import type { Evidence, Rubric } from '@quack/judge';
-import { parseCard } from '../rubric-kit.ts';
+import { parseCard, type NewsGate } from '../rubric-kit.ts';
 import type { DigestCard, DigestFacts } from './digest.ts';
 import type { RetroCard, RetroFacts } from './retro.ts';
 
@@ -77,3 +77,7 @@ export const retroRubric: Rubric = {
     ] },
   ],
 };
+
+/** The report jobs' news checks, gated by the live judge and its replay alike. */
+export const DIGEST_NEWS: NewsGate = { checks: ['preview_news_decides'], what: 'preview_news_decides' };
+export const RETRO_NEWS: NewsGate = { checks: ['signal_is_evidence'], what: 'signal_is_evidence' };

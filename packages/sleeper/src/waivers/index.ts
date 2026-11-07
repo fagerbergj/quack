@@ -4,7 +4,6 @@ import { waiversWorkflow, WAIVERS_WORKFLOW } from './workflow.ts';
 export { buildWaiversCard, type WaiversCard } from './card.ts';
 export { buildWaiverFacts, type WaiverFacts } from './facts.ts';
 export { nextProcessing, registerWaiversSchedules, startWaivers, waiversKey, waiversRun, WAIVERS_AGENT } from './jobs.ts';
-export { waiversEvalAdapter } from './adapter.ts';
 export { waiversEvidence, waiversRubric } from './rubric.ts';
 export { waiversWorkflow, WaiversFactsDoc, WAIVERS_FACTS_KIND, WAIVERS_WORKFLOW, type WaiversDeps } from './workflow.ts';
 
