@@ -1,0 +1,284 @@
+{
+  "episodes": [
+    {
+      "key": "github:fagerbergj/quack#2169",
+      "chars": 6038,
+      "adds": 1,
+      "memories": 5,
+      "seconds": 17.9,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2170",
+      "chars": 9696,
+      "adds": 1,
+      "memories": 8,
+      "seconds": 24.9,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2171",
+      "chars": 4890,
+      "adds": 1,
+      "memories": 5,
+      "seconds": 13.5,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2172",
+      "chars": 5979,
+      "adds": 1,
+      "memories": 4,
+      "seconds": 12.8,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2173",
+      "chars": 7074,
+      "adds": 1,
+      "memories": 6,
+      "seconds": 17.2,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2175",
+      "chars": 13165,
+      "adds": 2,
+      "memories": 13,
+      "seconds": 35.9,
+      "llm_calls": 2,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2176",
+      "chars": 27935,
+      "adds": 3,
+      "memories": 19,
+      "seconds": 75.7,
+      "llm_calls": 3,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2177",
+      "chars": 37834,
+      "adds": 4,
+      "memories": 30,
+      "seconds": 96.1,
+      "llm_calls": 4,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2178",
+      "chars": 10859,
+      "adds": 1,
+      "memories": 5,
+      "seconds": 22.8,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2179",
+      "chars": 4409,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 10.3,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2180",
+      "chars": 4516,
+      "adds": 1,
+      "memories": 4,
+      "seconds": 13.5,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2181",
+      "chars": 9164,
+      "adds": 1,
+      "memories": 2,
+      "seconds": 16.6,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2182",
+      "chars": 14768,
+      "adds": 2,
+      "memories": 6,
+      "seconds": 33.7,
+      "llm_calls": 2,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2183",
+      "chars": 3474,
+      "adds": 1,
+      "memories": 2,
+      "seconds": 9.9,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2117",
+      "chars": 4915,
+      "adds": 1,
+      "memories": 2,
+      "seconds": 9.2,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2184",
+      "chars": 6309,
+      "adds": 1,
+      "memories": 5,
+      "seconds": 18.1,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2185",
+      "chars": 16878,
+      "adds": 2,
+      "memories": 7,
+      "seconds": 33.0,
+      "llm_calls": 2,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2186",
+      "chars": 3456,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 9.8,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2187",
+      "chars": 30770,
+      "adds": 3,
+      "memories": 16,
+      "seconds": 62.0,
+      "llm_calls": 3,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2191",
+      "chars": 21999,
+      "adds": 2,
+      "memories": 8,
+      "seconds": 43.9,
+      "llm_calls": 2,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2192",
+      "chars": 6181,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 12.6,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2194",
+      "chars": 5076,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 10.7,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2195",
+      "chars": 17769,
+      "adds": 2,
+      "memories": 11,
+      "seconds": 38.4,
+      "llm_calls": 2,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2188",
+      "chars": 5400,
+      "adds": 1,
+      "memories": 5,
+      "seconds": 14.5,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2196",
+      "chars": 14761,
+      "adds": 2,
+      "memories": 8,
+      "seconds": 31.2,
+      "llm_calls": 2,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2197",
+      "chars": 6882,
+      "adds": 1,
+      "memories": 4,
+      "seconds": 15.5,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2198",
+      "chars": 5749,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 13.3,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2199",
+      "chars": 5869,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 11.7,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2200",
+      "chars": 9184,
+      "adds": 1,
+      "memories": 3,
+      "seconds": 18.3,
+      "llm_calls": 1,
+      "errors": []
+    },
+    {
+      "key": "github:fagerbergj/quack#2201",
+      "chars": 10020,
+      "adds": 1,
+      "memories": 2,
+      "seconds": 18.2,
+      "llm_calls": 1,
+      "errors": []
+    }
+  ],
+  "stats": {
+    "llm_calls": 43,
+    "llm_seconds": 284.7267873287201,
+    "llm_errors": [],
+    "malformed_json": 0,
+    "truncated": 0,
+    "embed_calls": 129,
+    "embed_seconds": 461.683146238327,
+    "embed_errors": []
+  }
+}

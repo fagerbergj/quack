@@ -1,0 +1,10 @@
+{
+  "providers": {
+    "local": {"baseUrl": "http://100.64.0.6:11436/v1", "models": {"qwen3.8-27b": {"contextWindow": 131072, "maxTokens": 32768, "reasoning": true, "images": true, "price": {"input": 0.04, "output": 2.5, "cacheRead": 0.02}}}},
+    "clef": {"baseUrl": "http://100.64.0.6:11436/upstream/clef/v1", "api": "systemone", "models": {"clef": {"contextWindow": 8192, "price": {"input": 0.24}}}}
+  },
+  "defaultModel": "local/qwen3.8-27b",
+  "extensions": {
+    "github": {"settings": {"implementerAgent": "implementer", "issueBase": {"fagerbergj/quack": "v1"}}}
+  }
+}

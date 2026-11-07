@@ -1,0 +1,302 @@
+{
+  "arm": "off",
+  "item": "reviewer-e47bb7c065ddfa26",
+  "scores": {
+    "checker_score": 0.8947368421052632,
+    "passed": 1,
+    "revisions": 1,
+    "turns": 28,
+    "seconds": 216,
+    "input_tokens": 961131,
+    "output_tokens": 15447,
+    "delivered": 1,
+    "answered": 1
+  },
+  "error": null,
+  "pinned": "",
+  "outcome": {
+    "status": "done",
+    "answer": "\n\nThe review passed (89%) and posted as **APPROVE**.\n\nVerdict: approve — 0 blocking, 0 suggestion, 1 nit (the comment/test example-number mismatch), 0 question."
+  },
+  "finals": {
+    "github.review": [
+      {
+        "version": 1,
+        "verdict": {
+          "run": "9",
+          "passed": true,
+          "limitReached": false,
+          "score": 0.8947368421052632,
+          "gatesFailed": [],
+          "rubric": "github.reviewer@5",
+          "checks": [
+            {
+              "criterion": "claims_grounded",
+              "id": "cites_existing_lines",
+              "label": "Cites a line that doesn't exist",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "quotes_exist",
+              "label": "Quotes code that isn't there",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "blocking_names_anchor",
+              "label": "Blocking issue names no concrete cause",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "structured_verdict",
+              "id": "verdict_present",
+              "label": "Review has no verdict",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "structured_verdict",
+              "id": "verdict_matches_labels",
+              "label": "Verdict disagrees with the findings",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "catches_real_issues",
+              "id": "approval_grounded",
+              "label": "Approves without saying why it is safe",
+              "weight": 3,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "approve"
+            },
+            {
+              "criterion": "catches_real_issues",
+              "id": "promises_handled",
+              "label": "A promised behavior is missing",
+              "weight": 3,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "change"
+            },
+            {
+              "criterion": "catches_real_issues",
+              "id": "toolchain_as_defect",
+              "label": "Blames code for a tooling failure",
+              "weight": -4,
+              "met": 0,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "change"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "matches_cited_code",
+              "label": "Cited code doesn't show the claim",
+              "weight": 3,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "agent-model": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "shows_how",
+              "label": "Blocking issue doesn't show how it fails",
+              "weight": 2,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "verified_names_evidence",
+              "label": "Says verified without saying what was run",
+              "weight": 2,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "review"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "contradicted",
+              "label": "Cited code contradicts the finding",
+              "weight": -4,
+              "met": 0,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "says_why",
+              "label": "Doesn't say why a finding matters",
+              "weight": 3,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "agent-model": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "shows_proposed_change",
+              "label": "Proposes a change without showing the code",
+              "weight": 2,
+              "met": 0,
+              "units": 1,
+              "resolvers": {
+                "agent-model": 1
+              },
+              "notes": [
+                "finding-1: The finding proposes aligning two example numbers but does not present the proposed change in a fenced code block with a language tag; it only describes the fix in prose."
+              ],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "answerable",
+              "label": "Finding is too vague to act on",
+              "weight": 1,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "agent-model": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "no_reason_given",
+              "label": "Says it's wrong with no reason",
+              "weight": -2,
+              "met": 0,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "anchor_borne_out",
+              "label": "Blocking issue isn't backed by the code",
+              "weight": 3,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "preference_only",
+              "label": "Blocks on mere preference",
+              "weight": -3,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "blocks_without_consequence",
+              "label": "Blocks with nothing that actually breaks",
+              "weight": -4,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "wrong_output_below_blocking",
+              "label": "A serious bug is listed as minor",
+              "weight": -2,
+              "met": 0,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "lower"
+            },
+            {
+              "criterion": "structured_verdict",
+              "id": "takeaway_actionable",
+              "label": "Takeaway isn't a quick, clear action",
+              "weight": 2,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "review"
+            }
+          ],
+          "undecided": []
+        },
+        "content": "## Takeaway\nSound, well-tested swap of a flaky per-claim model question for a deterministic whole-card code check that both covers the writer's mechanical bye rule and stays compatible with pre-`short` recorded facts — approve.\n\n## Verdict\napprove\n\n## Findings\n- nit: v1/packages/sleeper/src/waivers/rubric.ts:62 — the comment's example (\"proj 4.11 does not name week 11\") and the test at `v1/packages/sleeper/test/waivers.test.ts:217` (\"proj 4.10\" vs week 10) illustrate the same lookbehind/lookaround rule with different numbers. They agree on the behaviour; just align the two example numbers so a reader isn't left wondering which one is real.\n\n## Verified\n- Ran the sleeper suite: 141/141 pass (`node --test packages/sleeper/test/*.test.ts`).\n- Probed the recorded `waivers.json` facts directly: the good card's mine team has one bye hole (`{week:10,pos:'WR',out:3,short:1}`) and the two adds (RB `bye:null`, WR `bye:null`) cover it (`covers=1 >= short=1`) with nothing unflagged, so the clean `{met:0}` is genuine coverage, not an accident.\n- Traced the new `byeCoverage` (rubric.ts:49) against the writer's rule in `agents/sleeper-waivers/prompt.md:19`: hole half counts position-matching adds on a *different* bye against `short`; the flag half requires the add's own week to sit beside bye/sits/idle/off within one sentence, rejecting another team's bye and decimal weeks. The regex guards (`(?<![\\d.])`, `(?!\\.?\\d)`, sentence-scoped gap) match every branch in the new test.\n- Confirmed `teamNeeds` now stores `short = required(pos) - (here.length - out)` (facts.ts:85) — starting slots only, no COVER, matching the \"starting slots the bye leaves empty\" doc, and equivalent to the old `here.length - out < required(pos)` hole test plus the now-stored width.\n- Confirmed the sibling code checks (`contextFieldsMatch`, `dropNotWorthMore`, `widelyOwnedAccounted`) all take `(artifact, ev)` and the judge invokes `k.code!(artifact, ev)` (judge/src/index.ts:35); `byeCoverage` fits the pattern, and the judge records `units:1` independent of the check's internal `flaws/units` fraction.\n- Removing `bye_exposure` from the row unit (rubric.ts:91) is safe: no rubric question references it, and the model still sees the same data via the card-scope `table: f.table` (rubric.ts:100) and the add's own `row.bye`, so nothing the model relied on was dropped.\n- `version.lock` hash verified against the bundle (`node --test tools/bundle-locks.test.ts`), version bumped 2→3 consistently in `agent.json`, `version.lock`; rubric bumped 5→6 and the two workflow tests assert `sleeper.waivers@6`.\n- `go run ./tools/promptlint diff origin/v1` → ok; `node tools/sloplint.ts diff origin/v1` → ok.\n\n## Notes\n- The `h.short ?? 1` fallback (rubric.ts:54) is a lower bound, not an exact reconstruction: a pre-`short` 2-slot hole would be scored as 1-slot. That only affects re-scoring recorded facts sealed before `short` landed, and new facts always carry it, so it is an acceptable, documented tradeoff rather than a code-path defect. The PR text's \"every hole in them has `out: 1`, which forces `short: 1`\" is true of those specific cards but not a general implication of `out: 1` (a lone starter on bye can still leave a 2-slot hole), so the wording slightly overstates the guarantee.\n- Architecture is a clean win: the pitfall is now a property of the whole plan computed from the facts, eliminating the per-claim non-determinism (0 / 0.33 / 0.67 on the same card) and removing one model question per claim.\n"
+      }
+    ]
+  }
+}

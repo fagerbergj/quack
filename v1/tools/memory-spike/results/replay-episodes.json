@@ -1,0 +1,306 @@
+{
+  "arm": "episodes",
+  "item": "reviewer-e47bb7c065ddfa26",
+  "scores": {
+    "checker_score": 0.9166666666666667,
+    "passed": 1,
+    "revisions": 1,
+    "turns": 24,
+    "seconds": 272,
+    "input_tokens": 817712,
+    "output_tokens": 17792,
+    "delivered": 1,
+    "answered": 1
+  },
+  "error": null,
+  "pinned": "[#2198 2026-11-05T15:00Z \"fix(judge): a pitfall's feedback quotes the units where it is present\" | Request 1]\nReview pull request fagerbergj/quack#2198 (label quack:review).\nTitle: fix(judge): a pitfall's feedback quotes the units where it is present\nHead: d1c111016fd3818c9ec18891a03b11dd9adda34d on fix/judge-pitfall-notes; base: v1\n\nA pitfall's feedback now quotes the reason from the units where the pitfall is present, not the units where it is absent.\n\n## Why\n\nThe judge kept a unit's reason only on a \"no\" answer (`resolve.ts` dropped the reason on \"yes\", and `index.ts` recorded notes only when `met === false`). For a gate or a positive check a \"no\" is the defect, so that was right. For a pitfall the defect is a \"yes\", so a pitfall's feedback read like this, from sleeper waivers week 9 v2:\n\n> pitfall pitfalls.bye_coverage (1 of 3): claim1: Gesicki's own bye is Week 6 … so no bye inside the lead time is missed …; claim2: Juwan Johnson's bye is week 8 … he does not miss a bye\n\nThe reviser is told a pitfall is present and then given only reasons why it isn't. Across the 44 judged sleeper cards on prod, `bye_coverage` and `crowd_metric_as_value` fire on 6 of 7 and 5 of 7 waivers cards, and none of those verdicts says where the pitfall was.\n\n## Change\n\n---\n\n[#2198 2026-11-05T15:00Z \"fix(judge): a pitfall's feedback quotes the units where it is present\" | Request 1]\n- New test `a pitfall keeps the reason where it is present, a met check keeps none` fails on v1 and passes here. Judge suite 21/21.\n- Full v1 suite: 751/754. The three failures are the reMarkable `rmc` render tests, which need the Python `rmc` module missing on my laptop; CI has it.\n- Live: I re-judged two recorded waivers cards on prod with this judge mounted (local qwen3.8-27b). Every pitfall share now carries the reason where the pitfall is present, for example:\n  - `bye_coverage` (1 of 3): \"claim3: The Chicago Bears DEF (bye Week 10) is only one week out in Week 9, yet the bye_exposure for Week 10 lists only TE out:1 with no DEF entry\"\n  - `crowd_metric_as_value` (2 of 3): \"claim1: The 'why' field explicitly cites 'only 25.7% owned' as a reason the player is a good add\"\n\n  Seeing those reasons is what showed that `crowd_metric_as_value` also fires on ownership used as how hard a player is to land (\"49.2% … leaves ~5 teams without him, safer to land at priority 8\"). That rubric fix comes in a separate PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---\n\n[#2199 2026-11-05T15:02Z \"fix(sleeper): a news item keeps the excerpt that ties it to the player\" | Final answer]\n**Approve** posted — 0 blocking, 2 nits: https://github.com/fagerbergj/quack/pull/2199#pullrequestreview-5787138216\n\n---\n\n[#2201 2026-11-05T15:31Z \"fix(sleeper): waivers checks stop faulting ownership read as scarcity\" | Request 1]\nReview pull request fagerbergj/quack#2201 (label quack:review).\nTitle: fix(sleeper): waivers checks stop faulting ownership read as scarcity\nHead: 52574e7c92af185dbdde771019f93813b340f0d8 on fix/sleeper-waivers-crowd-checks; base: v1\n\nTwo waivers checks stop faulting a claim for how it treats ownership. `ranked_on_usage` asks only about role and usage, or for a team defense or kicker, its matchup. `crowd_metric_as_value` fires only when a crowd number is offered as evidence the player will score.\n\n## Why\n\nOn prod, `ranked_on_usage` failed 5 of 7 judged waivers cards. Its question also required \"trending and ownership counts framed as scarcity\", so the judge failed claims that never mention them: \"grounds the rank purely in role … but the 59.7% ownership figure is not framed as scarcity\". `crowd_metric_as_value` already guards a crowd number used as value.\n\nWith #2198 the pitfall's reasons became visible, and they showed it firing on ownership used as how hard a player is to land: \"cites the 49.2% ownership number … 'leaves ~5 teams without him, safer to land at priority 8'\". That framing is the one the rubric wants.\n\n## Checked\n\n---\n\n[#2201 2026-11-05T15:31Z \"fix(sleeper): waivers checks stop faulting ownership read as scarcity\" | Request 1]\nRe-judged recorded waivers cards on prod (local qwen3.8-27b, #2198's judge): eae1f01b v2 and v3 (week 9) and cc2f47d2 v5 (week 8), the versions whose stored facts match, × 2 reps.\n\n| Arm | Pass | `ranked_on_usage` met | `crowd_metric_as_value` present | Mean s |\n|---|---|---|---|---|\n| v4 (current) | 1/6 | 0.33–1.00 | 0.33–0.67 on 4 of 4 week-9 runs | 97 |\n| v5 without the defense/kicker clause | 2/6 | 0.67–1.00 | 0 on 6/6 | 94 |\n| v5 (this PR) | 3/6 | 1.00 on 5/6 | 0 on 6/6 | 88 |\n\n- The one `ranked_on_usage` miss left is real: a Bears DEF claim ranked on projection and roster need, with no matchup.\n- The other remaining fails come from checks this PR doesn't touch. `close_call_news` fails mostly on the Corum news misattribution that #2199 fixes for new cards. `bye_coverage` swings between 0 and 0.67 on the same card under the same question, and I'm leaving that as a separate finding.\n- Sleeper tests 140/140 (rubric id now `sleeper.waivers@5`), sloplint ok.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---\n\n[#2201 2026-11-05T15:31Z \"fix(sleeper): waivers checks stop faulting ownership read as scarcity\" | Request 2]\nRe-judged recorded waivers cards on prod (local qwen3.8-27b, #2198's judge): eae1f01b v2 and v3 (week 9) and cc2f47d2 v5 (week 8), the versions whose stored facts match, × 2 reps.\n\n| Arm | Pass | `ranked_on_usage` met | `crowd_metric_as_value` present | Mean s |\n|---|---|---|---|---|\n| v4 (current) | 1/6 | 0.33–1.00 | 0.33–0.67 on 4 of 4 week-9 runs | 97 |\n| v5 without the defense/kicker clause | 2/6 | 0.67–1.00 | 0 on 6/6 | 94 |\n| v5 (this PR) | 3/6 | 1.00 on 5/6 | 0 on 6/6 | 88 |\n\n- The one `ranked_on_usage` miss left is real: a Bears DEF claim ranked on projection and roster need, with no matchup.\n- The other remaining fails come from checks this PR doesn't touch. `close_call_news` fails mostly on the Corum news misattribution that #2199 fixes for new cards. `bye_coverage` swings between 0 and 0.67 on the same card under the same question, and I'm leaving that as a separate finding.\n- Sleeper tests 140/140 (rubric id now `sleeper.waivers@5`), sloplint ok.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---\n\n[#2201 2026-11-05T15:31Z \"fix(sleeper): waivers checks stop faulting ownership read as scarcity\" | github.review v1]\n## Verified\n- Read the full diff (rubric.ts question/label/version, test assertions), the whole rubric, and its consumers: `@quack/judge` composes the verdict id as `name@version` (v1/packages/judge/src/index.ts:118), so `sleeper.waivers@5` matches the updated test assertions; `waiversEvalAdapter` imports `waiversRubric` directly (v1/packages/sleeper/src/waivers/adapter.ts), so no stale version is pinned elsewhere; a repo-wide grep found no other reference to the two check ids or the question text.\n- The matchup clause is judgeable from the row unit: `waiversEvidence` puts the whole row in each unit, and `player` is a `PlayerRef` carrying `pos`/`team` (v1/packages/sleeper/src/waivers/card.ts `ref()`), so the judge can tell a DEF or K claim apart.\n- The test's faux judge regex (v1/packages/sleeper/test/waivers.test.ts:243) still matches the new pitfall question (\"trending or ownership number given\"), so the faux \"no\" path is preserved; both reworded checks remain yes/no questions, so the judge's answer shape is unchanged.\n- Ran the sleeper suite locally after a clean install: `node --test packages/sleeper/test/*.test.ts` → 140/140 pass, matching the PR's claim. CI: `check=success` (image skipped) on re-checkout.\n- The sibling waiver-scout chat rubric (extensions/sleeper/plugin/agents/waiver-scout/rubric.yaml) is a separate banded instrument and already words this pitfall as scarcity/bidding context \"never cited as the reason a player is good\", consistent with this change; promptlint's measured rubric items are `rubric.yaml`/config files, not this TS rubric.",
+  "outcome": {
+    "status": "done",
+    "answer": "\n\nComment posted on fagerbergj/quack#2202 — 1 question, 2 nits, 0 blocking: https://github.com/fagerbergj/quack/pull/2202#pullrequestreview-5787792877"
+  },
+  "finals": {
+    "github.review": [
+      {
+        "version": 1,
+        "verdict": {
+          "run": "9",
+          "passed": true,
+          "limitReached": false,
+          "score": 0.9166666666666667,
+          "gatesFailed": [],
+          "rubric": "github.reviewer@5",
+          "checks": [
+            {
+              "criterion": "claims_grounded",
+              "id": "cites_existing_lines",
+              "label": "Cites a line that doesn't exist",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "quotes_exist",
+              "label": "Quotes code that isn't there",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "blocking_names_anchor",
+              "label": "Blocking issue names no concrete cause",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "structured_verdict",
+              "id": "verdict_present",
+              "label": "Review has no verdict",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "structured_verdict",
+              "id": "verdict_matches_labels",
+              "label": "Verdict disagrees with the findings",
+              "weight": "gate",
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "code": 1
+              },
+              "notes": []
+            },
+            {
+              "criterion": "catches_real_issues",
+              "id": "approval_grounded",
+              "label": "Approves without saying why it is safe",
+              "weight": 3,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "approve"
+            },
+            {
+              "criterion": "catches_real_issues",
+              "id": "promises_handled",
+              "label": "A promised behavior is missing",
+              "weight": 3,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "change"
+            },
+            {
+              "criterion": "catches_real_issues",
+              "id": "toolchain_as_defect",
+              "label": "Blames code for a tooling failure",
+              "weight": -4,
+              "met": 0,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "change"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "matches_cited_code",
+              "label": "Cited code doesn't show the claim",
+              "weight": 3,
+              "met": 1,
+              "units": 3,
+              "resolvers": {
+                "clef": 2,
+                "agent-model": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "shows_how",
+              "label": "Blocking issue doesn't show how it fails",
+              "weight": 2,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "verified_names_evidence",
+              "label": "Says verified without saying what was run",
+              "weight": 2,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "clef": 1
+              },
+              "notes": [],
+              "scope": "review"
+            },
+            {
+              "criterion": "claims_grounded",
+              "id": "contradicted",
+              "label": "Cited code contradicts the finding",
+              "weight": -4,
+              "met": 0,
+              "units": 3,
+              "resolvers": {
+                "clef": 3
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "says_why",
+              "label": "Doesn't say why a finding matters",
+              "weight": 3,
+              "met": 1,
+              "units": 3,
+              "resolvers": {
+                "agent-model": 3
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "shows_proposed_change",
+              "label": "Proposes a change without showing the code",
+              "weight": 2,
+              "met": 0.6666666666666666,
+              "units": 3,
+              "resolvers": {
+                "clef": 2,
+                "agent-model": 1
+              },
+              "notes": [
+                "finding-2: The finding describes dropping a regex alternative but does not show the proposed code change in a fenced code block with a language tag."
+              ],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "answerable",
+              "label": "Finding is too vague to act on",
+              "weight": 1,
+              "met": 1,
+              "units": 3,
+              "resolvers": {
+                "clef": 2,
+                "agent-model": 1
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "constructive_actionable",
+              "id": "no_reason_given",
+              "label": "Says it's wrong with no reason",
+              "weight": -2,
+              "met": 0,
+              "units": 3,
+              "resolvers": {
+                "clef": 3
+              },
+              "notes": [],
+              "scope": "finding"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "anchor_borne_out",
+              "label": "Blocking issue isn't backed by the code",
+              "weight": 3,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "preference_only",
+              "label": "Blocks on mere preference",
+              "weight": -3,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "blocks_without_consequence",
+              "label": "Blocks with nothing that actually breaks",
+              "weight": -4,
+              "met": null,
+              "units": 0,
+              "resolvers": {},
+              "notes": [],
+              "scope": "blocking"
+            },
+            {
+              "criterion": "severity_grounded",
+              "id": "wrong_output_below_blocking",
+              "label": "A serious bug is listed as minor",
+              "weight": -2,
+              "met": 0.3333333333333333,
+              "units": 3,
+              "resolvers": {
+                "agent-model": 1,
+                "clef": 2
+              },
+              "notes": [
+                "finding-1: The finding identifies that the unflagged window at line 66 includes the current week (`r.bye >= f.week`) when the stated rule says 'next two weeks', meaning the rubric score could incorrectly penalize the writer for not flagging a current-week bye that is irrelevant to a freshly-picked player, which is a potential wrong output."
+              ],
+              "scope": "lower"
+            },
+            {
+              "criterion": "structured_verdict",
+              "id": "takeaway_actionable",
+              "label": "Takeaway isn't a quick, clear action",
+              "weight": 2,
+              "met": 1,
+              "units": 1,
+              "resolvers": {
+                "agent-model": 1
+              },
+              "notes": [],
+              "scope": "review"
+            }
+          ],
+          "undecided": []
+        },
+        "content": "## Takeaway\nMoving `bye_coverage` from a per-claim model question to code is the right call and is well tested; one window-boundary question (does the current week count as \"inside the lead time\"?) is worth confirming before it hardens.\n\n## Verdict\ncomment\n\n## Findings\n- question: v1/packages/sleeper/src/waivers/rubric.ts:66 — the unflagged window is `r.bye >= f.week && r.bye <= f.week + BYE_LEAD`, which includes the current week, while the prompt step 6 and the pre-existing rule say \"inside the **next** two weeks\". The hole half has the mirror image: `facts.ts:82` computes holes over `[week, week+1, week+2]`, so a claim is counted as covering a hole in the current week even though a waiver picked up this week presumably cannot play this week. If current-week byes are in scope, the prompt should say so; if they are not, both halves are one week wide in the direction that penalizes the writer. I could not settle Sleeper's pickup-availability timing from the repo, so I am asking rather than calling it a defect.\n- nit: v1/packages/sleeper/test/waivers.test.ts:262 — the faux judge's \"answer no\" regex still alternates on `miss a bye inside the lead time`, a question that no longer exists in the rubric. It is dead text now that the check is code; dropping the alternative keeps the helper honest.\n- nit: v1/packages/sleeper/src/waivers/rubric.ts:64 — the keyword match misses a few flagged-by shapes: \"byes\" (plural, no `\\bbye\\b` match in it) and \"sits wk. 10\" (the sentence gap refuses a `.` before whitespace, so \"wk.\" breaks the match). Both miss in the lenient direction and the prompt prescribes the \"sits wk 10\" form, so this is acceptable; just be aware a writer who uses either form still gets penalized.\n\n## Verified\n- Read the full diff against `origin/v1` plus the surrounding code: `facts.ts`, `rubric.ts`, `card.ts`, and the judge (`v1/packages/judge/src/index.ts`, `rubric.ts`). Pitfall scoring applies `penalty = -weight * met` where `met` is the share of units the pitfall is present in; the new `met = flaws.length / (holes.length + rows.length)` with at most one flaw per hole and per row is in exactly that range and the same semantics as the old row-scoped question. `codeResults` records `detail` as the note, so the reviser is told the named flaw, in line with #2198.\n- No remaining references to `bye_exposure` anywhere; `Bye` is constructed only in `teamNeeds` (`facts.ts:86`), so adding `short` to the type breaks no other producer or consumer.\n- Ran `node --test packages/sleeper/test/*.test.ts` after a clean checkout: 141/141 pass, matching the PR's claim, including the new `bye_coverage` test (clean card, open hole, unflagged add, flagged phrasings, another team's week, decimals, pre-`short` facts) and the `sleeper.waivers@6` assertions in both workflow tests.\n- Ran `node --test tools/bundle-locks.test.ts`: the version-3 bump in `agent.json` matches the recomputed `version.lock` hash.\n- Exercised the `flags` regex directly in node: \"sits wk 10.\" (trailing period) and \"on bye in week 10\" flag; \"proj 4.11\" does not name week 11, \"proj 4.10\" does not name week 10; another team's \"week 11 bye\" does not flag a week-10 add; the match stays inside one sentence (\"Sits wk 10. Bears bye is wk 11.\" is fine; a `;`-separated second sentence does not leak in).\n- The check follows the existing whole-card code-pitfall pattern (`faab_language_on_rolling`), reads the same `facts` unit the model checks get, and dropping the row question removes one model call per claim, as the description says.\n- CI: `check=success`, `image=skipped`; no Go changes in the diff.\n\n## Notes\n- The `h.short ?? 1` fallback is exact for the recorded pre-`short` cards only because every hole there has `out: 1`; a shared bye in old recorded facts would undercount as one slot. Fine while those recordings are the only consumers, worth remembering when replaying older sessions.\n- One flaw now costs a smaller `met` share on a card with many rows than a per-claim \"yes\" did, since the denominator is holes + rows — that is the same share-of-units convention the rubric already uses, and the weight (−2) is unchanged.\n- The `?? 1` on a required `Bye.short` reads like defensive coding against a shape the type says cannot happen; the comment makes clear it is for recorded facts, which is reasonable given the eval adapter replays them.\n"
+      }
+    ]
+  }
+}
