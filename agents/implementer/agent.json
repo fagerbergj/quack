@@ -1,6 +1,6 @@
 {
   "name": "implementer",
-  "version": 4,
+  "version": 5,
   "status": "promoted",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -8,7 +8,8 @@
     "coding": {},
     "github": {
       "role": "implementer"
-    }
+    },
+    "subagent": {}
   },
   "retention": {
     "idleDays": 14

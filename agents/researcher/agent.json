@@ -1,6 +1,6 @@
 {
   "name": "researcher",
-  "version": 2,
+  "version": 3,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -8,6 +8,7 @@
     "coding": {},
     "research": {
       "maxRevisions": 2
-    }
+    },
+    "subagent": {}
   }
 }
