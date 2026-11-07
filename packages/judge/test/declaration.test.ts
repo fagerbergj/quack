@@ -215,3 +215,18 @@ test('the llm splitter asks the judge model once per sealed version: a rejudge u
   assert.deepEqual(escalated, ['split'], 'one model split, then the memo');
   assert.deepEqual([first.checks[0].met, first.checks[0].units, first.checks[0].splitter], [true, 1, 'llm']);
 });
+
+test('a share pitfall asks every unsure item even after a flag, and costs its weight times the share flagged', async () => {
+  // Clef: a is flagged outright, b is unsure, c holds; the judge model clears b.
+  const p: Record<string, number> = { 'c.kept#0': 0.05, 'c.kept#1': 0.5, 'c.kept#2': 0.95 };
+  const decl: Declaration = { scopes: { rows: scope }, checks: { kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'share' } } } };
+  const { api, escalated } = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
+  const v = await rejudge(api, opts({ ...rubricOf('kept', -3), criteria: [{ id: 'c', checks: [{ id: 'kept', label: 'kept', weight: -3 }, { id: 'good', label: 'good', weight: 4, code: () => ({ met: 1 }) }] }] }, decl), sealed, 'm', BACKGROUND_CONTEXT);
+  assert.deepEqual(escalated, ['Does it keep the rule?'], 'b still escalates: the share is not known until it is answered');
+  const k = v.checks.find((c) => c.id === 'kept')!;
+  assert.deepEqual([k.met, k.notes, k.undecidedItems], [1 / 3, ['rows a: clef answered no'], undefined]);
+  assert.deepEqual([v.score, v.passed], [(4 - 3 / 3) / 4, false]);
+  const silent = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => 'no idea');
+  const u = await rejudge(silent.api, opts(rubricOf('kept', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);
+  assert.deepEqual([u.checks[0].met, u.checks[0].undecided, u.undecided], [null, 1, ['c.kept']], 'an item nobody answers leaves the share undecided');
+});

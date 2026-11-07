@@ -3,7 +3,7 @@ import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, GenerationTask, hook, LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
 import { buildEvidence, checkDeclaration, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
-import { fold, metOf, type Tri } from './fold.ts';
+import { fold, fractional, metOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
 import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type ClassifierRef, type Item, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
@@ -81,7 +81,8 @@ function preset(p: Plan, u: Unit): Answer | undefined {
 }
 
 const triOf = (p: Plan, u: Unit): Tri => p.answers.get(u.id)?.met ?? undefined;
-const decided = (p: Plan) => !!p.aggregate && fold(p.aggregate, p.units.map((u) => triOf(p, u))) !== undefined;
+// A share is the result itself, so it is decided only once every item is; a boolean fold decides as soon as no item can change it.
+const decided = (p: Plan) => !!p.aggregate && (fractional(p.aggregate) ? p.units.every((u) => triOf(p, u) !== undefined) : fold(p.aggregate, p.units.map((u) => triOf(p, u))) !== undefined);
 
 // A legacy check notes a "no" on a gate or a positive check and a "yes" on a pitfall, unprefixed on a whole-artifact unit.
 function legacyFinal(p: Plan, r: CheckResult) {
@@ -107,7 +108,7 @@ function finalize(p: Plan): CheckResult {
   r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [`${u.id}: ${why(u)}`] : []));
   const open = p.units.filter((_, i) => tris[i] === undefined).map((u) => u.id);
   const value = fold(p.aggregate, tris);
-  if (value === undefined) return Object.assign(r, { met: null, undecided: open.length });
+  if (value === undefined || (fractional(p.aggregate) && open.length)) return Object.assign(r, { met: null, undecided: open.length });
   r.met = metOf(p.aggregate, value, tris, p.pitfall);
   if (open.length) r.undecidedItems = open;
   return r;

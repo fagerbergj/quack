@@ -126,10 +126,11 @@ export const contractDeclaration: Declaration = {
     choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
     definition: { split: { name: 'contract.definitions', from: ['spec', 'kind'] }, piece: 'definition', context: { intent: { name: 'json', from: 'spec', pointer: '/intent' } } },
   },
+  // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   checks: {
     meets_intent: { scope: 'spec', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' } },
-    contradicts_guide: { scope: 'choice', aggregate: { name: 'all', pass: ['no'] }, question: departure('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
-    adds_unasked: { scope: 'definition', aggregate: { name: 'all', pass: ['no'] }, question: departure('Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.') },
+    contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: departure('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
+    adds_unasked: { scope: 'definition', aggregate: { name: 'share', pass: ['no'] }, question: departure('Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.') },
   },
 };
 
