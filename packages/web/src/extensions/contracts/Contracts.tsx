@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { startContract } from '../../api.ts';
 import { Modal, useAction } from '../../Housekeeping.tsx';
 import type { Row } from '../../sessions.ts';
-import { contractRows, type Tone } from './status.ts';
+import { contractRecords, contractRows, type ContractRecord, type Tone } from './status.ts';
 
-const TONE: Record<Tone, string> = { warn: 'bg-warning-bg text-warning', plain: 'bg-soft text-ink-2', bad: 'bg-danger/10 text-danger' };
+const TONE: Record<Tone, string> = { warn: 'bg-warning-bg text-warning', plain: 'bg-soft text-ink-2', ok: 'bg-success-bg text-success', bad: 'bg-danger/10 text-danger' };
 
 function NewContract({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
@@ -21,7 +21,11 @@ function NewContract({ onClose }: { onClose: () => void }) {
 
 export function Contracts({ rows }: { rows: Row[] | undefined }) {
   const [adding, setAdding] = useState(false);
-  const list = contractRows(rows ?? []);
+  const [records, setRecords] = useState<ReadonlyMap<string, ContractRecord>>(new Map());
+  // Read again when a contract session starts, ends or changes state, which is when a version can move.
+  const shape = (rows ?? []).filter((r) => r.key.startsWith('contracts:')).map((r) => `${r.key}:${r.state}:${r.pendingAsks}`).join(',');
+  useEffect(() => { void contractRecords().then(setRecords); }, [shape]);
+  const list = contractRows(rows ?? [], records);
   return (
     <div className="mx-auto w-full max-w-[960px] px-4 pt-4 pb-10 sm:px-6 lg:pt-8">
       <div className="mb-4 flex items-center gap-3">
@@ -33,7 +37,10 @@ export function Contracts({ rows }: { rows: Row[] | undefined }) {
         {list.map((c) => (
           <li key={c.key}>
             <a href={`#/s/${encodeURIComponent(c.key)}`} className="flex min-h-16 items-center gap-3 px-3 py-2 text-ink no-underline hover:bg-soft sm:px-4">
-              <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">{c.name}</span>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate text-[15px] font-semibold">{c.name}</span>
+                <span className="truncate text-[13px] text-muted empty:hidden">{[c.kind, c.version && `v${c.version}`, c.note].filter(Boolean).join(' · ')}</span>
+              </span>
               <span className={`flex-none rounded-full px-2.5 py-0.5 text-xs font-medium ${TONE[c.tone]}`}>{c.status}</span>
             </a>
           </li>

@@ -40,3 +40,4 @@ export function contractsSessionExtensions(config: ContractsConfig = {}, evidenc
     judge({ kind: specKind, rubric: contractRubric, evidence, maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_contract', onCleared }),
   ];
 }
+export { contractOf as contractRecordOf, contractsApp, type ContractRecord } from './app.ts';

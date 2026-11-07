@@ -1,15 +1,40 @@
 import type { Row } from '../../sessions.ts';
 
-export type Tone = 'warn' | 'plain' | 'bad';
-export type Contract = { key: string; name: string; status: string; tone: Tone; rank: number };
+export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
+export type Contract = { key: string; name: string; kind?: string; version?: number; status: string; tone: Tone; note?: string; rank: number };
 
-/** What the Contracts page says about one contract session, from its catalog row; which version is approved is the extension's own record, not the row's. */
-export function contractOf(row: Row): Contract {
-  const base = { key: row.key, name: row.title ?? 'New contract' };
-  if (row.pendingAsks) return { ...base, status: 'Waiting on you', tone: 'warn', rank: 0 };
-  if (row.state === 'running') return { ...base, status: 'Drafting', tone: 'plain', rank: 1 };
-  if (row.failures.length) return { ...base, status: 'Run failed', tone: 'bad', rank: 2 };
-  return { ...base, status: 'Idle', tone: 'plain', rank: 3 };
+/** One contract as the contracts extension serves it (GET apps/contracts/contracts), from the session's own sealed records. */
+export type ContractRecord = { key: string; title: string; kind: string; draft?: number; proposed?: number; approved?: number; changesRequested?: number; pendingApproval: boolean };
+
+const KIND_NAMES: Record<string, string> = { rest: 'REST', 'json-schema': 'JSON Schema', typescript: 'TypeScript' };
+
+// Asked to change the very version last put up, and not approved since.
+const changesAsked = (r: ContractRecord | undefined) => r?.changesRequested !== undefined && r.changesRequested === r.proposed && r.changesRequested !== r.approved;
+
+function settled(base: Omit<Contract, 'status' | 'tone' | 'rank'>, rec: ContractRecord | undefined): Contract {
+  if (changesAsked(rec)) return { ...base, status: 'Changes requested', tone: 'bad', rank: 2 };
+  const stale = rec?.draft !== undefined && rec.approved !== undefined && rec.draft > rec.approved ? `v${rec.draft} is not approved yet` : undefined;
+  if (rec?.approved !== undefined) return { ...base, status: `Approved v${rec.approved}`, tone: 'ok', ...(stale && { note: stale }), rank: 4 };
+  return { ...base, status: rec?.draft !== undefined ? 'Drafting' : 'Idle', tone: 'plain', ...(rec?.draft !== undefined && { note: 'not yet proposed for approval' }), rank: 3 };
 }
 
-export const contractRows = (rows: Row[]) => rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map(contractOf).sort((a, b) => a.rank - b.rank);
+/** What the Contracts page says about one contract session: its catalog row for what runs, the extension's record for its versions. */
+export function contractOf(row: Row, rec?: ContractRecord): Contract {
+  const base = { key: row.key, name: rec?.title ?? row.title ?? 'New contract', ...(rec && { kind: KIND_NAMES[rec.kind] ?? 'REST' }), ...(rec?.draft !== undefined && { version: rec.draft }) };
+  if (rec?.pendingApproval) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
+  if (row.pendingAsks) return { ...base, status: 'Waiting on you', tone: 'warn', rank: 0 };
+  if (row.state === 'running') return { ...base, status: 'Drafting', tone: 'plain', ...(rec?.approved !== undefined && { note: `v${rec.approved} approved` }), rank: 1 };
+  if (row.failures.length) return { ...base, status: 'Run failed', tone: 'bad', rank: 2 };
+  return settled(base, rec);
+}
+
+export const contractRows = (rows: Row[], records: ReadonlyMap<string, ContractRecord> = new Map()) =>
+  rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map((r) => contractOf(r, records.get(r.key))).sort((a, b) => a.rank - b.rank);
+
+/** The contracts extension's records by session key; an app that is not mounted reads as none, and the rows still show. */
+export async function contractRecords(): Promise<Map<string, ContractRecord>> {
+  const res = await fetch('apps/contracts/contracts').catch(() => undefined);
+  if (!res?.ok) return new Map();
+  const body = (await res.json().catch(() => ({}))) as { contracts?: ContractRecord[] };
+  return new Map((body.contracts ?? []).map((c) => [c.key, c]));
+}

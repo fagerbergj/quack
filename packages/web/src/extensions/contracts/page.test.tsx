@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Session } from '../../api.ts';
@@ -25,6 +25,31 @@ test('each contract reads from its catalog row: waiting on you first, then draft
   expect(within(items[0]!).getByRole('link')).toHaveAttribute('href', '#/s/contracts%3Ab');
 });
 
+test("each contract shows its kind, version and approval status from the contracts extension's own read", async () => {
+  const records = [
+    { key: 'contracts:a', title: 'Sleeper schedule endpoint', kind: 'rest', draft: 2, proposed: 2, approved: 1, pendingApproval: true },
+    { key: 'contracts:b', title: 'Extension SDK', kind: 'typescript', draft: 3, proposed: 3, changesRequested: 3, pendingApproval: false },
+    { key: 'contracts:c', title: 'Payments API', kind: 'json-schema', draft: 4, proposed: 3, approved: 3, pendingApproval: false },
+  ];
+  const fetchMock = vi.fn(async (url: string) => (url === 'apps/contracts/contracts' ? Response.json({ contracts: records }) : new Response('{}', { status: 404 })));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<Contracts rows={[row('a'), row('b'), row('c'), row('new')]} />);
+  await waitFor(() => expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('Sleeper schedule endpoint'));
+  expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+    'Sleeper schedule endpointREST · v2Awaiting your approval',
+    'Extension SDKTypeScript · v3Changes requested',
+    'Draft newIdle',
+    'Payments APIJSON Schema · v4 · v4 is not approved yetApproved v3',
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith('apps/contracts/contracts');
+});
+
+test('the page still lists contracts from their rows when the contracts app is not mounted', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+  render(<Contracts rows={[row('b', { state: 'running', pendingAsks: 1 })]} />);
+  expect(screen.getByRole('listitem')).toHaveTextContent('Draft bWaiting on you');
+});
+
 test('with no contracts it says what one is', () => {
   render(<Contracts rows={[]} />);
   expect(screen.getByText(/A contract is the agreed shape of an interface/)).toBeInTheDocument();
@@ -32,7 +57,7 @@ test('with no contracts it says what one is', () => {
 
 test('New contract asks for the description and starts the contracts agent', async () => {
   const calls: Array<[string, RequestInit]> = [];
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => (calls.push([url, init]), new Response('{}', { status: 202 }))));
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => (url.startsWith('sessions/') && calls.push([url, init]), new Response('{}', { status: 202 }))));
   render(<Contracts rows={[]} />);
   await userEvent.click(screen.getByRole('button', { name: 'New contract' }));
   await userEvent.type(screen.getByLabelText('What should it do, and for whom?'), 'GET /x for the page');
