@@ -138,7 +138,11 @@ test('artifacts: the per-session list carries content and deliveries, the cross-
   const all = await call('GET', `/artifacts?orderBy=sealedAt&q=${encodeURIComponent('kind:sleeper.cards AND lineup')}`);
   assert.equal((all.body.artifacts as unknown[]).length, 3);
   assert.ok((all.body.artifacts as Array<Record<string, unknown>>).every((a) => !('content' in a)));
-  assert.equal((await call('GET', '/artifacts?orderBy=createdAt')).status, 400, 'artifacts have no createdAt');
+  for (const order of ['createdAt', 'lastActivity', 'oldestAskAt']) {
+    assert.equal((await call('GET', `/artifacts?orderBy=${order}`)).status, 400, `artifacts order only by sealedAt, not ${order}`);
+    assert.equal((await call('GET', `/sessions/${k('sleeper:platinum:1')}/artifacts?orderBy=${order}`)).status, 400, `per session too, not ${order}`);
+  }
+  assert.equal((await call('GET', '/asks?orderBy=sealedAt')).status, 400, 'asks order only by createdAt');
 });
 
 test('DELETE removes the session once its directory is gone, and is refused while it works', async () => {
