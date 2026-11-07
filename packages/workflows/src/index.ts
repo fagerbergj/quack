@@ -138,6 +138,13 @@ export async function resumeWorkflow(harness: Harness, root: Conversation, workf
   }, ctx);
 }
 
+/** The step results a recorded run's steps saw, from its task's stored state: the checkpoint while it can run, the result once completed, what a failed run kept. */
+export function runResults(doc: { kept?: Results | null }, state: { checkpoint?: unknown; outcome?: { status: string; result?: unknown } }): Results | undefined {
+  if (state.checkpoint) return (state.checkpoint as Checkpoint).results;
+  if (state.outcome?.status === 'completed') return state.outcome.result as Results;
+  return doc.kept ?? undefined;
+}
+
 export async function outcomeOf(harness: Harness, id: string, ctx: Context = BACKGROUND_CONTEXT) {
   return (await harness.waitForTask(Number(id) as never, ctx)).state.outcome;
 }

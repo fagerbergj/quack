@@ -14,9 +14,15 @@ Replay the same recorded cases under the baseline and the candidate, three times
 QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --classifier clef/clef --arm base=<trunk ref> --arm cand=. --repeat 3 --concurrency 2
 ```
 
-`cases.json` is an array of `{ case, kind, checks?, session?, version?, content?, evidence? }`. `kind` picks the extension's eval adapter (its rubric and evidence builder). `session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter; `content` and `evidence` (scope to units) give both inline for a kind whose adapter cannot rebuild evidence, such as `github.review`. `checks` (`id` or `criterion.id`) limits the run to the checks being watched. An arm is `label=ref`: `.` is this tree, any other value is a git ref whose rubrics and evidence code are used while the judge engine stays this tree's, so a change to `packages/judge` itself is not visible to a baseline arm. Without `--arm` it runs one arm, `current=.`.
+`cases.json` is an array of `{ case, kind, checks?, session?, version?, content?, evidence? }`. `kind` picks the extension's eval adapter (its rubric and evidence builder). `session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter from the recording as it stood when that version was sealed, through the same builder the live judge uses: `research.report` (fetch log, kept source files, request), `contract.spec` (artifacts, approvals, answered questions, workspace files) and every Sleeper card (the workflow run's facts step result; waivers from its facts document). `content` and `evidence` (scope to units) give both inline for a kind whose adapter cannot rebuild evidence, such as `github.review`. `checks` (`id` or `criterion.id`) limits the run to the checks being watched; a Sleeper adapter carries the full rubric, so leave out the news checks for a deployment that ran without a news source. An arm is `label=ref[:classifier]`: `.` is this tree, any other value is a git ref whose rubrics and evidence code are used while the judge engine stays this tree's, so a change to `packages/judge` itself is not visible to a baseline arm. The classifier is `none` or `provider/model`; without one the arm takes `--classifier`, or none. Without `--arm` it runs one arm, `current=.`.
 
-It prints a markdown table of per-repeat `met` (null: no unit, the check does not count) and classifier/escalation counts per case and check for each arm, then median judge seconds per case. Paste it into the PR with the cases' provenance. Cases that are only rubric-level (digest, trade, retro) need their kind's adapter to carry the rubric first.
+To measure a classifier change, run two arms on the same tree:
+
+```
+... replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --arm base=.:none --arm clef=.:clef/clef --repeat 3
+```
+
+It prints a markdown table of per-repeat `met` (null: no unit, the check does not count) and classifier/escalation counts per case and check for each arm, then each arm's median and p90 judge seconds per case, then every case and check whose `met` values differ between arms with each arm's values and the judge's notes, for adjudicating false positives, and last any case an adapter declined with what its recording lacks. Paste it into the PR with the cases' provenance.
 
 ## Checking a rollout
 

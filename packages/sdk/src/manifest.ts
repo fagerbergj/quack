@@ -63,7 +63,16 @@ export type ExtensionManifest = {
 export type EvalService = { env: Record<string, string>; captured: unknown[]; close(): Promise<void> };
 
 /** What a recorded session holds that an adapter may build evidence from. */
-export type RecordedSession = { docs: Record<string, JsonObject>; artifacts: Record<string, SealedArtifact[]> };
+export type RecordedSession = {
+  docs: Record<string, JsonObject>;
+  artifacts: Record<string, SealedArtifact[]>;
+  /** The person's messages, in order. */
+  inputs?: string[];
+  /** The step results of the session's latest workflow run, by step name. */
+  results?: JsonObject;
+  /** A file of the session's workspace by its workspace-relative path; undefined when the recording kept none there. */
+  readFile?: (path: string) => Promise<string | undefined>;
+};
 
 /** How eval replays and scores one artifact kind; the extension that owns the kind contributes it, so eval names no extension. */
 export type EvalAdapter = {

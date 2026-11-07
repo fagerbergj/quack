@@ -13,6 +13,7 @@
     "@quack/judge": "*",
     "@quack/runtime": "*",
     "@quack/session": "*",
+    "@quack/workflows": "*",
     "@earendil-works/pi-ai": "1.5.0"
   }
 }

@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { test, type TestContext } from 'node:test';
+import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
 import { packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
@@ -37,7 +40,42 @@ test('two cases, two arms and repeat 2 give the met values of each repeat for th
     '| a | helpful | 1 1 | 1 1 | 0/2 | 0/2 |',
     '| b | helpful | 0 0 | 1 1 | 0/2 | 0/2 |',
   ]);
-  assert.match(out.at(-1)!, /^median judge seconds per case: base \d+\.\d, cand \d+\.\d$/);
+  assert.match(out[5], /^judge seconds per case: base median \d+\.\d p90 \d+\.\d, cand median \d+\.\d p90 \d+\.\d$/);
+  assert.deepEqual(out.slice(7), ['disagreements (case check: met per repeat by arm, then the notes each arm gave):', '- b helpful: base 0 0; cand 1 1', '  - base: b: because'], 'a, where the arms agree, is not listed');
+});
+
+// A stand-in for Clef on its wire format, so an arm's classifier is really asked.
+async function fakeClef(t: TestContext, probability: number) {
+  const server = createServer(async (req, res) => {
+    for await (const _ of req);
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers: { 'c.helpful': { type: 'noul', noul: probability } }, usage: { input_tokens: 1, output_tokens: 0 } }));
+  }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const key = process.env.QUACK_CLEF_KEY;
+  process.env.QUACK_CLEF_KEY = 'none';
+  t.after(() => (server.close(), key === undefined ? delete process.env.QUACK_CLEF_KEY : (process.env.QUACK_CLEF_KEY = key)));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  const clef = { id: 'clef', name: 'clef', type: 'classifier', api: 'typesafe-system-one', provider: 'clef', baseUrl, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192 };
+  return createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clef] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } });
+}
+
+test('arms that differ only in classifier: the classifier arm answers from Clef, the other escalates, and the disagreement is listed', async (t) => {
+  const models = judgeModels([true]);
+  models.setProvider(await fakeClef(t, 0.05));
+  const same = adapter('Is it helpful?');
+  const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [same] }, { label: 'clef', adapters: [same], classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }], repeat: 1, concurrency: 1, models, judgeModel });
+  const out = table(result, ['base', 'clef']).split('\n');
+  assert.equal(out[2], '| a | helpful | 1 | 0 | 0/1 | 1/0 |');
+  assert.equal(out[7], '- a helpful: base 1; clef 0');
+});
+
+test('an adapter that cannot rebuild a case declines it with its reason, and the other cases are still judged', async () => {
+  const picky: EvalAdapter = { kind: 'acme.note', judge: { rubric: rubric('Is it helpful?'), evidence: async (_s, content) => { throw new Error(`the recording of ${content} keeps no facts`); } } };
+  const bare = cases.map(({ evidence: _e, ...c }) => c);
+  const result = await replayJudge({ cases: [cases[0], bare[1]], arms: [{ label: 'base', adapters: [picky] }], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel });
+  assert.deepEqual(result.declined, [{ arm: 'base', case: 'b', reason: 'the recording of b keeps no facts' }]);
+  assert.deepEqual(table(result, ['base']).split('\n').slice(-2), ['declined:', '- base b: the recording of b keeps no facts']);
+  await assert.rejects(replayJudge({ cases: bare, arms: [{ label: 'base', adapters: [picky] }], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /every case was declined: base a: the recording of a keeps no facts; base b/);
 });
 
 test('a watched check no rubric has is an error, and a check with no unit prints null', async () => {

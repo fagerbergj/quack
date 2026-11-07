@@ -17,6 +17,7 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
+    "@quack/eval": "*",
     "@quack/session": "*"
   }
 }

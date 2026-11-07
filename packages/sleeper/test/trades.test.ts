@@ -8,6 +8,8 @@ import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
+import { readSession } from '@quack/eval';
+import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
@@ -142,7 +144,8 @@ async function run<D>(workflow: ReturnType<typeof tradeWorkflow>, input: object,
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(input));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, asked, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    await s.close();
+    return { record: await readSession(dir), sealed, judged, asked, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -152,7 +155,8 @@ const deps = (news?: (p: { name: string }) => Promise<unknown[]>) => ({ client: 
 
 test('the trade workflow seals a card whose news the code searched for each traded player, and the judge passes it', async () => {
   const searched: string[] = [];
-  const { sealed, verdict, judged } = await run(tradeWorkflow(deps(async (p) => (searched.push(p.name), [item]))), OFFER, tradeDecision);
+  const { sealed, verdict, judged, record } = await run(tradeWorkflow(deps(async (p) => (searched.push(p.name), [item]))), OFFER, tradeDecision);
+  assert.deepEqual(await replayed(record, sealed.content), await tradeEvidence(await factsOf(OFFER))(null, sealed), 'the recording rebuilds the evidence the judge read');
   const c = JSON.parse(sealed.content) as TradeCard;
   assert.deepEqual([c.kind, c.partner.team, c.offers[0].verdict, c.offers[0].news.length, searched], ['trade', 'Pintail Pride', 'send', 2, ['Bo Bench', 'Tom Tail']]);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@4', [], true, []]);
@@ -168,7 +172,8 @@ test('without a news source the trade verdict says so and does not score news', 
 
 test('the finder searches news once for every player a deal may name, gives it to the model before it decides, and seals a ranked card', async () => {
   const searched: string[] = [];
-  const { sealed, verdict, asked } = await run(finderWorkflow(deps(async (p) => (searched.push(p.name), [{ ...item, title: `${p.name} report` }]))), FINDER, finderDecision);
+  const { sealed, verdict, asked, record } = await run(finderWorkflow(deps(async (p) => (searched.push(p.name), [{ ...item, title: `${p.name} report` }]))), FINDER, finderDecision);
+  assert.deepEqual(await replayed(record, sealed.content), await tradeEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
   const c = JSON.parse(sealed.content) as FinderCard;
   const dealt = dealable(await factsOf()).map((p) => p.name);
   assert.deepEqual([...searched].sort(), [...dealt].sort(), 'each dealable player once, before the decision');

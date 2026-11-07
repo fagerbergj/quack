@@ -10,6 +10,8 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
+import { readSession } from '@quack/eval';
+import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
@@ -168,7 +170,8 @@ async function runLineup(news?: LineupDeps['news']) {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    await s.close();
+    return { record: await readSession(dir), sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -176,7 +179,8 @@ async function runLineup(news?: LineupDeps['news']) {
 }
 
 test('the workflow seals a lineup card from the recorded week and the judge passes it, saying close-call news was not checked', async () => {
-  const { sealed, judged, verdict } = await runLineup();
+  const { sealed, judged, verdict, record } = await runLineup();
+  assert.deepEqual(await replayed(record, sealed.content), await lineupEvidence(await facts())(null, sealed), 'the recording rebuilds the evidence the judge read');
   const card = JSON.parse(sealed.content) as LineupCard;
   assert.equal(card.kind, 'lineup');
   assert.equal(card.starters.length, 9);

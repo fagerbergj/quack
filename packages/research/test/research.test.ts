@@ -12,7 +12,9 @@ import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { deliveredReport, findingItems, formatResults, htmlToText, isPublicAddress, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
+import { readSession } from '@quack/eval';
+import type { Evidence } from '@quack/judge';
+import { deliveredReport, findingItems, formatResults, htmlToText, isPublicAddress, manifest, reportEvidence, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 import { excerpt, missingQuotes } from '../src/report.ts';
 
 const servers: Server[] = [];
@@ -123,7 +125,7 @@ async function run(config: Parameters<typeof researchSessionExtensions>[0], step
   dirs.push(dir);
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...researchSessionExtensions({ judgeModel: { provider: 'judge', modelId: 'j' }, ...config }, deps), ...extra] } });
   const done = await session.submit('Do ducks fly?', 'r-1', true);
-  return { done, seen, session };
+  return { done, seen, session, dir };
 }
 
 test('a run searches, fetches HTML and PDF, records each fetch, and a report citing an unfetched source is sent back', async () => {
@@ -156,6 +158,34 @@ test('a run searches, fetches HTML and PDF, records each fetch, and a report cit
   const kinds = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['research.report'];
   assert.deepEqual(kinds.versions.map((v) => (v.verdict as any).passed), [false, true]);
   await session.close();
+});
+
+test('a recorded session rebuilds, for each sealed report, the evidence the live judge read when it judged it', async () => {
+  const base = await web();
+  const live: Evidence[] = [];
+  const builder = reportEvidence();
+  // The judge's own evidence is tapped, so the replay is compared with what the judge itself was given.
+  const evidence: typeof builder = async (...a) => { const ev = await builder(...a); live.push(ev); return ev; };
+  const { session, dir } = await run({}, (step) => [
+    call('web_fetch', { urls: [`${base}/page`] }),
+    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s2]') })),
+    step(call('submit_report', {})),
+    // s2 is fetched only after version 1 was judged, so its evidence must not count it.
+    step(call('web_fetch', { urls: [`${base}/paper.pdf`] })),
+    step(call('write', { path: 'artifacts/report.md', content: `${report('[s1][s2]')}- Mallards migrate. [s2]\n` })),
+    step(call('submit_report', {})),
+    step(fauxAssistantMessage('Ducks fly.')),
+  ], { isPublic: loopbackOk, evidence });
+  await session.close();
+  const record = await readSession(dir);
+  const versions = record.artifacts['research.report'];
+  assert.equal(versions.length, 2);
+  const adapter = manifest.evalAdapters![0].judge!;
+  const replayed = await Promise.all(versions.map((v) => adapter.evidence(record, v.content)));
+  assert.deepEqual(replayed, live);
+  assert.deepEqual(live.map((ev) => ev.sources[0].state.ids), [['s1'], ['s1', 's2']]);
+  assert.ok(live[1].claim.some((u) => JSON.stringify(u.state).includes('Mallards migrate')), 'claim units carry the kept source text');
+  await assert.rejects(adapter.evidence(record, 'never sealed'), /not a version this session sealed/);
 });
 
 test('without the Exa key web_search says so, and a private URL is refused by default', async () => {
