@@ -3,7 +3,7 @@ import { defineExtension, type Extension, type ToolExecutionApi } from '@earendi
 import { judge, type ClassifierRef, type ModelRef } from '@quack/judge';
 import { artifactsExtension, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
 import { awaitingApproval, proposeVersion } from './approval.ts';
-import { contractRubric, specEvidence } from './rubric.ts';
+import { contractDeclaration, contractRubric, specInputs } from './rubric.ts';
 import { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec } from './spec.ts';
 import { contractTools } from './tools.ts';
 
@@ -17,7 +17,7 @@ export { lintJsonSchema } from './json-schema-rules.ts';
 export { schemaBreaks } from './json-schema-diff.ts';
 export { lintTypeScript } from './typescript-rules.ts';
 export { typeScriptBreaks } from './typescript-diff.ts';
-export { contractRubric, guideAnchors, guideRules, recordedSpecEvidence, specEvidence } from './rubric.ts';
+export { contractDeclaration, contractRubric, guideAnchors, guideRules, recordedSpecInputs, specInputs } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { manifest } from './manifest.ts';
 
@@ -32,12 +32,12 @@ const onCleared = async (sealed: SealedArtifact, v: { passed: boolean }, api: To
 
 export type ContractsConfig = { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef; escalations?: number };
 
-/** The contracts extension's session half: the question tool, the spec artifact and the judge that checks it against the kind's guide; `evidence` is a seam for tests to watch what the judge reads. */
-export function contractsSessionExtensions(config: ContractsConfig = {}, evidence = specEvidence()): Extension[] {
+/** The contracts extension's session half: the question tool, the spec artifact and the judge that checks it against the kind's guide; `inputs` is a seam for tests to watch what the judge reads. */
+export function contractsSessionExtensions(config: ContractsConfig = {}, inputs = specInputs()): Extension[] {
   return [
     defineExtension({ name: 'contracts', tools: contractTools, hooks: [awaitingApproval()] }),
     artifactsExtension([specKind]),
-    judge({ kind: specKind, rubric: contractRubric, evidence, maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, escalations: config.escalations, toolName: 'submit_contract', onCleared }),
+    judge({ kind: specKind, rubric: contractRubric, declaration: contractDeclaration, inputs, maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, escalations: config.escalations, toolName: 'submit_contract', onCleared }),
   ];
 }
 export { contractOf as contractRecordOf, contractsApp, type ContractRecord } from './app.ts';

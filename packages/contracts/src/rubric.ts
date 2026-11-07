@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import ts from 'typescript';
-import type { CodeResult, Evidence, Rubric, Unit } from '@quack/judge';
+import { registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
@@ -58,19 +58,10 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
 }
 
 type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
-const state = (ev: Evidence) => ev.facts[0].state as unknown as SpecState;
+const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, and its workspace. */
 type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined };
-
-const json = (v: unknown) => JSON.parse(JSON.stringify(v));
-
-// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
-// and a departure nobody cited is what the check is for. The document itself is meets_intent's to read.
-function choiceUnits(spec: ContractSpec, rules: Map<string, string>): Unit[] {
-  const shared = { guide: Object.fromEntries(rules) };
-  return spec.choices.map((c) => ({ id: `choice ${c.id}`, shared, state: json({ choice: c, cites: [...new Set(c.why.filter((w) => w.source === 'guide').map((w) => anchorOf(w.ref)))] }) }));
-}
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The choices that decide a definition: their pointer is at or under it, or their decision names it; what the person or code asked for shows there.
@@ -87,7 +78,17 @@ function usersOf(d: Definition, defs: Definition[]): string[] {
   return defs.filter((o) => o !== d && uses(o)).map((o) => o.id);
 }
 
-async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
+// A contract document splits on its kind's own structure: each top-level definition, with the choices that decide it and the definitions that use it.
+function definitionChunks(inputs: Inputs, o: SplitDecl) {
+  const [specInput, kindInput] = [o.from].flat();
+  const { choices, document } = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'choices' | 'document'>;
+  const defs = kinds[inputs[kindInput] as ContractSpec['kind']].definitions(document);
+  return defs.map((d) => ({ id: d.id, key: d.name, text: JSON.stringify({ text: d.definition, decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) }) }));
+}
+registerSplitter('contract.definitions', definitionChunks);
+
+// The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
+async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const spec = parseSpec(sealed.content) as ContractSpec;
   const kind = kinds[spec.kind];
   // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
@@ -102,26 +103,46 @@ async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
   ]);
   const { intent, choices, document, version, compatibility } = spec;
   const facts = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility };
-  const defs = kind.definitions(document);
-  const shared = json({ intent });
+  const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
-    facts: [{ id: 'facts', whole: true, state: json(facts) }],
-    spec: [{ id: 'spec', whole: true, state: json({ intent, choices, document }) }],
-    choice: choiceUnits(spec, guideRules(kind.skill)),
-    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition, decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) }) })),
+    facts: JSON.stringify(facts),
+    spec: JSON.stringify({ intent, choices, document }),
+    kind: spec.kind,
+    choices: JSON.stringify(choices.map((c) => ({ ...c, cites: cites(c) }))),
+    guide: JSON.stringify(Object.fromEntries(guideRules(kind.skill))),
   };
 }
 
+// A pitfall asks about the departure itself and its claim holds on "no": a question worded as the claim
+// cost Clef its confidence (61% of choices and 74% of definitions answered at 0.8, against 97% and 98% asked this way).
+const departure = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
+
+// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
+// and a departure nobody cited is what the check is for. The document itself is meets_intent's to read.
+export const contractDeclaration: Declaration = {
+  scopes: {
+    facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
+    spec: { split: { name: 'whole', from: 'spec' }, piece: 'spec' },
+    choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
+    definition: { split: { name: 'contract.definitions', from: ['spec', 'kind'] }, piece: 'definition', context: { intent: { name: 'json', from: 'spec', pointer: '/intent' } } },
+  },
+  checks: {
+    meets_intent: { scope: 'spec', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' } },
+    contradicts_guide: { scope: 'choice', aggregate: { name: 'all', pass: ['no'] }, question: departure('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
+    adds_unasked: { scope: 'definition', aggregate: { name: 'all', pass: ['no'] }, question: departure('Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.') },
+  },
+};
+
 const answeredIn = (items: Record<string, Question>, by = Infinity) => new Set(Object.values(items).filter((q) => q.answer && q.answer.at <= by).map((q) => q.question));
 
-/** What the checks judge: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec itself with its guide for the judged checks. */
-export function specEvidence() {
-  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Evidence> => {
+/** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec with its guide. */
+export function specInputs() {
+  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
     const read = api.env && (async (path: string) => {
       const r = await api.env!.readTextFile(path, ctx);
       return r.ok ? r.value : undefined;
     });
-    return evidenceIn(sealed, {
+    return inputsIn(sealed, {
       kinds: (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {},
       approvals: (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {},
       answered: answeredIn((await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {}),
@@ -130,15 +151,15 @@ export function specEvidence() {
   };
 }
 
-/** The same evidence from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet. */
-export async function recordedSpecEvidence(session: RecordedSession, content: string): Promise<Evidence> {
+/** The same inputs from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet. */
+export async function recordedSpecInputs(session: RecordedSession, content: string): Promise<Inputs> {
   const sealed = session.artifacts[CONTRACT_KIND]?.findLast((v) => v.content === content);
   if (!sealed) throw new Error('the spec is not a version this session sealed, so what stood when it was judged is unknown');
   if (!session.readFile) throw new Error('the recording keeps no workspace to resolve code refs in');
   const kinds = Object.fromEntries(Object.entries(session.artifacts).map(([k, vs]) => [k, { versions: vs.filter((v) => v.sealedAt <= sealed.sealedAt) }]));
   const approvals = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
   const questions = (session.docs['quack.questions']?.items ?? {}) as unknown as Record<string, Question>;
-  return evidenceIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile });
+  return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile });
 }
 
 const list = (items: string[]) => items.slice(0, 6).join('; ');
@@ -169,7 +190,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 2,
+  version: 3,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -183,9 +204,9 @@ export const contractRubric: Rubric = {
       { id: 'breaking_named', label: 'A breaking change names no caller', weight: 'gate', code: breakingNamed },
     ] },
     { id: 'matches_intent', checks: [
-      { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4, scope: 'spec', question: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' },
-      { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3, scope: 'choice', question: 'Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.' },
-      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3, scope: 'definition', question: 'Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.' },
+      { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4 },
+      { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },
+      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3 },
     ] },
   ],
 };

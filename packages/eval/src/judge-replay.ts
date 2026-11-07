@@ -6,13 +6,13 @@ import type { MutableModels } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import type { Context } from '@earendil-works/chord/context';
 import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { rejudge, type ClassifierRef, type Evidence, type ModelRef, type Rubric } from '@quack/judge';
+import { rejudge, type ClassifierRef, type Declaration, type Evidence, type Inputs, type JudgeOptions, type ModelRef, type Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { driveTool } from './driver.ts';
 import { asJudged, readSession } from './record.ts';
 
-/** A recorded artifact to judge: from a session directory, or with its content and evidence given inline (for a kind whose adapter cannot rebuild evidence). */
-export type Case = { case: string; kind: string; checks?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence };
+/** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them. */
+export type Case = { case: string; kind: string; checks?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
 /** An arm judges with its adapters' rubrics and evidence and, when it has one, a per-unit classifier before the judge model. */
 export type Arm = { label: string; adapters: EvalAdapter[]; classifier?: ClassifierRef };
 
@@ -29,7 +29,9 @@ export type Replayed = { rows: Row[]; declined: Declined[] };
 export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number };
 
 const ESCALATED = ['judge-model', 'agent-model'];
-type Job = { arm: string; classifier?: ClassifierRef; rep: number; c: Case; rubric: Rubric; content: string; evidence: Evidence };
+/** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
+type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
+type Job = { arm: string; classifier?: ClassifierRef; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
 /** The rubric cut to the watched checks (by id or criterion.id), so only those are judged; a name that matches nothing is an error. */
 function watch(rubric: Rubric, names: string[] | undefined): Rubric {
@@ -51,20 +53,37 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
   if (content === undefined) throw new Error(`${c.case}: no ${c.kind} content in the case or its session`);
   const reasons = new Set<string>();
   for (const a of arm.adapters.filter((x) => x.kind === c.kind && x.judge)) {
-    const evidence = c.evidence ?? (await a.judge!.evidence(record, content).catch((err: Error) => void reasons.add(err.message)));
-    if (evidence) return { arm: arm.label, classifier: arm.classifier, c, content, evidence: evidence as Evidence, rubric: watch(a.judge!.rubric as Rubric, c.checks) };
+    const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
+    if (!judged) continue;
+    const rubric = watch(a.judge!.rubric as Rubric, c.checks);
+    return { arm: arm.label, classifier: arm.classifier, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
 
+async function judgedBy(a: EvalAdapter, c: Case, record: RecordedSession, content: string): Promise<Judged | undefined> {
+  const j = a.judge!;
+  if (j.declaration) return { declaration: j.declaration as Declaration, inputs: c.inputs ?? (await j.inputs!(record, content)) };
+  const evidence = c.evidence ?? (await j.evidence!(record, content));
+  return evidence ? { evidence: evidence as Evidence } : undefined;
+}
+
+/** The declaration cut to the watched rubric's checks, as the rubric is. */
+function declared(d: Declaration, rubric: Rubric): Declaration {
+  const ids = new Set(rubric.criteria.flatMap((c) => c.checks.map((k) => k.id)));
+  return { ...d, checks: Object.fromEntries(Object.entries(d.checks).filter(([id]) => ids.has(id))) };
+}
+
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const opts = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, evidence: async () => j.evidence, maxRevisions: 0, classifier: j.classifier, judgeModel: o.judgeModel, escalations: o.escalations };
+  const base = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, maxRevisions: 0, classifier: j.classifier, judgeModel: o.judgeModel, escalations: o.escalations };
+  const judged = j.judged;
+  const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
   const t = Date.now();
   const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;
-  // A check no resolver could decide is scored unmet by the judge; the table shows it as null so a model outage is not read as a failed check.
-  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: k.resolvers.none ? null : k.met, clef: j.classifier ? k.resolvers[j.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms, notes: k.notes }));
+  // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
+  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.classifier ? k.resolvers[j.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms, notes: k.notes }));
 }
 
 /** Judges every case under every arm `repeat` times and returns one row per check, and the cases an arm declined. */

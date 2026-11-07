@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { guideAnchors, kinds, lintTypeScript, specEvidence, typeScriptBreaks, typescriptKind, validateSpec, type ContractSpec } from '../src/index.ts';
+import { guideAnchors, kinds, lintTypeScript, specInputs, typeScriptBreaks, typescriptKind, validateSpec, type ContractSpec } from '../src/index.ts';
 
 const SURFACE = `/** Provided by each extension, read by core at boot. */
 export interface Manifest {
@@ -97,6 +97,6 @@ test('a pointer resolves for every export form the AST lists, and not for a name
   };
   const api = { conversationId: 'c', env: undefined, snapshot: async () => undefined } as never;
   const sealed = { kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null, outcome: '', summary: '' };
-  const { unresolved } = (await specEvidence()(api, sealed, BACKGROUND_CONTEXT)).facts[0].state as { unresolved: string[] };
+  const { unresolved } = JSON.parse((await specInputs()(api, sealed, BACKGROUND_CONTEXT)).facts) as { unresolved: string[] };
   assert.deepEqual(unresolved, ['hidden: pointer `/hidden` is not in the document', 'nope: pointer `/nope` is not in the document']);
 });

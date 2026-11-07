@@ -7,8 +7,8 @@ import ts from 'typescript';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { replayJudge } from '@quack/eval';
-import { classifierTokens, type Evidence, type Unit } from '@quack/judge';
-import { contractRubric, guideRules, kinds, manifest, recordedSpecEvidence, type ContractSpec } from '../src/index.ts';
+import { buildEvidence, classifierTokens, type Evidence, type Unit } from '@quack/judge';
+import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
 
 // Approved contracts as they were sealed: two whole specs, and two documents whose specs are not kept here.
 const fixture = (name: string) => readFileSync(new URL(`fixtures-specs/${name}`, import.meta.url), 'utf8');
@@ -19,12 +19,13 @@ const env = JSON.parse(fixture('env-v4.schema.json')) as Record<string, Record<s
 // A bare document is judged with the store port's intent, a real one of the usual size.
 const wrap = (kind: ContractSpec['kind'], document: unknown): ContractSpec => ({ ...storePort, kind, document, choices: [] });
 
-const evidenceOf = (spec: ContractSpec) => {
+const inputsOf = (spec: ContractSpec) => {
   const content = JSON.stringify(spec);
   const sealed = { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 1, verdict: null };
-  return recordedSpecEvidence({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined }, content);
+  return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined }, content);
 };
-const checksOf = (scope: string) => contractRubric.criteria.flatMap((c) => c.checks.filter((k) => k.scope === scope).map((k) => ({ ...k, id: `${c.id}.${k.id}` })));
+const evidenceOf = async (spec: ContractSpec): Promise<Evidence> => (await buildEvidence(contractDeclaration, await inputsOf(spec))).evidence;
+const checksOf = (scope: string) => Object.entries(contractDeclaration.checks).filter(([, d]) => d.scope === scope).map(([id, d]) => ({ id: `matches_intent.${id}`, question: d.question }));
 const ids = (units: Unit[]) => units.map((u) => u.id);
 const noSpace = (s: string) => s.replace(/\s+/g, '');
 
@@ -80,34 +81,41 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   const ev = await evidenceOf(lifecycle);
   const rules = guideRules(kinds.rest.skill);
   const errors = ev.choice.find((u) => u.id === 'choice errors')!;
-  assert.deepEqual(errors.state, { choice: lifecycle.choices.find((c) => c.id === 'errors'), cites: ['errors'] });
+  assert.deepEqual(errors.state, { choice: { ...lifecycle.choices.find((c) => c.id === 'errors'), cites: ['errors'] } });
   assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
   assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
-  assert.ok(ev.choice.every((u) => u.shared === errors.shared), 'one guide for every choice, so they pack together');
+  assert.ok(ev.choice.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors.shared)), 'one guide for every choice, so they pack together');
   assert.deepEqual(ev.definition[0].shared, { intent: lifecycle.intent });
-  assert.equal('intent' in ev.definition[0].state, false, 'the intent is sent once per request, not per definition');
+  assert.deepEqual(Object.keys(ev.definition[0].state), ['definition'], 'the intent is sent once per request, not per definition');
+  type Def = { text: unknown; decided: Array<{ choice: string }>; usedBy: string[] };
+  const def = (e: Evidence, id: string) => e.definition.find((u) => u.id === `definition ${id}`)!.state.definition as unknown as Def;
   // A definition carries the choices that decide it: by pointer, or by naming it in the decision.
-  const decided = (id: string) => (ev.definition.find((u) => u.id === `definition ${id}`)!.state.decided as Array<{ choice: string }>).map((d) => d.choice);
+  const decided = (id: string) => def(ev, id).decided.map((d) => d.choice);
   assert.ok(decided('/components/schemas/Problem').includes('errors'));
   assert.ok(decided('POST /sessions/{key}/events').includes('transport'), 'an operation is decided by a choice on its path');
   const port = await evidenceOf(storePort);
-  const money = port.definition.find((u) => u.id === 'definition /Money')!.state as { decided: Array<{ choice: string }>; usedBy: string[] };
+  const money = def(port, '/Money');
   assert.ok(money.decided.some((d) => d.choice === 'money'));
   // And the definitions that use it, so a shared shape reads as asked for: a local $ref, or a TypeScript name.
-  const usedBy = (id: string) => ev.definition.find((u) => u.id === `definition ${id}`)!.state.usedBy as string[];
+  const usedBy = (id: string) => def(ev, id).usedBy;
   assert.ok(usedBy('/components/schemas/Problem').includes('POST /sessions/{key}/events'));
   assert.ok(money.usedBy.includes('/SessionCatalogStore'));
 });
 
-// A stand-in for Clef on its wire format: every pitfall question is a confident no.
+// A stand-in for Clef on its wire format: a confident yes to every bool and no to every choice, so the intent is met and no pitfall is present.
 async function fakeClef(t: TestContext) {
   const asked: string[][] = [];
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
-    const questions = Object.keys(JSON.parse(body).questions);
+    const sent = JSON.parse(body).questions as Record<string, { type: string; criteria: Record<string, string> }>;
+    const questions = Object.keys(sent);
     asked.push(questions);
-    const answers = Object.fromEntries(questions.map((q) => [q, { type: 'noul', noul: 0.05 }]));
+    const choice = (q: { criteria: Record<string, string> }) => {
+      const [first, ...rest] = Object.keys(q.criteria).sort();
+      return { type: 'choice', choice: first, confidence: 0.95, probabilities: Object.fromEntries([[first, 0.95], ...rest.map((k) => [k, 0.05 / rest.length])]) };
+    };
+    const answers = Object.fromEntries(questions.map((q) => [q, sent[q].type === 'choice' ? choice(sent[q]) : { type: 'noul', noul: 0.95 }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 1, output_tokens: 0 } }));
   }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -128,9 +136,9 @@ test('with Clef on, Clef answers every choice and definition unit and only meets
   models.setProvider(clef.provider);
   const adapters = manifest.evalAdapters!;
   const content = JSON.stringify(lifecycle);
-  const evidence = await evidenceOf(lifecycle);
+  const inputs = await inputsOf(lifecycle);
   const { rows } = await replayJudge({
-    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked'], content, evidence }],
+    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked'], content, inputs }],
     arms: [{ label: 'clef', adapters, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });

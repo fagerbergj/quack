@@ -11,7 +11,7 @@ type JudgeDeps = { news?: unknown; classifier?: ClassifierRef; now?: () => numbe
 /** A job's card judge: its rubric gated on the news source by newsGated, and evidence from the facts its card was built on. */
 export function cardJudge<F>(deps: JudgeDeps, rubric: Rubric, gate: NewsGate | undefined, evidence: (f: F) => unknown) {
   const { rubric: gated, notes } = gate ? newsGated(rubric, gate, !!deps.news) : { rubric, notes: [] };
-  return (facts: F): { options: JudgeOptions; notes: string[] } => ({ options: { kind: cardsKind, rubric: gated, evidence: evidence(facts) as JudgeOptions['evidence'], maxRevisions: 1, classifier: deps.classifier }, notes });
+  return (facts: F): { options: JudgeOptions; notes: string[] } => ({ options: { kind: cardsKind, rubric: gated, evidence: evidence(facts) as NonNullable<JudgeOptions['evidence']>, maxRevisions: 1, classifier: deps.classifier }, notes });
 }
 
 /** What a card job is: how it gathers facts, asks for a decision, builds the card and judges it. */
