@@ -86,6 +86,12 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   assert.ok(ev.choice.every((u) => u.shared === errors.shared), 'one guide for every choice, so they pack together');
   assert.deepEqual(ev.definition[0].shared, { intent: lifecycle.intent });
   assert.equal('intent' in ev.definition[0].state, false, 'the intent is sent once per request, not per definition');
+  // A definition carries the choices that decide it: by pointer, or by naming it in the decision.
+  const decided = (id: string) => (ev.definition.find((u) => u.id === `definition ${id}`)!.state.decided as Array<{ choice: string }>).map((d) => d.choice);
+  assert.ok(decided('/components/schemas/Problem').includes('errors'));
+  assert.ok(decided('POST /sessions/{key}/events').includes('transport'), 'an operation is decided by a choice on its path');
+  const port = await evidenceOf(storePort);
+  assert.ok((port.definition.find((u) => u.id === 'definition /Money')!.state.decided as Array<{ choice: string }>).some((d) => d.choice === 'money'));
 });
 
 // A stand-in for Clef on its wire format: every pitfall question is a confident no.

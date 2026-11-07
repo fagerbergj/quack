@@ -4,6 +4,7 @@ import ts from 'typescript';
 import type { CodeResult, Evidence, Rubric, Unit } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
+import type { Definition } from './definitions.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
@@ -71,6 +72,14 @@ function choiceUnits(spec: ContractSpec, rules: Map<string, string>): Unit[] {
   return spec.choices.map((c) => ({ id: `choice ${c.id}`, shared, state: json({ choice: c, cites: [...new Set(c.why.filter((w) => w.source === 'guide').map((w) => anchorOf(w.ref)))] }) }));
 }
 
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The choices that decide a definition: their pointer is at or under it, or their decision names it; what the person or code asked for shows there.
+function decisionsOn(d: Definition, choices: ContractSpec['choices']) {
+  const named = d.name && new RegExp(`(?<![\\w$])${escRe(d.name)}(?![\\w$])`);
+  const on = (c: ContractSpec['choices'][number]) => (d.pointer && (c.pointer === d.pointer || c.pointer.startsWith(`${d.pointer}/`))) || (named && named.test(c.decision));
+  return choices.filter(on).map((c) => ({ choice: c.id, decision: c.decision }));
+}
+
 async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
   const spec = parseSpec(sealed.content) as ContractSpec;
   const kind = kinds[spec.kind];
@@ -92,7 +101,7 @@ async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
     facts: [{ id: 'facts', whole: true, state: json(facts) }],
     spec: [{ id: 'spec', whole: true, state: json({ intent, choices, document }) }],
     choice: choiceUnits(spec, guideRules(kind.skill)),
-    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition }) })),
+    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition, decided: decisionsOn(d, choices) }) })),
   };
 }
 
@@ -169,7 +178,7 @@ export const contractRubric: Rubric = {
     { id: 'matches_intent', checks: [
       { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4, scope: 'spec', question: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' },
       { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3, scope: 'choice', question: 'Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.' },
-      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3, scope: 'definition', question: 'Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs) was asked for.' },
+      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3, scope: 'definition', question: 'Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.' },
     ] },
   ],
 };
