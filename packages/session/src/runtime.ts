@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, Liv
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { closeQuestions, Failures, pendingApprovals, statusNote, type Principal } from '@quack/sdk';
+import { Failures, pendingApprovals, Questions, statusNote, type Principal } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -118,27 +118,32 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   harness.resume();
   await watchModelFaults(harness, root, log);
   // A process that stopped mid-abort left the queue with nothing to run it. A close ends the wait; a storage error reaches onReport.
-  void root.waitForIdle(ctx).then(() => startQueued(root)).catch(() => undefined);
+  void root.waitForIdle(ctx).then(() => startQueued(root, false)).catch(() => undefined);
 
   // Stops the conversation's current work only. Conversation.abort() withdraws queued inputs, so this aborts the work's
   // tasks instead and lets the inputs queued behind it start the next run.
   async function stopRun(c: Conversation) {
-    const run = (await harness.snapshot(LiveDoc, c.id, ctx))?.run;
+    const inputs = (await harness.snapshot(LiveDoc, c.id, ctx))?.run?.inputs ?? [];
     const top = (await harness.inspect(ctx)).tasks.map((t) => t.record).filter((t) => t.conversationId === c.id && t.owner === undefined && !t.background);
     await Promise.all(top.map((t) => harness.abortTask(t.id, ctx)));
     await Promise.all(top.map((t) => harness.waitForTask(t.id, ctx)));
-    // Before the next run starts, so a question it asks stays open.
-    await closeQuestions(c, ctx);
-    return { aborted: (run?.inputs ?? []).map(String), ...(await startQueued(c)) };
+    // A run that answered before its abort mark landed settled its inputs done; only those the abort settled count.
+    const settled = await Promise.all(inputs.map(async (id) => (await (await harness.submission(id, ctx))?.status(ctx))));
+    const aborted = settled.filter((r) => r?.status === 'unanswered' && r.reason === 'aborted').map((r) => String(r!.id));
+    return { aborted, ...(await startQueued(c, true)) };
   }
 
   // A continue places the queued inputs, oldest first, as the next run's input; in one commit, so a racing input or withdraw wins cleanly.
-  function startQueued(c: Conversation) {
+  // A run that went live during the abort (the stopped run answered first and its end placed the queue) is the next run already.
+  function startQueued(c: Conversation, closing: boolean) {
     return c.commit(async (tx) => {
       const kept = (await tx.doc(InboxDoc, c.id)).items.filter((i) => i.mode !== 'write').map((i) => String(i.id));
-      const idle = (await tx.doc(LiveDoc, c.id)).run === undefined;
-      if (kept.length && idle) await c.submit(tx, { type: 'continue' });
-      return { kept, queue: !kept.length ? 'empty' : idle ? 'started the next run' : 'placed by the run already going' };
+      const run = (await tx.doc(LiveDoc, c.id)).run;
+      if (run) return { kept, queue: 'placed by the run already going', running: run.inputs.map(String) };
+      // The stopped run's questions close before the next run starts, so a question that run asks stays open.
+      if (closing) for (const q of Object.values((await tx.doc(Questions, c.id)).items)) if (!q.answer) q.closed = true;
+      if (kept.length) await c.submit(tx, { type: 'continue' });
+      return { kept, queue: kept.length ? 'started the next run' : 'empty' };
     }, ctx);
   }
 

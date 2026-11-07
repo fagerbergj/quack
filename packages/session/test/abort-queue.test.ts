@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { num, obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, LiveDoc } from '@earendil-works/pi-durable';
-import { gated, onWaiting } from '@quack/sdk';
+import { gated, onWaiting, pendingApprovals, resolveApproval } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
 
 const dirs: string[] = [];
@@ -23,25 +23,28 @@ type Context = { messages: Array<{ role: string; content: unknown }> };
 const usersOf = (c: Context) => c.messages.filter((m) => m.role === 'user').map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)));
 
 // The first model call parks on a gated tool, as the prod run did on an approval; every later call answers.
-function parkedAgent(calls: string[][]) {
+// With `hold`, the third call (the run after the first answers) runs a tool that waits on it.
+function parkedAgent(calls: string[][], hold?: { until: Promise<void>; started: () => void }) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   const respond = (c: Context) => {
     calls.push(usersOf(c));
-    return calls.length === 1 ? fauxAssistantMessage(fauxToolCall('submit_contract', {}), { stopReason: 'toolUse' }) : fauxAssistantMessage(`answer ${calls.length}`);
+    if (calls.length === 1) return fauxAssistantMessage(fauxToolCall('submit_contract', {}), { stopReason: 'toolUse' });
+    return hold && calls.length === 3 ? fauxAssistantMessage(fauxToolCall('hold', {}), { stopReason: 'toolUse' }) : fauxAssistantMessage(`answer ${calls.length}`);
   };
   faux.setResponses(Array.from({ length: 8 }, () => respond) as never);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const tool = gated(defineTool({ name: 'submit_contract', description: 'put a version up', parameters: obj({}, { open: true }), execute: async () => ({ output: [{ type: 'text', text: 'ok' }] }) }));
-  return { models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'gate', tools: [tool] })] } };
+  const held = defineTool({ name: 'hold', description: 'waits', parameters: obj({}, { open: true }), execute: async () => { hold!.started(); await hold!.until; return { output: [{ type: 'text', text: 'held' }] }; } });
+  return { models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'gate', tools: [tool, held] })] } };
 }
 
 const parked = () => new Promise<void>((resolve) => { const off = onWaiting((n) => n > 0 && (off(), resolve())); });
 
 // Parks a run, then queues each text as a follow-up behind it.
-async function parkAndQueue(dir: string, calls: string[][], texts: string[], lines: string[] = []) {
-  const session = await openSession({ dir, key: 'contracts:test', log: (l) => lines.push(l), ...parkedAgent(calls) });
+async function parkAndQueue(dir: string, calls: string[][], texts: string[], lines: string[] = [], hold?: Parameters<typeof parkedAgent>[1]) {
+  const session = await openSession({ dir, key: 'contracts:test', log: (l) => lines.push(l), ...parkedAgent(calls, hold) });
   const waiting = parked();
   await session.submit('write the contract');
   await waiting;
@@ -56,13 +59,15 @@ async function parkAndQueue(dir: string, calls: string[][], texts: string[], lin
 
 const settle = async (session: Awaited<ReturnType<typeof openSession>>, id: string) => (await session.harness.submission(id as never, ctx))!.wait(ctx);
 
-// The call that took the follow-ups holds each once, in submission order, and no other call holds any.
+// Every model call that sees the follow-ups holds each exactly once, in submission order: none dropped or placed twice.
 function deliveredOnce(calls: string[][], texts: string[]) {
   const took = calls.filter((users) => texts.some((t) => users.some((u) => u.includes(t))));
-  assert.equal(took.length, 1, `one model call took the follow-ups: ${JSON.stringify(calls)}`);
-  const at = texts.map((t) => took[0].findIndex((u) => u.includes(t)));
-  assert.ok(at.every((i) => i >= 0) && at.every((i, n) => n === 0 || i > at[n - 1]), `in order: ${JSON.stringify(took[0])}`);
-  for (const t of texts) assert.equal(took[0].filter((u) => u.includes(t)).length, 1, `exactly once: ${t}`);
+  assert.ok(took.length > 0, `a model call took the follow-ups: ${JSON.stringify(calls)}`);
+  for (const users of took) {
+    const at = texts.map((t) => users.findIndex((u) => u.includes(t)));
+    assert.ok(at.every((i) => i >= 0) && at.every((i, n) => n === 0 || i > at[n - 1]), `all, in order: ${JSON.stringify(users)}`);
+    for (const t of texts) assert.equal(users.filter((u) => u.includes(t)).length, 1, `exactly once: ${t}`);
+  }
 }
 
 test('POST /abort stops the run and the follow-ups queued behind it start the next run, in order, exactly once', async (t) => {
@@ -96,6 +101,51 @@ test('a withdrawn follow-up is gone after an abort; the one still queued starts 
   assert.ok(calls.every((users) => !users.some((u) => u.includes('drop this one'))), 'the withdrawn follow-up never reached the model');
   const withdrawn = JSON.parse(lines.find((l) => l.includes('"session.withdraw"'))!);
   assert.deepEqual([withdrawn.caller, withdrawn.submission, withdrawn.queue], [{ kind: 'person', name: 'jason' }, ids[0], 'removed']);
+  await session.close();
+});
+
+test('a steered follow-up is logged with its new id, kept by an abort, and starts the next run', async () => {
+  const calls: string[][] = [];
+  const lines: string[] = [];
+  const { session, ids } = await parkAndQueue(await tempDir(), calls, ['do this now'], lines);
+  assert.equal(await session.withdraw(ids[0], true, { kind: 'person', name: 'jason' }), true);
+  const line = JSON.parse(lines.find((l) => l.includes('"session.steer"'))!);
+  assert.deepEqual([line.caller, line.submission, line.queue], [{ kind: 'person', name: 'jason' }, ids[0], 'removed']);
+  assert.ok(line.steered && line.steered !== ids[0], 'the steer is a new submission');
+  const result = await session.abort('service');
+  assert.deepEqual(result.kept, [line.steered]);
+  assert.equal((await settle(session, line.steered)).status, 'done');
+  deliveredOnce(calls, ['do this now']);
+  await session.close();
+});
+
+test('a run that answers as the abort lands is not reported aborted; the run its end started is reported as running the queue', async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const until = new Promise<void>((r) => (release = r));
+  const holding = new Promise<void>((r) => (started = r));
+  const calls: string[][] = [];
+  const lines: string[] = [];
+  const { session, ids } = await parkAndQueue(await tempDir(), calls, ['also cover pagination', 'and rate limits'], lines, { until, started });
+  const first = (await session.harness.snapshot(LiveDoc, session.root.id, ctx))!.run!.inputs.map(String);
+  // The approval lands between the abort's look at the tasks and its marks: the run answers and its end starts the queue.
+  const inspect = session.harness.inspect.bind(session.harness);
+  session.harness.inspect = async (c) => {
+    const view = await inspect(c);
+    const [approval] = await pendingApprovals(session.root, ctx);
+    await resolveApproval(session.root, approval.id, { decision: 'approve', by: { kind: 'tailnet' } }, ctx);
+    await holding;
+    return view;
+  };
+  const result = await session.abort('service');
+  assert.equal((await settle(session, first[0])).status, 'done', 'the first run answered');
+  assert.deepEqual(result.aborted, [], 'nothing this abort settled');
+  assert.equal(result.queue, 'placed by the run already going');
+  assert.deepEqual('running' in result && result.running, ids, 'the run going holds the follow-ups');
+  assert.deepEqual(JSON.parse(lines.find((l) => l.includes('"session.abort"'))!).running, ids);
+  release();
+  for (const id of ids) assert.equal((await settle(session, id)).status, 'done');
+  deliveredOnce(calls, ['also cover pagination', 'and rate limits']);
   await session.close();
 });
 
