@@ -5,59 +5,67 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createDistributor, processDriver, sessionDirName } from '../src/index.ts';
-import { PID_FILE, reapOrphans, recordProcess, type ProcessTable } from '../src/orphans.ts';
+import { RECORDS, reapOrphans, recordProcess, type ProcessTable } from '../src/orphans.ts';
 
 const dirs: string[] = [];
 after(async () => { for (const d of dirs) await rm(d, { recursive: true, force: true }); });
 const temp = async () => { const d = await mkdtemp(join(tmpdir(), 'quack-orphans-')); dirs.push(d); return d; };
 
-// A process table in memory: processes by pid with their start time, which ones ignore TERM, and every signal sent.
-function fakeTable(procs: Record<number, string>, stubborn: number[] = []) {
-  const live = new Map(Object.entries(procs).map(([pid, start]) => [Number(pid), start]));
+const ENTRY = '/app/packages/runtime/src/main.ts';
+type Proc = { start: string; argv?: string[]; dir?: string };
+
+// A process table in memory: processes by pid with start time, argv and session dir, which ignore TERM, and every signal sent.
+function fakeTable(procs: Record<number, Proc>, stubborn: number[] = []) {
+  const live = new Map(Object.entries(procs).map(([pid, p]) => [Number(pid), p]));
   const signals: string[] = [];
   const table: ProcessTable = {
-    startOf: (pid) => live.get(pid),
+    startOf: (pid) => live.get(pid)?.start,
+    identity: (pid) => { const p = live.get(pid); return p && { argv: p.argv ?? [], ...(p.dir && { sessionDir: p.dir }) }; },
     kill: (pid, signal) => { signals.push(`${pid} ${signal}`); if (signal === 'SIGKILL' || !stubborn.includes(pid)) live.delete(pid); },
     gone: async (pid) => !live.has(pid),
   };
   return { table, signals, live };
 }
 
-async function sessionDir(dataDir: string, name: string, record?: { pid: number; start: string }) {
-  const dir = join(dataDir, name);
-  await mkdir(dir, { recursive: true });
-  if (record) await writeFile(join(dir, PID_FILE), JSON.stringify(record));
-  return dir;
+async function record(dataDir: string, name: string, rec: { pid: number; start: string }) {
+  await mkdir(join(dataDir, RECORDS), { recursive: true });
+  await writeFile(join(dataDir, RECORDS, `${name}.json`), JSON.stringify(rec));
 }
+const runtime = (dataDir: string, name: string, start: string): Proc => ({ start, argv: ['node', ENTRY], dir: join(dataDir, name) });
+const quiet = { log: () => {} };
 
-test('a process a previous run left is stopped before ready, and a stubborn one is killed', async () => {
+test('a session runtime a previous run left is stopped before ready, and a stubborn one is killed', async () => {
   const dataDir = await temp();
-  await sessionDir(dataDir, 'a', { pid: 101, start: 's101' });
-  await sessionDir(dataDir, 'b', { pid: 102, start: 's102' });
-  await sessionDir(dataDir, 'c');
-  const { table, signals, live } = fakeTable({ 101: 's101', 102: 's102', 999: 'other' }, [102]);
-  assert.deepEqual((await reapOrphans(dataDir, { table })).sort(), ['a', 'b']);
+  await record(dataDir, 'a', { pid: 101, start: 's101' });
+  await record(dataDir, 'b', { pid: 102, start: 's102' });
+  const { table, signals, live } = fakeTable({ 101: runtime(dataDir, 'a', 's101'), 102: runtime(dataDir, 'b', 's102'), 999: { start: 'other' } }, [102]);
+  assert.deepEqual((await reapOrphans(dataDir, { entry: ENTRY, table, ...quiet })).sort(), ['a', 'b']);
   assert.deepEqual(signals, ['101 SIGTERM', '102 SIGTERM', '102 SIGKILL']);
   assert.deepEqual([...live.keys()], [999], 'nothing else is touched');
-  for (const d of ['a', 'b']) assert.equal(existsSync(join(dataDir, d, PID_FILE)), false);
+  assert.deepEqual(await readdir(join(dataDir, RECORDS)), [], 'the records are cleared');
 });
 
-test('a pid since reused by another process, or one already gone, is left alone and its record cleared', async () => {
+test('a record for a process that is not a session runtime, or names another session, is never signalled', async () => {
   const dataDir = await temp();
-  await sessionDir(dataDir, 'reused', { pid: 201, start: 'old-start' });
-  await sessionDir(dataDir, 'gone', { pid: 202, start: 's202' });
-  const { table, signals } = fakeTable({ 201: 'new-start' });
-  assert.deepEqual(await reapOrphans(dataDir, { table }), []);
+  await record(dataDir, 'planted', { pid: 201, start: 's201' });
+  await record(dataDir, 'other-session', { pid: 202, start: 's202' });
+  await record(dataDir, 'reused', { pid: 203, start: 'old-start' });
+  await record(dataDir, 'gone', { pid: 204, start: 's204' });
+  const logged: string[] = [];
+  const { table, signals } = fakeTable({ 201: { start: 's201', argv: ['/usr/bin/vim'], dir: join(dataDir, 'planted') }, 202: runtime(dataDir, 'somewhere-else', 's202'), 203: runtime(dataDir, 'reused', 'new-start') });
+  assert.deepEqual(await reapOrphans(dataDir, { entry: ENTRY, table, log: (m) => void logged.push(m) }), []);
   assert.deepEqual(signals, []);
-  assert.deepEqual(await readdir(join(dataDir, 'reused')), []);
+  assert.equal(logged.length, 3, 'each live mismatch is logged');
 });
 
-test('a launch records its process so the next run can find it', async () => {
-  const dir = await temp();
-  const { table } = fakeTable({ 301: 's301' });
-  await recordProcess(dir, 301, table);
-  const { table: next, signals } = fakeTable({ 301: 's301' });
-  assert.deepEqual(await reapOrphans(join(dir, '..'), { table: next }).then((r) => r.includes(dir.split('/').at(-1)!)), true);
+test('a launch records its process in the distributor area, never in the session directory, and the next run finds it', async () => {
+  const dataDir = await temp();
+  const dir = join(dataDir, 'sess');
+  await mkdir(dir);
+  await recordProcess(dir, 301, fakeTable({ 301: runtime(dataDir, 'sess', 's301') }).table);
+  assert.deepEqual(await readdir(dir), []);
+  const { table, signals } = fakeTable({ 301: runtime(dataDir, 'sess', 's301') });
+  assert.deepEqual(await reapOrphans(dataDir, { entry: ENTRY, table, ...quiet }), ['sess']);
   assert.deepEqual(signals, ['301 SIGTERM']);
 });
 

@@ -11,6 +11,7 @@ import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
 import { childPort, shellEnv } from '@quack/session';
 import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
+import { RECORDS } from '../src/orphans.ts';
 import { createDistributor, forwardOutput, processDriver, sessionDirName } from '../src/index.ts';
 import { PING_TIMEOUT_MS, PROXY_PROOF } from '../src/server.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
@@ -149,7 +150,7 @@ test('an unknown or deleted key answers 404 on every route and starts nothing; a
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${key}/ws`);
   await new Promise((r) => { ws.onerror = ws.onclose = r; });
   assert.deepEqual(driver.running(), []);
-  assert.deepEqual(await readdir(dataDir), []);
+  assert.deepEqual((await readdir(dataDir)).filter((d) => d !== RECORDS), []);
   assert.equal((await invoke('research:ghost', { input: 'hi', wait: true })).status, 200);
   assert.equal((await fetch(`${base}/sessions/${key}/ping`)).status, 200);
 });
@@ -166,7 +167,7 @@ test('a session open in a page is deleted from that page: its idle process is st
     assert.equal(res.status, 200);
     await closed;
     assert.deepEqual(driver.running(), []);
-    assert.deepEqual(await readdir(dataDir), []);
+    assert.deepEqual((await readdir(dataDir)).filter((d) => d !== RECORDS), []);
   } finally {
     // A failed delete must not leave the socket holding the session open past the test.
     ws.close();
