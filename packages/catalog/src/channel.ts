@@ -54,7 +54,7 @@ function prompt(v: unknown, what: string) {
   return p as never;
 }
 
-// A seal's own deliveries are not read: deliveries arrive only as artifact.delivered events.
+// A seal carries no deliveries (channel v9): they arrive only as artifact.delivered events.
 function sealed(d: Obj, what: string) {
   return {
     kind: str(d, 'kind', what)!, version: int(d, 'version', what), hash: str(d, 'hash', what)!, content: str(d, 'content', what)!,

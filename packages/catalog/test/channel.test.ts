@@ -92,14 +92,14 @@ test('a down store is a 503 the session retries', async () => {
 test('v8 events: deliveries append, and echoes and extension events only move the watermark', async () => {
   const { post, catalog } = await channel();
   const key = 'sleeper:platinum:2';
-  await post({ events: [created(), { seq: 2, id: 'artifact:k:1', at: at(2), type: 'artifact.sealed', data: { kind: 'k', version: 1, hash: 'h', content: 'c', summary: 'S', deliveries: [{ where: 'x', link: 'y', at: at(2) }] } }] });
+  await post({ events: [created(), { seq: 2, id: 'artifact:k:1', at: at(2), type: 'artifact.sealed', data: { kind: 'k', version: 1, hash: 'h', content: 'c', summary: 'S' } }] });
   const delivery = { seq: 3, id: 'delivered:k:1', at: at(3), type: 'artifact.delivered', data: { kind: 'k', version: 1, where: 'github', link: 'https://x/1', at: at(3) } };
   const before = await catalog.getSession(key);
   assert.deepEqual(await post({ events: [delivery, { seq: 4, id: 'judge:1', at: at(4), type: 'judge.cleared', data: { kind: 'k', version: 1 } }, { seq: 5, id: 'state:echo', at: at(5), type: 'state.changed', data: { state: 'stopped' } }] }), { status: 200, body: { acked: 5 } });
   assert.deepEqual(await post({ events: [{ ...delivery, seq: 6 }] }), { status: 200, body: { acked: 6 } });
   assert.deepEqual(await catalog.getSession(key), before, 'the echo and the extension event changed no row');
   const [row] = (await catalog.listArtifacts({ session: key })).rows;
-  assert.deepEqual(row?.deliveries, [{ where: 'github', link: 'https://x/1', at: Date.parse(at(3)) }], 'one delivery per event id, none from the seal itself');
+  assert.deepEqual(row?.deliveries, [{ where: 'github', link: 'https://x/1', at: Date.parse(at(3)) }], 'one delivery per event id');
   await post({ events: [{ seq: 7, id: 'run:1:ended', at: at(7), type: 'run.ended', data: { run: 1, outcome: 'denied', failedSteps: [] } }] });
   assert.equal((await catalog.getSession(key))?.lastRun?.outcome, 'denied');
 });
