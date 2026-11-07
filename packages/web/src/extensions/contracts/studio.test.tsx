@@ -34,7 +34,7 @@ function open(artifacts: SealedArtifact[], approvals: object[] = []) {
   return { ws, pane: screen.getByRole('region', { name: 'Contract' }) };
 }
 const bar = () => screen.getByRole('region', { name: 'Approval' });
-const posts = () => fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').map(([u, i]) => [String(u), JSON.parse(String(i!.body))]);
+const posts = () => fetchMock.mock.calls.filter(([, i]) => i?.method === 'PATCH').map(([u, i]) => [String(u), JSON.parse(String(i!.body))]);
 
 test('a semantic diff marks the elements that changed, by the pointer each is drawn at, and names what was removed', () => {
   const rest = diffUnits(units(v1 as ContractSpec), units(v2 as ContractSpec));
@@ -64,7 +64,7 @@ test('only a version the judge passed and put up can be approved; every other st
 
 test('the contract sits beside the conversation with what changed since this viewer last looked, and approving it decides the waiting proposal', async () => {
   localStorage.setItem('quack.contracts.seen.contracts:s1', '1');
-  routes[`POST /sessions/${KEY}/approvals/p%2F1`] = { resolved: true };
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, [{ text: 'runs are now oldest first' }])]);
   expect(within(pane).getByRole('heading', { name: /^\d+ new · \d+ changed.* since version 1$/ })).toBeInTheDocument();
   expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
@@ -72,7 +72,7 @@ test('the contract sits beside the conversation with what changed since this vie
   expect(screen.queryByRole('button', { name: /^Reject/ }), 'the pane decides it, not a transcript card').toBeNull();
   expect(localStorage.getItem('quack.contracts.seen.contracts:s1')).toBe('2');
   await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
-  expect(posts()).toEqual([[`sessions/${KEY}/approvals/p%2F1`, { decision: 'approve' }]]);
+  expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
   await waitFor(() => expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled());
 });
 
@@ -92,18 +92,18 @@ test('each sealed draft replaces the shown one live: checking, then failed, each
 });
 
 test('a message sent while a version waits is steered into the run and declines the proposal', async () => {
-  routes[`POST /sessions/${KEY}/approvals/p%2F1`] = { resolved: true };
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
   const { ws } = open([spec(1, v1), spec(2, v2)], [proposal(2, 2)]);
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'Why oldest first?');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   const input = ws.sent.find((f) => (f as { type: string }).type === 'input') as { requestId: string; whenBusy: string; input: string };
   expect([input.input, input.whenBusy]).toEqual(['Why oldest first?', 'steer']);
   ws.frame({ type: 'accepted', requestId: input.requestId });
-  await waitFor(() => expect(posts()).toEqual([[`sessions/${KEY}/approvals/p%2F1`, { decision: 'reject', reason: SUPERSEDED }]]));
+  await waitFor(() => expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'reject', reason: SUPERSEDED } }]]));
 });
 
 test('an approval another tab already decided says so instead of failing silently', async () => {
-  routes[`POST /sessions/${KEY}/approvals/p%2F1`] = new (await import('../../test-harness.ts')).Fail(409, { detail: 'unknown or already decided' });
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = new (await import('../../test-harness.ts')).Fail(409, { detail: 'unknown or already decided' });
   open([spec(1, v1), spec(2, v2)], [proposal(2, 2)]);
   await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
   expect(await within(bar()).findByRole('alert')).toHaveTextContent('already decided');

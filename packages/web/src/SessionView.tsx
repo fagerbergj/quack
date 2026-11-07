@@ -17,7 +17,7 @@ import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
 import { SessionChips, studioFor } from './slots.tsx';
-import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
+import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { useLoad } from './useLoad.ts';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
@@ -235,19 +235,7 @@ function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; 
   );
 }
 
-const RESULT: Record<LookTone, string> = { plain: 'text-ink-2', muted: 'text-muted', warn: 'text-warning', ok: 'text-success', bad: 'text-danger' };
-
-// What the session delivered (a review's posted verdict and its link); absent while it runs, so an earlier result never reads as current.
-function Result({ result }: { result: Look }) {
-  return (
-    <span className={`flex items-center gap-2 text-[12px] ${RESULT[result.tone]}`}>
-      {result.line}
-      {result.link && <a href={result.link.url} target="_blank" rel="noopener noreferrer" className="-my-3.5 py-3.5 text-link no-underline hover:underline">{`${result.link.label} ↗`}</a>}
-    </span>
-  );
-}
-
-function Header({ sessionKey, name, back, status, tone, spend, link, result, onDetails, children }: { sessionKey: string; name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; result?: Look; onDetails?: () => void; children: ReactNode }) {
+function Header({ sessionKey, name, back, status, tone, spend, link, onDetails, children }: { sessionKey: string; name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; onDetails?: () => void; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
         <a href={back.href} aria-label={back.label} className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
@@ -259,7 +247,6 @@ function Header({ sessionKey, name, back, status, tone, spend, link, result, onD
         <div className="flex min-w-0 flex-1 flex-col lg:flex-row lg:items-center lg:gap-3">
           <Title name={name} />
           <StatusChip text={status} tone={tone} />
-          {result && <Result result={result} />}
         </div>
         <SessionChips sessionKey={sessionKey} />
         <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
@@ -367,7 +354,7 @@ function Side({ live, rail, ...props }: Omit<StudioProps, 'visible'> & { live: L
   );
 }
 
-export function SessionView({ sessionKey, agent, name, delivered, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
+export function SessionView({ sessionKey, agent, name, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
@@ -385,7 +372,7 @@ export function SessionView({ sessionKey, agent, name, delivered, spend, manage,
   const live = useStudio(sessionKey, approvals, send, pending.decide, setError, view.running);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered} onDetails={details.show}>
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} onDetails={details.show}>
         {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>

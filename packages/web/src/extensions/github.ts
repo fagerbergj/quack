@@ -1,7 +1,6 @@
 import { createElement } from 'react';
-import { BLUE, cut, sentence, type Delivered, type Extension } from '../extension.ts';
+import { BLUE, cut, sentence, type Extension, type Nameable } from '../extension.ts';
 import type { SealedArtifact } from '../api.ts';
-import type { Row } from '../sessions.ts';
 import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
 import { PrSection } from './PrRail.tsx';
 import { PrChip, PrStates, PrStatesNotice } from './prState.tsx';
@@ -13,7 +12,7 @@ const KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
 const TRIGGER = /^Review pull request .*? Title: (.+)$/s;
 const CC_PREFIX = /^\w+(\([^)]*\))?!?:\s*/;
 
-function prTitle(r: Row, fallback: string): string {
+function prTitle(r: Nameable, fallback: string): string {
   const t = (r.title && TRIGGER.exec(r.title)?.[1]) || (r.title?.startsWith('Review pull request ') ? '' : r.title) || '';
   return t.replace(CC_PREFIX, '') ? sentence(t.replace(CC_PREFIX, '')) : fallback;
 }
@@ -25,23 +24,12 @@ function outdated(a: SealedArtifact, now: Parameters<NonNullable<Extension['card
   const head = (now?.meta.at(-1) as PrMeta | undefined)?.headSha;
   return Boolean(now?.running && a.basis && head && head !== a.basis);
 }
-const POSTED: Record<string, Delivered['tone']> = { 'Approved ✓': 'ok', 'Changes requested': 'bad', Commented: 'plain' };
-const VERDICT_WORDS: Record<string, string> = { approve: 'Approved ✓', request_changes: 'Changes requested', comment: 'Commented' };
 const DECISION: Record<string, string> = { approve: 'Approve', request_changes: 'Request changes', comment: 'Comment' };
 
 const postedTo = (a: SealedArtifact) => {
   const decision = DECISION[parseReview(a.content)?.verdict ?? ''];
   return `Posted to GitHub${decision ? ` as ${decision}` : ''}`;
 };
-
-// An idle review reads as the newest version that reached GitHub, with its verdict as posted (a limit-released one included), never the judge's result.
-function delivered(r: Row): Delivered | undefined {
-  const reviews = r.artifacts.filter((a) => a.kind === KIND);
-  const posted = reviews.filter((a) => a.links?.length).sort((a, b) => b.version - a.version)[0];
-  if (!posted) return reviews.length ? { line: 'No review posted', tone: 'muted' } : undefined;
-  const line = VERDICT_WORDS[posted.outcome ?? ''] ?? 'Review posted';
-  return { line, tone: POSTED[line] ?? 'plain', link: posted.links![0] };
-}
 
 export const github: Extension = {
   wholeUnits: ['review'],
@@ -52,8 +40,7 @@ export const github: Extension = {
       const full = prTitle(r, repo!);
       return { title: cut(full), full, num: `#${n}`, ...(r.multiRepo && { repo: `${owner}/${repo}` }) };
     },
-    delivered,
-    words: () => ({ kind: KIND, w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
+    words: () => ({ run: 'Reviewing', done: 'Reviewed', none: 'Not reviewed yet' }),
   },
   artifact: (a, running) => (a.kind === KIND ? { name: 'Review', titled: true, posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length), postedTo: postedTo(a) } : undefined),
   card: (a, now) => (a.kind === KIND ? reviewCard(a, outdated(a, now)) : undefined),

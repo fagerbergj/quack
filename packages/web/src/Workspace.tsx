@@ -1,32 +1,19 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { approvalOf, indexApprovals, indexArtifacts, indexFailures, indexQuestions, listApprovals, listQuestions, listSessions, type Question } from './api.ts';
+import { listSessions } from './api.ts';
 import { Home } from './Home.tsx';
-import { look, sessionTitle } from './kinds.ts';
-import { multiScope, type Row } from './sessions.ts';
+import { sessionTitle } from './kinds.ts';
+import { multiScope, rowOf, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
 const REFRESH_MS = 15_000;
 
-// The index knows pending approvals of idle sessions too. Without it, only running sessions are asked: a request to an idle one would start its process.
+// The row carries its pending-ask count and its last run, so the tick is this one list.
 async function loadRows(): Promise<Row[]> {
-  const [listed, indexed, asked, sealed, failed] = await Promise.all([listSessions(), indexApprovals(), indexQuestions(), indexArtifacts(), indexFailures()]);
   // The server pages by last activity; the list stays in creation order so rows do not jump as sessions work.
-  const sessions = listed.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.key.localeCompare(b.key));
-  const approvalsBy = Map.groupBy(indexed ?? [], (a) => a.session);
-  const questionsBy = Map.groupBy(asked ?? [], (q) => q.session);
-  const failuresBy = Map.groupBy(failed ?? [], (f) => f.session);
-  const artifacts = Map.groupBy(sealed ?? [], (a) => a.session);
+  const sessions = (await listSessions()).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.key.localeCompare(b.key));
   // A repo prefix only earns its space when reviews come from more than one repo.
   const multiRepo = multiScope(sessions.map((s) => s.key));
-  return Promise.all(sessions.map(async ({ cost, tokens, ...s }) => ({
-    ...s,
-    multiRepo,
-    spend: tokens && { cost: cost ?? 0, tokens },
-    artifacts: artifacts.get(s.key) ?? [],
-    failures: failuresBy.get(s.key) ?? [],
-    approvals: indexed ? (approvalsBy.get(s.key) ?? []).map(approvalOf) : s.running ? await listApprovals(s.key).catch(() => []) : [],
-    questions: asked ? (questionsBy.get(s.key) ?? []).map((q): Question => ({ ...q, askedAt: Date.parse(q.at) })) : s.running ? await listQuestions(s.key).catch(() => []) : [],
-  })));
+  return sessions.map((s) => rowOf(s, multiRepo));
 }
 
 export function useWorkspaceData(selected: string | undefined) {
@@ -59,14 +46,13 @@ function headerName(key: string, s: Parameters<typeof sessionTitle>[0]) {
 export function Workspace({ data, selected, home, list }: { data: WorkspaceData; selected?: { key: string; agent?: string }; home: boolean; list?: ReactNode }) {
   if (list && !selected && !home) return <>{list}</>;
   const row = data.rows?.find((r) => r.key === selected?.key);
-  const l = row && !row.active ? look(row) : undefined;
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} delivered={l?.delivered ? l : undefined} spend={row?.spend} about={row && { agent: row.agent, created: row.createdAt, activity: row.lastActivity }} manage={row && { archived: Boolean(row.archived), changed: data.reload }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} spend={row?.spend} about={row && { agent: row.agent, created: row.createdAt, activity: row.lastActivity }} manage={row && { archived: row.state === 'archived', changed: data.reload }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '' })} />
       ) : (
         <div className="overflow-y-auto">
-          <Home rows={data.rows?.filter((r) => !r.archived)} error={data.error} now={data.now} reload={data.reload} />
+          <Home rows={data.rows?.filter((r) => r.state !== 'archived')} error={data.error} now={data.now} reload={data.reload} />
         </div>
       )}
     </div>

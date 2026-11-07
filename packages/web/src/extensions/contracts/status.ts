@@ -1,37 +1,15 @@
-import type { IndexArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 
-export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
-export type Contract = { key: string; name: string; kind: string; version?: number; status: string; tone: Tone; note?: string; rank: number };
+export type Tone = 'warn' | 'plain' | 'bad';
+export type Contract = { key: string; name: string; status: string; tone: Tone; rank: number };
 
-const SUFFIX = /, version \d+$/;
-const named = (row: Row, kind: string) => row.artifacts.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version);
-const outcomeOf = (a: IndexArtifact | undefined) => (a?.outcome ? Number.parseInt(a.outcome.slice(1), 10) : undefined);
-// A spec's outcome is "v2", or "v2 json-schema" for a kind other than REST.
-const KIND_NAMES: Record<string, string> = { 'json-schema': 'JSON Schema', typescript: 'TypeScript' };
-const kindOf = (a: IndexArtifact | undefined) => KIND_NAMES[a?.outcome?.split(' ')[1] ?? ''] ?? 'REST';
-
-// The newest spec that passed its checks names the contract (summary, cut at 80 characters) and gives its version (outcome).
-function latestSpec(row: Row) {
-  const specs = named(row, 'contract.spec');
-  const hit = specs.filter((a) => a.verdict?.passed).at(-1) ?? specs.at(-1);
-  const name = hit?.summary?.replace(SUFFIX, '');
-  return { name: name || (row.title ?? 'New contract'), kind: kindOf(hit), version: outcomeOf(hit), passed: Boolean(hit?.verdict?.passed) };
-}
-
-/** What the Contracts page says about one contract session, from the index rows it already loaded. */
+/** What the Contracts page says about one contract session, from its catalog row; which version is approved is the extension's own record, not the row's. */
 export function contractOf(row: Row): Contract {
-  const { name, kind, version, passed } = latestSpec(row);
-  const approved = outcomeOf(named(row, 'contract.approved').at(-1));
-  const asked = outcomeOf(named(row, 'contract.changes').at(-1));
-  const base = { key: row.key, name, kind, version };
-  const stale = approved !== undefined && version !== undefined && version > approved ? `v${version} is not approved yet` : undefined;
-  if (row.approvals.length) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
-  // A run that only finishes its reply after an approval is not drafting anything new.
-  if (row.questions.length || (row.active && approved !== version)) return { ...base, status: 'Drafting', tone: 'plain', note: approved === undefined ? undefined : `v${approved} approved`, rank: 1 };
-  if (asked !== undefined && asked === version && asked !== approved) return { ...base, status: 'Changes requested', tone: 'bad', note: named(row, 'contract.changes').at(-1)?.summary || undefined, rank: 2 };
-  if (approved !== undefined) return { ...base, status: `Approved v${approved}`, tone: 'ok', note: stale, rank: 4 };
-  return { ...base, status: 'Drafting', tone: 'plain', note: passed ? 'not yet proposed for approval' : undefined, rank: 3 };
+  const base = { key: row.key, name: row.title ?? 'New contract' };
+  if (row.pendingAsks) return { ...base, status: 'Waiting on you', tone: 'warn', rank: 0 };
+  if (row.state === 'running') return { ...base, status: 'Drafting', tone: 'plain', rank: 1 };
+  if (row.failures.length) return { ...base, status: 'Run failed', tone: 'bad', rank: 2 };
+  return { ...base, status: 'Idle', tone: 'plain', rank: 3 };
 }
 
-export const contractRows = (rows: Row[]) => rows.filter((r) => r.key.startsWith('contracts:') && !r.archived).map(contractOf).sort((a, b) => a.rank - b.rank);
+export const contractRows = (rows: Row[]) => rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map(contractOf).sort((a, b) => a.rank - b.rank);

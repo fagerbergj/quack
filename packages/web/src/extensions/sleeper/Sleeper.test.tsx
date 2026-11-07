@@ -1,7 +1,9 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import type { Row } from '../../sessions.ts';
+import type { Session } from '../../api.ts';
+import { rowOf, type Row } from '../../sessions.ts';
+import { sess } from '../../test-harness.ts';
 import { Sleeper } from './Sleeper.tsx';
 import digest7 from './fixtures/7-digest.json';
 import retro7 from './fixtures/7-retro.json';
@@ -15,7 +17,10 @@ import waivers8 from './fixtures/8-waivers.json';
 const L = '1356407594683482112';
 const SEALED: Record<string, object> = { '8:lineup': lineup8, '8:waivers': waivers8, '8:trade-finder': finder8, '8:trends': trends8, '8:history': history8, '7:digest': digest7, '7:retro': retro7 };
 const key = (week: number, job: string) => `sleeper:${L}:${week}:${job}`;
-const row = (week: number, job: string, running = false) => ({ key: key(week, job), agent: 'a', running, active: running, lastActivity: '2026-11-01T01:00:00.000Z', createdAt: '2026-11-01T01:00:00.000Z', approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }) as Row;
+const row = (week: number, job: string, running = false) => rowOf(sess(key(week, job), { agent: 'a', state: running ? 'running' : 'idle' }) as Session, false);
+// A sealed fixture as the Sessions API lists it: dates as RFC 3339, and no verdict, which is the judge's.
+const listed = (session: string, a: { sealedAt: number } & Record<string, unknown>) =>
+  ({ session, kind: a.kind, version: a.version, hash: a.hash, content: a.content, sealedAt: new Date(a.sealedAt).toISOString(), summary: a.summary });
 const ALL = [...Object.keys(SEALED).map((k) => row(Number(k.split(':')[0]), k.split(':')[1]!)), row(9, 'lineup', true)];
 // Sunday Nov 1 15:00 UTC is "now"; these are the service's next runs (Eastern times in the comments).
 const RUNS = [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'retro', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }, { job: 'trade-finder', at: '2026-11-04T10:00:00.000Z' }, { job: 'trends', at: '2026-11-02T09:30:00.000Z' }];
@@ -34,9 +39,10 @@ beforeEach(() => {
     if (url === 'apps/sleeper/schedule') return new Response(JSON.stringify({ week: live, runs: RUNS }));
     if (url === 'apps/sleeper') return new Response(JSON.stringify({ league: L }));
     if (url.startsWith('sessions?')) return new Response(JSON.stringify({ sessions: served }));
-    const m = /^sessions\/(.+)\/artifacts$/.exec(url);
-    const sealed = m && SEALED[decodeURIComponent(m[1]!).split(':').slice(2, 4).join(':')];
-    return new Response(JSON.stringify({ artifacts: sealed ? [sealed] : [] }));
+    const m = /^sessions\/([^/?]+)\/artifacts\?/.exec(url);
+    const session = m ? decodeURIComponent(m[1]!) : '';
+    const sealed = SEALED[session.split(':').slice(2, 4).join(':')] as { sealedAt: number } | undefined;
+    return new Response(JSON.stringify({ artifacts: sealed ? [listed(session, sealed)] : [] }));
   }));
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -106,7 +112,6 @@ test('trends group by kind, name the player and carry no player id', async () =>
   expect(t.getByText('Rising on waivers')).toBeInTheDocument();
   expect(t.getByText('Devin Singletary · RB · NYG')).toBeInTheDocument();
   expect(t.getByText(/Devin Singletary leads free-agent adds/)).toBeInTheDocument();
-  expect(t.getByText("Didn't pass its checks")).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/6130|4881|7547/);
   expect(t.getByText('Source notes')).toBeInTheDocument();
 });
@@ -241,7 +246,9 @@ test('the page asks the server for its league by key prefix, following pages, an
   page();
   expect(await screen.findByRole('heading', { name: 'Week 9' })).toBeInTheDocument();
   const asked = calls.map(([u]) => new URL(u, 'http://x')).filter((u) => u.pathname === '/sessions');
-  expect(asked.map((u) => u.searchParams.get('filter'))).toEqual([`key:sleeper:${L}:*`, `key:sleeper:${L}:*`]);
+  // q is Lucene: the key's colons are escaped and the trailing * is the prefix wildcard.
+  expect(asked.map((u) => u.searchParams.get('q'))).toEqual([`key:sleeper\\:${L}\\:*`, `key:sleeper\\:${L}\\:*`]);
+  expect(asked.map((u) => u.searchParams.has('filter'))).toEqual([false, false]);
   expect(calls.some(([u]) => u.includes('sleeper%3A999'))).toBe(false);
 });
 
@@ -300,11 +307,12 @@ test('a past week rows say what each result is, not just the week again', async 
   expect((await card('Week 7 retro')).getByText('Your lineup calls, looked back on')).toBeInTheDocument();
 });
 
-test('every passed result is a tick on its title, with no status line or minor notes', async () => {
+test('results read from the Sessions API carry no verdict: no tick, no failed-checks line, no minor notes', async () => {
   page();
-  await screen.findByRole('article', { name: 'Waivers' });
-  expect(screen.getAllByRole('img', { name: 'Double-checked' }).length).toBeGreaterThan(2);
-  expect(screen.queryByText('Double-checked')).toBeNull();
+  await userEvent.click(await screen.findByRole('button', { name: 'Open Trends' }));
+  await card('Trends');
+  expect(screen.queryAllByRole('img', { name: 'Double-checked' })).toEqual([]);
+  expect(screen.queryByText("Didn't pass its checks")).toBeNull();
   expect(document.body).not.toHaveTextContent(/\d+ minor notes?/);
 });
 

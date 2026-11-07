@@ -1,7 +1,12 @@
 import { expect, test } from 'vitest';
+import type { Failure, Session } from './api.ts';
 import { look, sessionTitle } from './kinds.ts';
+import { rowOf } from './sessions.ts';
+import { sess } from './test-harness.ts';
 
-const s = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '', lastActivity: '', ...over });
+const s = (key: string, over: Partial<Session> = {}) => sess(key, over) as Session;
+const row = (key: string, over: Partial<Session> = {}) => rowOf(s(key, over), false);
+const ended = (outcome: NonNullable<Session['lastRun']>['outcome'], failedSteps: Failure[] = []) => ({ lastRun: { outcome, endedAt: '', failedSteps } });
 const text = (x: ReturnType<typeof sessionTitle>) => [x.repo, x.number, x.text].filter(Boolean).join(' ');
 
 test('a review is #n plus the PR title without its conventional-commit prefix, cut at a word', () => {
@@ -20,7 +25,7 @@ test('a review opened before titles were recorded reads the PR title after "Titl
 test('the repo shows as a prefix only when the loaded reviews span more than one repo', () => {
   const one = sessionTitle(s('github:acme/tool#5', { title: 'feat: add retries' }));
   expect(text(one)).toBe('#5 Add retries');
-  const many = sessionTitle(s('github:acme/tool#5', { title: 'feat: add retries', multiRepo: true }));
+  const many = sessionTitle({ ...s('github:acme/tool#5', { title: 'feat: add retries' }), multiRepo: true });
   expect(text(many)).toBe('acme/tool #5 Add retries');
 });
 
@@ -41,14 +46,22 @@ test('reMarkable and other sessions cut long names at about 40 characters', () =
   expect(sessionTitle(s('ui:x', { agent: 'coder', title: 'Refactor the distributor sweep so that listing never pings' })).text).toBe('Refactor the distributor sweep so that…');
 });
 
-test('a sealed reMarkable transcript with no verdict is not "not transcribed"', () => {
-  const row = (artifacts: object[]) => ({ ...s('remarkable:d1'), multiRepo: false, approvals: [], questions: [], failures: [], artifacts }) as unknown as Parameters<typeof look>[0];
-  const art = { kind: 'remarkable.transcript', version: 1, sealedAt: 1 };
-  expect(look(row([art])).line).toBe('Transcribed');
-  expect(look(row([])).line).toBe('Not transcribed yet');
+test('an idle row reads how its last run ended, from the catalog row alone', () => {
+  expect(look(row('remarkable:d1', ended('succeeded'))).line).toBe('Transcribed');
+  expect(look(row('remarkable:d1')).line).toBe('Not transcribed yet');
+  expect(look(row('remarkable:d1', ended('aborted'))).line).toBe('Stopped');
+  expect(look(row('remarkable:d1', { state: 'running', ...ended('succeeded') })).line).toBe('Transcribing');
+});
+
+test('a failed last run reads its step until a new run works on it; pending asks read as waiting', () => {
+  const failed = ended('failed', [{ step: 'ocr', error: 'timeout\nstack' }]);
+  expect(look(row('remarkable:d1', failed))).toMatchObject({ line: 'Run failed at ocr · timeout', tone: 'bad' });
+  expect(look(row('remarkable:d1', { state: 'running', ...failed })).line).toBe('Transcribing');
+  expect(look(row('remarkable:d1', { pendingAsks: 2 }))).toMatchObject({ line: '2 waiting on you', tone: 'warn' });
+  expect(look(row('remarkable:d1', { pendingAsks: 1 })).line).toBe('Waiting on you');
 });
 
 test('a Home conversation reads Chat or Working, never the agent name', () => {
-  expect(look({ ...s('home:main', { agent: 'quack' }), approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }).line).toBe('Chat');
-  expect(look({ ...s('home:main', { agent: 'quack', active: true }), approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }).line).toBe('Working');
+  expect(look(row('home:main', { agent: 'quack', ...ended('succeeded') })).line).toBe('Chat');
+  expect(look(row('home:main', { agent: 'quack', state: 'running' })).line).toBe('Working');
 });
