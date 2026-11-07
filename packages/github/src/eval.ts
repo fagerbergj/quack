@@ -19,7 +19,6 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
     const { pr } = pin;
     // The session reaches its apps under /apps/<name> and publishes facts to the same base, which the replay discards.
     const path = (req.url ?? '').replace(/^\/apps\/github/, '');
-    if (path === '/index/facts') return send(200, {});
     // A replay re-runs a review made while the PR was open; a pin recorded after it merged must not read as closed.
     if (req.method === 'GET' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}`) return send(200, { ...pr, state: 'open' });
     if (req.method === 'POST' && path === '/reviews') {

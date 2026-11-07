@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { openCatalog } from '@quack/catalog';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo, Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -50,7 +51,10 @@ async function start() {
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/gate-session.ts', import.meta.url))], dataDir, agentsDir, broker: { mint, revoke: broker.revoke } });
   cleanups.push(() => Promise.all(driver.running().map((k) => driver.stop(k))));
   const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await readFile(pinnedAgentPath(dataDir, key), 'utf8').then(JSON.parse, () => null)) };
-  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, sessions, retire: { waiting: async () => false, forget: async () => {} } });
+  // The catalog the sessions' own channels fill; this fixture's sessions send none, so a test publishes what they would.
+  const catalog = openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-auth-catalog-')) });
+  cleanups.push(() => catalog.close());
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, sessions, catalog });
   const [base, sessionBase] = [await listening(server), await listening(server.sessions)];
   const path = (key: string, rest = '') => `/sessions/${encodeURIComponent(key)}${rest}`;
   const invoke = async (key: string, agent: string) => assert.equal((await fetch(`${base}${path(key, '/invocations')}?agent=${agent}`, { method: 'POST', body: JSON.stringify({ input: 'post it' }) })).status, 202);
@@ -59,19 +63,21 @@ async function start() {
     return approvals.length ? approvals : undefined;
   });
   const asSession = (key: string, url: string, init: RequestInit = {}) => fetch(sessionBase + url, { ...init, headers: { authorization: `Bearer ${held.get(key)}`, ...(init.headers as Record<string, string>) } });
-  return { driver, base, sessionBase, path, invoke, pending, asSession, held };
+  return { driver, base, sessionBase, path, invoke, pending, asSession, held, catalog };
 }
 
 test('an identity header from a session is refused on both listeners, so it can delete or rename nothing', async () => {
-  const { base, path, invoke, pending, asSession } = await start();
+  const { base, path, invoke, pending, asSession, catalog } = await start();
   const key = 'github:o/r#1';
   await invoke(key, 'reviewer');
   await pending(key);
+  await catalog.publish(key, [{ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'reviewer', createdAt: 0 } }]);
   const forged = await fetch(base + path(key), { method: 'DELETE', headers: { 'x-authentik-username': 'jason' } });
   assert.equal(forged.status, 401, 'the public listener believes an identity only beside the proxy\'s proof');
-  for (const [method, rest] of [['DELETE', ''], ['PATCH', ''], ['POST', '/delete']]) {
+  // The Sessions API refuses a session credential's write (401); any other route is the listener's policy (403).
+  for (const [method, rest, status] of [['DELETE', '', 401], ['PATCH', '', 401], ['POST', '/delete', 403]] as const) {
     const res = await asSession(key, path(key, rest), { method, headers: { ...PERSON, 'content-type': 'application/json' }, body: method === 'DELETE' ? undefined : '{"title":"x"}' });
-    assert.equal(res.status, 403, `${method} ${rest} from a session, even with the proxy's proof`);
+    assert.equal(res.status, status, `${method} ${rest} from a session, even with the proxy's proof`);
   }
   assert.equal((await fetch(base + path(key))).status, 200, 'the session is still there');
 });
@@ -93,15 +99,17 @@ test('a session cannot approve its own pending action through the distributor or
 });
 
 test('the home agent lists and reads other sessions; any other agent reaches only its own key', async () => {
-  const { sessionBase, path, invoke, pending, asSession, held } = await start();
+  const { sessionBase, path, invoke, pending, asSession, held, catalog } = await start();
   await invoke('quack:home', 'quack');
   await invoke('github:o/r#3', 'reviewer');
   await Promise.all([pending('quack:home'), pending('github:o/r#3')]);
+  for (const key of ['quack:home', 'github:o/r#3']) await catalog.publish(key, [{ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'a', createdAt: 0 } }]);
   const home = distributor(sessionBase, withCredential(held.get('quack:home')!));
   assert.deepEqual((await home.sessions()).map((s) => s.key).sort(), ['github:o/r#3', 'quack:home']);
-  assert.equal((await home.ping('github:o/r#3')).status, 'Healthy');
+  assert.equal((await home.session('github:o/r#3'))?.key, undefined, 'the home grant covers the lists, not another key');
   const reviewer = 'github:o/r#3';
-  for (const url of ['/sessions', path('quack:home'), path('quack:home', '/messages'), '/index/approvals']) assert.equal((await asSession(reviewer, url)).status, 403, url);
+  for (const url of ['/sessions', '/asks', '/artifacts', path('quack:home')]) assert.equal((await asSession(reviewer, url)).status, 404, url);
+  for (const url of [path('quack:home', '/messages'), '/index/approvals']) assert.equal((await asSession(reviewer, url)).status, 403, url);
   assert.equal((await asSession(reviewer, path(reviewer, '/ping'))).status, 200, 'its own key');
   assert.equal((await fetch(sessionBase + '/sessions')).status, 401, 'no credential, no answer');
 });

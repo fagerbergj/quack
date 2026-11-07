@@ -121,18 +121,31 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
     if (last.o !== null && last.o >= final) db.prepare(`DELETE FROM schedules WHERE id = ? AND source = 'api'`).run(row.id);
   }
 
-  // Retention: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.
+  // The retention each agent's current definition declares, read once per agent per sweep; undefined keeps its sessions.
+  async function retentionOf(agents: string[]): Promise<Map<string, number | undefined>> {
+    const found = await Promise.all(agents.map(async (name) => {
+      const r = await doFetch(`${config.distributorUrl}/agents/${encodeURIComponent(name)}`);
+      const view = r.ok ? ((await r.json()) as { definition?: { retention?: { idleDays?: unknown } } }) : undefined;
+      const days = view?.definition?.retention?.idleDays;
+      return [name, typeof days === 'number' ? days : undefined] as const;
+    }));
+    return new Map(found);
+  }
+
+  // Retention: delete sessions idle longer than their agent declares; the distributor refuses any that are not safe to remove.
   async function sweepRetention() {
-    const sessions: Array<{ key: string; lastActivity: string; retention?: { idleDays: number } }> = [];
+    const sessions: Array<{ key: string; agent: string; lastActivity: string }> = [];
     for (let token = ''; ;) {
-      const query = new URLSearchParams({ pageSize: '1000', filter: 'running:false', ...(token && { pageToken: token }) });
+      const query = new URLSearchParams({ pageSize: '1000', q: '-state:running AND pendingAsks:0', ...(token && { pageToken: token }) });
       const page = (await (await doFetch(`${config.distributorUrl}/sessions?${query}`)).json()) as { sessions: typeof sessions; nextPageToken?: string };
       sessions.push(...page.sessions);
       if (!page.nextPageToken) break;
       token = page.nextPageToken;
     }
+    const days = await retentionOf([...new Set(sessions.map((s) => s.agent))]);
+    const idleDays = (s: (typeof sessions)[number]) => days.get(s.agent);
     // home:main is the standing Home conversation and must outlive any idle stretch.
-    const due = sessions.filter((s) => s.key !== 'home:main' && s.retention && +now() - Date.parse(s.lastActivity) > s.retention.idleDays * DAY_MS).map((s) => s.key);
+    const due = sessions.filter((s) => s.key !== 'home:main' && idleDays(s) !== undefined && +now() - Date.parse(s.lastActivity) > idleDays(s)! * DAY_MS).map((s) => s.key);
     const deleted: string[] = [];
     const refused: Array<{ key: string; status: number }> = [];
     for (const key of due) {

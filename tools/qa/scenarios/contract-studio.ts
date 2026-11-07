@@ -6,7 +6,7 @@ const SDK = '#/s/contracts%3Aqa-sdk';
 // Two seeded contracts, each with version 1 approved and version 2 passed and waiting for approval.
 const scenario: Scenario = {
   name: 'contract-studio',
-  stack: { seed: 'contracts' },
+  stack: { seed: 'contracts', apps: ['contracts'] },
   async run(ctx) {
     await eachView(ctx, 'contract beside the chat, changes since v1 highlighted, approvable', async (page, label) => {
       await page.goto(`${ctx.url}/${SCHEDULE}`);
@@ -22,6 +22,14 @@ const scenario: Scenario = {
         await visible(page.getByRole('textbox', { name: 'Message' }));
         await ctx.shot(page, `studio-rest-chat-${label}`);
       } else await visible(page.getByRole('textbox', { name: 'Message' }));
+    });
+    await eachView(ctx, 'the Contracts page shows each contract\'s kind, version and approval status', async (page, label) => {
+      await page.goto(`${ctx.url}/#/contracts`);
+      const row = page.getByRole('listitem').filter({ hasText: 'Sleeper schedule endpoint' });
+      await visible(row.getByText('REST · v2'));
+      await visible(row.getByText('Awaiting your approval'));
+      await visible(page.getByRole('listitem').filter({ hasText: 'TypeScript · v2' }).first());
+      await ctx.shot(page, `contracts-page-${label}`);
     });
     await eachView(ctx, 'TypeScript contract: diagram centres on a type and re-centres on a click', async (page, label) => {
       await page.goto(`${ctx.url}/${SDK}`);

@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, launchEnv, sessionFacts, startLifecycleSender, takeLaunchToken } from '@quack/session';
-import { startPublisher } from '@quack/index';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -23,14 +22,11 @@ const definition = readJson(env('QUACK_AGENT'));
 // Only the providers this agent names are asked for their models, so one that is down cannot slow an agent that never uses it.
 const deployment = await resolveDeployment(config, fetch, referencedProviders(definition, config));
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions);
-const { name: agentName, version: agentVersion, extensions } = definition;
+const { extensions } = definition;
 
 const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, key: env('QUACK_SESSION_KEY') });
 const launch = launchEnv();
-const publisher = launch
-  ? await startPublisher(session, { ...launch, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion }, priceOf: priceOf(deployment) })
-  : undefined;
-// The lifecycle channel feeds the session catalog; the index publisher keeps the index's reads current until the cutover.
+// The lifecycle channel feeds the session catalog.
 const sender = launch
   ? await startLifecycleSender(session, {
     ...launch, key: env('QUACK_SESSION_KEY'), facts: () => sessionFacts(env('QUACK_SESSION_DIR')), priceOf: priceOf(deployment),
@@ -45,6 +41,6 @@ listenReporting(server, Number(env('PORT', '8080')), env('QUACK_SESSION_HOST', '
 
 // A caller cut off mid-invocation re-sends the same requestId to rejoin the run.
 exitOnStop(server, async () => {
-  await Promise.all([publisher?.stop(), sender?.stop()]);
+  await sender?.stop();
   await session.close();
 });

@@ -1,8 +1,8 @@
 import { validateToolArguments } from '@earendil-works/pi-ai';
 import { int, lit, map, obj, opt, str, union, unknown } from '@earendil-works/pi-schema';
 import { defineTool, type ToolRegistration } from '@earendil-works/pi-durable';
-import { gated, type Action, type ActionContext } from '@quack/sdk';
-import { type Distributor, type SessionRow, type Standing } from './client.ts';
+import { escapeTerm, gated, type Action, type ActionContext } from '@quack/sdk';
+import { type Distributor, type SessionRow } from './client.ts';
 
 const STATES = ['running', 'needs_you', 'failed', 'done'] as const;
 type State = (typeof STATES)[number];
@@ -17,8 +17,9 @@ const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 /** A relative link the web app resolves under any prefix. */
 export const sessionLink = (key: string) => `#/s/${encodeURIComponent(key)}`;
 
-const stateOf = (row: SessionRow, standing: Standing): State =>
-  standing.needsYou.has(row.key) ? 'needs_you' : standing.failed.has(row.key) ? 'failed' : row.active ? 'running' : 'done';
+// The row carries all of it: a pending ask needs a person, a failed last run is failed, a run going is running.
+const stateOf = (row: SessionRow): State =>
+  row.pendingAsks > 0 ? 'needs_you' : row.lastRun?.outcome === 'failed' && row.state !== 'running' ? 'failed' : row.state === 'running' ? 'running' : 'done';
 
 const line = (row: SessionRow, state: State) => `${row.title || row.key} | key ${row.key} | ${row.agent} | ${state} | ${row.lastActivity} | ${sessionLink(row.key)}`;
 
@@ -33,20 +34,20 @@ const safely = async <T>(fn: () => Promise<T>, empty: T): Promise<T> => fn().cat
 function artifactLines(newest: Awaited<ReturnType<Distributor['artifacts']>>): string[] {
   if (!newest.length) return [];
   return ['Newest results:', ...newest.map((a) => {
-    const verdict = a.verdict ? (a.verdict.passed ? ', checks passed' : ', checks failed') : '';
-    return `- ${a.kind} v${a.version}${verdict}: ${a.summary ? oneLine(a.summary) : clip(oneLine(a.content), 300)}${a.links?.length ? ` (${a.links.map((l) => `${l.label} ${l.url}`).join('; ')})` : ''}`;
+    const delivered = a.deliveries?.length ? ` (${a.deliveries.map((d) => `${d.where} ${d.link}`).join('; ')})` : '';
+    return `- ${a.kind} v${a.version}: ${a.summary ? oneLine(a.summary) : clip(oneLine(a.content), 300)}${delivered}`;
   })];
 }
 
-export async function readSession(d: Distributor, row: SessionRow, standing: Standing): Promise<string> {
-  const [ping, artifacts, questions, failures, messages] = await Promise.all([
-    safely(() => d.ping(row.key), undefined), safely(() => d.artifacts(row.key), []), safely(() => d.questions(row.key), []),
-    safely(() => d.failures(row.key), []), safely(() => d.messages(row.key, MAX_MESSAGES), []),
-  ]);
-  const state = ping?.waitingOnHuman || questions.length ? 'needs_you' : failures.length ? 'failed' : ping?.status === 'HealthyBusy' ? 'running' : stateOf(row, standing);
-  const out = [`${row.title || row.key} (${row.agent}), state ${state}${ping?.note ? `, ${oneLine(ping.note)}` : ''}`, `link ${sessionLink(row.key)}`];
-  out.push(...artifactLines(artifacts.slice(-MAX_ARTIFACTS).reverse()));
-  if (questions.length) out.push('Open questions:', ...questions.map((q) => `- ${oneLine(q.question)} [${q.options.join(' / ')}]`));
+const askLine = (a: Awaited<ReturnType<Distributor['pendingAsks']>>[number]) =>
+  a.type === 'question' && a.prompt ? `- ${oneLine(a.prompt.question)} [${a.prompt.options.join(' / ')}]` : `- approve ${a.toolCall?.tool ?? 'a tool call'}?`;
+
+export async function readSession(d: Distributor, row: SessionRow): Promise<string> {
+  const [artifacts, asks, messages] = await Promise.all([safely(() => d.artifacts(row.key), []), safely(() => d.pendingAsks(row.key), []), safely(() => d.messages(row.key, MAX_MESSAGES), [])]);
+  const failures = row.lastRun?.outcome === 'failed' ? row.lastRun.failedSteps : [];
+  const out = [`${row.title || row.key} (${row.agent}), state ${stateOf(row)}`, `link ${sessionLink(row.key)}`];
+  out.push(...artifactLines(artifacts.slice(0, MAX_ARTIFACTS)));
+  if (asks.length) out.push('Waiting on you:', ...asks.map(askLine));
   if (failures.length) out.push('Failures:', ...failures.map((f) => `- ${f.step}: ${clip(oneLine(f.error), 200)}`));
   if (messages.length) out.push('Last messages:', ...messages.map((m) => `- ${m.role}: ${clip(oneLine(m.text), 400)}`));
   return clip(out.join('\n'), MAX_READ_CHARS);
@@ -96,12 +97,12 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
       parameters: obj({ text: opt(str()), agent: opt(str()), state: opt(union(STATES.map((s) => lit(s)))), limit: opt(int({ minimum: 1, maximum: 25 })) }, { open: true }),
       replay: 'safe',
       async execute(args) {
-        const filter = ['-key:home:*', ...(args.agent ? [`agent:${JSON.stringify(args.agent)}`] : [])].join(' AND ');
-        const [rows, standing] = await Promise.all([d.sessions(filter), d.standing()]);
+        const q = [`-key:${escapeTerm('home:')}*`, ...(args.agent ? [`agent:${escapeTerm(args.agent)}`] : [])].join(' AND ');
+        const rows = await d.sessions(q);
         const needle = args.text?.toLowerCase();
         const found = rows
           .filter((r) => !needle || `${r.key} ${r.title ?? ''} ${r.agent}`.toLowerCase().includes(needle))
-          .map((r) => ({ r, state: stateOf(r, standing) }))
+          .map((r) => ({ r, state: stateOf(r) }))
           .filter((x) => !args.state || x.state === args.state)
           .sort((a, b) => b.r.lastActivity.localeCompare(a.r.lastActivity))
           .slice(0, args.limit ?? 10);
@@ -115,7 +116,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
       replay: 'safe',
       async execute(args) {
         const row = await known(d, args.key);
-        return typeof row === 'string' ? failure(row) : text(await readSession(d, row, await d.standing()));
+        return typeof row === 'string' ? failure(row) : text(await readSession(d, row));
       },
     }),
     defineTool({

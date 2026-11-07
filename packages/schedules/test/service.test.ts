@@ -271,27 +271,34 @@ test('the API rejects bad definitions and an oversized body', async () => {
   assert.deepEqual([big.status, big.headers.get('content-type')], [413, 'application/problem+json']);
 });
 
-test('the retention sweep deletes only sessions idle past their agent retention', async () => {
+test('the retention sweep deletes only sessions idle past their agent retention, read from the agent', async () => {
   const sessions = [
-    { key: 'old', running: false, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
-    { key: 'recent', running: false, lastActivity: '2026-01-20T00:00:00Z', retention: { idleDays: 14 } },
-    { key: 'keep-forever', running: false, lastActivity: '2025-01-01T00:00:00Z' },
-    { key: 'home:main', running: false, lastActivity: '2025-01-01T00:00:00Z', retention: { idleDays: 14 } },
-    { key: 'running', running: true, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
+    { key: 'old', agent: 'reviewer', state: 'stopped', pendingAsks: 0, lastActivity: '2026-01-01T00:00:00Z' },
+    { key: 'recent', agent: 'reviewer', state: 'idle', pendingAsks: 0, lastActivity: '2026-01-20T00:00:00Z' },
+    { key: 'keep-forever', agent: 'researcher', state: 'stopped', pendingAsks: 0, lastActivity: '2025-01-01T00:00:00Z' },
+    { key: 'home:main', agent: 'reviewer', state: 'stopped', pendingAsks: 0, lastActivity: '2025-01-01T00:00:00Z' },
+    { key: 'running', agent: 'reviewer', state: 'running', pendingAsks: 0, lastActivity: '2026-01-01T00:00:00Z' },
   ];
   const deletes: string[] = [];
   const asked: string[] = [];
-  const fetchStub = (async (url: string, init?: { method?: string; headers?: Record<string, string> }) => {
+  const agentsRead: string[] = [];
+  const definitions: Record<string, unknown> = { reviewer: { retention: { idleDays: 14 } }, researcher: {} };
+  const fetchStub = (async (url: string, init?: { method?: string }) => {
+    const agent = /\/agents\/([^/?]+)$/.exec(url);
+    if (agent) {
+      agentsRead.push(decodeURIComponent(agent[1]!));
+      return { ok: true, json: async () => ({ definition: definitions[decodeURIComponent(agent[1]!)] }) };
+    }
+    if (url.endsWith('/agents')) return { ok: true, json: async () => ({ agents: [] }) };
     if (init?.method !== 'DELETE') {
-      // Two rows to a page, running sessions filtered out as the request asks.
+      // Two rows to a page, running sessions filtered out as the q asks.
       const q = new URL(url).searchParams;
-      asked.push(q.get('filter') ?? '');
-      const rows = sessions.filter((s) => !s.running);
+      asked.push(q.get('q') ?? '');
+      const rows = sessions.filter((s) => s.state !== 'running');
       const from = Number(q.get('pageToken') ?? 0);
       return { ok: true, json: async () => ({ sessions: rows.slice(from, from + 2), ...(from + 2 < rows.length && { nextPageToken: String(from + 2) }) }) };
     }
-    assert.equal(init.headers?.authorization, 'Bearer admin');
-    deletes.push(decodeURIComponent(url.split('/sessions/')[1]));
+    deletes.push(decodeURIComponent(url.split('/sessions/')[1]!));
     return { ok: true, status: 200 };
   }) as unknown as typeof fetch;
   clock = new Date('2026-01-25T00:00:00Z');
@@ -299,7 +306,8 @@ test('the retention sweep deletes only sessions idle past their agent retention'
   open.push(svc);
   await svc.tick();
   assert.deepEqual(deletes, ['old']);
-  assert.deepEqual(asked, ['running:false', 'running:false'], 'the four stopped sessions took two pages');
+  assert.deepEqual(asked, ['-state:running AND pendingAsks:0', '-state:running AND pendingAsks:0'], 'the four sessions took two pages');
+  assert.deepEqual(agentsRead.sort(), ['researcher', 'reviewer'], 'each agent read once');
   await svc.tick();
   assert.deepEqual(deletes, ['old'], 'the automatic sweep runs once a day');
 });

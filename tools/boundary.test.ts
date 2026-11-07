@@ -25,8 +25,8 @@ test('a manifest requires or marks optional only packages it depends on', async 
 });
 
 test('arrows point down only; runtime assembles everything and only core and leaves import it', () => {
-  const bad = [['github', 'sleeper'], ['judge', 'github'], ['workflows', 'sleeper'], ['sdk', 'judge'], ['index', 'workflows'], ['github', 'runtime'], ['judge', 'runtime'], ['github', 'eval'], ['github', 'nope'],
-    ['github', 'distributor'], ['sleeper', 'session'], ['judge', 'index'], ['workflows', 'session'], ['research', 'web']];
+  const bad = [['github', 'sleeper'], ['judge', 'github'], ['workflows', 'sleeper'], ['sdk', 'judge'], ['catalog', 'workflows'], ['github', 'runtime'], ['judge', 'runtime'], ['github', 'eval'], ['github', 'nope'],
+    ['github', 'distributor'], ['sleeper', 'session'], ['judge', 'catalog'], ['workflows', 'session'], ['research', 'web']];
   for (const [from, to] of bad) assert.ok(arrowProblem(from, to), `${from} -> ${to}`);
   const good = [['sleeper', 'workflows'], ['workflows', 'judge'], ['github', 'sdk'], ['runtime', 'github'], ['eval', 'runtime'], ['distributor', 'runtime'], ['eval', 'judge'], ['session', 'sdk']];
   for (const [from, to] of good) assert.equal(arrowProblem(from, to), undefined, `${from} -> ${to}`);

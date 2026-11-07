@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { openCatalog } from '@quack/catalog';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -90,18 +91,21 @@ test('a delete is refused while a request for the session is starting it, and no
   await new Promise((r) => upstream.once('listening', r));
   cleanups.push(() => upstream.close());
   const url = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
-  const server = createDistributor({ ...driver, ensure: async (k, a) => (await driver.ensure(k, a), url) }, { retire: { token: 't', waiting: async () => false, forget: async () => {} } }).listen(0);
+  const catalog = openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-life-catalog-')) });
+  cleanups.push(() => void catalog.close());
+  await catalog.publish('research:z', [{ seq: 1, id: 'session:z', at: 0, type: 'session.created', data: { agent: 'a', createdAt: 0 } }]);
+  const server = createDistributor({ ...driver, ensure: async (k, a) => (await driver.ensure(k, a), url) }, { catalog }).listen(0);
   await new Promise((r) => server.once('listening', r));
   cleanups.push(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/research%3Az`;
   const read = fetch(`${base}/messages`);
   await settles(() => launches.length >= 2);
-  const del = await fetch(base, { method: 'DELETE', headers: { authorization: 'Bearer t' } });
+  const del = await fetch(base, { method: 'DELETE' });
   assert.equal(del.status, 409);
   assert.match((await del.json()).detail, /handling a request/);
   launches[1].release();
   assert.equal((await read).status, 200);
-  assert.equal((await fetch(base, { method: 'DELETE', headers: { authorization: 'Bearer t' } })).status, 200);
+  assert.equal((await fetch(base, { method: 'DELETE' })).status, 200);
   assert.equal(launches[1].stopped, true);
 });
 

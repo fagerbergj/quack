@@ -20,7 +20,7 @@ export const remarkable: Extension = {
   session: {
     label: 'reMarkable', noun: () => 'Transcript', group: 'Notes', match: (r) => r.key.startsWith('remarkable:'), icon: ICON, tint: BLUE,
     name: (r) => plain(r.title ?? r.key.slice('remarkable:'.length)),
-    words: () => ({ kind: 'remarkable.transcript', w: { run: 'Transcribing', pass: 'Transcribed ✓', fail: "Didn't pass its checks", none: 'Not transcribed yet', sealed: 'Transcribed' } }),
+    words: () => ({ run: 'Transcribing', done: 'Transcribed', none: 'Not transcribed yet' }),
   },
   artifact: (a) => (a.kind === 'remarkable.transcript' ? { name: 'Transcript' } : undefined),
   nav: { route: 'remarkable', label: 'reMarkable', icon: ICON, tint: 'bg-paper text-paper-ink', page: Remarkable, status: useStatus },

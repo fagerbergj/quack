@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { answerQuestion, type Answer, type Question } from './api.ts';
+import { answerQuestion, type Question, type Resolution } from './api.ts';
 import { Markdown } from './Markdown.tsx';
 import { age, needId } from './sessions.ts';
 
@@ -16,13 +16,13 @@ const linkBtn = 'min-h-11 cursor-pointer self-start bg-transparent px-1 text-lef
 const field = 'w-full rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
 
 // A note rides along with the option tapped, so every answer stays one tap.
-function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Answer) => void }) {
+function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Resolution) => void }) {
   const [mode, setMode] = useState<'' | 'note' | 'text'>('');
   const [value, setValue] = useState('');
   const pick = d.suggested ?? -1;
   const labels = pick > 0 && pick < d.options.length ? [d.options[pick]!, ...d.options.filter((_, i) => i !== pick)] : d.options;
   const note = mode === 'note' ? value.trim() : '';
-  const choose = (o: string) => send(note ? { choice: o, note } : { choice: o });
+  const choose = (o: string) => send(note ? { choice: o, reason: note } : { choice: o });
   const toggle = (m: 'note' | 'text') => { setMode(mode === m ? '' : m); setValue(''); };
   return (
     <div className="flex flex-col gap-2">
@@ -42,7 +42,7 @@ function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Answ
         {d.freeText && <button type="button" aria-expanded={mode === 'text'} onClick={() => toggle('text')} className={linkBtn}>Something else…</button>}
       </div>
       {mode === 'text' && <textarea data-answer aria-label="Your answer" maxLength={2000} rows={3} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
-      {mode === 'text' && <button type="button" disabled={busy || !value.trim()} onClick={() => send({ text: value })} className="min-h-11 cursor-pointer self-start rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:opacity-50">Send</button>}
+      {mode === 'text' && <button type="button" disabled={busy || !value.trim()} onClick={() => send({ choice: value, text: value })} className="min-h-11 cursor-pointer self-start rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:opacity-50">Send</button>}
     </div>
   );
 }
@@ -62,7 +62,7 @@ export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [answered, setAnswered] = useState<number>();
-  const choose = (answer: Answer) => {
+  const choose = (answer: Resolution) => {
     if (busy) return;
     setBusy(true);
     setError('');

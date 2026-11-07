@@ -11,7 +11,6 @@
     "@quack/contracts": "*",
     "@quack/github": "*",
     "@quack/home": "*",
-    "@quack/index": "*",
     "@quack/judge": "*",
     "@quack/remarkable": "*",
     "@quack/research": "*",

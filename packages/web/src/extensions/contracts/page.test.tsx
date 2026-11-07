@@ -1,49 +1,53 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { IndexArtifact } from '../../api.ts';
-import type { Row } from '../../sessions.ts';
+import type { Session } from '../../api.ts';
+import { rowOf } from '../../sessions.ts';
+import { failedRun, sess } from '../../test-harness.ts';
 import { Contracts } from './Contracts.tsx';
 
-const art = (kind: string, version: number, over: Partial<IndexArtifact> = {}): IndexArtifact => ({ session: 's', kind, version, verdict: null, sealedAt: new Date(1).toISOString(), ...over });
-const spec = (version: number, title = 'Sleeper schedule endpoint') => art('contract.spec', version, { verdict: { passed: true }, summary: `${title}, version ${version}`.slice(0, 80), outcome: `v${version}` });
-const row = (id: string, over: Partial<Row> = {}): Row => ({ key: `contracts:${id}`, agent: 'contracts', title: `Draft ${id}`, running: false, active: false, createdAt: '', lastActivity: '', approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false, ...over });
+const row = (id: string, over: Partial<Session> | object = {}) => rowOf(sess(`contracts:${id}`, { agent: 'contracts', title: `Draft ${id}`, ...over }) as Session, false);
 
 afterEach(() => vi.unstubAllGlobals());
 
-test('a json-schema contract is listed as JSON Schema, with its version', () => {
-  const rows = [row('j', { artifacts: [art('contract.spec', 2, { verdict: { passed: true }, summary: 'Settings, version 2', outcome: 'v2 json-schema' })] })];
-  render(<Contracts rows={rows} />);
-  expect(screen.getByRole('listitem')).toHaveTextContent('JSON Schema · v2');
-});
-
-test('each contract reads as drafting, awaiting approval, approved or changes requested', () => {
+test('each contract reads from its catalog row: waiting on you first, then drafting, a failed run, then idle', () => {
   const rows = [
-    row('a', { active: true }),
-    row('b', { approvals: [{ id: 'x', tool: 'propose_contract', args: { summary: 'Approve GET /apps/sleeper/schedule v2' }, requestedAt: 1 }], artifacts: [spec(1), spec(2)] }),
-    row('c', { artifacts: [spec(1, 'Waivers'), art('contract.approved', 1, { outcome: 'v1' })] }),
-    row('d', { artifacts: [spec(1, 'Lineup'), art('contract.approved', 1, { outcome: 'v1' }), spec(2, 'Lineup')] }),
-    row('e', { artifacts: [spec(1, 'Trades'), art('contract.changes', 1, { outcome: 'v1', summary: 'Use cursor pagination' })] }),
-    row('f', { key: 'sleeper:x:1:lineup' }),
+    row('idle', { lastRun: { outcome: 'succeeded', endedAt: '', failedSteps: [] } }),
+    row('a', { state: 'running' }),
+    row('b', { state: 'running', pendingAsks: 1 }),
+    row('c', failedRun('propose', 'boom')),
+    row('archived', { state: 'archived' }),
+    rowOf(sess('sleeper:x:1:lineup') as Session, false),
   ];
   render(<Contracts rows={rows} />);
   const items = screen.getAllByRole('listitem');
-  expect(items).toHaveLength(5);
-  const by = (name: string) => items.find((li) => within(li).queryByText(name))!;
-  expect(by('Draft a')).toHaveTextContent('Drafting');
-  expect(by('Sleeper schedule endpoint')).toHaveTextContent('REST · v2Awaiting your approval');
-  expect(by('Waivers')).toHaveTextContent('REST · v1Approved v1');
-  expect(by('Lineup')).toHaveTextContent('REST · v2 · v2 is not approved yetApproved v1');
-  expect(by('Trades')).toHaveTextContent('Changes requested');
-  expect(items[0]).toHaveTextContent('Awaiting your approval');
-  expect(within(by('Waivers')).getByRole('link')).toHaveAttribute('href', '#/s/contracts%3Ac');
+  expect(items.map((li) => li.textContent)).toEqual(['Draft bWaiting on you', 'Draft aDrafting', 'Draft cRun failed', 'Draft idleIdle']);
+  expect(within(items[0]!).getByRole('link')).toHaveAttribute('href', '#/s/contracts%3Ab');
 });
 
-test('a title over 80 characters keeps its version, and Changes requested shows the reason', () => {
-  const long = 'A very long contract title that runs well past the eighty character summary limit of the index';
-  const rows = [row('l', { artifacts: [spec(3, long), art('contract.changes', 1, { outcome: 'v3', summary: 'Use cursor pagination' })] })];
-  render(<Contracts rows={rows} />);
-  expect(screen.getByRole('listitem')).toHaveTextContent('REST · v3 · Use cursor paginationChanges requested');
+test("each contract shows its kind, version and approval status from the contracts extension's own read", async () => {
+  const records = [
+    { key: 'contracts:a', title: 'Sleeper schedule endpoint', kind: 'rest', draft: 2, proposed: 2, approved: 1, pendingApproval: true },
+    { key: 'contracts:b', title: 'Extension SDK', kind: 'typescript', draft: 3, proposed: 3, changesRequested: 3, pendingApproval: false },
+    { key: 'contracts:c', title: 'Payments API', kind: 'json-schema', draft: 4, proposed: 3, approved: 3, pendingApproval: false },
+  ];
+  const fetchMock = vi.fn(async (url: string) => (url === 'apps/contracts/contracts' ? Response.json({ contracts: records }) : new Response('{}', { status: 404 })));
+  vi.stubGlobal('fetch', fetchMock);
+  render(<Contracts rows={[row('a'), row('b'), row('c'), row('new')]} />);
+  await waitFor(() => expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('Sleeper schedule endpoint'));
+  expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+    'Sleeper schedule endpointREST · v2Awaiting your approval',
+    'Extension SDKTypeScript · v3Changes requested',
+    'Draft newIdle',
+    'Payments APIJSON Schema · v4 · v4 is not approved yetApproved v3',
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith('apps/contracts/contracts');
+});
+
+test('the page still lists contracts from their rows when the contracts app is not mounted', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+  render(<Contracts rows={[row('b', { state: 'running', pendingAsks: 1 })]} />);
+  expect(screen.getByRole('listitem')).toHaveTextContent('Draft bWaiting on you');
 });
 
 test('with no contracts it says what one is', () => {
@@ -53,7 +57,7 @@ test('with no contracts it says what one is', () => {
 
 test('New contract asks for the description and starts the contracts agent', async () => {
   const calls: Array<[string, RequestInit]> = [];
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => (calls.push([url, init]), new Response('{}', { status: 202 }))));
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => (url.startsWith('sessions/') && calls.push([url, init]), new Response('{}', { status: 202 }))));
   render(<Contracts rows={[]} />);
   await userEvent.click(screen.getByRole('button', { name: 'New contract' }));
   await userEvent.type(screen.getByLabelText('What should it do, and for whom?'), 'GET /x for the page');
@@ -62,15 +66,4 @@ test('New contract asks for the description and starts the contracts agent', asy
   expect(calls[0]![0]).toMatch(/^sessions\/contracts%3A[0-9a-f-]{36}\/invocations\?agent=contracts$/);
   expect(JSON.parse(String(calls[0]![1].body))).toMatchObject({ input: 'GET /x for the page', title: 'GET /x for the page' });
   expect(location.hash).toMatch(/^#\/s\/contracts%3A/);
-});
-
-test('a run still finishing its reply after the approval reads Approved, not Drafting; a newer draft in progress reads Drafting', () => {
-  const rows = [
-    row('g', { active: true, artifacts: [spec(1, 'Schedule'), art('contract.approved', 1, { outcome: 'v1' })] }),
-    row('h', { active: true, artifacts: [spec(1, 'Roster'), art('contract.approved', 1, { outcome: 'v1' }), spec(2, 'Roster')] }),
-  ];
-  render(<Contracts rows={rows} />);
-  const by = (name: string) => screen.getAllByRole('listitem').find((li) => within(li).queryByText(name))!;
-  expect(by('Schedule')).toHaveTextContent('REST · v1Approved v1');
-  expect(by('Roster')).toHaveTextContent('REST · v2 · v1 approvedDrafting');
 });

@@ -1,9 +1,13 @@
-import type { Approval, Failure, Question, IndexArtifact, SessionSummary, Spend } from './api.ts';
+import { spendOf, type Failure, type Session, type Spend } from './api.ts';
 import type { Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { searchText, sessionTitle } from './kinds.ts';
 
-export type Row = SessionSummary & { approvals: Approval[]; questions: Question[]; failures: Failure[]; artifacts: IndexArtifact[]; multiRepo: boolean; spend?: Spend };
+/** A session as the lists show it; `failures` are its last run's failed steps, empty while a new run works on them. */
+export type Row = Session & { failures: Failure[]; multiRepo: boolean; spend: Spend };
+
+export const rowOf = (s: Session, multiRepo: boolean): Row =>
+  ({ ...s, multiRepo, spend: spendOf(s), failures: s.state !== 'running' && s.lastRun?.outcome === 'failed' ? s.lastRun.failedSteps : [] });
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string; view: '' | 'archived' };
 
@@ -28,15 +32,15 @@ export function startOf(key: string): string {
 export function matches(s: Row, f: Filters): boolean {
   const q = f.text.trim().toLowerCase();
   const hit = !q || [...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
-  return hit && Boolean(s.archived) === (f.view === 'archived') && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
+  return hit && (s.state === 'archived') === (f.view === 'archived') && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
 }
 
-const asks = (r: Row) => r.approvals.length + r.questions.length + r.failures.length > 0;
+const asks = (r: Row) => r.pendingAsks > 0 || r.failures.length > 0;
 
 export function group(rows: Row[]): Groups {
   const needs = rows.filter(asks);
   const rest = rows.filter((r) => !asks(r));
-  return { needs, running: rest.filter((r) => r.active), recent: rest.filter((r) => !r.active) };
+  return { needs, running: rest.filter((r) => r.state === 'running'), recent: rest.filter((r) => r.state !== 'running') };
 }
 
 /** The row's line for a failed run: the step and the error's first line. */

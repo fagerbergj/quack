@@ -1,8 +1,17 @@
 // Every call to the distributor, so its contract lives in one place.
+export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
 /** What a session has spent: tokens by kind, and `cost` in dollars at the deployment's cloud-equivalent prices (0 when unpriced). */
-export type Spend = { cost: number; tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } };
-/** A session row; `cost` and `tokens` are absent while the session index is off. */
-export type SessionSummary = { key: string; agent: string; title?: string; archived?: boolean; running: boolean; active: boolean; note?: string; createdAt: string; lastActivity: string } & Partial<Spend>;
+export type Spend = { cost: number; tokens: Tokens };
+/** Money as the Sessions API sends it: millionths of the unit as a decimal string. */
+export type Money = { currencyCode: string; amountMicros: string };
+export type Failure = { step: string; error: string };
+export type SessionState = 'running' | 'idle' | 'stopped' | 'archived';
+/** A session row of the catalog; dates are RFC 3339. */
+export type Session = {
+  key: string; agent: string; title?: string; state: SessionState; createdAt: string; lastActivity: string; cost: Money; tokens: Tokens;
+  pendingAsks: number; oldestAskAt?: string; lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Failure[] };
+};
+export const spendOf = (s: Pick<Session, 'cost' | 'tokens'>): Spend => ({ cost: Number(s.cost.amountMicros) / 1e6, tokens: s.tokens });
 export type AgentSummary = { name: string; version: number; status: 'draft' | 'promoted'; model?: string; description?: string };
 export type RubricCheck = { label?: string; weight?: number | 'gate' };
 export type AgentRubric = { criteria: Array<{ id: string; checks: RubricCheck[] }> };
@@ -13,7 +22,8 @@ export type Check = { criterion: string; id: string; label: string; weight: numb
 export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? c.met < 1 : c.met > 0);
 export type Verdict = { passed: boolean; /** The judge released it unpassed after its revision limit. */ limitReached?: boolean; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string; carriedFrom?: { sha: string; url?: string } };
+/** A sealed version as the session socket sends it; `verdict` is null while the judge works and absent when read over REST, which carries none. */
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict?: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string; carriedFrom?: { sha: string; url?: string } };
 
 export async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -26,77 +36,70 @@ export async function json<T>(res: Response): Promise<T> {
 // Paths are relative to the page so the bundle works under any prefix (/ locally, /v1/ behind the proxy).
 const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
-/** Every session matching `filter` (a Lucene-style expression, see the sessions API): pages are followed to the end, so none is dropped. */
-export async function listSessions(filter?: string): Promise<SessionSummary[]> {
-  const rows: SessionSummary[] = [];
+/** Every row of a list matching `q` (Lucene, its terms built with escapeTerm): pages are followed to the end, so none is dropped. */
+async function listAll<T>(path: string, field: string, q?: string): Promise<T[]> {
+  const rows: T[] = [];
   for (let token = ''; ;) {
-    const query = new URLSearchParams({ pageSize: '1000', ...(filter && { filter }), ...(token && { pageToken: token }) });
-    const page = await json<{ sessions: SessionSummary[]; nextPageToken?: string }>(await fetch(`sessions?${query}`));
-    rows.push(...page.sessions);
+    const query = new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) });
+    const page = await json<Record<string, T[] | undefined> & { nextPageToken?: string }>(await fetch(`${path}?${query}`));
+    rows.push(...(page[field] ?? []));
     if (!page.nextPageToken) return rows;
     token = page.nextPageToken;
   }
 }
+export const listSessions = (q?: string) => listAll<Session>('sessions', 'sessions', q);
 export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
 export const getAgent = async (name: string, version?: number) => json<AgentDetail>(await fetch(`agents/${encodeURIComponent(name)}${version === undefined ? '' : `?version=${version}`}`));
 export const promoteAgent = async (name: string, version: number) =>
   void (await json(await fetch(`agents/${encodeURIComponent(name)}/promote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ version }) })));
-export const listApprovals = async (key: string) => (await json<{ approvals: Approval[] }>(await fetch(`${base(key)}/approvals`))).approvals;
 // Verdicts sealed before checks carried a label have none; their id reads well enough.
 const named = (a: SealedArtifact): SealedArtifact =>
   a.verdict ? { ...a, verdict: { ...a.verdict, checks: a.verdict.checks.map((c) => ({ ...c, label: c.label ?? c.id.replace(/_/g, ' ') })) } } : a;
-export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts.map(named);
-/** Sealed versions as the session socket sends them, read the same way as the REST list. */
+/** One sealed version as the Sessions API lists it; `content` is in the per-session list only. */
+export type Artifact = { session: string; kind: string; version: number; hash: string; content?: string; sealedAt: string; summary?: string; deliveries?: Array<{ where: string; link: string; at: string }> };
+/** A session's sealed versions with their content, newest first. */
+export const listArtifacts = async (key: string): Promise<SealedArtifact[]> =>
+  (await listAll<Artifact>(`${base(key)}/artifacts`, 'artifacts')).map((a) => ({ kind: a.kind, version: a.version, hash: a.hash, content: a.content ?? '', sealedAt: Date.parse(a.sealedAt), summary: a.summary }));
+/** Sealed versions across sessions, without content, newest first. */
+export const listAllArtifacts = () => listAll<Artifact>('artifacts', 'artifacts');
+/** Sealed versions as the session socket sends them, with the judge's verdicts. */
 export const sealedFrom = (artifacts: SealedArtifact[]) => artifacts.map(named);
 // Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.
 export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await fetch(`${base(key)}/meta`))).meta;
 const housekeep = async (path: string, method: string, body: object) =>
   void (await json(await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
 export const renameSession = (key: string, title: string) => housekeep(base(key), 'PATCH', { title });
-export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { archived });
+// Unarchiving returns the session to stopped; the server refuses to archive a running one.
+export const archiveSession = (key: string, archived: boolean) => housekeep(base(key), 'PATCH', { state: archived ? 'archived' : 'stopped' });
 export const deleteSession = async (key: string) => void (await json(await fetch(base(key), { method: 'DELETE' })));
 /** Where the session downloads as one JSON file; a plain link, so the browser saves it. */
 export const exportUrl = (key: string) => `${base(key)}/export`;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
+export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
 
-export type IndexApproval = { session: string; id: string; tool: string; args?: unknown; at: string };
-export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The kind's own one-word reading of the content (a review's verdict), when it has one. */ outcome?: string; summary?: string; sealedAt: string };
-
-// The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
-async function indexRead<T>(path: string, field: string): Promise<T[] | undefined> {
-  const rows: T[] = [];
-  for (let token = ''; ;) {
-    const res = await fetch(`${path}${token && `${path.includes('?') ? '&' : '?'}pageToken=${token}`}`).catch(() => undefined);
-    if (!res?.ok) return undefined;
-    const page = (await res.json()) as Record<string, T[]> & { nextPageToken?: string };
-    rows.push(...(page[field] ?? []));
-    if (!page.nextPageToken) return rows;
-    token = page.nextPageToken;
-  }
-}
 /** A question an extension escalated to a person; `askedAt` is when it was asked. */
 export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number; header?: string | null; title?: string | null; detail?: string | null; optionDescriptions?: Record<string, string>; suggested?: number | null; freeText?: boolean };
-export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: string };
-export const indexQuestions = () => indexRead<IndexQuestion>('index/questions?state=pending', 'questions');
-export const listQuestions = async (key: string) => (await json<{ questions: Question[] }>(await fetch(`${base(key)}/questions`))).questions;
-export type Answer = { choice: string; note?: string } | { text: string };
-export const answerQuestion = async (key: string, id: string, answer: Answer) =>
-  void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(answer) })));
-export type Failure = { step: string; error: string };
-export type IndexFailure = Failure & { session: string; at: string };
-export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
-export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
-export const approvalOf = (a: IndexApproval): Approval => ({ id: a.id, tool: a.tool, args: a.args, requestedAt: Date.parse(a.at) });
-export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
-export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
+type Prompt = Omit<Question, 'id' | 'askedAt' | 'evidence' | 'freeText'> & { evidence?: string | null; freeText: boolean };
+/** An approval or a question of one session, as the Sessions API lists them. */
+export type Ask = {
+  session: string; id: string; type: 'approval' | 'question'; state: 'pending' | 'resolved' | 'cancelled'; createdAt: string; resolvedAt?: string;
+  resolution?: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string };
+  toolCall?: { tool: string; args: unknown }; prompt?: Prompt;
+};
+/** Asks across sessions, oldest first; `state:pending` is everything waiting on a person. */
+export const listAsks = (q: string) => listAll<Ask>('asks', 'asks', q);
+export const approvalOf = (a: Ask): Approval => ({ id: a.id, tool: a.toolCall?.tool ?? '', args: a.toolCall?.args, requestedAt: Date.parse(a.createdAt) });
+export const questionOf = (a: Ask): Question => ({ question: '', options: [], ...a.prompt, evidence: a.prompt?.evidence ?? null, id: a.id, askedAt: Date.parse(a.createdAt) });
 
-/** False when the session answers 409: the approval is unknown or already decided, so the caller's view of it is stale. */
+/** A question's choice is an option's label, or the free text itself; an approval's is approve or reject. */
+export type Resolution = { choice: string; text?: string; reason?: string };
+const resolveAsk = (key: string, id: string, resolution: Resolution) =>
+  fetch(`${base(key)}/asks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resolution }) });
+export const answerQuestion = async (key: string, id: string, resolution: Resolution) => void (await json(await resolveAsk(key, id, resolution)));
+
+/** False when the session answers 409: the approval is already decided or cancelled, so the caller's view of it is stale. */
 export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string): Promise<boolean> {
-  const res = await fetch(`${base(key)}/approvals/${encodeURIComponent(id)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
-  });
+  const res = await resolveAsk(key, id, { choice: decision, ...(reason ? { reason } : {}) });
   if (res.status === 409) return false;
   await json(res);
   return true;

@@ -1,37 +1,40 @@
-import type { IndexArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 
 export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
-export type Contract = { key: string; name: string; kind: string; version?: number; status: string; tone: Tone; note?: string; rank: number };
+export type Contract = { key: string; name: string; kind?: string; version?: number; status: string; tone: Tone; note?: string; rank: number };
 
-const SUFFIX = /, version \d+$/;
-const named = (row: Row, kind: string) => row.artifacts.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version);
-const outcomeOf = (a: IndexArtifact | undefined) => (a?.outcome ? Number.parseInt(a.outcome.slice(1), 10) : undefined);
-// A spec's outcome is "v2", or "v2 json-schema" for a kind other than REST.
-const KIND_NAMES: Record<string, string> = { 'json-schema': 'JSON Schema', typescript: 'TypeScript' };
-const kindOf = (a: IndexArtifact | undefined) => KIND_NAMES[a?.outcome?.split(' ')[1] ?? ''] ?? 'REST';
+/** One contract as the contracts extension serves it (GET apps/contracts/contracts), from the session's own sealed records. */
+export type ContractRecord = { key: string; title: string; kind: string; draft?: number; proposed?: number; approved?: number; changesRequested?: number; pendingApproval: boolean };
 
-// The newest spec that passed its checks names the contract (summary, cut at 80 characters) and gives its version (outcome).
-function latestSpec(row: Row) {
-  const specs = named(row, 'contract.spec');
-  const hit = specs.filter((a) => a.verdict?.passed).at(-1) ?? specs.at(-1);
-  const name = hit?.summary?.replace(SUFFIX, '');
-  return { name: name || (row.title ?? 'New contract'), kind: kindOf(hit), version: outcomeOf(hit), passed: Boolean(hit?.verdict?.passed) };
+const KIND_NAMES: Record<string, string> = { rest: 'REST', 'json-schema': 'JSON Schema', typescript: 'TypeScript' };
+
+// Asked to change the very version last put up, and not approved since.
+const changesAsked = (r: ContractRecord | undefined) => r?.changesRequested !== undefined && r.changesRequested === r.proposed && r.changesRequested !== r.approved;
+
+function settled(base: Omit<Contract, 'status' | 'tone' | 'rank'>, rec: ContractRecord | undefined): Contract {
+  if (changesAsked(rec)) return { ...base, status: 'Changes requested', tone: 'bad', rank: 2 };
+  const stale = rec?.draft !== undefined && rec.approved !== undefined && rec.draft > rec.approved ? `v${rec.draft} is not approved yet` : undefined;
+  if (rec?.approved !== undefined) return { ...base, status: `Approved v${rec.approved}`, tone: 'ok', ...(stale && { note: stale }), rank: 4 };
+  return { ...base, status: rec?.draft !== undefined ? 'Drafting' : 'Idle', tone: 'plain', ...(rec?.draft !== undefined && { note: 'not yet proposed for approval' }), rank: 3 };
 }
 
-/** What the Contracts page says about one contract session, from the index rows it already loaded. */
-export function contractOf(row: Row): Contract {
-  const { name, kind, version, passed } = latestSpec(row);
-  const approved = outcomeOf(named(row, 'contract.approved').at(-1));
-  const asked = outcomeOf(named(row, 'contract.changes').at(-1));
-  const base = { key: row.key, name, kind, version };
-  const stale = approved !== undefined && version !== undefined && version > approved ? `v${version} is not approved yet` : undefined;
-  if (row.approvals.length) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
-  // A run that only finishes its reply after an approval is not drafting anything new.
-  if (row.questions.length || (row.active && approved !== version)) return { ...base, status: 'Drafting', tone: 'plain', note: approved === undefined ? undefined : `v${approved} approved`, rank: 1 };
-  if (asked !== undefined && asked === version && asked !== approved) return { ...base, status: 'Changes requested', tone: 'bad', note: named(row, 'contract.changes').at(-1)?.summary || undefined, rank: 2 };
-  if (approved !== undefined) return { ...base, status: `Approved v${approved}`, tone: 'ok', note: stale, rank: 4 };
-  return { ...base, status: 'Drafting', tone: 'plain', note: passed ? 'not yet proposed for approval' : undefined, rank: 3 };
+/** What the Contracts page says about one contract session: its catalog row for what runs, the extension's record for its versions. */
+export function contractOf(row: Row, rec?: ContractRecord): Contract {
+  const base = { key: row.key, name: rec?.title ?? row.title ?? 'New contract', ...(rec && { kind: KIND_NAMES[rec.kind] ?? 'REST' }), ...(rec?.draft !== undefined && { version: rec.draft }) };
+  if (rec?.pendingApproval) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
+  if (row.pendingAsks) return { ...base, status: 'Waiting on you', tone: 'warn', rank: 0 };
+  if (row.state === 'running') return { ...base, status: 'Drafting', tone: 'plain', ...(rec?.approved !== undefined && { note: `v${rec.approved} approved` }), rank: 1 };
+  if (row.failures.length) return { ...base, status: 'Run failed', tone: 'bad', rank: 2 };
+  return settled(base, rec);
 }
 
-export const contractRows = (rows: Row[]) => rows.filter((r) => r.key.startsWith('contracts:') && !r.archived).map(contractOf).sort((a, b) => a.rank - b.rank);
+export const contractRows = (rows: Row[], records: ReadonlyMap<string, ContractRecord> = new Map()) =>
+  rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map((r) => contractOf(r, records.get(r.key))).sort((a, b) => a.rank - b.rank);
+
+/** The contracts extension's records by session key; an app that is not mounted reads as none, and the rows still show. */
+export async function contractRecords(): Promise<Map<string, ContractRecord>> {
+  const res = await fetch('apps/contracts/contracts').catch(() => undefined);
+  if (!res?.ok) return new Map();
+  const body = (await res.json().catch(() => ({}))) as { contracts?: ContractRecord[] };
+  return new Map((body.contracts ?? []).map((c) => [c.key, c]));
+}

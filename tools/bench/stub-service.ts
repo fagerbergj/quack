@@ -24,7 +24,6 @@ export function stubService(pins: Record<string, { head: string; at: string }>, 
     for await (const c of req) raw += c;
     // The session reaches its apps under /apps/<name> and publishes facts to the same base.
     const path = (req.url ?? '').replace(/^\/apps\/github/, '');
-    if (path === '/index/facts') return res.writeHead(200).end('{}');
     const m = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
     if (m) {
       const [, owner, repo, n] = m;

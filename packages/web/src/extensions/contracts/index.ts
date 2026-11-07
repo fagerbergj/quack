@@ -3,7 +3,6 @@ import type { SealedArtifact } from '../../api.ts';
 import { BLUE, plain, type Extension } from '../../extension.ts';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec } from './spec.ts';
-import { contractOf } from './status.ts';
 import { ContractStudio, VIEWS } from './Studio.tsx';
 
 const KIND = 'contract.spec';
@@ -24,15 +23,9 @@ export const contracts: Extension = {
   // The contract is drawn beside its conversation, and approved there.
   studio: { match: (key) => key.startsWith('contracts:'), label: 'Contract', owns: (a) => a.tool === 'propose_contract', Pane: ContractStudio },
   nav: { route: 'contracts', label: 'Contracts', icon: ICON, page: Contracts },
-  // A contract session is named by its latest spec, and reads its status the way the Contracts page does.
   session: {
     label: 'contract', noun: () => 'Contract', group: 'Contracts', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
-    name: (r) => plain(contractOf(r).name),
-    words: () => ({ kind: KIND, w: { run: 'Drafting the contract', pass: 'Spec ready', fail: "Didn't pass its checks", none: 'Starting', sealed: 'Spec ready' } }),
-    delivered: (r) => {
-      const c = contractOf(r);
-      if (c.status === 'Changes requested') return { line: c.status, tone: 'bad' };
-      return c.status.startsWith('Approved') ? { line: c.status, tone: 'ok' } : undefined;
-    },
+    name: (r) => plain(r.title ?? 'New contract'),
+    words: () => ({ run: 'Drafting the contract', done: 'Draft ready', none: 'Starting' }),
   },
 };

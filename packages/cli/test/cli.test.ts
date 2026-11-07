@@ -4,91 +4,106 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { WebSocketServer } from 'ws';
 import { client } from '../src/api.ts';
 import { run } from '../src/main.ts';
 
+const money = { currencyCode: 'USD', amountMicros: '0' };
+const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const row = (key: string, agent: string, state: string, extra: object = {}) => ({ key, agent, state, createdAt: 't', lastActivity: 't', cost: money, tokens, pendingAsks: 0, ...extra });
 const sessions = [
-  { key: 'ui:a', agent: 'chat', title: 'Alpha', running: true, active: true, createdAt: 't', lastActivity: 't' },
-  { key: 'ui:b', agent: 'review', running: false, active: false, createdAt: 't', lastActivity: 't' },
-  { key: 'ui:c', agent: 'chat', running: false, active: false, createdAt: 't', lastActivity: 't' },
+  row('ui:a', 'chat', 'running', { title: 'Alpha' }),
+  row('ui:b', 'review', 'idle', { pendingAsks: 2, oldestAskAt: 't' }),
+  row('ui:c', 'chat', 'stopped', { lastRun: { outcome: 'failed', endedAt: 't', failedSteps: [] } }),
 ];
+const asks = [
+  { session: 'ui:b', id: 'ap1', type: 'approval', state: 'pending', createdAt: '1970-01-01T00:00:00.000Z', toolCall: { tool: 'bash', args: {} } },
+  { session: 'ui:b', id: 'q1', type: 'question', state: 'pending', createdAt: '1970-01-01T00:00:01.000Z', prompt: { question: 'Which?', options: ['this one', 'that'], freeText: true } },
+];
+// Newest first, as the per-session list orders them.
 const sealed = [
-  { kind: 'plan', version: 1, content: 'old plan', verdict: null, summary: 's1' },
-  { kind: 'plan', version: 2, content: 'new plan', verdict: { passed: true }, summary: 's2' },
+  { session: 'ui:a', kind: 'plan', version: 2, hash: 'h2', content: 'new plan', sealedAt: 't2', summary: 's2' },
+  { session: 'ui:a', kind: 'plan', version: 1, hash: 'h1', content: 'old plan', sealedAt: 't1', summary: 's1' },
 ];
-const index: Record<string, unknown> = {
-  approvals: [{ session: 'ui:b', id: 'ap1', tool: 'bash', at: '1970-01-01T00:00:00.000Z' }],
-  questions: [],
-  failures: [{ session: 'ui:c', at: '1970-01-01T00:00:00.000Z', step: 's', error: 'e' }],
-  artifacts: [{ session: 'ui:a', kind: 'plan', version: 2, verdict: null, sealedAt: '1970-01-01T00:00:00.000Z' }],
-};
+const messages = [{ role: 'user', text: 'hello' }, { role: 'assistant', text: 'hi there' }];
 
 let server: Server;
 let url: string;
-let calls: Array<{ method: string; path: string; body: unknown; auth?: string }>;
+let calls: Array<{ method: string; path: string; query: Record<string, string>; body: unknown; auth?: string }>;
 let frames: unknown[];
-let indexOff = false;
+let queue: Array<{ id: string; text: string }>;
 let streaming = false;
-let paged = false;
+let defaultSize = 100;
 
-// Applies the filters the CLI sends (agent, not archived) and pages two rows at a time when `paged` is set, as the sessions API does.
-function pageOfSessions(path: string, reply: (status: number, body: object) => void) {
-  const q = new URL(path, 'http://x').searchParams;
-  const agent = /agent:"([^"]+)"/.exec(q.get('filter') ?? '')?.[1];
-  const rows = sessions.filter((x) => !agent || x.agent === agent);
+// One page of `rows` for the request's pageSize and pageToken, as every v9 list answers.
+function page(field: string, rows: unknown[], q: URLSearchParams) {
   const from = Number(q.get('pageToken') ?? 0);
-  const size = paged ? 2 : 1000;
-  reply(200, { sessions: rows.slice(from, from + size), ...(from + size < rows.length && { nextPageToken: String(from + size) }) });
+  const size = Number(q.get('pageSize') ?? defaultSize);
+  return { [field]: rows.slice(from, from + size), ...(from + size < rows.length && { nextPageToken: String(from + size) }) };
 }
+
+// The fake's stand-in for the server's q: just the kind and version terms the artifact command sends.
+const artifactsFor = (q: string) => sealed.filter((a) => (!/kind:/.test(q) || q.includes(`kind:${a.kind}`)) && (!/version:/.test(q) || q.includes(`version:${a.version}`)));
 
 const readBody = async (req: IncomingMessage) => { let s = ''; for await (const c of req) s += c; return s ? JSON.parse(s) : undefined; };
 
+const ROUTES: Array<[string, RegExp, (m: RegExpExecArray, q: URLSearchParams) => [number, object]]> = [
+  ['GET', /^\/sessions$/, (_, q) => [200, page('sessions', sessions, q)]],
+  ['GET', /^\/sessions\/([^/]+)$/, ([, k]) => { const s = sessions.find((x) => x.key === k); return s ? [200, s] : [404, { title: 'Not Found', status: 404, detail: 'no such session' }]; }],
+  ['GET', /^\/asks$/, (_, q) => [200, page('asks', asks, q)]],
+  ['GET', /^\/sessions\/([^/]+)\/asks$/, ([, k], q) => [200, page('asks', asks.filter((a) => a.session === k), q)]],
+  ['PATCH', /^\/sessions\/[^/]+\/asks\/ap9$/, () => [409, { title: 'Conflict', status: 409, detail: 'the ask is not pending' }]],
+  ['PATCH', /^\/sessions\/[^/]+\/asks\/([^/]+)$/, ([, id]) => [200, { ...asks.find((a) => a.id === id), state: 'resolved' }]],
+  ['GET', /^\/artifacts$/, (_, q) => [200, page('artifacts', sealed.map(({ content: _c, ...meta }) => meta), q)]],
+  ['GET', /^\/sessions\/[^/]+\/artifacts$/, (_, q) => [200, page('artifacts', artifactsFor(q.get('q') ?? ''), q)]],
+  ['GET', /^\/sessions\/[^/]+\/messages$/, (_, q) => [200, { messages: messages.slice(-Number(q.get('limit'))) }]],
+  ['GET', /^\/sessions\/[^/]+\/export$/, () => [200, { session: sessions[0], transcript: [], artifacts: sealed }]],
+  ['GET', /^\/agents$/, () => [200, { agents: [{ name: 'chat', version: 3 }] }]],
+  ['DELETE', /^\/sessions\/ui:b$/, () => [409, { error: 'session is running' }]],
+];
+
 before(async () => {
   server = createServer(async (req, res) => {
-    const path = decodeURIComponent(req.url!);
-    calls.push({ method: req.method!, path, body: await readBody(req), auth: req.headers.authorization });
-    const reply = (status: number, body: object) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-    if (path.includes('/invocations')) {
+    const u = new URL(req.url!, 'http://x');
+    const path = decodeURIComponent(u.pathname);
+    calls.push({ method: req.method!, path, query: Object.fromEntries(u.searchParams), body: await readBody(req), auth: req.headers.authorization });
+    const reply = (status: number, body: object) => { res.writeHead(status, { 'content-type': status < 400 ? 'application/json' : 'application/problem+json' }); res.end(JSON.stringify(body)); };
+    if (path.endsWith('/invocations')) {
       const body = calls.at(-1)!.body as { input: string; wait?: boolean };
       return reply(body.wait ? 200 : 202, body.input === 'fail' ? { status: 'unanswered', reason: 'model_fault' } : body.wait ? { status: 'done', answer: 'final answer' } : { status: 'running' });
     }
-    const idx = /^\/index\/(\w+)/.exec(path);
-    if (idx && paged) return reply(200, { [idx[1]!]: (index[idx[1]!] as unknown[]).slice(...(path.includes('pageToken=P2') ? [1] : [0, 1])), ...(!path.includes('pageToken=') && { nextPageToken: 'P2' }) });
-    if (path.startsWith('/sessions?')) return pageOfSessions(path, reply);
-    const one = req.method === 'GET' && /^\/sessions\/([^/]+)$/.exec(path);
-    if (one) return sessions.find((x) => x.key === one[1]) ? reply(200, sessions.find((x) => x.key === one[1])!) : reply(404, { title: 'Not Found', status: 404, detail: 'no such session' });
-    if (path === '/agents') return reply(200, { agents: [{ name: 'chat', version: 3 }] });
-    if (idx) return indexOff ? reply(404, { error: 'not found' }) : reply(200, { [idx[1]!]: index[idx[1]!] });
-    if (path.endsWith('/export')) return reply(200, { session: sessions[0], transcript: [], artifacts: sealed });
-    if (path.endsWith('/artifacts')) return reply(200, { artifacts: sealed });
-    if (path.endsWith('/questions')) return reply(200, { questions: [{ id: 'q1', question: 'Which?' }] });
-    if (path.endsWith('/approvals')) return reply(200, { approvals: [{ id: 'ap1', tool: 'bash' }] });
-    if (path.endsWith('/approvals/ap9')) { res.writeHead(409, { 'content-type': 'application/problem+json' }); return res.end(JSON.stringify({ title: 'Conflict', status: 409, detail: 'unknown or already decided' })); }
-    if (req.method === 'DELETE' && path.includes('ui:b')) return reply(409, { error: 'session is running' });
+    for (const [method, pattern, route] of ROUTES) {
+      const m = req.method === method ? pattern.exec(path) : null;
+      if (m) return reply(...route(m, u.searchParams));
+    }
     reply(200, { key: 'ok' });
   });
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
+    const entry = (role: string, text: string) => ({ kind: 'entry', entry: { model: [{ role, content: [{ type: 'text', text }] }] } });
     if (streaming) {
-      const entry = (role: string, text: string) => ({ kind: 'entry', entry: { model: [{ role, content: [{ type: 'text', text }] }] } });
       ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go')], live: { run: {} } }));
       setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20);
       setTimeout(() => ws.send(JSON.stringify({ type: 'view', live: {} })), 40);
       return;
     }
-    ws.send(JSON.stringify({ type: 'view', items: [{ kind: 'earlier' }, { kind: 'entry', entry: { model: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: [{ type: 'text', text: 'hi there' }] }] } }], live: {} }));
+    ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'hello')], live: {} }));
+    ws.send(JSON.stringify({ type: 'queued', items: queue }));
     ws.on('message', (d) => {
-      frames.push(JSON.parse(String(d)));
-      ws.send(JSON.stringify(JSON.parse(String(d)).input === 'bad' ? { type: 'error', error: 'rejected' } : { type: 'accepted' }));
+      const frame = JSON.parse(String(d));
+      frames.push(frame);
+      // The session server answers a withdraw with no frame of its own; only the queue it pushes changes.
+      if (frame.type === 'withdraw') return ws.send(JSON.stringify({ type: 'queued', items: (queue = queue.filter((q) => q.id !== frame.id)) }));
+      ws.send(JSON.stringify(frame.input === 'bad' ? { type: 'error', error: 'rejected' } : { type: 'accepted', submissionId: 'f2', status: 'queued' }));
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 after(() => server.close());
-beforeEach(() => { calls = []; frames = []; });
+beforeEach(() => { calls = []; frames = []; queue = [{ id: 'f1', text: 'later' }]; });
+afterEach(() => assert.deepEqual(calls.filter((c) => c.path.startsWith('/index')), [], 'the index routes are retired'));
 
 async function cli(args: string[], env: Record<string, string> = {}) {
   let stdout = '';
@@ -97,74 +112,118 @@ async function cli(args: string[], env: Record<string, string> = {}) {
   return { code, stdout, stderr };
 }
 
+const qOf = async (args: string[]) => { calls = []; await cli(args); return calls[0]!.query.q; };
+
 describe('quack', () => {
   it('lists commands for --help', async () => {
     const r = await cli(['--help']);
     assert.equal(r.code, 0);
-    for (const c of ['sessions', 'show', 'new', 'send', 'stop', 'resume', 'rename', 'archive', 'unarchive', 'delete', 'export', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents', 'completion', 'eval']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
+    for (const c of ['sessions', 'show', 'new', 'send', 'steer', 'withdraw', 'stop', 'resume', 'rename', 'archive', 'unarchive', 'delete', 'export', 'asks', 'answer', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents', 'completion', 'eval']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
   });
 
-  it('sessions prints the API JSON unchanged with --json and filters by agent', async () => {
-    const r = await cli(['sessions', '--json', '--agent', 'chat']);
-    assert.deepEqual(JSON.parse(r.stdout), { sessions: sessions.filter((s) => s.agent === 'chat') });
-    assert.match((await cli(['sessions'])).stdout, /ui:a\s+chat\s+running\s+Alpha/);
+  it('sessions prints the API page unchanged with --json and drops archived ones by default', async () => {
+    const r = await cli(['sessions', '--json']);
+    assert.deepEqual(JSON.parse(r.stdout), { sessions });
+    assert.deepEqual(calls.map((c) => [c.path, c.query]), [['/sessions', { q: '-state:archived' }]]);
+    assert.match((await cli(['sessions'])).stdout, /ui:a\s+chat\s+running\s+0\s+Alpha/);
   });
 
-  it('sessions asks the server to drop archived ones and keep one agent, and follows the pages to the end', async () => {
-    paged = true;
-    try {
-      assert.equal((await cli(['sessions', '--keys'])).stdout, 'ui:a\nui:b\nui:c');
-      const asked = calls.filter((c) => c.path.startsWith('/sessions?')).map((c) => new URL(c.path, 'http://x').searchParams);
-      assert.deepEqual(asked.map((q) => [q.get('pageSize'), q.get('pageToken'), q.get('filter')]), [['1000', null, '-archived:true'], ['1000', '2', '-archived:true']]);
-      calls = [];
-      await cli(['sessions', '--agent', 'chat']);
-      assert.equal(new URL(calls[0]!.path, 'http://x').searchParams.get('filter'), '-archived:true AND agent:"chat"');
-    } finally {
-      paged = false;
-    }
-  });
-
-  it('sessions --state uses the index like the UI groups', async () => {
-    const keys = async (state: string) => JSON.parse((await cli(['sessions', '--state', state, '--json'])).stdout).sessions.map((s: { key: string }) => s.key);
-    assert.deepEqual(await keys('running'), ['ui:a']);
-    assert.deepEqual(await keys('needs_you'), ['ui:b', 'ui:c']);
-    assert.deepEqual(await keys('failed'), ['ui:c']);
-    assert.deepEqual(await keys('done'), []);
+  it('sessions maps --state and --agent to q, escaping the agent', async () => {
+    assert.equal(await qOf(['sessions', '--state', 'running']), '-state:archived AND state:running');
+    assert.equal(await qOf(['sessions', '--state', 'needs_you']), '-state:archived AND pendingAsks:>0');
+    assert.equal(await qOf(['sessions', '--state', 'failed']), '-state:archived AND lastRun.outcome:failed');
+    assert.equal(await qOf(['sessions', '--state', 'done']), '-state:archived AND (state:idle OR state:stopped) AND pendingAsks:0');
+    assert.equal(await qOf(['sessions', '--agent', 'chat']), '-state:archived AND agent:chat');
+    assert.equal(await qOf(['sessions', '--agent', 'a:b OR x']), String.raw`-state:archived AND agent:a\:b\ OR\ x`);
     assert.equal((await cli(['sessions', '--state', 'nope'])).code, 1);
   });
 
-  it('follows nextPageToken so the list is whole', async () => {
-    const all = index.approvals;
-    index.approvals = [{ session: 'ui:b', id: 'ap1', tool: 'bash', at: 'a' }, { session: 'ui:b', id: 'ap2', tool: 'bash', at: 'b' }];
-    paged = true;
-    try {
-      const out = JSON.parse((await cli(['approvals', '--json'])).stdout) as { approvals: Array<{ id: string }> };
-      assert.deepEqual(out.approvals.map((a) => a.id), ['ap1', 'ap2']);
-      assert.ok(calls.some((c) => c.path === '/index/approvals?state=pending&pageToken=P2'));
-    } finally {
-      paged = false;
-      index.approvals = all;
-    }
+  it('sessions takes a q of its own in place of the archived default', async () => {
+    assert.equal(await qOf(['sessions', 'state:archived']), '(state:archived)');
+    assert.equal(await qOf(['sessions', '--agent', 'chat', 'title:x', 'OR', 'title:y']), '(title:x OR title:y) AND agent:chat');
   });
 
-  it('says so when the index is off', async () => {
-    indexOff = true;
-    const r = await cli(['approvals']);
-    indexOff = false;
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /index is off/);
+  it('sessions --order-by, --page-size and --page-token page the list, and the next token goes to stderr', async () => {
+    const r = await cli(['sessions', '--keys', '--page-size', '2', '--order-by', 'oldestAskAt']);
+    assert.deepEqual([r.stdout, r.stderr], ['ui:a\nui:b', 'next page: --page-token 2']);
+    assert.deepEqual(calls[0]!.query, { q: '-state:archived', orderBy: 'oldestAskAt', pageSize: '2' });
+    calls = [];
+    const last = await cli(['sessions', '--keys', '--page-size', '2', '--page-token', '2']);
+    assert.deepEqual([last.stdout, last.stderr], ['ui:c', '']);
+    assert.equal(calls.at(0)!.query.pageToken, '2');
+    assert.equal(JSON.parse((await cli(['sessions', '--json', '--page-size', '2'])).stdout).nextPageToken, '2');
   });
 
-  it('show gathers state, artifacts, questions, approvals and last messages', async () => {
+  it('sessions --keys prints one key per line', async () => {
+    assert.equal((await cli(['sessions', '--keys'])).stdout, 'ui:a\nui:b\nui:c');
+  });
+
+  it('asks lists pending approvals and questions across sessions or for one, with a q of its own', async () => {
+    const r = await cli(['asks']);
+    assert.match(r.stdout, /ui:b\s+ap1\s+approval\s+1970-01-01T00:00:00.000Z\s+bash/);
+    assert.match(r.stdout, /ui:b\s+q1\s+question\s+\S+\s+Which\?/);
+    assert.deepEqual(calls.map((c) => [c.path, c.query]), [['/asks', { q: 'state:pending' }]]);
+    calls = [];
+    assert.deepEqual(JSON.parse((await cli(['asks', '--json', '--session', 'ui:b', 'type:approval'])).stdout), { asks });
+    assert.deepEqual(calls.map((c) => [c.path, c.query]), [['/sessions/ui:b/asks', { q: 'state:pending AND (type:approval)' }]]);
+    assert.equal(await qOf(['approvals']), 'state:pending AND (type:approval)');
+    assert.match((await cli(['asks', '--page-size', '1'])).stderr, /next page: --page-token 1/);
+  });
+
+  it('answer resolves either kind with the nested body; approve and reject are its aliases', async () => {
+    assert.equal((await cli(['answer', 'ui:b', 'q1', 'this', 'one', '--text', 'free', '--reason', 'why'])).code, 0);
+    await cli(['approve', 'ui:b', 'ap1']);
+    await cli(['reject', 'ui:b', 'ap1', 'too', 'risky']);
+    await cli(['reject', 'ui:b', 'ap1', '--reason', 'flagged']);
+    assert.deepEqual(calls.map((c) => [c.method, c.path, c.body]), [
+      ['PATCH', '/sessions/ui:b/asks/q1', { resolution: { choice: 'this one', text: 'free', reason: 'why' } }],
+      ['PATCH', '/sessions/ui:b/asks/ap1', { resolution: { choice: 'approve' } }],
+      ['PATCH', '/sessions/ui:b/asks/ap1', { resolution: { choice: 'reject', reason: 'too risky' } }],
+      ['PATCH', '/sessions/ui:b/asks/ap1', { resolution: { choice: 'reject', reason: 'flagged' } }],
+    ]);
+    assert.equal((await cli(['answer', 'ui:b', 'q1'])).code, 1);
+  });
+
+  it('answer prints the problem detail when the ask is not pending', async () => {
+    const stale = await cli(['approve', 'ui:b', 'ap9']);
+    assert.equal(stale.code, 1);
+    assert.match(stale.stderr, /the ask is not pending/);
+  });
+
+  it('show gathers the session, its pending asks, newest artifacts and last messages', async () => {
     const r = await cli(['show', 'ui:a']);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /plan\s+v2\s+passed\s+s2/);
-    assert.match(r.stdout, /q1\s+Which\?/);
-    assert.match(r.stdout, /ap1\s+bash/);
+    assert.match(r.stdout, /^ui:a {2}chat {2}running {2}Alpha/);
+    assert.match(r.stdout, /plan\s+v2\s+t2\s+s2/);
+    assert.doesNotMatch(r.stdout, /v1/);
     assert.match(r.stdout, /assistant: hi there/);
-    const j = JSON.parse((await cli(['show', 'ui:a', '--json'])).stdout);
-    assert.deepEqual(j.artifacts, sealed);
-    assert.deepEqual(j.messages, [{ role: 'user', text: 'hello' }, { role: 'assistant', text: 'hi there' }]);
+    assert.deepEqual(calls.map((c) => [c.path, c.query]), [
+      ['/sessions/ui:a', {}],
+      ['/sessions/ui:a/asks', { q: 'state:pending' }],
+      ['/sessions/ui:a/artifacts', {}],
+      ['/sessions/ui:a/messages', { limit: '5' }],
+    ]);
+    const j = JSON.parse((await cli(['show', 'ui:b', '--json'])).stdout);
+    assert.deepEqual(j.asks, asks);
+    assert.deepEqual(j.messages, messages);
+    assert.match((await cli(['show', 'ui:b'])).stdout, /q1\s+question\s+\S+\s+Which\?/);
+  });
+
+  it('show --messages N prints the last N messages and refuses what the server would cut', async () => {
+    const r = await cli(['show', 'ui:a', '--messages', '1']);
+    assert.match(r.stdout, /Last messages\nassistant: hi there$/);
+    assert.equal(calls.at(-1)!.query.limit, '1');
+    for (const n of ['0', '51', 'x']) assert.equal((await cli(['show', 'ui:a', '--messages', n])).code, 1);
+  });
+
+  it('show follows the asks pages so nothing pending is left out', async () => {
+    defaultSize = 1;
+    try {
+      assert.deepEqual(JSON.parse((await cli(['show', 'ui:b', '--json'])).stdout).asks.map((a: { id: string }) => a.id), ['ap1', 'q1']);
+      assert.deepEqual(calls.filter((c) => c.path.endsWith('/asks')).map((c) => c.query.pageToken), [undefined, '1']);
+    } finally {
+      defaultSize = 100;
+    }
   });
 
   it('exits 2 for an unknown session without touching it', async () => {
@@ -174,26 +233,47 @@ describe('quack', () => {
     assert.deepEqual(calls.map((c) => c.path), ['/sessions/ui:nope']);
   });
 
-  it('send returns once the server accepts, and reports a rejection', async () => {
-    assert.equal((await cli(['send', 'ui:a', 'do', 'it'])).code, 0);
+  it('send returns the submission id once the server accepts, and reports a rejection', async () => {
+    const r = await cli(['send', 'ui:a', 'do', 'it']);
+    assert.deepEqual([r.code, r.stdout], [0, 'f2']);
     assert.deepEqual(frames, [{ type: 'input', input: 'do it' }]);
     const bad = await cli(['send', 'ui:a', 'bad']);
     assert.equal(bad.code, 1);
     assert.match(bad.stderr, /rejected/);
   });
 
-  it('stop, resume and housekeeping call the UI routes', async () => {
+  it('steer sends the input into the running turn as a steer', async () => {
+    const r = await cli(['steer', 'ui:a', 'look', 'here']);
+    assert.deepEqual([r.code, r.stdout], [0, 'f2']);
+    assert.deepEqual(frames, [{ type: 'input', input: 'look here', whenBusy: 'steer' }]);
+    assert.equal((await cli(['steer', 'ui:a'])).code, 1);
+    assert.equal((await cli(['steer', 'ui:nope', 'x'])).code, 2);
+  });
+
+  it('withdraw removes a queued follow-up and exits 2 for one that is not queued', async () => {
+    assert.equal((await cli(['withdraw', 'ui:a', 'f1'])).code, 0);
+    assert.deepEqual(frames, [{ type: 'withdraw', id: 'f1' }]);
+    frames = [];
+    const gone = await cli(['withdraw', 'ui:a', 'f1']);
+    assert.equal(gone.code, 2);
+    assert.match(gone.stderr, /no queued message f1 in ui:a/);
+    assert.deepEqual(frames, []);
+  });
+
+  it('stop, resume and housekeeping call the session routes, archiving through state', async () => {
     await cli(['stop', 'ui:a']);
     await cli(['resume', 'ui:a']);
     await cli(['rename', 'ui:a', 'New', 'name']);
     await cli(['archive', 'ui:a']);
+    await cli(['unarchive', 'ui:a']);
     await cli(['delete', 'ui:a']);
     const writes = calls.filter((c) => c.method !== 'GET').map((c) => [c.method, c.path, c.body]);
     assert.deepEqual(writes, [
       ['POST', '/sessions/ui:a/abort', undefined],
       ['POST', '/sessions/ui:a/resume', undefined],
       ['PATCH', '/sessions/ui:a', { title: 'New name' }],
-      ['PATCH', '/sessions/ui:a', { archived: true }],
+      ['PATCH', '/sessions/ui:a', { state: 'archived' }],
+      ['PATCH', '/sessions/ui:a', { state: 'stopped' }],
       ['DELETE', '/sessions/ui:a', undefined],
     ]);
   });
@@ -203,7 +283,7 @@ describe('quack', () => {
     assert.equal(r.code, 0);
     assert.match(r.stdout, /^ui:[0-9a-f-]{36}$/);
     const post = calls.find((c) => c.method === 'POST')!;
-    assert.equal(post.path, `/sessions/${r.stdout}/invocations?agent=chat`);
+    assert.deepEqual([post.path, post.query], [`/sessions/${r.stdout}/invocations`, { agent: 'chat' }]);
     assert.equal((post.body as { input: string }).input, 'plan it');
     assert.equal((await cli(['new'])).code, 1);
   });
@@ -228,20 +308,11 @@ describe('quack', () => {
     try {
       const r = await cli(['show', '-f', 'ui:a']);
       assert.equal(r.code, 0);
-      assert.match(r.stdout, /user: go/);
-      assert.match(r.stdout, /assistant: streamed one$/);
+      assert.doesNotMatch(r.stdout, /user: go/);
+      assert.match(r.stdout, /assistant: hi there\s*assistant: streamed one$/);
     } finally {
       streaming = false;
     }
-  });
-
-  it('unarchive clears the archived flag', async () => {
-    await cli(['unarchive', 'ui:a']);
-    assert.deepEqual(calls.filter((c) => c.method === 'PATCH').map((c) => c.body), [{ archived: false }]);
-  });
-
-  it('sessions --keys prints one key per line', async () => {
-    assert.equal((await cli(['sessions', '--keys'])).stdout, 'ui:a\nui:b\nui:c');
   });
 
   it('completion prints a static script and rejects other shells', async () => {
@@ -281,26 +352,20 @@ describe('quack', () => {
     assert.match(r.stderr, /session is running/);
   });
 
-  it('approvals lists the inbox; approve and reject post decisions', async () => {
-    assert.match((await cli(['approvals'])).stdout, /ui:b\s+ap1\s+bash/);
-    assert.deepEqual(JSON.parse((await cli(['approvals', '--json'])).stdout), { approvals: index.approvals });
-    await cli(['approve', 'ui:b', 'ap1']);
-    await cli(['reject', 'ui:b', 'ap1', 'too', 'risky']);
-    assert.deepEqual(calls.filter((c) => c.method === 'POST').map((c) => c.body), [{ decision: 'approve' }, { decision: 'reject', reason: 'too risky' }]);
-    const stale = await cli(['approve', 'ui:b', 'ap9']);
-    assert.equal(stale.code, 1);
-    assert.match(stale.stderr, /unknown or already decided/);
-    calls = [];
-    for (const verb of ['approve', 'reject']) assert.equal((await cli([verb, 'ui:typo', 'ap1'])).code, 2);
-    assert.deepEqual(calls.map((c) => c.method), ['GET', 'GET']);
+  it('artifacts lists one page across sessions or for one session', async () => {
+    assert.match((await cli(['artifacts'])).stdout, /ui:a\s+plan\s+v2\s+t2\s+s2/);
+    assert.match((await cli(['artifacts', 'ui:a'])).stdout, /ui:a\s+plan\s+v1\s+t1\s+s1/);
+    assert.deepEqual(calls.map((c) => c.path), ['/artifacts', '/sessions/ui:a/artifacts']);
+    assert.match((await cli(['artifacts', '--page-size', '1'])).stderr, /next page: --page-token 1/);
   });
 
-  it('artifacts lists and artifact prints the newest or a given version', async () => {
-    assert.match((await cli(['artifacts'])).stdout, /ui:a\s+plan\s+v2/);
-    assert.match((await cli(['artifacts', 'ui:a'])).stdout, /plan\s+v1\s+s1/);
+  it('artifact asks the server for the newest version of a kind, or a given one, escaping both', async () => {
     assert.equal((await cli(['artifact', 'ui:a', 'plan'])).stdout, 'new plan');
+    assert.deepEqual(calls.at(-1)!.query, { q: 'kind:plan', pageSize: '1' });
     assert.equal((await cli(['artifact', 'ui:a', 'plan', '--version', '1'])).stdout, 'old plan');
-    assert.deepEqual(JSON.parse((await cli(['artifact', 'ui:a', 'plan', '--json'])).stdout), sealed[1]);
+    assert.deepEqual(calls.at(-1)!.query, { q: 'kind:plan AND version:1', pageSize: '1' });
+    assert.deepEqual(JSON.parse((await cli(['artifact', 'ui:a', 'plan', '--json'])).stdout), sealed[0]);
+    assert.equal(await qOf(['artifact', 'ui:a', 'sleeper.cards', '--version', '1 OR 2']), String.raw`kind:sleeper\.cards AND version:1\ OR\ 2`);
     assert.equal((await cli(['artifact', 'ui:a', 'nope'])).code, 2);
   });
 
@@ -318,7 +383,7 @@ describe('quack', () => {
     mute.on('upgrade', () => {});
     await new Promise<void>((r) => mute.listen(0, '127.0.0.1', r));
     const c = client(`http://127.0.0.1:${(mute.address() as AddressInfo).port}`, undefined, 50);
-    await assert.rejects(c.view('ui:a'), /cannot reach/);
+    await assert.rejects(c.send('ui:a', 'x'), /cannot reach/);
     mute.closeAllConnections();
     mute.close();
   });

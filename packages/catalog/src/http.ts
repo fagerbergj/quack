@@ -13,8 +13,9 @@ export type Caller = Principal | { kind: 'session'; key: string; crossSession: b
 export type SessionsApiDeps = {
   /** Deletes the session's directory, stopping its process; refused while it works or sleeps until a wake time. */
   deleteSession(key: string): Promise<'deleted' | 'absent' | { refused: string }>;
-  /** Hands the answer to the session's gate or question, which waits on it; false when the session holds it answered. */
-  answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean>;
+  /** Hands the answer to the session's gate or question, which waits on it: true, false when the session holds it
+   * answered, or the session's reason for refusing a malformed answer. */
+  answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string>;
 };
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
@@ -122,7 +123,9 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     const resolution = resolutionOf(await body(req));
     const ask = await catalog.getAsk(key, id);
     if (!ask) throw new Problem(404, 'no such ask');
-    if (ask.state !== 'pending' || !(await deps.answer(key, ask, { by, ...resolution }))) throw new Problem(409, `the ask is ${ask.state === 'pending' ? 'already answered' : ask.state}`);
+    const taken = ask.state === 'pending' && (await deps.answer(key, ask, { by, ...resolution }));
+    if (typeof taken === 'string') throw new Problem(400, taken);
+    if (!taken) throw new Problem(409, `the ask is ${ask.state === 'pending' ? 'already answered' : ask.state}`);
     await catalog.resolve(key, id, { by, ...resolution });
     return askWire((await catalog.getAsk(key, id))!);
   }

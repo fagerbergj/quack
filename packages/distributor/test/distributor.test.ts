@@ -12,7 +12,8 @@ import { childPort, shellEnv } from '@quack/session';
 import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { RECORDS } from '../src/orphans.ts';
-import { createDistributor, forwardOutput, processDriver, sessionDirName } from '../src/index.ts';
+import { openCatalog } from '@quack/catalog';
+import { createDistributor, forwardOutput, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 import { PING_TIMEOUT_MS, PROXY_PROOF } from '../src/server.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
 
@@ -41,13 +42,20 @@ async function agentsDirAt(version: number, ...names: string[]) {
   return dir;
 }
 
-async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }, retire?: NonNullable<Parameters<typeof createDistributor>[1]>['retire']) {
+// The driver of the latest startDistributor: listing tests read its sessions(), which export and the session facts share.
+let lastDriver: HostDriver | undefined;
+
+async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }, withCatalog = false) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
+  lastDriver = driver;
   // A fake clock with no timers: a test runs the idle sweep itself after moving the clock.
   let clock = 1_000_000;
-  const server = createDistributor(driver, { idleMs, retire, proxySecret: PROXY_SECRET, now: () => clock, setTimer: () => () => {} }).listen(0);
+  // The catalog lives beside, not in, the data dir, so a test can still see that dir emptied.
+  const catalog = withCatalog ? openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-dist-catalog-')) }) : undefined;
+  if (catalog) servers.push(() => catalog.close());
+  const server = createDistributor(driver, { idleMs, catalog, proxySecret: PROXY_SECRET, now: () => clock, setTimer: () => () => {} }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   servers.push(async () => {
@@ -57,7 +65,9 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   const invoke = (key: string, body: unknown, agent?: string) =>
     fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations${agent ? `?agent=${agent}` : ''}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
   const ranAs = (key: string) => `agent: ${join(dataDir, sessionDirName(key), 'agent-def', 'agent.json')}`;
-  return { driver, invoke, base, ranAs, dataDir, sweep: () => server.sweep(), advance: (ms: number) => void (clock += ms) };
+  // What a session's own lifecycle channel would have reported, for the tests that delete through the Sessions API.
+  const known = (key: string) => catalog!.publish(key, [{ seq: 1, id: `session:${key}`, at: clock, type: 'session.created', data: { agent: 'quack', createdAt: clock } }]);
+  return { driver, invoke, base, ranAs, dataDir, known, sweep: () => server.sweep(), advance: (ms: number) => void (clock += ms) };
 }
 
 // Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
@@ -156,9 +166,10 @@ test('an unknown or deleted key answers 404 on every route and starts nothing; a
 });
 
 test('a session open in a page is deleted from that page: its idle process is stopped and its socket ends', async () => {
-  const { driver, base, invoke, dataDir } = await startDistributor(60_000, { defaultAgent: '' }, { waiting: async () => false, forget: async () => {} });
+  const { driver, base, invoke, dataDir, known } = await startDistributor(60_000, { defaultAgent: '' }, true);
   const key = 'github:fagerbergj/quack#2208';
   await invoke(key, { input: 'start', wait: true });
+  await known(key);
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
   assert.equal((await nextFrame(ws, () => true)).type, 'view');
   const closed = new Promise((r) => { ws.onclose = r; });
@@ -209,7 +220,7 @@ test('a viewer whose session cannot start is disconnected, and the distributor k
   const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/research%3Ax/ws`);
   const closed = await new Promise<string>((r) => { ws.onerror = () => r('error'); ws.onopen = () => r('open'); });
   assert.equal(closed, 'error');
-  assert.equal((await fetch(`${base}/sessions`)).status, 200);
+  assert.equal((await fetch(`${base}/agents`)).status, 200);
   await new Promise((r) => server.close(r));
 });
 
@@ -223,12 +234,12 @@ test('each session runs on the agent that created it, and the registry and index
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ name: string }> };
   assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3, status: 'draft' }, { name: 'reviewer', version: 3, status: 'draft' }]);
   await driver.stop('research:b');
-  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; title?: string; running: boolean; lastActivity: string }> };
+  const { sessions } = ({ sessions: await lastDriver!.sessions() }) as { sessions: Array<{ key: string; agent: string; title?: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
   assert.equal(sessions.find((s) => s.key === 'research:b')?.title, 'whoami');
   assert.equal(sessions.find((s) => s.key === 'github:a#1')?.title, 'whoami');
   await writeFile(join(dataDir, sessionDirName('github:a#1'), 'title'), 'Fix the cache');
-  const named = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; title?: string }> };
+  const named = ({ sessions: await lastDriver!.sessions() }) as { sessions: Array<{ key: string; title?: string }> };
   assert.equal(named.sessions.find((s) => s.key === 'github:a#1')?.title, 'Fix the cache');
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
@@ -238,7 +249,8 @@ test('sessions list newest-active first, and a legacy session\'s created time is
   const start = Date.now();
   await invoke('ord:1', { input: 'hi', wait: true });
   await invoke('ord:2', { input: 'hi', wait: true });
-  const read = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; createdAt: string }> }).sessions;
+  // Newest active first, as the session facts the catalog reads carry it.
+  const read = async () => (await lastDriver!.sessions()).sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
   const dir = (k: string) => join(dataDir, sessionDirName(k));
   for (const k of ['ord:1', 'ord:2']) {
     const at = Number(await readFile(join(dir(k), 'created'), 'utf8'));
@@ -268,7 +280,7 @@ test('lastActivity comes from the session log, so file mtimes from a restart do 
   const { invoke, base, driver, dataDir } = await startDistributor(60_000);
   await invoke('act:1', { input: 'hi', wait: true });
   await driver.stop('act:1');
-  const read = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ lastActivity: string }> }).sessions[0]!.lastActivity;
+  const read = async () => (({ sessions: await lastDriver!.sessions() }) as { sessions: Array<{ lastActivity: string }> }).sessions[0]!.lastActivity;
   const before = await read();
   const future = new Date('2099-01-01T00:00:00Z');
   const dir = join(dataDir, sessionDirName('act:1'));
@@ -294,7 +306,7 @@ test('a session naming no agent gets the deployment default', async () => {
   assert.equal((await invoke('github:a#2', { input: 'whoami', wait: true })).body.answer, ranAs('github:a#2'));
   assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
   assert.equal((await fetch(`${base}/sessions/github%3Aa%232/ping?agent=research`)).status, 409);
-  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ agent: string }> };
+  const { sessions } = ({ sessions: await lastDriver!.sessions() }) as { sessions: Array<{ agent: string }> };
   assert.equal(sessions[0].agent, 'reviewer');
 });
 
@@ -318,7 +330,7 @@ test('a session stays on the version it started on after the agents dir moves on
   assert.deepEqual([await pinned('github:v#1'), await pinned('github:v#2')], [1, 2]);
   const prompt = (key: string) => readFile(join(ranAs(key).slice('agent: '.length), '..', 'prompt.md'), 'utf8');
   assert.deepEqual([await prompt('github:v#1'), await prompt('github:v#2')], ['prompt v1', 'prompt v2']);
-  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; version: number }> };
+  const { sessions } = ({ sessions: await lastDriver!.sessions() }) as { sessions: Array<{ key: string; version: number }> };
   assert.deepEqual(sessions.map((x) => [x.key, x.version]).sort(), [['github:v#1', 1], ['github:v#2', 2]]);
 });
 
@@ -384,7 +396,6 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
     s.on('data', (d) => (out += d)).on('close', () => res(out));
   });
   assert.match(raw, /^HTTP\/1.1 404/);
-  assert.deepEqual(await (await fetch(`${base}/sessions`)).json(), { sessions: [] });
   assert.deepEqual(await (await fetch(`${base}/agents`)).json(), { agents: [] });
 });
 
@@ -484,22 +495,6 @@ async function fakeFleet(ping: (now: number) => unknown) {
 
 const HOUR = 3_600_000;
 
-test('the listing says which running sessions are mid-run, from the last sweep and without a ping', async () => {
-  let status = 'HealthyBusy';
-  const fleet = await fakeFleet(() => ({ status, waitingOnHuman: false, wake: {} }));
-  const server = fleet.start().listen(0);
-  await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  await fetch(`${base}/sessions/research%3Aa/ping`);
-  const active = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ active: boolean }> }).sessions[0]!.active;
-  assert.equal(await active(), false, 'not known before a sweep');
-  await server.sweep();
-  assert.equal(await active(), true);
-  status = 'Healthy';
-  await server.sweep();
-  assert.equal(await active(), false, 'alive but between runs');
-});
-
 test('a sweep that finds a session working records the touch, and an idle one does not', async () => {
   let status = 'HealthyBusy';
   const fleet = await fakeFleet(() => ({ status, waitingOnHuman: false, wake: {} }));
@@ -512,21 +507,6 @@ test('a sweep that finds a session working records the touch, and an idle one do
   status = 'Healthy';
   await server.sweep();
   assert.equal(fleet.touches.get('research:a'), fleet.now() - 1000);
-});
-
-test('the listing carries a session\'s status note from its last ping, and drops it when the note clears', async () => {
-  let note: string | undefined = 'Waiting for a model slot (2 ahead)';
-  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {}, note }));
-  const server = fleet.start().listen(0);
-  await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  await fetch(`${base}/sessions/research%3Aa/ping`);
-  const listed = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ note?: string }> }).sessions[0]!.note;
-  await server.sweep();
-  assert.equal(await listed(), 'Waiting for a model slot (2 ahead)');
-  note = undefined;
-  await server.sweep();
-  assert.equal(await listed(), undefined);
 });
 
 test('a session sleeping an hour is stopped by the sweep and restarted at its wake time', async () => {
@@ -823,7 +803,7 @@ test('a client that hangs up mid-body does not take the distributor down', async
     const req = httpRequest(`http://127.0.0.1:${port}/sessions/gone/invocations`, { method: 'POST' }, (res) => { res.on('error', () => {}); res.once('data', () => req.destroy()); });
     req.on('error', () => {}).end('{}');
     await closed;
-    assert.equal((await fetch(`http://127.0.0.1:${port}/sessions`)).status, 200);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/agents`)).status, 200);
   } finally {
     await Promise.all([new Promise((r) => server.close(r)), new Promise((r) => session.close(r))]);
   }
