@@ -7,6 +7,7 @@ RUN go install github.com/oasdiff/oasdiff@v1.34.0
 FROM node:26.13-trixie-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY packages/catalog/package.json packages/catalog/
 COPY packages/cli/package.json packages/cli/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/distributor/package.json packages/distributor/
@@ -23,6 +24,8 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/session/package.json packages/session/
 COPY packages/web/package.json packages/web/
 COPY packages/workflows/package.json packages/workflows/
+# The postinstall patches liqe's grammar (packages/catalog's query parser), so its script comes first.
+COPY tools/patch-liqe.ts tools/
 # typescript is a dev dependency the sessions run, so nothing is omitted.
 RUN --mount=type=cache,target=/root/.npm npm ci
 
