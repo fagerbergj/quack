@@ -43,6 +43,8 @@ export async function rebuildCatalog(catalog: Catalog, dataDir: string, priceOf:
       const events = await recordedStream(dir, priceOf);
       if (!events) continue;
       await catalog.rebuild(key, parseEvents(events));
+      // Called only while no session process runs, so every rebuilt session is stopped.
+      await catalog.stopped(key);
       rebuilt++;
     } catch (err) {
       log(`catalog: session ${key} not rebuilt: ${err instanceof Error ? err.message : String(err)}`);

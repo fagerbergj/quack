@@ -37,9 +37,9 @@ test('a batch applies in seq order and answers its watermark; a retried batch ap
   assert.deepEqual(await post(batch), { status: 200, body: { acked: 3 } });
   assert.deepEqual(await post(batch), { status: 200, body: { acked: 3 } });
   const row = await catalog.getSession('sleeper:platinum:2');
-  assert.deepEqual([row?.title, row?.cost.micros, row?.createdAt], ['Lineup', 1_250_000n, Date.parse(at(0))]);
+  assert.deepEqual([row?.title, row?.cost.amountMicros, row?.createdAt], ['Lineup', 1_250_000n, Date.parse(at(0))]);
   assert.deepEqual(await post({ events: [spend(4, '9007199254740993')] }), { status: 200, body: { acked: 4 } });
-  assert.equal((await catalog.getSession('sleeper:platinum:2'))?.cost.micros, 9007199254740993n, 'a later spend with the same id supersedes, exactly');
+  assert.equal((await catalog.getSession('sleeper:platinum:2'))?.cost.amountMicros, 9007199254740993n, 'a later spend with the same id supersedes, exactly');
 });
 
 test('a batch that starts past the watermark plus one is a 409 carrying the watermark', async () => {
@@ -60,10 +60,10 @@ test('a foreign key is not found, never forbidden', async () => {
 test('a malformed batch is a 400 that names what is wrong', async () => {
   const { post } = await channel();
   const bad: Array<[unknown, RegExp]> = [
-    ['not json', /JSON/], [{ events: [] }, /non-empty/], [{ events: [{ ...created(), type: 'session.renamed' }] }, /event types/],
+    ['not json', /JSON/], [{ events: [] }, /non-empty/], [{ events: [{ ...created(), type: 'renamed' }] }, /event types/], [{ events: [{ ...created(), type: 'Judge.Cleared' }] }, /event types/],
     [{ events: [created(2), spend(2, '1')] }, /strictly increase/], [{ events: [{ ...created(), seq: 0 }] }, /seq/],
     [{ events: [spend(1, '1.5')] }, /Money/], [{ events: [spend(1, '99999999999999999999')] }, /Money|int64/],
-    [{ events: [{ seq: 1, id: 's', at: at(1), type: 'state.changed', data: { state: 'stopped' } }] }, /running or idle/],
+    [{ events: [{ seq: 1, id: 's', at: at(1), type: 'state.changed', data: { state: 'paused' } }] }, /running, idle, stopped or archived/],
     [{ events: [{ seq: 1, id: 'a', at: 'yesterday', type: 'run.started', data: { run: 1 } }] }, /RFC 3339/],
     [{ events: [{ seq: 1, id: 'r', at: at(1), type: 'ask.resolved', data: { id: 'a', choice: 'approve', by: { kind: 'person' } } }] }, /person with an id/],
     [{ events: Array.from({ length: 501 }, (_, i) => spend(i + 1, '1')) }, /at most 500/],
@@ -87,4 +87,19 @@ test('a down store is a 503 the session retries', async () => {
   const { post } = await channel(down);
   const out = await post({ events: [created()] });
   assert.equal(out.status, 503);
+});
+
+test('v8 events: deliveries append, and echoes and extension events only move the watermark', async () => {
+  const { post, catalog } = await channel();
+  const key = 'sleeper:platinum:2';
+  await post({ events: [created(), { seq: 2, id: 'artifact:k:1', at: at(2), type: 'artifact.sealed', data: { kind: 'k', version: 1, hash: 'h', content: 'c', summary: 'S', deliveries: [{ where: 'x', link: 'y', at: at(2) }] } }] });
+  const delivery = { seq: 3, id: 'delivered:k:1', at: at(3), type: 'artifact.delivered', data: { kind: 'k', version: 1, where: 'github', link: 'https://x/1', at: at(3) } };
+  const before = await catalog.getSession(key);
+  assert.deepEqual(await post({ events: [delivery, { seq: 4, id: 'judge:1', at: at(4), type: 'judge.cleared', data: { kind: 'k', version: 1 } }, { seq: 5, id: 'state:echo', at: at(5), type: 'state.changed', data: { state: 'stopped' } }] }), { status: 200, body: { acked: 5 } });
+  assert.deepEqual(await post({ events: [{ ...delivery, seq: 6 }] }), { status: 200, body: { acked: 6 } });
+  assert.deepEqual(await catalog.getSession(key), before, 'the echo and the extension event changed no row');
+  const [row] = (await catalog.listArtifacts({ session: key })).rows;
+  assert.deepEqual(row?.deliveries, [{ where: 'github', link: 'https://x/1', at: Date.parse(at(3)) }], 'one delivery per event id, none from the seal itself');
+  await post({ events: [{ seq: 7, id: 'run:1:ended', at: at(7), type: 'run.ended', data: { run: 1, outcome: 'denied', failedSteps: [] } }] });
+  assert.equal((await catalog.getSession(key))?.lastRun?.outcome, 'denied');
 });

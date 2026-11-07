@@ -11,13 +11,14 @@ const iso = (ms: number) => new Date(ms).toISOString();
 export const eventBytes = (id: string, type: string, data: unknown): number =>
   Buffer.byteLength(JSON.stringify({ seq: Number.MAX_SAFE_INTEGER, id, at: '+275760-09-13T00:00:00.000Z', type, data }));
 
-/** artifact.sealed's data for one sealed version. */
+/** artifact.sealed's data for one sealed version: the core deliverable only. */
 export function artifactSealedData(kind: string, v: SealedArtifact) {
-  return {
-    kind, version: v.version, hash: v.hash, content: v.content, sealedAt: iso(v.sealedAt), verdict: v.verdict ?? null, links: v.links ?? [],
-    ...(v.summary !== undefined && { summary: v.summary }), ...(v.outcome !== undefined && { outcome: v.outcome }), ...(v.basis !== undefined && { basis: v.basis }), ...(v.carriedFrom && { carriedFrom: v.carriedFrom }),
-  };
+  return { kind, version: v.version, hash: v.hash, content: v.content, sealedAt: iso(v.sealedAt), ...(v.summary !== undefined && { summary: v.summary }) };
 }
+
+/** artifact.delivered's data: an attached link is where the version was delivered, until the SDK's deliver records it. */
+export const artifactDeliveredData = (kind: string, v: SealedArtifact, link: { label: string; url: string }) =>
+  ({ kind, version: v.version, where: link.label, link: link.url, at: iso(v.sealedAt) });
 
 /** ask.opened's data for one gated tool call. */
 export const approvalOpenedData = (id: string, tool: string, args: JsonValue, requestedAt: number) =>

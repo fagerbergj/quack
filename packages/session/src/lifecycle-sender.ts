@@ -138,13 +138,14 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     return (current = loop().finally(() => { current = undefined; }));
   }
 
-  async function runChanged(running: boolean) {
+  async function runChanged(running: boolean, booting = false) {
     const at = now();
     const lastMessage = running ? null : ((await opts.lastMessage?.().catch(() => undefined)) ?? null);
     await commit(async (tx) => {
       const doc = await tx.doc(LifecycleStream, root.id);
       const open = doc.runs.at(-1)?.endedAt === null ? doc.runs.at(-1) : undefined;
       if (running && !open) doc.runs.push({ n: doc.runs.length + 1, startedAt: at, endedAt: null, failedSteps: [], lastMessage: null, cancelled: [] });
+      if (!running && !open && booting) doc.boots = [...(doc.boots ?? []), at];
       if (running || !open) return;
       // An approval still without a verdict when its run ends is cancelled: nobody waits on it.
       const approvals = (await tx.doc(Approvals, root.id)).items;
@@ -175,7 +176,7 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
   let seen = signatureOf(watch.value);
   let running = runs(watch.value);
   // A run cut by a restart is closed now; a run already going on open is recorded.
-  await runChanged(running);
+  await runChanged(running, true);
   watch.start(async (call) => {
     if (call.kind !== 'value') return;
     const next = signatureOf(call.value);

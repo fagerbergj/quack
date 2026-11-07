@@ -1,11 +1,12 @@
 // The lifecycle channel's HTTP adapter: POST /sessions/{key}/events on the credentialed session listener.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
-import { BatchError, type Catalog, type CatalogEvent } from './core.ts';
+import { BatchError, type Catalog, type CatalogEvent, type CoreEvent } from './core.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 const ROUTE = /^\/sessions\/([^/]+)\/events$/;
 export const MAX_EVENTS = 500;
+const EXTENSION = /^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/;
 const { send, json } = serviceHttp({ maxBody: 1024 * 1024 });
 
 type Obj = Record<string, unknown>;
@@ -35,7 +36,7 @@ function money(v: unknown, what: string) {
   need(isObj(v) && typeof v.currencyCode === 'string' && /^[A-Z]{3}$/.test(v.currencyCode) && typeof v.amountMicros === 'string' && /^\d{1,19}$/.test(v.amountMicros), `${what}.cost must be Money`);
   const micros = BigInt((v as Obj).amountMicros as string);
   need(micros < 2n ** 63n, `${what}.cost.amountMicros must fit an int64`);
-  return { currencyCode: (v as Obj).currencyCode as string, micros };
+  return { currencyCode: (v as Obj).currencyCode as string, amountMicros: micros };
 }
 
 function tokens(v: unknown, what: string) {
@@ -53,32 +54,27 @@ function prompt(v: unknown, what: string) {
   return p as never;
 }
 
-function links(v: unknown, what: string) {
-  if (v === undefined) return undefined;
-  need(Array.isArray(v) && v.every((l) => isObj(l) && typeof l.label === 'string' && typeof l.url === 'string'), `${what}.links must be {label, url} pairs`);
-  return v as Array<{ label: string; url: string }>;
-}
-
+// A seal's own deliveries are not read: deliveries arrive only as artifact.delivered events.
 function sealed(d: Obj, what: string) {
-  const carried = d.carriedFrom;
-  need(carried === undefined || (isObj(carried) && typeof carried.sha === 'string' && (carried.url === undefined || typeof carried.url === 'string')), `${what}.carriedFrom must have a sha`);
-  need(d.verdict === undefined || d.verdict === null || (isObj(d.verdict) && typeof d.verdict.passed === 'boolean'), `${what}.verdict must be null or carry a boolean passed`);
   return {
     kind: str(d, 'kind', what)!, version: int(d, 'version', what), hash: str(d, 'hash', what)!, content: str(d, 'content', what)!,
-    ...(d.sealedAt !== undefined && { sealedAt: date(d, 'sealedAt', what) }), ...(d.verdict !== undefined && { verdict: d.verdict as never }), ...(d.links !== undefined && { links: links(d.links, what) }),
-    ...(optStr(d, 'summary', what) !== undefined && { summary: optStr(d, 'summary', what) }), ...(optStr(d, 'outcome', what) !== undefined && { outcome: optStr(d, 'outcome', what) }),
-    ...(optStr(d, 'basis', what) !== undefined && { basis: optStr(d, 'basis', what) }), ...(carried !== undefined && { carriedFrom: carried as { sha: string; url?: string } }),
+    ...(d.sealedAt !== undefined && { sealedAt: date(d, 'sealedAt', what) }), ...(optStr(d, 'summary', what) !== undefined && { summary: optStr(d, 'summary', what) }),
   };
+}
+
+function delivered(d: Obj, what: string) {
+  for (const k of ['where', 'link']) need(typeof d[k] === 'string' && (d[k] as string).length > 0, `${what}.${k} must be a non-empty string`);
+  return { kind: str(d, 'kind', what)!, version: int(d, 'version', what), where: d.where as string, link: d.link as string, at: date(d, 'at', what) };
 }
 
 const steps = (v: unknown, what: string) => (need(Array.isArray(v) && v.every((s) => isObj(s) && typeof s.step === 'string' && typeof s.error === 'string'), `${what}.failedSteps must be {step, error} pairs`), v as Array<{ step: string; error: string }>);
 
 // Each event type's data, checked and turned into domain values.
-const DATA: Record<CatalogEvent['type'], (d: Obj, what: string) => unknown> = {
+const DATA: Record<CoreEvent['type'], (d: Obj, what: string) => unknown> = {
   'session.created': (d, w) => (need(d.version === undefined || d.version === null || Number.isSafeInteger(d.version), `${w}.version must be an integer or null`), { agent: str(d, 'agent', w), version: (d.version as number | null | undefined) ?? null, createdAt: date(d, 'createdAt', w) }),
   'run.started': (d, w) => ({ run: int(d, 'run', w) }),
   'run.ended': (d, w) => {
-    need(['succeeded', 'failed', 'aborted'].includes(d.outcome as string), `${w}.outcome must be succeeded, failed or aborted`);
+    need(['succeeded', 'denied', 'failed', 'aborted'].includes(d.outcome as string), `${w}.outcome must be succeeded, denied, failed or aborted`);
     return { run: int(d, 'run', w), outcome: d.outcome, failedSteps: steps(d.failedSteps, w), ...(d.lastMessage !== undefined && { lastMessage: str(d, 'lastMessage', w) }) };
   },
   'ask.opened': (d, w) => {
@@ -91,7 +87,8 @@ const DATA: Record<CatalogEvent['type'], (d: Obj, what: string) => unknown> = {
   'artifact.sealed': sealed,
   'spend.recorded': (d, w) => ({ cost: money(d.cost, w), tokens: tokens(d.tokens, w) }),
   'title.set': (d, w) => (need(typeof d.title === 'string' && d.title.length <= 120, `${w}.title must be a string of at most 120 characters`), { title: d.title }),
-  'state.changed': (d, w) => (need(d.state === 'running' || d.state === 'idle', `${w}.state must be running or idle`), { state: d.state }),
+  'state.changed': (d, w) => (need(['running', 'idle', 'stopped', 'archived'].includes(d.state as string), `${w}.state must be running, idle, stopped or archived`), { state: d.state }),
+  'artifact.delivered': delivered,
 };
 
 /** A batch as the channel carries it, in domain values; throws Bad with what is malformed. */
@@ -107,13 +104,17 @@ export function parseEvents(events: unknown[]): CatalogEvent[] {
   let last = 0;
   return events.map((e, i) => {
     const what = `events[${i}]`;
-    need(isObj(e) && isObj(e.data) && Object.hasOwn(DATA, e.type as string), `${what} must be one of the channel's event types with data`);
+    const core = isObj(e) && Object.hasOwn(DATA, e.type as string);
+    // shortcut: an extension event's data is not checked against its manifest's schema until SDK v2 manifests declare events.
+    const extension = isObj(e) && !core && typeof e.type === 'string' && EXTENSION.test(e.type);
+    need(isObj(e) && isObj(e.data) && (core || extension), `${what} must be one of the channel's event types, or a namespaced <extension>.<event>, with data`);
     const o = e as Obj;
     const seq = int(o, 'seq', what);
     need(seq > last, `${what}.seq must strictly increase within the batch`);
     last = seq;
     need((o.id as string)?.length > 0, `${what}.id must be a non-empty string`);
-    return { seq, id: str(o, 'id', what)!, at: date(o, 'at', what), type: o.type, data: DATA[o.type as CatalogEvent['type']](o.data as Obj, `${what}.data`) } as CatalogEvent;
+    const head = { seq, id: str(o, 'id', what)!, at: date(o, 'at', what), type: o.type as string };
+    return (extension ? { ...head, data: o.data, extension: true } : { ...head, data: DATA[o.type as CoreEvent['type']](o.data as Obj, `${what}.data`) }) as CatalogEvent;
   });
 }
 

@@ -9,4 +9,4 @@ export type { App, AppContext, PageRoute, Action, ActionContext, ContributedWork
 export { appEndpoint, invocationRequest, safeEqual, sendProblem, serviceHttp, inProcessFetch, serveApp, submitToSession, tooLarge, type SessionSubmission } from './http.ts';
 export { checkedSettings, extensionDbPath, extensionEntry, readDeploymentFile, storeFor, type DeploymentFile, type ExtensionEntry, type StoreChoice, type StoreEntry } from './extensions.ts';
 export { escapeTerm, unescapeTerm } from './query.ts';
-export { approvalOpenedData, artifactSealedData, assertSealFits, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
+export { approvalOpenedData, artifactDeliveredData, artifactSealedData, assertSealFits, eventBytes, EVENT_MAX_BYTES } from './channel.ts';

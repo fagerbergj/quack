@@ -36,9 +36,12 @@ test('the stream is the documents at their latest revision, and only a change ap
   for (const e of first) { stream.events.push(e); stream.signatures[e.id] = JSON.stringify([e.type, e.at, e.data]); }
   assert.deepEqual(revisions(stream, events), [], 'nothing changed, nothing appended');
   docs.artifacts.kinds.review.versions[0]!.verdict = { passed: true } as never;
+  (docs.artifacts.kinds.review.versions[0] as { links?: unknown[] }).links = [{ label: 'github', url: 'https://x/pr/1' }];
   docs.spend.cost = 0.25;
   const next = revisions(stream, currentEvents('root-1', { ...facts, title: 'Hello' }, { ...docs, spentMicros: 500000n }));
-  assert.deepEqual(next.map((e) => [e.seq, e.id]), [[12, 'artifact:review:1']], 'the verdict is a new revision; a lower price never reports less spend');
+  assert.deepEqual(next.map((e) => [e.seq, e.type, e.data]), [[12, 'artifact.delivered', { kind: 'review', version: 1, where: 'github', link: 'https://x/pr/1', at: new Date(40).toISOString() }]],
+    'a verdict is not core, so it appends nothing; a delivery does; a lower price never reports less spend');
+  assert.deepEqual(events.find((e) => e.type === 'artifact.sealed')?.data, { kind: 'review', version: 1, hash: 'h', content: 'c', sealedAt: new Date(40).toISOString() }, 'the seal is the core deliverable only');
 });
 
 test('an over-cap run end is cut with a marker until it fits; other events are left whole', () => {
@@ -85,7 +88,7 @@ async function harness(key = KEY) {
   const stream = () => session.harness.snapshot(LifecycleStream, session.root.id, ctx);
   // Settles the sender's watch-driven flushes without a wall-clock wait.
   const settle = async () => { for (let i = 0; i < 50; i++) { await sender.flush(); await new Promise((r) => setImmediate(r)); } };
-  return { dir, session, catalog, store, gate, fire, timers, sender, stream, settle };
+  return { dir, session, catalog, store, gate, fire, timers, sender, stream, settle, restart: () => startLifecycleSender(session, { url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: () => () => {} }) };
 }
 
 test('a session reports its creation, runs and last message, and the catalog acks them', async () => {
@@ -157,4 +160,16 @@ test("deciders recorded by today's code, a {name} or a bare string, reach the ch
   const answered = (by: unknown) => ({ question: 'Q?', options: ['y'], evidence: null, askedAt: 1, answer: { choice: 'y', by: by as never, at: 2 }, closed: false });
   const events = currentEvents('r', facts, { questions: { items: { q1: answered({ kind: 'person', name: 'jason' }), q2: answered('alice'), q3: answered('tailnet'), q4: answered({ kind: 'tailnet' }) } }, runs: [], spend: none, spentMicros: 0n });
   assert.deepEqual(events.filter((e) => e.type === 'ask.resolved').map((e) => e.data.by), [{ kind: 'person', id: 'jason' }, { kind: 'person', id: 'alice' }, { kind: 'tailnet' }, { kind: 'tailnet' }]);
+});
+
+test('a process that comes up without a run reports idle, after the distributor recorded it stopped', async () => {
+  const h = await harness();
+  await h.catalog.stopped(KEY);
+  assert.equal((await h.catalog.getSession(KEY))?.state, 'stopped');
+  await h.sender.stop();
+  const again = await h.restart();
+  await again.flush();
+  await again.stop();
+  assert.equal((await h.catalog.getSession(KEY))?.state, 'idle');
+  assert.deepEqual((await h.stream())?.events.filter((e) => e.id.startsWith('state:boot:')).map((e) => e.id), ['state:boot:1', 'state:boot:2']);
 });
