@@ -161,16 +161,16 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     return paged('artifacts', await catalog.listArtifacts(r), (a) => artifactWire(a, false));
   }
 
+  // The methods each route under /sessions/{key} answers.
+  const METHODS: Record<string, string[]> = { '': ['GET', 'PATCH', 'DELETE'], asks: ['GET'], 'asks/:id': ['GET', 'PATCH'], artifacts: ['GET'] };
+
   // Which route a request is, or undefined for one this adapter does not serve.
   function routeOf(req: IncomingMessage, url: URL): ((caller: Caller) => Promise<unknown>) | undefined {
     if (req.method === 'GET' && ['/sessions', '/asks', '/artifacts'].includes(url.pathname)) return (c) => top(url, c);
-    const parts = url.pathname.split('/').slice(1);
-    if (parts[0] !== 'sessions' || parts.length < 2 || parts.length > 4) return undefined;
-    const rest = parts.slice(2);
-    const reads = req.method === 'GET';
-    if (!rest.length) return reads || req.method === 'PATCH' || req.method === 'DELETE' ? (c) => one(req, keyOf(parts[1]!), c) : undefined;
-    const known = (rest[0] === 'asks' && (rest.length === 1 ? reads : reads || req.method === 'PATCH')) || (rest[0] === 'artifacts' && rest.length === 1 && reads);
-    return known ? (c) => sub(req, url, keyOf(parts[1]!), rest, c) : undefined;
+    const [root, key, ...rest] = url.pathname.split('/').slice(1);
+    const shape = rest.length === 2 && rest[0] === 'asks' ? 'asks/:id' : rest.join('/');
+    if (root !== 'sessions' || key === undefined || !METHODS[shape]?.includes(req.method ?? '')) return undefined;
+    return (c) => (shape === '' ? one(req, keyOf(key), c) : sub(req, url, keyOf(key), rest, c));
   }
 
   return async (req: IncomingMessage, res: ServerResponse, caller: Caller): Promise<boolean> => {

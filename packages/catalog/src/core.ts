@@ -77,30 +77,31 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
     return next;
   }
 
+  type Of<T extends CoreEvent['type']> = Extract<CoreEvent, { type: T }>;
+  // Each core event type's one port method.
+  const apply: { [T in CoreEvent['type']]: (key: string, w: EventWrite, e: Of<T>) => Promise<unknown> } = {
+    'session.created': (key, w, e) => store.createSession(w, { key, agent: e.data.agent, createdAt: e.data.createdAt }),
+    'run.started': (key, w) => store.transitionSession(w, { key, to: 'running' }),
+    // stopped and archived are the echo of the action write that set them, which is authoritative.
+    'state.changed': (key, w, e) => (e.data.state === 'stopped' || e.data.state === 'archived' ? store.advanceWatermark(w, { key }) : store.transitionSession(w, { key, to: e.data.state })),
+    'artifact.delivered': (key, w, e) => store.recordArtifactDelivery(w, { key, ...e.data }),
+    'run.ended': (key, w, e) => store.recordRunOutcome(w, { key, outcome: e.data.outcome, endedAt: e.at, failedSteps: e.data.failedSteps, ...(e.data.lastMessage !== undefined && { lastMessage: e.data.lastMessage }) }),
+    'ask.opened': (key, w, e) => store.openAsk(w, { key, ...e.data }),
+    'ask.resolved': (key, w, e) => store.resolveAsk(w, { key, ...e.data, resolvedAt: e.at }),
+    'ask.cancelled': (key, w, e) => store.cancelAsk(w, { key, id: e.data.id }),
+    'title.set': (key, w, e) => store.setTitle(w, { key, title: e.data.title }),
+    'artifact.sealed': (key, w, { at, data: { sealedAt, ...seal } }) => store.sealArtifact(w, { key, ...seal, sealedAt: sealedAt ?? at }),
+    'spend.recorded': async (key, w, e) => {
+      const out = await store.recordSpend(w, { key, ...e.data });
+      // A session bug: spend in another currency, or going backwards. Refused with the watermark held.
+      if (out.refused) log(`catalog: session ${key} spend at seq ${e.seq} refused (${out.refused})`);
+    },
+  };
+
   async function applyEvent(key: string, e: CatalogEvent): Promise<void> {
     const w: EventWrite = { kind: 'event', id: e.id, seq: e.seq };
     if ('extension' in e) return store.advanceWatermark(w, { key });
-    switch (e.type) {
-      case 'session.created': return store.createSession(w, { key, agent: e.data.agent, createdAt: e.data.createdAt });
-      case 'run.started': return void (await store.transitionSession(w, { key, to: 'running' }));
-      // stopped and archived are the echo of the action write that set them, which is authoritative.
-      case 'state.changed': return e.data.state === 'stopped' || e.data.state === 'archived' ? store.advanceWatermark(w, { key }) : void (await store.transitionSession(w, { key, to: e.data.state }));
-      case 'artifact.delivered': return store.recordArtifactDelivery(w, { key, ...e.data });
-      case 'run.ended': return store.recordRunOutcome(w, { key, outcome: e.data.outcome, endedAt: e.at, failedSteps: e.data.failedSteps, ...(e.data.lastMessage !== undefined && { lastMessage: e.data.lastMessage }) });
-      case 'ask.opened': return store.openAsk(w, { key, ...e.data });
-      case 'ask.resolved': return void (await store.resolveAsk(w, { key, ...e.data, resolvedAt: e.at }));
-      case 'ask.cancelled': return store.cancelAsk(w, { key, id: e.data.id });
-      case 'title.set': return store.setTitle(w, { key, title: e.data.title });
-      case 'artifact.sealed': {
-        const { sealedAt, ...seal } = e.data;
-        return store.sealArtifact(w, { key, ...seal, sealedAt: sealedAt ?? e.at });
-      }
-      case 'spend.recorded': {
-        const out = await store.recordSpend(w, { key, ...e.data });
-        // A session bug: spend in another currency, or going backwards. Refused with the watermark held.
-        if (out.refused) log(`catalog: session ${key} spend at seq ${e.seq} refused (${out.refused})`);
-      }
-    }
+    await (apply[e.type] as (key: string, w: EventWrite, e: CoreEvent) => Promise<unknown>)(key, w, e);
   }
 
   function replayAction(line: Extract<JournalLine, { method: ActionMethod }>): Promise<unknown> {
