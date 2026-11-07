@@ -2,6 +2,9 @@
   "name": "@quack/cli",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@quack/sdk": "*"
+  },
   "bin": {
     "quack": "./src/main.ts"
   },

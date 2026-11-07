@@ -11,12 +11,32 @@ export class ApiError extends Error {
 
 export type Client = ReturnType<typeof client>;
 type Json = any;
+/** The paging every list of the Sessions API shares; `q` is Lucene, so values from people go through escapeTerm. */
+export type Page = { q?: string; orderBy?: string; pageSize?: string; pageToken?: string };
+
+const query = (p: Page) => {
+  const s = new URLSearchParams(Object.entries(p).filter((e): e is [string, string] => !!e[1])).toString();
+  return s ? `?${s}` : '';
+};
+
+/** Every row of a list, following nextPageToken to the end, for a read that must be whole. */
+export async function whole(get: (p: Page) => Promise<Json>, field: string, p: Page = {}): Promise<Json[]> {
+  const rows: Json[] = [];
+  for (let pageToken: string | undefined; ;) {
+    const page = await get({ ...p, pageToken });
+    rows.push(...page[field]);
+    if (!page.nextPageToken) return rows;
+    pageToken = page.nextPageToken;
+  }
+}
+
 const SOCKET_MS = 10_000;
 const INVOKE_ATTEMPTS = 3;
 
 export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) {
   root = root.replace(/\/+$/, '');
   const path = (key: string) => `sessions/${encodeURIComponent(key)}`;
+  const under = (key?: string) => (key ? `${path(key)}/` : '');
 
   async function call(route: string, method = 'GET', body?: object): Promise<Json> {
     const headers = { ...(body && { 'content-type': 'application/json' }), ...(adminToken && { authorization: `Bearer ${adminToken}` }) };
@@ -53,46 +73,22 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     });
   }
 
-  // The index answers 404 when it is off; say so instead of "not found".
-  async function index(name: string, query = ''): Promise<Json[]> {
-    try {
-      const rows: Json[] = [];
-      for (let token = ''; ;) {
-        const page = await call(`index/${name}${query}${token && `${query ? '&' : '?'}pageToken=${token}`}`);
-        rows.push(...(page[name] ?? []));
-        if (!page.nextPageToken) return rows;
-        token = page.nextPageToken;
-      }
-    } catch (e) {
-      throw e instanceof ApiError && e.status === 404 ? new ApiError('the session index is off on this distributor', 1) : e;
-    }
-  }
-
   return {
-    /** Every session matching `filter` (the sessions API's Lucene-style expression); pages are followed to the end. */
-    sessions: async (filter?: string): Promise<Json[]> => {
-      const rows: Json[] = [];
-      for (let token = ''; ;) {
-        const page = await call(`sessions?${new URLSearchParams({ pageSize: '1000', ...(filter && { filter }), ...(token && { pageToken: token }) })}`);
-        rows.push(...page.sessions);
-        if (!page.nextPageToken) return rows;
-        token = page.nextPageToken;
-      }
-    },
+    sessions: (p: Page): Promise<Json> => call(`sessions${query(p)}`),
     session: async (key: string): Promise<Json> => call(path(key)),
     agents: async (): Promise<Json[]> => (await call('agents')).agents,
-    approvals: async (key: string): Promise<Json[]> => (await call(`${path(key)}/approvals`)).approvals,
-    questions: async (key: string): Promise<Json[]> => (await call(`${path(key)}/questions`)).questions,
-    artifacts: async (key: string): Promise<Json[]> => (await call(`${path(key)}/artifacts`)).artifacts,
-    index,
+    /** Pending and past asks of one session, or of every session without a key. */
+    asks: (p: Page, key?: string): Promise<Json> => call(`${under(key)}asks${query(p)}`),
+    artifacts: (p: Page, key?: string): Promise<Json> => call(`${under(key)}artifacts${query(p)}`),
+    messages: async (key: string, limit: number): Promise<Array<{ role: string; text: string }>> => (await call(`${path(key)}/messages?limit=${limit}`)).messages,
     exported: async (key: string): Promise<Json> => call(`${path(key)}/export`),
-    decide: (key: string, id: string, decision: 'approve' | 'reject', reason?: string) =>
-      call(`${path(key)}/approvals/${encodeURIComponent(id)}`, 'POST', { decision, ...(reason && { reason }) }),
+    resolve: (key: string, id: string, resolution: { choice: string; text?: string; reason?: string }) =>
+      call(`${path(key)}/asks/${encodeURIComponent(id)}`, 'PATCH', { resolution }),
     abort: (key: string) => call(`${path(key)}/abort`, 'POST'),
     resume: (key: string) => call(`${path(key)}/resume`, 'POST'),
     rename: (key: string, title: string) => call(path(key), 'PATCH', { title }),
-    archive: (key: string) => call(path(key), 'PATCH', { archived: true }),
-    unarchive: (key: string) => call(path(key), 'PATCH', { archived: false }),
+    archive: (key: string) => call(path(key), 'PATCH', { state: 'archived' }),
+    unarchive: (key: string) => call(path(key), 'PATCH', { state: 'stopped' }),
     /** The distributor creates the session on its first invocation. With `wait` the answer is the run's outcome; a long run holds the request open. */
     invoke: async (key: string, input: string, o: { agent?: string; wait?: boolean } = {}): Promise<{ status: string; answer?: string; reason?: string; detail?: string }> => {
       const route = `${path(key)}/invocations${o.agent ? `?agent=${encodeURIComponent(o.agent)}` : ''}`;
@@ -110,9 +106,21 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     follow: (key: string, onFrame: (items: any[] | undefined) => void) =>
       socket<true>(key, undefined, (f) => (f.type !== 'view' ? undefined : (onFrame(f.items), f.live?.run === undefined ? true : undefined)), 0),
     remove: (key: string) => call(path(key), 'DELETE'),
-    /** Returns once the server accepts the message; the run is not streamed. */
-    send: (key: string, input: string) => socket(key, (ws) => ws.send(JSON.stringify({ type: 'input', input })), (f) => (f.type === 'accepted' ? f : undefined)),
-    /** The first frame the socket sends: the newest window of the transcript as items. */
-    view: (key: string) => socket<{ items: Array<{ kind: string; entry?: { model?: Array<{ role: string; content: unknown }> } }> }>(key, undefined, (f) => (f.type === 'view' ? f : undefined)),
+    /** Returns once the server accepts the message; the run is not streamed. A steer goes into the running turn instead of queueing behind it. */
+    send: (key: string, input: string, whenBusy?: 'steer') =>
+      socket<{ submissionId: string; status: string }>(key, (ws) => ws.send(JSON.stringify({ type: 'input', input, whenBusy })), (f) => (f.type === 'accepted' ? f : undefined)),
+    /** False when `id` is not a queued follow-up. The server acknowledges a withdraw only by pushing the queue without it. */
+    // shortcut: a follow-up the run takes during the withdraw also leaves the queue and reads as withdrawn; fine until the socket acks withdraws.
+    withdraw: (key: string, id: string) => {
+      let open: WebSocket;
+      let asked = false;
+      return socket<boolean>(key, (ws) => (open = ws), (f) => {
+        if (f.type !== 'queued') return undefined;
+        if (!f.items.some((i: { id: string }) => i.id === id)) return asked;
+        if (!asked) open.send(JSON.stringify({ type: 'withdraw', id }));
+        asked = true;
+        return undefined;
+      });
+    },
   };
 }

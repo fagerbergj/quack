@@ -4,17 +4,30 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { ApiError, client, type Client } from './api.ts';
+import { escapeTerm } from '@quack/sdk/query';
+import { ApiError, client, whole, type Client, type Page } from './api.ts';
 
 type Out = { stdout: (s: string) => void; stderr: (s: string) => void };
-type Opts = { state?: string; agent?: string; version?: string; json?: boolean; url?: string; help?: boolean; print?: boolean; follow?: boolean; keys?: boolean };
-// A command returns the API's JSON and how to print it for a person.
-type Result = { data: unknown; text: string; streamed?: boolean };
+type Opts = {
+  state?: string; agent?: string; version?: string; json?: boolean; url?: string; help?: boolean; print?: boolean; follow?: boolean; keys?: boolean;
+  session?: string; text?: string; reason?: string; messages?: string; 'order-by'?: string; 'page-size'?: string; 'page-token'?: string;
+};
+// A command returns the API's JSON and how to print it for a person; a list's next page token is printed on stderr.
+type Result = { data: unknown; text: string; streamed?: boolean; next?: string };
 type Command = { usage: string; run: (c: Client, pos: string[], o: Opts, out: Out) => Promise<Result> };
 
-const STATES = ['running', 'needs_you', 'failed', 'done'];
+// The UI's groups as q: a session waiting on a person needs you whatever else it is doing.
+const STATES: Record<string, string> = {
+  running: 'state:running',
+  needs_you: 'pendingAsks:>0',
+  failed: 'lastRun.outcome:failed',
+  done: '(state:idle OR state:stopped) AND pendingAsks:0',
+};
 const usageError = (m: string) => new ApiError(m, -1);
 const ok = (data: unknown): Result => ({ data, text: 'ok' });
+const and = (...terms: Array<string | false | undefined>) => terms.filter(Boolean).join(' AND ') || undefined;
+const page = (o: Opts, q?: string): Page => ({ q, orderBy: o['order-by'], pageSize: o['page-size'], pageToken: o['page-token'] });
+const listed = (data: any, text: string): Result => ({ data, text, next: data.nextPageToken });
 
 function table(rows: Array<Array<string | number | undefined>>, head: string[]): string {
   const all = [head, ...rows.map((r) => r.map((v) => String(v ?? '')))];
@@ -32,27 +45,14 @@ async function known(c: Client, key: string): Promise<any> {
   }
 }
 
-// Mirrors the UI's groups: a session with an approval, question or failure needs you, whatever else it is doing.
-async function filterByState(c: Client, sessions: any[], state: string): Promise<any[]> {
-  const [approvals, questions, failures] = await Promise.all([c.index('approvals', '?state=pending'), c.index('questions', '?state=pending'), c.index('failures')]);
-  const keys = (rows: any[]) => new Set(rows.map((r) => r.session));
-  const failed = keys(failures);
-  const asks = new Set([...keys(approvals), ...keys(questions), ...failed]);
-  const test: Record<string, (s: any) => boolean> = {
-    failed: (s) => failed.has(s.key),
-    needs_you: (s) => asks.has(s.key),
-    running: (s) => s.active && !asks.has(s.key),
-    done: (s) => !s.active && !asks.has(s.key),
-  };
-  return sessions.filter(test[state]!);
-}
-
-async function sessions(c: Client, _: string[], o: Opts): Promise<Result> {
-  if (o.state && !STATES.includes(o.state)) throw usageError(`--state must be one of ${STATES.join(', ')}`);
-  let list = await c.sessions(['-archived:true', ...(o.agent ? [`agent:${JSON.stringify(o.agent)}`] : [])].join(' AND '));
-  if (o.state) list = await filterByState(c, list, o.state);
-  if (o.keys) return { data: { sessions: list }, text: list.map((s) => s.key).join('\n') };
-  return { data: { sessions: list }, text: table(list.map((s) => [s.key, s.agent, s.running ? (s.active ? 'running' : 'idle') : 'stopped', s.title, s.lastActivity]), ['KEY', 'AGENT', 'STATE', 'TITLE', 'LAST ACTIVITY']) };
+// A q of the caller's own replaces the default of hiding archived sessions.
+async function sessions(c: Client, pos: string[], o: Opts): Promise<Result> {
+  if (o.state && !Object.hasOwn(STATES, o.state)) throw usageError(`--state must be one of ${Object.keys(STATES).join(', ')}`);
+  const q = and(pos.length ? `(${pos.join(' ')})` : '-state:archived', o.state && STATES[o.state], o.agent && `agent:${escapeTerm(o.agent)}`);
+  const data = await c.sessions(page(o, q));
+  const list: any[] = data.sessions;
+  if (o.keys) return listed(data, list.map((s) => s.key).join('\n'));
+  return listed(data, table(list.map((s) => [s.key, s.agent, s.state, s.pendingAsks, s.title, s.lastActivity]), ['KEY', 'AGENT', 'STATE', 'ASKS', 'TITLE', 'LAST ACTIVITY']));
 }
 
 const textOf = (content: unknown): string =>
@@ -61,29 +61,41 @@ const textOf = (content: unknown): string =>
 const messagesOf = (items: Array<{ entry?: { model?: Array<{ role: string; content: unknown }> } }>) =>
   items.flatMap((i) => i.entry?.model ?? []).filter((m) => m.role !== 'toolResult' && textOf(m.content)).map((m) => ({ role: m.role, text: textOf(m.content) }));
 
-async function show(c: Client, [key]: string[], o: Opts, out: Out): Promise<Result> {
-  if (!key) throw usageError('usage: quack show <key>');
+const askRow = (a: any) => [a.id, a.type, a.createdAt, a.toolCall?.tool ?? a.prompt?.question];
+
+async function summary(c: Client, key: string, n: number): Promise<{ data: object; lines: string[] }> {
   const session = await known(c, key);
-  const [artifacts, questions, approvals, snap] = await Promise.all([c.artifacts(key), c.questions(key), c.approvals(key), c.view(key)]);
-  const all = messagesOf(snap.items);
-  const messages = all.slice(-5);
-  const newest = [...new Map(artifacts.map((a) => [a.kind, a])).values()];
+  const [asks, artifacts, messages] = await Promise.all([
+    whole((p) => c.asks(p, key), 'asks', { q: 'state:pending' }), whole((p) => c.artifacts(p, key), 'artifacts'), c.messages(key, n),
+  ]);
+  // The list is newest first, so a kind's first row is its newest version.
+  const newest = new Map<string, any>();
+  for (const a of artifacts) if (!newest.has(a.kind)) newest.set(a.kind, a);
   const lines = [
-    `${session.key}  ${session.agent}  ${session.running ? (session.active ? 'running' : 'idle') : 'stopped'}${session.title ? `  ${session.title}` : ''}`,
-    '', 'Artifacts', table(newest.map((a) => [a.kind, `v${a.version}`, a.verdict ? (a.verdict.passed ? 'passed' : 'failed') : '', a.summary]), ['KIND', 'VERSION', 'VERDICT', 'SUMMARY']),
-    '', 'Questions', table(questions.map((q) => [q.id, q.question]), ['ID', 'QUESTION']),
-    '', 'Approvals', table(approvals.map((a) => [a.id, a.tool]), ['ID', 'TOOL']),
+    `${session.key}  ${session.agent}  ${session.state}${session.title ? `  ${session.title}` : ''}`,
+    '', 'Artifacts', table([...newest.values()].map((a) => [a.kind, `v${a.version}`, a.sealedAt, a.summary]), ['KIND', 'VERSION', 'SEALED', 'SUMMARY']),
+    '', 'Asks', table(asks.map(askRow), ['ID', 'TYPE', 'ASKED', 'WHAT']),
     '', 'Last messages', ...messages.map((m) => `${m.role}: ${m.text}`),
   ];
-  const data = { session, artifacts, questions, approvals, messages };
+  return { data: { session, asks, artifacts, messages }, lines };
+}
+
+async function show(c: Client, [key]: string[], o: Opts, out: Out): Promise<Result> {
+  if (!key) throw usageError('usage: quack show [-f] [--messages N] <key>');
+  const n = Number(o.messages ?? 5);
+  // The session server returns at most 50; refusing more beats printing fewer than asked.
+  if (!Number.isInteger(n) || n < 1 || n > 50) throw usageError('--messages takes 1 to 50');
+  const { data, lines } = await summary(c, key, n);
   if (!o.follow) return { data, text: lines.join('\n') };
   out.stdout(lines.join('\n'));
-  // shortcut: counts messages in the newest window, so a window that slides mid-run can repeat or skip a line; fine for tailing.
-  let seen = all.length;
+  // shortcut: the socket's first window is the baseline, so a line between the read above and it, or one a sliding window
+  // drops mid-run, is not printed; fine for tailing.
+  let seen: number | undefined;
   await c.follow(key, (items) => {
-    const now = messagesOf(items ?? []);
-    if (items) for (const m of now.slice(seen)) out.stdout(`${m.role}: ${m.text}`);
-    if (items) seen = Math.max(seen, now.length);
+    if (!items) return;
+    const now = messagesOf(items);
+    if (seen !== undefined) for (const m of now.slice(seen)) out.stdout(`${m.role}: ${m.text}`);
+    seen = Math.max(seen ?? 0, now.length);
   });
   return { data, text: '', streamed: true };
 }
@@ -103,28 +115,48 @@ async function newSession(c: Client, pos: string[], o: Opts, out: Out): Promise<
   return started(c, key, pos.join(' '), o, o.agent);
 }
 
-async function send(c: Client, [key, ...text]: string[], o: Opts): Promise<Result> {
-  if (!key || !text.length) throw usageError('usage: quack send [-p] <key> <text>');
+// A steer goes into the running turn; a plain send queues behind it as a follow-up, which withdraw takes back by this id.
+async function send(c: Client, [key, ...text]: string[], o: Opts, whenBusy?: 'steer'): Promise<Result> {
+  if (!key || !text.length) throw usageError(`usage: quack ${whenBusy ?? 'send [-p]'} <key> <text>`);
   await known(c, key);
-  if (o.print) return started(c, key, text.join(' '), o);
-  return ok(await c.send(key, text.join(' ')));
+  if (o.print && !whenBusy) return started(c, key, text.join(' '), o);
+  const r = await c.send(key, text.join(' '), whenBusy);
+  return { data: r, text: r.submissionId };
 }
 
-async function approvals(c: Client): Promise<Result> {
-  const list = await c.index('approvals', '?state=pending');
-  return { data: { approvals: list }, text: table(list.map((a) => [a.session, a.id, a.tool, a.at]), ['SESSION', 'ID', 'TOOL', 'ASKED']) };
+async function withdraw(c: Client, [key, id]: string[]): Promise<Result> {
+  if (!key || !id) throw usageError('usage: quack withdraw <key> <id>');
+  await known(c, key);
+  if (!(await c.withdraw(key, id))) throw new ApiError(`no queued message ${id} in ${key}`, 404);
+  return ok({ withdrawn: id });
 }
 
-async function artifacts(c: Client, [key]: string[]): Promise<Result> {
-  const list = key ? (await known(c, key), (await c.artifacts(key)).map((a) => ({ session: key, ...a }))) : await c.index('artifacts');
-  return { data: { artifacts: list }, text: table(list.map((a) => [a.session, a.kind, `v${a.version}`, a.summary]), ['SESSION', 'KIND', 'VERSION', 'SUMMARY']) };
+async function asks(c: Client, pos: string[], o: Opts): Promise<Result> {
+  const data = await c.asks(page(o, and('state:pending', pos.length > 0 && `(${pos.join(' ')})`)), o.session);
+  return listed(data, table(data.asks.map((a: any) => [a.session, ...askRow(a)]), ['SESSION', 'ID', 'TYPE', 'ASKED', 'WHAT']));
 }
 
+async function answer(c: Client, [key, id, ...choice]: string[], o: Opts): Promise<Result> {
+  if (!key || !id || !choice.length) throw usageError('usage: quack answer <key> <askId> <choice> [--text T] [--reason R]');
+  return ok(await c.resolve(key, id, { choice: choice.join(' '), ...(o.text && { text: o.text }), ...(o.reason && { reason: o.reason }) }));
+}
+
+// An approval's answer with its choice filled in; a reason may also follow the id.
+const decide = (choice: 'approve' | 'reject'): Command => ({
+  usage: `${choice} <key> <askId> [reason]`,
+  run: (c, [key = '', id = '', ...reason], o) => answer(c, [key, id, choice], { ...o, reason: o.reason ?? (reason.join(' ') || undefined) }),
+});
+
+async function artifacts(c: Client, [key]: string[], o: Opts): Promise<Result> {
+  const data = await c.artifacts(page(o), key);
+  return listed(data, table(data.artifacts.map((a: any) => [a.session, a.kind, `v${a.version}`, a.sealedAt, a.summary]), ['SESSION', 'KIND', 'VERSION', 'SEALED', 'SUMMARY']));
+}
+
+// The list is newest first, so one row is the newest version, or the one --version names.
 async function artifact(c: Client, [key, kind]: string[], o: Opts): Promise<Result> {
   if (!key || !kind) throw usageError('usage: quack artifact <key> <kind> [--version N]');
-  await known(c, key);
-  const of = (await c.artifacts(key)).filter((a) => a.kind === kind);
-  const found = o.version ? of.find((a) => String(a.version) === o.version) : of.reduce((m, a) => (!m || a.version > m.version ? a : m), undefined);
+  const q = and(`kind:${escapeTerm(kind)}`, o.version && `version:${escapeTerm(o.version)}`);
+  const [found] = (await c.artifacts({ q, pageSize: '1' }, key)).artifacts;
   if (!found) throw new ApiError(`no ${kind} artifact${o.version ? ` version ${o.version}` : ''} in ${key}`, 404);
   return { data: found, text: found.content };
 }
@@ -152,10 +184,12 @@ async function exportSession(c: Client, [key, file]: string[]): Promise<Result> 
 }
 
 const COMMANDS: Record<string, Command> = {
-  sessions: { usage: 'sessions [--state running|needs_you|failed|done] [--agent A] [--keys]', run: sessions },
-  show: { usage: 'show [-f] <key>', run: show },
+  sessions: { usage: 'sessions [--state running|needs_you|failed|done] [--agent A] [--order-by F] [--page-size N] [--page-token T] [--keys] [q]', run: sessions },
+  show: { usage: 'show [-f] [--messages N] <key>', run: show },
   new: { usage: 'new [--agent A] [-p] <text>', run: newSession },
-  send: { usage: 'send [-p] <key> <text>', run: send },
+  send: { usage: 'send [-p] <key> <text>', run: (c, pos, o) => send(c, pos, o) },
+  steer: { usage: 'steer <key> <text>', run: (c, pos, o) => send(c, pos, o, 'steer') },
+  withdraw: { usage: 'withdraw <key> <id>', run: withdraw },
   stop: action('stop <key>', 1, true, (c, [k]) => c.abort(k!)),
   resume: action('resume <key>', 1, true, (c, [k]) => c.resume(k!)),
   rename: action('rename <key> <title>', 2, false, (c, [k, ...t]) => c.rename(k!, t.join(' '))),
@@ -163,10 +197,12 @@ const COMMANDS: Record<string, Command> = {
   unarchive: action('unarchive <key>', 1, false, (c, [k]) => c.unarchive(k!)),
   delete: action('delete <key>', 1, false, (c, [k]) => c.remove(k!)),
   export: { usage: 'export <key> [file]', run: exportSession },
-  approvals: { usage: 'approvals', run: approvals },
-  approve: action('approve <key> <id>', 2, true, (c, [k, id]) => c.decide(k!, id!, 'approve')),
-  reject: action('reject <key> <id> [reason]', 2, true, (c, [k, id, ...r]) => c.decide(k!, id!, 'reject', r.join(' ') || undefined)),
-  artifacts: { usage: 'artifacts [<key>]', run: artifacts },
+  asks: { usage: 'asks [--session K] [--page-size N] [--page-token T] [q]', run: asks },
+  answer: { usage: 'answer <key> <askId> <choice> [--text T] [--reason R]', run: answer },
+  approvals: { usage: 'approvals', run: (c, _pos, o) => asks(c, ['type:approval'], o) },
+  approve: decide('approve'),
+  reject: decide('reject'),
+  artifacts: { usage: 'artifacts [--page-size N] [--page-token T] [<key>]', run: artifacts },
   artifact: { usage: 'artifact <key> <kind> [--version N]', run: artifact },
   completion: { usage: 'completion bash|zsh', run: async (_c, pos) => completion(pos) },
   eval: { usage: 'eval <args>', run: async () => { throw usageError('eval takes its own arguments: quack eval <command> ...'); } },
@@ -196,11 +232,23 @@ const evalPassthrough = (args: string[], env: Record<string, string | undefined>
 
 const help = () => ['usage: quack [--url URL] [--json] <command>', '', ...Object.values(COMMANDS).map((c) => `  quack ${c.usage}`), '', 'URL defaults to $QUACK_URL, else http://localhost:8080. $QUACK_ADMIN_TOKEN is sent when set.'].join('\n');
 
+const string = { type: 'string' } as const;
+const flag = { type: 'boolean' } as const;
+const OPTIONS = {
+  state: string, agent: string, version: string, session: string, text: string, reason: string, messages: string, 'order-by': string, 'page-size': string, 'page-token': string,
+  json: flag, url: string, help: { ...flag, short: 'h' }, print: { ...flag, short: 'p' }, follow: { ...flag, short: 'f' }, keys: flag,
+} as const;
+
+function print(result: Result, json: boolean | undefined, out: Out) {
+  if (!result.streamed) out.stdout(json ? JSON.stringify(result.data, null, 2) : result.text);
+  if (result.next && !json) out.stderr(`next page: --page-token ${result.next}`);
+}
+
 /** Exit codes: 0 ok, 1 API or usage error, 2 not found. */
 export async function run(argv: string[], env: Record<string, string | undefined>, out: Out): Promise<number> {
   if (argv[0] === 'eval') return evalPassthrough(argv.slice(1), env);
   try {
-    const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: { state: { type: 'string' }, agent: { type: 'string' }, version: { type: 'string' }, json: { type: 'boolean' }, url: { type: 'string' }, help: { type: 'boolean', short: 'h' }, print: { type: 'boolean', short: 'p' }, follow: { type: 'boolean', short: 'f' }, keys: { type: 'boolean' } } });
+    const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: OPTIONS });
     const [name, ...pos] = positionals;
     const command = name ? COMMANDS[name] : undefined;
     if (values.help || !name) {
@@ -209,7 +257,7 @@ export async function run(argv: string[], env: Record<string, string | undefined
     }
     if (!command) throw usageError(`unknown command ${name}; try --help`);
     const result = await command.run(client(values.url ?? env.QUACK_URL ?? 'http://localhost:8080', env.QUACK_ADMIN_TOKEN), pos, values, out);
-    if (!result.streamed) out.stdout(values.json ? JSON.stringify(result.data, null, 2) : result.text);
+    print(result, values.json, out);
     return 0;
   } catch (e) {
     out.stderr(`quack: ${e instanceof Error ? e.message : String(e)}`);
