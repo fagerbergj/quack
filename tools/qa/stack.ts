@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createSchedulesService } from '@quack/schedules';
 import { inProcessFetch } from '@quack/sdk';
-import { FAKE_MODEL, fakeModel } from './fake-model.ts';
+import { FAKE_MODEL, fakeModel, type FakeScript } from './fake-model.ts';
 import { seedContracts } from './seed-contracts.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -21,6 +21,10 @@ export type StackOpts = {
   apps?: string[];
   /** `local` points the deployment at QA_MODEL_URL (default llm-swap); `none` and `fake` use a canned local endpoint. */
   model?: 'local' | 'none' | 'fake';
+  /** What the fake model answers, picked per request; absent, it answers the demo review. */
+  script?: FakeScript;
+  /** QA-only agents (agent.json and prompt), written beside a copy of agents/ so the shipped bundles stay untouched. */
+  agents?: Record<string, { definition: object; prompt: string }>;
 };
 export type Stack = { url: string; dataDir: string; stop(): Promise<void> };
 
@@ -69,6 +73,18 @@ export function buildWeb(): string {
   return join(ROOT, 'packages/web/dist');
 }
 
+function agentsDir(tmp: string, extra: StackOpts['agents']): string {
+  if (!extra) return join(ROOT, 'agents');
+  const dir = join(tmp, 'agents');
+  cpSync(join(ROOT, 'agents'), dir, { recursive: true });
+  for (const [name, { definition, prompt }] of Object.entries(extra)) {
+    mkdirSync(join(dir, name));
+    writeFileSync(join(dir, name, 'agent.json'), JSON.stringify(definition));
+    writeFileSync(join(dir, name, 'prompt.md'), prompt);
+  }
+  return dir;
+}
+
 function copySeed(from: string, dataDir: string): void {
   for (const name of readdirSync(from)) cpSync(join(from, name), join(dataDir, name), { recursive: true, filter: (src) => !/[\\/]workspace$/.test(src) });
 }
@@ -113,11 +129,11 @@ async function teardown(parts: Parts): Promise<void> {
 }
 
 async function modelUrl(parts: Parts, opts: StackOpts): Promise<string> {
-  const mode = opts.model ?? (opts.seed === 'demo' ? 'fake' : 'none');
+  const mode = opts.model ?? (opts.seed === 'demo' || opts.script ? 'fake' : 'none');
   if (mode === 'local') return process.env.QA_MODEL_URL ?? 'http://127.0.0.1:11436/v1';
   // Port 9 (discard) refuses connections, so a model-free stack fails fast if anything calls the model.
   if (mode === 'none') return 'http://127.0.0.1:9/v1';
-  const fake = await fakeModel(DEMO_REVIEW);
+  const fake = await fakeModel(opts.script ?? DEMO_REVIEW);
   parts.servers.push(fake.server);
   return fake.url;
 }
@@ -142,7 +158,7 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     const extensions = Object.fromEntries((opts.apps ?? []).map((name) => [name, {}]));
     writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts)), extensions }));
     launch(parts, ['packages/distributor/src/main.ts'], {
-      PORT: String(port), QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: join(ROOT, 'agents'), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
+      PORT: String(port), QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x',
     });
     await waitFor(reachable(`${url}/version`), 'the distributor');
