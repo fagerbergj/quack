@@ -47,7 +47,8 @@ test('values are typed by their field: micros past 2^53 stay exact, dates become
   assert.deepEqual(parseQuery('sessions', 'cost.amountMicros:[1 TO 9007199254740993}'), { kind: 'range', field: 'cost.amountMicros', from: { value: 1n, inclusive: true }, to: { value: 9007199254740993n, inclusive: false } });
   assert.deepEqual(parseQuery('sessions', q`createdAt:>2026-11-06T09\:00\:00Z`), { kind: 'compare', field: 'createdAt', op: 'gt', value: Date.parse('2026-11-06T09:00:00Z') });
   assert.deepEqual(parseQuery('asks', 'createdAt:["2026-11-01" TO "2026-11-06T00:00:00Z"]'), { kind: 'range', field: 'createdAt', from: { value: Date.parse('2026-11-01'), inclusive: true }, to: { value: Date.parse('2026-11-06T00:00:00Z'), inclusive: true } });
-  assert.deepEqual(parseQuery('artifacts', 'verdict.passed:true AND version:3'), { kind: 'and', terms: [{ kind: 'match', field: 'verdict.passed', value: true }, { kind: 'match', field: 'version', value: 3 }] });
+  assert.deepEqual(parseQuery('artifacts', 'sealedAt:>="2026-11-01T00:00:00Z" AND version:3'), { kind: 'and', terms: [{ kind: 'compare', field: 'sealedAt', op: 'gte', value: Date.parse('2026-11-01T00:00:00Z') }, { kind: 'match', field: 'version', value: 3 }] });
+  assert.deepEqual(parseQuery('sessions', 'lastRun.outcome:denied'), { kind: 'match', field: 'lastRun.outcome', value: 'denied' });
 });
 
 test('bare terms and phrases are full text, with wildcards marked', () => {
@@ -58,7 +59,7 @@ test('bare terms and phrases are full text, with wildcards marked', () => {
 
 test('a field outside the list, a bad value, a regex or a wildcard on a non-text field is refused', () => {
   for (const [list, bad] of [['sessions', 'session:x'], ['sessionAsks', 'session:x'], ['sessions', 'state:waiting'], ['sessions', 'pendingAsks:many'], ['sessions', 'createdAt:yesterday'],
-    ['sessions', 'key:/^sleeper/'], ['sessions', 'state:run*'], ['artifacts', 'verdict.passed:maybe'], ['sessions', 'title:'], ['asks', 'type:approval OR']] as const) {
+    ['sessions', 'key:/^sleeper/'], ['sessions', 'state:run*'], ['artifacts', 'verdict.passed:true'], ['artifacts', 'createdAt:>"2026-11-01"'], ['artifacts', 'outcome:approve'], ['sessions', 'title:'], ['asks', 'type:approval OR']] as const) {
     assert.throws(() => parseQuery(list, bad), QueryError, `${list} ${bad}`);
   }
 });

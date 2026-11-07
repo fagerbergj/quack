@@ -1,6 +1,6 @@
 // The conformance suite's reference: the lists' documented semantics evaluated in memory over rows read one by one.
 import { unescapeTerm } from '@quack/sdk';
-import type { ArtifactRow, AskRow, SessionRow } from '../src/index.ts';
+import type { AskRow, SessionRow } from '../src/index.ts';
 
 export type Listed = 'sessions' | 'asks' | 'artifacts';
 type Row = Record<string, unknown>;
@@ -9,20 +9,20 @@ type Node = { kind: string; field?: string; value?: unknown; pattern?: string; o
 const FIELDS: Record<Listed, Record<string, (r: Row) => unknown>> = {
   sessions: {
     key: (r) => r.key, agent: (r) => r.agent, title: (r) => r.title, state: (r) => r.state, createdAt: (r) => r.createdAt, lastActivity: (r) => r.lastActivity,
-    'cost.currencyCode': (r) => (r as SessionRow).cost.currencyCode, 'cost.amountMicros': (r) => (r as SessionRow).cost.micros,
+    'cost.currencyCode': (r) => (r as SessionRow).cost.currencyCode, 'cost.amountMicros': (r) => (r as SessionRow).cost.amountMicros,
     'tokens.input': (r) => (r as SessionRow).tokens.input, 'tokens.output': (r) => (r as SessionRow).tokens.output,
     'tokens.cacheRead': (r) => (r as SessionRow).tokens.cacheRead, 'tokens.cacheWrite': (r) => (r as SessionRow).tokens.cacheWrite,
     pendingAsks: (r) => r.pendingAsks, oldestAskAt: (r) => r.oldestAskAt, 'lastRun.outcome': (r) => (r as SessionRow).lastRun?.outcome,
   },
   asks: { session: (r) => r.session, type: (r) => r.type, state: (r) => r.state, createdAt: (r) => r.createdAt, resolvedAt: (r) => r.resolvedAt, tool: (r) => (r as AskRow).toolCall?.tool },
-  artifacts: { session: (r) => r.session, kind: (r) => r.kind, version: (r) => r.version, createdAt: (r) => r.createdAt, 'verdict.passed': (r) => (r as ArtifactRow).verdictPassed },
+  artifacts: { session: (r) => r.session, kind: (r) => r.kind, version: (r) => r.version, sealedAt: (r) => r.sealedAt },
 };
 
 // The documented full-text sources, in the order the store joins them.
 const SOURCES: Record<Listed, (r: Row) => unknown[]> = {
   sessions: (r) => [r.title, r.key, r.lastMessage],
   asks: (r) => [(r as AskRow).prompt?.question, (r as AskRow).toolCall?.tool],
-  artifacts: (r) => [r.summary, r.outcome],
+  artifacts: (r) => [r.summary],
 };
 
 const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);

@@ -19,7 +19,7 @@ const ORDERS: Record<Table, Record<string, (a: string) => Col[]>> = {
     { expr: `${a}.created_at`, desc: dir === 'newest', numeric: true }, { expr: `${a}.session`, desc: false, numeric: false }, { expr: `${a}.id`, desc: false, numeric: false },
   ]])),
   artifacts: {
-    'createdAt:newest': (a) => [{ expr: `${a}.created_at`, desc: true, numeric: true }, { expr: `${a}.session`, desc: false, numeric: false },
+    'sealedAt:newest': (a) => [{ expr: `${a}.sealed_at`, desc: true, numeric: true }, { expr: `${a}.session`, desc: false, numeric: false },
       { expr: `${a}.kind`, desc: false, numeric: false }, { expr: `${a}.version`, desc: false, numeric: true }],
   },
 };

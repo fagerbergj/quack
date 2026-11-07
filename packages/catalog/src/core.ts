@@ -5,8 +5,8 @@ import type {
   ActionWrite, AskPrompt, AskType, EventWrite, FailedStep, Json, Money, Principal, QueryAst, RunOutcome, SessionCatalogStore, SessionOrder, TokenUsage,
 } from './port.ts';
 
-/** One lifecycle channel event in domain values: epoch ms, bigint micros. */
-export type CatalogEvent = { seq: number; id: string; at: number } & (
+/** One core lifecycle channel event in domain values: epoch ms, bigint micros. */
+export type CoreEvent = { seq: number; id: string; at: number } & (
   | { type: 'session.created'; data: { agent: string; version?: number | null; createdAt: number } }
   | { type: 'run.started'; data: { run: number } }
   | { type: 'run.ended'; data: { run: number; outcome: RunOutcome; failedSteps: FailedStep[]; lastMessage?: string } }
@@ -16,12 +16,13 @@ export type CatalogEvent = { seq: number; id: string; at: number } & (
   | { type: 'artifact.sealed'; data: ArtifactSeal }
   | { type: 'spend.recorded'; data: { cost: Money; tokens: TokenUsage } }
   | { type: 'title.set'; data: { title: string } }
-  | { type: 'state.changed'; data: { state: 'running' | 'idle' } }
+  | { type: 'state.changed'; data: { state: 'running' | 'idle' | 'stopped' | 'archived' } }
+  | { type: 'artifact.delivered'; data: { kind: string; version: number; where: string; link: string; at: number } }
 );
-type ArtifactSeal = {
-  kind: string; version: number; hash: string; content: string; sealedAt?: number; verdict?: Json | null; links?: Array<{ label: string; url: string }>;
-  summary?: string; outcome?: string; basis?: string; carriedFrom?: { sha: string; url?: string };
-};
+/** A namespaced <extension>.<event>: the catalog stores nothing of it and only moves its watermark past it. */
+export type ExtensionEvent = { seq: number; id: string; at: number; type: string; data: { [field: string]: Json }; extension: true };
+export type CatalogEvent = CoreEvent | ExtensionEvent;
+type ArtifactSeal = { kind: string; version: number; hash: string; content: string; sealedAt?: number; summary?: string };
 
 /** A channel batch the core refuses whole: the channel's 400. */
 export class BatchError extends Error {}
@@ -78,10 +79,13 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
 
   async function applyEvent(key: string, e: CatalogEvent): Promise<void> {
     const w: EventWrite = { kind: 'event', id: e.id, seq: e.seq };
+    if ('extension' in e) return store.advanceWatermark(w, { key });
     switch (e.type) {
       case 'session.created': return store.createSession(w, { key, agent: e.data.agent, createdAt: e.data.createdAt });
       case 'run.started': return void (await store.transitionSession(w, { key, to: 'running' }));
-      case 'state.changed': return void (await store.transitionSession(w, { key, to: e.data.state }));
+      // stopped and archived are the echo of the action write that set them, which is authoritative.
+      case 'state.changed': return e.data.state === 'stopped' || e.data.state === 'archived' ? store.advanceWatermark(w, { key }) : void (await store.transitionSession(w, { key, to: e.data.state }));
+      case 'artifact.delivered': return store.recordArtifactDelivery(w, { key, ...e.data });
       case 'run.ended': return store.recordRunOutcome(w, { key, outcome: e.data.outcome, endedAt: e.at, failedSteps: e.data.failedSteps, ...(e.data.lastMessage !== undefined && { lastMessage: e.data.lastMessage }) });
       case 'ask.opened': return store.openAsk(w, { key, ...e.data });
       case 'ask.resolved': return void (await store.resolveAsk(w, { key, ...e.data, resolvedAt: e.at }));
@@ -89,7 +93,7 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
       case 'title.set': return store.setTitle(w, { key, title: e.data.title });
       case 'artifact.sealed': {
         const { sealedAt, ...seal } = e.data;
-        return store.sealArtifact(w, { key, ...seal, createdAt: sealedAt ?? e.at });
+        return store.sealArtifact(w, { key, ...seal, sealedAt: sealedAt ?? e.at });
       }
       case 'spend.recorded': {
         const out = await store.recordSpend(w, { key, ...e.data });
@@ -170,8 +174,6 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
     remove: (key: string) => act<boolean>(key, 'deleteSession', {}),
     resolve: (key: string, id: string, answer: { by: Principal; choice: string; text?: string; reason?: string }) =>
       act<Awaited<ReturnType<SessionCatalogStore['resolveAsk']>>>(key, 'resolveAsk', { id, ...answer, resolvedAt: now() }),
-    verdict: (key: string, kind: string, version: number, verdict: Json | null) => act<void>(key, 'updateArtifactVerdict', { kind, version, verdict }),
-    link: (key: string, kind: string, version: number, link: { label: string; url: string }) => act<void>(key, 'addArtifactLink', { kind, version, link }),
 
     getSession: (key: string) => read(() => store.getSession(key)),
     getAsk: (key: string, id: string) => read(() => store.getAsk(key, id)),
@@ -181,7 +183,7 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
       orderBy: orderOf({ createdAt: req.session === undefined ? 'oldest' : 'newest' } as const, req.orderBy), ...pageOf(req),
     })),
     listArtifacts: (req: ListRequest & { session?: string }) => read(() => store.listArtifacts({
-      where: scoped(req.session === undefined ? 'artifacts' : 'sessionArtifacts', req.q, req.session), orderBy: orderOf({ createdAt: 'newest' } as const, req.orderBy), ...pageOf(req),
+      where: scoped(req.session === undefined ? 'artifacts' : 'sessionArtifacts', req.q, req.session), orderBy: orderOf({ sealedAt: 'newest' } as const, req.orderBy), ...pageOf(req),
     })),
     close: () => store.close(),
   };

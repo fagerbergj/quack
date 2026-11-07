@@ -19,7 +19,7 @@ export type Driver = QueryDialect & {
 const SESSION_COLS = 's.key, s.incarnation, s.agent, s.title, s.default_title, s.custom_title, s.state, s.created_at, s.last_activity, s.currency, cast(s.cost_micros as text) as cost_text, '
   + 's.tokens_input, s.tokens_output, s.tokens_cache_read, s.tokens_cache_write, s.pending_asks, s.oldest_ask_at, s.last_outcome, s.last_ended_at, s.failed_steps, s.last_message, s.watermark';
 const ASK_COLS = 'a.session, a.id, a.type, a.state, a.created_at, a.resolved_at, a.resolution, a.tool, a.args, a.prompt';
-const ARTIFACT_COLS = 'r.session, r.kind, r.version, r.hash, r.content, r.created_at, r.verdict, r.verdict_passed, r.links, r.outcome, r.summary, r.basis, r.carried_from';
+const ARTIFACT_COLS = 'r.session, r.kind, r.version, r.hash, r.content, r.sealed_at, r.summary, r.deliveries';
 
 const num = (v: unknown) => Number(v);
 const opt = (v: unknown) => (v === null || v === undefined ? undefined : v);
@@ -28,7 +28,7 @@ const json = (v: unknown) => (v === null || v === undefined ? undefined : JSON.p
 function sessionRow(r: Row): SessionRow {
   return {
     key: String(r.key), agent: String(r.agent), ...(opt(r.title) !== undefined && { title: String(r.title) }), state: r.state as SessionState,
-    createdAt: num(r.created_at), lastActivity: num(r.last_activity), cost: { currencyCode: String(r.currency), micros: BigInt(String(r.cost_text)) },
+    createdAt: num(r.created_at), lastActivity: num(r.last_activity), cost: { currencyCode: String(r.currency), amountMicros: BigInt(String(r.cost_text)) },
     tokens: { input: num(r.tokens_input), output: num(r.tokens_output), cacheRead: num(r.tokens_cache_read), cacheWrite: num(r.tokens_cache_write) },
     pendingAsks: num(r.pending_asks), ...(opt(r.oldest_ask_at) !== undefined && { oldestAskAt: num(r.oldest_ask_at) }),
     ...(opt(r.last_outcome) !== undefined && { lastRun: { outcome: r.last_outcome as RunOutcome, endedAt: num(r.last_ended_at), failedSteps: json(r.failed_steps) ?? [] } }),
@@ -44,33 +44,23 @@ function askRow(r: Row): AskRow {
   };
 }
 
+// The one place a stored artifact becomes the port's row.
 function artifactRow(r: Row): ArtifactRow {
-  const text = (k: string) => (opt(r[k]) !== undefined ? String(r[k]) : undefined);
+  const deliveries = json(r.deliveries) as ArtifactRow['deliveries'];
   return {
-    session: String(r.session), kind: String(r.kind), version: num(r.version), hash: String(r.hash), content: String(r.content), createdAt: num(r.created_at),
-    verdict: json(r.verdict) ?? null, ...(opt(r.verdict_passed) !== undefined && { verdictPassed: num(r.verdict_passed) === 1 }), links: json(r.links) ?? [],
-    ...(text('outcome') !== undefined && { outcome: text('outcome') }), ...(text('summary') !== undefined && { summary: text('summary') }),
-    ...(text('basis') !== undefined && { basis: text('basis') }), ...(opt(r.carried_from) !== undefined && { carriedFrom: json(r.carried_from) }),
+    session: String(r.session), kind: String(r.kind), version: num(r.version), hash: String(r.hash), content: String(r.content), sealedAt: num(r.sealed_at),
+    ...(opt(r.summary) !== undefined && { summary: String(r.summary) }), ...(deliveries?.length && { deliveries }),
   };
 }
 
 // The lifecycle table: target state, or what the move is when it does not apply.
 function nextState(from: SessionState, to: SessionState): SessionState | 'noop' | 'refused' {
   if (from === to) return 'noop';
-  if (to === 'idle') return from === 'running' ? 'idle' : 'refused';
-  if (to === 'stopped') return from === 'archived' ? 'refused' : 'stopped';
+  // idle is a run ending or a process coming up without one; only invocation or unarchive leaves archived.
+  if (to === 'idle' || to === 'stopped') return from === 'archived' ? 'refused' : to;
   if (to === 'archived') return from === 'running' ? 'refused' : 'archived';
   return 'running';
 }
-
-/** The judge's passed, lifted out of its opaque verdict when it is a boolean. */
-export const passedOf = (verdict: Json | null | undefined): number | null => {
-  const passed = verdict && typeof verdict === 'object' && !Array.isArray(verdict) ? verdict.passed : undefined;
-  return typeof passed === 'boolean' ? Number(passed) : null;
-};
-
-const sameLink = (a: { label: string; url: string }, b: { label: string; url: string }) => a.label === b.label && a.url === b.url;
-const mergeLinks = (old: Array<{ label: string; url: string }>, add: Array<{ label: string; url: string }>) => [...old, ...add.filter((l) => !old.some((o) => sameLink(o, l)))];
 
 /** The catalog store over one SQL driver: every write is one transaction holding the session's lock. */
 export function sqlStore(driver: Driver, opts: { currency: string }): SessionCatalogStore {
@@ -121,7 +111,7 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
   }
 
   async function removeRows(sql: Sql, key: string) {
-    for (const table of ['catalog_asks', 'catalog_artifacts', 'catalog_actions']) await sql.run(`delete from ${table} where session = ?`, [key]);
+    for (const table of ['catalog_asks', 'catalog_artifacts', 'catalog_actions', 'catalog_deliveries']) await sql.run(`delete from ${table} where session = ?`, [key]);
     await sql.run('delete from catalog_sessions where key = ?', [key]);
   }
 
@@ -153,7 +143,7 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
         await sql.run('delete from catalog_tombstones where session = ?', [key]);
         await sql.run(
           `insert into catalog_sessions (key, incarnation, agent, state, created_at, last_activity, currency, cost_micros, tokens_input, tokens_output, tokens_cache_read,
-             tokens_cache_write, pending_asks, watermark, fts_text) values (?, ?, ?, 'stopped', ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?)`,
+             tokens_cache_write, pending_asks, watermark, fts_text) values (?, ?, ?, 'idle', ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, ?)`,
           [key, w.id, agent, createdAt, createdAt, opts.currency, w.seq, ftsText(key)]);
       });
     },
@@ -196,9 +186,9 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
       type Out = { applied: boolean; refused?: 'currency' | 'regressed' };
       return onEvent<Out>(key, w, { applied: false }, async (sql, row) => {
         if (cost.currencyCode !== row.currency) return { applied: false, refused: 'currency' };
-        if (cost.micros < BigInt(String(row.cost_text))) return { applied: false, refused: 'regressed' };
+        if (cost.amountMicros < BigInt(String(row.cost_text))) return { applied: false, refused: 'regressed' };
         await sql.run('update catalog_sessions set cost_micros = ?, tokens_input = ?, tokens_output = ?, tokens_cache_read = ?, tokens_cache_write = ? where key = ?',
-          [cost.micros, tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, key]);
+          [cost.amountMicros, tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, key]);
         return { applied: true };
       }, (out) => out.refused !== undefined);
     },
@@ -268,33 +258,26 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
 
     sealArtifact(w, a) {
       return onEvent(a.key, w, undefined, async (sql) => {
-        const old = await loadArtifact(sql, a.key, a.kind, a.version);
-        const prior = old && artifactRow(old);
-        // A re-sent seal fills in; it never drops a verdict or a link attached after the fact.
-        const verdict = a.verdict ?? prior?.verdict ?? null;
-        const links = mergeLinks(prior?.links ?? [], a.links ?? []);
-        const values: Param[] = [a.hash, a.content, a.createdAt, verdict === null ? null : JSON.stringify(verdict), passedOf(verdict), JSON.stringify(links),
-          a.outcome ?? null, a.summary ?? null, a.basis ?? null, a.carriedFrom ? JSON.stringify(a.carriedFrom) : null, ftsText(a.summary, a.outcome)];
-        await sql.run(`insert into catalog_artifacts (session, kind, version, hash, content, created_at, verdict, verdict_passed, links, outcome, summary, basis, carried_from, fts_text)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (session, kind, version) do update set hash = excluded.hash, content = excluded.content,
-          created_at = excluded.created_at, verdict = excluded.verdict, verdict_passed = excluded.verdict_passed, links = excluded.links, outcome = excluded.outcome,
-          summary = excluded.summary, basis = excluded.basis, carried_from = excluded.carried_from, fts_text = excluded.fts_text`, [a.key, a.kind, a.version, ...values]);
+        await sql.run(`insert into catalog_artifacts (session, kind, version, hash, content, sealed_at, summary, deliveries, fts_text) values (?, ?, ?, ?, ?, ?, ?, '[]', ?)
+          on conflict (session, kind, version) do update set hash = excluded.hash, content = excluded.content, sealed_at = excluded.sealed_at, summary = excluded.summary, fts_text = excluded.fts_text`,
+        [a.key, a.kind, a.version, a.hash, a.content, a.sealedAt, a.summary ?? null, ftsText(a.summary)]);
       });
     },
 
-    updateArtifactVerdict(w, c) {
-      return onAction(c.key, w, undefined, async (sql, _row, repeat) => {
-        if (repeat) return;
-        await sql.run('update catalog_artifacts set verdict = ?, verdict_passed = ? where session = ? and kind = ? and version = ?',
-          [c.verdict === null ? null : JSON.stringify(c.verdict), passedOf(c.verdict), c.key, c.kind, c.version]);
-      });
+    advanceWatermark(w, { key }) {
+      return onEvent(key, w, undefined, async () => {});
     },
 
-    addArtifactLink(w, c) {
-      return onAction(c.key, w, undefined, async (sql, _row, repeat) => {
-        const old = await loadArtifact(sql, c.key, c.kind, c.version);
-        if (repeat || !old) return;
-        await sql.run('update catalog_artifacts set links = ? where session = ? and kind = ? and version = ?', [JSON.stringify(mergeLinks(json(old.links) ?? [], [c.link])), c.key, c.kind, c.version]);
+    recordArtifactDelivery(w, d) {
+      return onEvent(d.key, w, undefined, async (sql) => {
+        const old = await loadArtifact(sql, d.key, d.kind, d.version);
+        if (!old) return;
+        // Once per event id, whatever its seq: a superseding revision of the same delivery never appends again.
+        const seen = await sql.all('select 1 as x from catalog_deliveries where session = ? and event_id = ?', [d.key, w.id]);
+        if (seen.length) return;
+        await sql.run('insert into catalog_deliveries (session, event_id) values (?, ?)', [d.key, w.id]);
+        const deliveries = [...((json(old.deliveries) as unknown[]) ?? []), { where: d.where, link: d.link, at: d.at }];
+        await sql.run('update catalog_artifacts set deliveries = ? where session = ? and kind = ? and version = ?', [JSON.stringify(deliveries), d.key, d.kind, d.version]);
       });
     },
 
@@ -320,10 +303,11 @@ export function tablesDdl(types: { text: string; int: string }): string {
     );
     create index catalog_asks_state on catalog_asks (state, created_at, session, id);
     create table catalog_artifacts (
-      session ${t} not null, kind ${t} not null, version ${i} not null, hash ${t} not null, content ${t} not null, created_at ${i} not null, verdict ${t},
-      verdict_passed ${i}, links ${t} not null, outcome ${t}, summary ${t}, basis ${t}, carried_from ${t}, fts_text ${t} not null, primary key (session, kind, version)
+      session ${t} not null, kind ${t} not null, version ${i} not null, hash ${t} not null, content ${t} not null, sealed_at ${i} not null, summary ${t},
+      deliveries ${t} not null, fts_text ${t} not null, primary key (session, kind, version)
     );
-    create index catalog_artifacts_created on catalog_artifacts (created_at desc, session, kind, version);
+    create index catalog_artifacts_sealed on catalog_artifacts (sealed_at desc, session, kind, version);
+    create table catalog_deliveries (session ${t} not null, event_id ${t} not null, primary key (session, event_id));
     create table catalog_actions (session ${t} not null, id ${t} not null, primary key (session, id));
     create table catalog_tombstones (session ${t} primary key, incarnation ${t} not null)`;
 }

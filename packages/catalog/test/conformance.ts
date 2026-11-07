@@ -12,13 +12,14 @@ export type Fresh = () => Promise<{ store: SessionCatalogStore; catalog: Catalog
 export const T0 = Date.parse('2026-11-01T00:00:00Z');
 const BIG = 2n ** 53n + 1n;
 
+const CORE = new Set(['session.created', 'run.started', 'run.ended', 'ask.opened', 'ask.resolved', 'ask.cancelled', 'artifact.sealed', 'artifact.delivered', 'spend.recorded', 'title.set', 'state.changed']);
 type Data<T extends CatalogEvent['type']> = Extract<CatalogEvent, { type: T }>['data'];
 /** A session's event stream: seq counts up, `at` is seq seconds past T0 unless given. */
 export function stream(key: string, incarnation = 'session') {
   let seq = 0;
   const events: CatalogEvent[] = [];
   const next = <T extends CatalogEvent['type']>(type: T, data: Data<T>, id = `${type}:${seq + 1}`, at = T0 + (seq + 1) * 1000) => {
-    const e = { seq: ++seq, id, at, type, data } as CatalogEvent;
+    const e = { seq: ++seq, id, at, type, data, ...(!CORE.has(type) && { extension: true }) } as CatalogEvent;
     events.push(e);
     return e;
   };
@@ -29,14 +30,14 @@ export function stream(key: string, incarnation = 'session') {
 const action = (id: string) => ({ kind: 'action' as const, id });
 const event = (id: string, seq: number) => ({ kind: 'event' as const, id, seq });
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const usd = (micros: bigint) => ({ currencyCode: 'USD', micros });
+const usd = (amountMicros: bigint) => ({ currencyCode: 'USD', amountMicros });
 
 async function snapshot(store: SessionCatalogStore, key: string) {
   const all = { kind: 'match' as const, field: 'session' as const, value: key };
   return {
     session: await store.getSession(key), watermark: await store.watermark(key),
     asks: (await store.listAsks({ where: all, orderBy: { field: 'createdAt', direction: 'oldest' }, pageSize: 1000 })).rows,
-    artifacts: (await store.listArtifacts({ where: all, orderBy: { field: 'createdAt', direction: 'newest' }, pageSize: 1000 })).rows,
+    artifacts: (await store.listArtifacts({ where: all, orderBy: { field: 'sealedAt', direction: 'newest' }, pageSize: 1000 })).rows,
   };
 }
 
@@ -67,7 +68,8 @@ export async function corpus(catalog: Catalog): Promise<string[]> {
     s.next('spend.recorded', { cost: usd(i === 5 ? BIG : BigInt(i * 1_250_000)), tokens: { input: i * 10, output: i, cacheRead: 0, cacheWrite: i % 2 } });
     if (i % 4 !== 3) s.next('run.ended', { run: 1, outcome: (['succeeded', 'failed', 'aborted'] as const)[i % 3]!, failedSteps: i % 3 === 1 ? [{ step: 'submit-lineup', error: 'deadline passed' }] : [], lastMessage: `done with lineup ${i % 2 ? 'rotation' : 'starters'}` }, `run:1:ended`, T0 + 60_000 * (i % 6));
     if (i % 4 === 1) s.next('state.changed', { state: 'idle' }, `state:${s.seq + 1}`);
-    s.next('artifact.sealed', { kind: i % 2 ? 'sleeper.cards' : 'review.report', version: 1, hash: `h${i}`, content: `content ${i}`, sealedAt: T0 + 1000 * (i % 7), verdict: i % 3 ? { passed: i % 3 === 1 } : null, summary: `Matchday ${i} starter lineup`, outcome: i % 2 ? 'approve' : 'revise' });
+    s.next('artifact.sealed', { kind: i % 2 ? 'sleeper.cards' : 'review.report', version: 1, hash: `h${i}`, content: `content ${i}`, sealedAt: T0 + 1000 * (i % 7), summary: `Matchday ${i} starter lineup ${i % 2 ? 'approve' : 'revise'}` });
+    if (i % 3 === 0) s.next('artifact.delivered', { kind: i % 2 ? 'sleeper.cards' : 'review.report', version: 1, where: 'github', link: `https://x/${i}`, at: T0 + 5 });
     await catalog.publish(key, s.events);
     if (i % 4 === 2) await catalog.resolve(key, `q${i}`, { by: { kind: 'person', id: 'jason' }, choice: 'keep' });
     if (i % 4 === 3) await catalog.archive(key);
@@ -81,7 +83,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       const { store } = await fresh();
       await store.migrate();
       await store.createSession(event('c', 1), { key: 'k', agent: 'quack', createdAt: T0 });
-      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'stopped', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
+      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
       await store.setTitle(event('title', 2), { key: 'k', title: 'Default' });
       await store.transitionSession(event('r', 3), { key: 'k', to: 'running' });
       await store.openAsk(event('o1', 4), { key: 'k', id: 'a1', type: 'approval', createdAt: T0 + 5, toolCall: { tool: 'merge', args: { pr: 1 } } });
@@ -95,9 +97,11 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await store.recordSpend(event('spend', 8), { key: 'k', cost: usd(1_250_000n), tokens: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8 } });
       await store.recordRunOutcome(event('end', 9), { key: 'k', outcome: 'failed', endedAt: T0 + 50, failedSteps: [{ step: 's', error: 'e' }], lastMessage: 'last words' });
       await store.transitionSession(event('idle', 10), { key: 'k', to: 'idle' });
-      await store.sealArtifact(event('art', 11), { key: 'k', kind: 'review', version: 1, hash: 'h', content: 'body', createdAt: T0 + 40, verdict: { passed: false, score: 0.2 }, links: [{ label: 'PR', url: 'https://x/1' }], outcome: 'revise', summary: 'sum', basis: 'abc', carriedFrom: { sha: 'def' } });
-      await store.updateArtifactVerdict(action('v'), { key: 'k', kind: 'review', version: 1, verdict: { passed: true } });
-      await store.addArtifactLink(action('l'), { key: 'k', kind: 'review', version: 1, link: { label: 'Posted', url: 'https://x/2' } });
+      await store.sealArtifact(event('art', 11), { key: 'k', kind: 'review', version: 1, hash: 'h', content: 'body', sealedAt: T0 + 40, summary: 'sum' });
+      await store.recordArtifactDelivery(event('delivered:1', 12), { key: 'k', kind: 'review', version: 1, where: 'github', link: 'https://x/1', at: T0 + 41 });
+      await store.recordArtifactDelivery(event('delivered:1', 13), { key: 'k', kind: 'review', version: 1, where: 'github', link: 'https://x/1b', at: T0 + 42 });
+      await store.recordArtifactDelivery(event('delivered:2', 14), { key: 'k', kind: 'review', version: 1, where: 'board', link: 'https://x/2', at: T0 + 43 });
+      await store.recordArtifactDelivery(event('delivered:3', 15), { key: 'k', kind: 'review', version: 9, where: 'board', link: 'https://x/3', at: T0 + 44 });
       await store.setTitle(action('rename'), { key: 'k', title: 'Mine' });
       assert.deepEqual(await store.getSession('k'), {
         key: 'k', agent: 'quack', title: 'Mine', state: 'idle', createdAt: T0, lastActivity: T0 + 50, cost: usd(1_250_000n), tokens: { input: 5, output: 6, cacheRead: 7, cacheWrite: 8 },
@@ -106,10 +110,13 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await store.setTitle(action('restore'), { key: 'k', title: null });
       assert.equal((await store.getSession('k'))?.title, 'Default', 'a null rename restores the default');
       assert.deepEqual((await snapshot(store, 'k')).artifacts, [{
-        session: 'k', kind: 'review', version: 1, hash: 'h', content: 'body', createdAt: T0 + 40, verdict: { passed: true }, verdictPassed: true,
-        links: [{ label: 'PR', url: 'https://x/1' }, { label: 'Posted', url: 'https://x/2' }], outcome: 'revise', summary: 'sum', basis: 'abc', carriedFrom: { sha: 'def' },
-      }]);
-      assert.equal(await store.watermark('k'), 11, 'action writes never move the watermark');
+        session: 'k', kind: 'review', version: 1, hash: 'h', content: 'body', sealedAt: T0 + 40, summary: 'sum',
+        deliveries: [{ where: 'github', link: 'https://x/1', at: T0 + 41 }, { where: 'board', link: 'https://x/2', at: T0 + 43 }],
+      }], 'a delivery appends once per event id, and one for an absent version is a no-op');
+      await store.advanceWatermark(event('ext', 16), { key: 'k' });
+      assert.deepEqual((await snapshot(store, 'k')).session, await store.getSession('k'));
+      assert.equal(await store.watermark('k'), 16, 'an event the catalog ignores still moves the watermark');
+      assert.equal(await store.watermark('k'), 16, 'action writes never move the watermark');
       assert.equal(await store.getSession('nope'), undefined);
       assert.equal(await store.watermark('nope'), undefined);
     });
@@ -129,10 +136,15 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await catalog.publish('k', s.events.slice(4));
       await store.setTitle(event('title', 2), { key: 'k', title: 'stale' });
       const row = await store.getSession('k');
-      assert.deepEqual([row?.title, row?.cost.micros, row?.tokens.input, await store.watermark('k')], ['second', 20n, 2, 6]);
+      assert.deepEqual([row?.title, row?.cost.amountMicros, row?.tokens.input, await store.watermark('k')], ['second', 20n, 2, 6]);
       await store.archiveSession(action('x1'), { key: 'k' }).then(() => store.transitionSession(event('idle', 7), { key: 'k', to: 'idle' }));
       await store.archiveSession(action('x1'), { key: 'k' });
       assert.equal((await store.getSession('k'))?.state, 'idle', 'a repeated action id is a no-op');
+      const quiet = await snapshot(store, 'k');
+      for (const echo of ['stopped', 'archived'] as const) s.next('state.changed', { state: echo }, `state:echo:${echo}`);
+      s.next('judge.failed', { kind: 'review', version: 1 } as never, 'judge:failed:1');
+      assert.deepEqual(await catalog.publish('k', s.events.slice(-3)), { acked: s.seq }, 'echoes and extension events are applied past');
+      assert.deepEqual({ ...(await snapshot(store, 'k')), watermark: quiet.watermark }, quiet, 'and change no row and no count');
       const asked = await store.resolveAsk(action('r1'), { key: 'k', id: 'a', by: { kind: 'person', id: 'p' }, choice: 'approve', resolvedAt: T0 + 1 });
       assert.equal(asked.applied, true);
       assert.deepEqual(await store.resolveAsk(action('r1'), { key: 'k', id: 'a', by: { kind: 'person', id: 'q' }, choice: 'reject', resolvedAt: T0 + 2 }), { applied: false, ask: asked.ask });
@@ -143,7 +155,8 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await store.migrate();
       const at = async (key: string, state: 'running' | 'idle' | 'stopped' | 'archived') => {
         await store.createSession(event(`c-${key}`, 1), { key, agent: 'a', createdAt: T0 });
-        if (state !== 'stopped') await store.transitionSession(event('r', 2), { key, to: 'running' });
+        if (state !== 'idle') await store.transitionSession(event('r', 2), { key, to: 'running' });
+        if (state === 'stopped') await store.transitionSession(action(`stop-${key}`), { key, to: 'stopped' });
         if (state === 'idle' || state === 'archived') await store.transitionSession(event('i', 3), { key, to: 'idle' });
         if (state === 'archived') await store.archiveSession(action(`arch-${key}`), { key });
         assert.equal((await store.getSession(key))?.state, state);
@@ -160,7 +173,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       const table: Array<[string, string, string, boolean]> = [
         ['running', 'event running', 'running', false], ['running', 'event idle', 'idle', true], ['running', 'action stopped', 'stopped', true], ['running', 'archive', 'running', false], ['running', 'unarchive', 'running', false],
         ['idle', 'event running', 'running', true], ['idle', 'event idle', 'idle', false], ['idle', 'action stopped', 'stopped', true], ['idle', 'archive', 'archived', true], ['idle', 'unarchive', 'idle', false],
-        ['stopped', 'event running', 'running', true], ['stopped', 'event idle', 'stopped', false], ['stopped', 'action stopped', 'stopped', false], ['stopped', 'archive', 'archived', true], ['stopped', 'unarchive', 'stopped', false],
+        ['stopped', 'event running', 'running', true], ['stopped', 'event idle', 'idle', true], ['stopped', 'action stopped', 'stopped', false], ['stopped', 'archive', 'archived', true], ['stopped', 'unarchive', 'stopped', false],
         ['archived', 'event running', 'running', true], ['archived', 'event idle', 'archived', false], ['archived', 'action stopped', 'archived', false], ['archived', 'archive', 'archived', false], ['archived', 'unarchive', 'stopped', true],
       ];
       for (const [i, [from, move, to, applied]] of table.entries()) {
@@ -172,7 +185,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
         if (!applied) assert.deepEqual(await store.getSession(key), before, `${from} → ${move} changes nothing`);
       }
       const before = await snapshot(store, 's0');
-      assert.deepEqual(await store.recordSpend(event('sp', 20), { key: 's0', cost: { currencyCode: 'EUR', micros: 5n }, tokens: zero }), { applied: false, refused: 'currency' });
+      assert.deepEqual(await store.recordSpend(event('sp', 20), { key: 's0', cost: { currencyCode: 'EUR', amountMicros: 5n }, tokens: zero }), { applied: false, refused: 'currency' });
       assert.deepEqual(await snapshot(store, 's0'), before, 'a refused spend holds the row and the watermark');
       assert.equal(await store.deleteSession(action('del'), { key: 's0' }), true);
       assert.deepEqual(await store.archiveSession(action('late'), { key: 's0' }), { applied: false }, 'an action on a tombstoned key is refused');
@@ -200,13 +213,13 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
           if (!row) continue;
           if ((row.pendingAsks > 0) !== (row.oldestAskAt !== undefined)) torn.push(`counts ${row.pendingAsks}/${row.oldestAskAt}`);
           if (row.lastRun && row.lastRun.endedAt !== row.lastActivity) torn.push('run outcome');
-          if (row.cost.micros !== BigInt(row.tokens.input * 10)) torn.push('spend');
+          if (row.cost.amountMicros !== BigInt(row.tokens.input * 10)) torn.push('spend');
         }
       })();
       await Promise.all([...writes, reads]);
       assert.deepEqual(torn, []);
       const row = await store.getSession('k');
-      assert.deepEqual([row?.pendingAsks, row?.oldestAskAt, row?.cost.micros, row?.lastActivity], [20, T0 + 2, 400n, T0 + 280]);
+      assert.deepEqual([row?.pendingAsks, row?.oldestAskAt, row?.cost.amountMicros, row?.lastActivity], [20, T0 + 2, 400n, T0 + 280]);
     });
 
     test('(5) every order and a battery of ASTs page to the end exactly as the reference, stable under interleaved writes', async () => {
@@ -226,10 +239,10 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
         ['sessions', 'lineup'], ['sessions', 'rotation'], ['sessions', '"matchday 3"'], ['sessions', 'mono*'], ['sessions', 'st?rters'], ['sessions', 'café'], ['sessions', 'review AND NOT pendingAsks:0'],
         ['asks', ''], ['asks', 'state:pending'], ['asks', 'type:approval'], ['asks', String.raw`session:sleeper\:*`], ['asks', 'tool:merge?pr'], ['asks', 'tool:submit*'], ['asks', 'resolvedAt:>"2026-11-01T00:00:00Z"'],
         ['asks', 'createdAt:["2026-11-01T00:00:00Z" TO "2026-11-01T00:00:00.150Z"]'], ['asks', 'starter'], ['asks', '"tired starter"'], ['asks', 'merge'], ['asks', '-state:pending'],
-        ['artifacts', ''], ['artifacts', 'kind:sleeper.cards'], ['artifacts', 'kind:review*'], ['artifacts', 'version:1'], ['artifacts', 'version:>1'], ['artifacts', 'verdict.passed:true'], ['artifacts', '-verdict.passed:true'],
-        ['artifacts', String.raw`session:a\/b*`], ['artifacts', 'session:*monorepo*'], ['artifacts', 'createdAt:<"2026-11-01T00:00:03Z"'], ['artifacts', 'approve'], ['artifacts', '"starter lineup"'], ['artifacts', 'match*'],
+        ['artifacts', ''], ['artifacts', 'kind:sleeper.cards'], ['artifacts', 'kind:review*'], ['artifacts', 'version:1'], ['artifacts', 'version:>1'], ['artifacts', 'sealedAt:>="2026-11-01T00:00:02Z"'],
+        ['artifacts', String.raw`session:a\/b*`], ['artifacts', 'session:*monorepo*'], ['artifacts', 'sealedAt:<"2026-11-01T00:00:03Z"'], ['artifacts', 'approve'], ['artifacts', '"starter lineup"'], ['artifacts', 'match*'],
       ];
-      const orders = { sessions: ['lastActivity:newest', 'createdAt:newest', 'oldestAskAt:oldest'], asks: ['createdAt:newest', 'createdAt:oldest'], artifacts: ['createdAt:newest'] };
+      const orders = { sessions: ['lastActivity:newest', 'createdAt:newest', 'oldestAskAt:oldest'], asks: ['createdAt:newest', 'createdAt:oldest'], artifacts: ['sealedAt:newest'] };
       const rows = { sessions, asks, artifacts };
       const listOf = { sessions: store.listSessions.bind(store), asks: store.listAsks.bind(store), artifacts: store.listArtifacts.bind(store) } as Record<Listed, (o: never) => Promise<{ rows: object[]; cursor?: string }>>;
       for (const [list, q] of battery) {
@@ -283,15 +296,15 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       assert.deepEqual(await keysOf('"check lineup"'), [], 'and only in order');
       const asks = async (q: string) => (await store.listAsks({ where: parseQuery('asks', q), orderBy: { field: 'createdAt', direction: 'oldest' }, pageSize: 1000 })).rows.length;
       assert.deepEqual([await asks('platinum'), await asks('keep')], [0, 0], 'tool arguments and options are not searched');
-      const artifacts = async (q: string) => (await store.listArtifacts({ where: parseQuery('artifacts', q), orderBy: { field: 'createdAt', direction: 'newest' }, pageSize: 1000 })).rows.length;
-      assert.deepEqual([await artifacts('content'), await artifacts('revise') > 0], [0, true], 'content is not searched; outcome is');
+      const artifacts = async (q: string) => (await store.listArtifacts({ where: parseQuery('artifacts', q), orderBy: { field: 'sealedAt', direction: 'newest' }, pageSize: 1000 })).rows.length;
+      assert.deepEqual([await artifacts('content'), await artifacts('revise') > 0], [0, true], 'content is not searched; the summary is');
     });
 
     test('(8) money stays integer', async () => {
       const { store, catalog } = await fresh();
       const keys = await corpus(catalog);
       const big = await store.getSession(keys[5]!);
-      assert.equal(big?.cost.micros, BIG);
+      assert.equal(big?.cost.amountMicros, BIG);
       const exact = await store.listSessions({ where: parseQuery('sessions', `cost.amountMicros:${BIG}`), orderBy: { field: 'createdAt', direction: 'newest' }, pageSize: 10 });
       assert.deepEqual(exact.rows.map((r) => r.key), [keys[5]], 'compared exactly, not as a float');
       const below = await store.listSessions({ where: parseQuery('sessions', `cost.amountMicros:>${BIG - 1n}`), orderBy: { field: 'createdAt', direction: 'newest' }, pageSize: 10 });
@@ -300,7 +313,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       assert.deepEqual(await store.recordSpend(event('spend', wm! + 1), { key: keys[5]!, cost: usd(BIG - 1n), tokens: zero }), { applied: false, refused: 'regressed' });
       assert.equal(await store.watermark(keys[5]!), wm);
       const all = (await store.listSessions({ where: { kind: 'all' }, orderBy: { field: 'createdAt', direction: 'newest' }, pageSize: 1000 })).rows;
-      assert.equal(all.reduce((sum, r) => sum + r.cost.micros, 0n), BIG + 1_250_000n * BigInt([...Array(24).keys()].filter((i) => i !== 5).reduce((a, b) => a + b, 0)));
+      assert.equal(all.reduce((sum, r) => sum + r.cost.amountMicros, 0n), BIG + 1_250_000n * BigInt([...Array(24).keys()].filter((i) => i !== 5).reduce((a, b) => a + b, 0)));
     });
 
     test('(9) rebuild replays the log and the journal back to the live rows; a journal in the session directory is ignored', async () => {
@@ -310,14 +323,14 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       s.next('run.started', { run: 1 });
       s.next('ask.opened', { id: 'a1', type: 'approval', createdAt: T0 + 1, toolCall: { tool: 'merge', args: { pr: 1 } } });
       s.next('ask.opened', { id: 'q1', type: 'question', createdAt: T0 + 2, prompt: { question: 'Q?', options: ['y', 'n'], freeText: false } });
-      s.next('artifact.sealed', { kind: 'review', version: 1, hash: 'h1', content: 'c1', verdict: null }, 'artifact:review:1');
+      s.next('artifact.sealed', { kind: 'review', version: 1, hash: 'h1', content: 'c1' }, 'artifact:review:1');
+      s.next('artifact.delivered', { kind: 'review', version: 1, where: 'github', link: 'https://x/1', at: T0 + 3 }, 'delivered:review:1');
+      s.next('judge.cleared', { kind: 'review', version: 1 } as never, 'judge:cleared:1');
       s.next('spend.recorded', { cost: usd(5n), tokens: { ...zero, input: 1 } }, 'spend');
       await catalog.publish('k', s.events);
       await catalog.archive('k');
       await catalog.resolve('k', 'a1', { by: { kind: 'person', id: 'jason' }, choice: 'approve', reason: 'fine' });
       await catalog.rename('k', 'mine');
-      await catalog.verdict('k', 'review', 1, { passed: false });
-      await catalog.link('k', 'review', 1, { label: 'Posted', url: 'https://x/1' });
       s.next('run.ended', { run: 1, outcome: 'succeeded', failedSteps: [], lastMessage: 'bye' }, 'run:1:ended');
       s.next('ask.cancelled', { id: 'q1', run: 1 });
       s.next('state.changed', { state: 'idle' });
@@ -325,9 +338,10 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await catalog.archive('k');
       await catalog.unarchive('k');
       s.next('run.started', { run: 2 });
-      s.next('artifact.sealed', { kind: 'review', version: 1, hash: 'h1', content: 'c1', verdict: null, summary: 'filled' }, 'artifact:review:1');
+      s.next('artifact.sealed', { kind: 'review', version: 1, hash: 'h1', content: 'c1', summary: 'filled' }, 'artifact:review:1');
+      s.next('state.changed', { state: 'stopped' }, 'state:echo');
       s.next('spend.recorded', { cost: usd(9n), tokens: { ...zero, input: 3 } }, 'spend');
-      await catalog.publish('k', s.events.slice(-3));
+      await catalog.publish('k', s.events.slice(-4));
       await catalog.stopped('k');
       await catalog.rename('k', null);
       const live = await snapshot(store, 'k');
@@ -359,7 +373,7 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       assert.deepEqual(await snapshot(store, 'k'), { session: undefined, watermark: undefined, asks: [], artifacts: [] });
       const fresh2 = stream('k', 'incarnation-2');
       await catalog.publish('k', fresh2.events);
-      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'stopped', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
+      assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
     });
   });
 }

@@ -27,7 +27,7 @@ const COLUMNS: Record<Table, Record<string, string>> = {
     'tokens.cacheWrite': 'tokens_cache_write', pendingAsks: 'pending_asks', oldestAskAt: 'oldest_ask_at', 'lastRun.outcome': 'last_outcome',
   },
   asks: { session: 'session', type: 'type', state: 'state', createdAt: 'created_at', resolvedAt: 'resolved_at', tool: 'tool' },
-  artifacts: { session: 'session', kind: 'kind', version: 'version', createdAt: 'created_at', 'verdict.passed': 'verdict_passed' },
+  artifacts: { session: 'session', kind: 'kind', version: 'version', sealedAt: 'sealed_at' },
 };
 
 const REGEX_SPECIAL = /[\\^$.|?*+()[\]{}]/g;

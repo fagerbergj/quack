@@ -1,11 +1,11 @@
-// The session catalog's store port (approved store-port contract v3): the core depends only on this, and the
+// The session catalog's store port (approved store-port contract v5): the core depends only on this, and the
 // PostgreSQL and SQLite adapters implement it and pass one conformance suite. The contract carries the full TSDoc.
 
-/** Any JSON value; open fields such as a resolved approval's tool arguments and the judge's verdict. */
+/** Any JSON value; open fields such as a resolved approval's tool arguments. Extension state never crosses this port. */
 export type Json = null | boolean | number | string | Json[] | { [field: string]: Json };
 
 /** ISO 4217 code and an int64 count of millionths; unpriced spend is 0n in the deployment's currency, never absent. */
-export type Money = { currencyCode: string; micros: bigint };
+export type Money = { currencyCode: string; amountMicros: bigint };
 
 /** The server-set actor: a person the proxy authenticated, or the tailnet itself. */
 export type Principal = { kind: 'person'; id: string } | { kind: 'tailnet' };
@@ -21,9 +21,12 @@ export type ActionWrite = { kind: 'action'; id: string };
 
 export type Write = EventWrite | ActionWrite;
 
+/** running: a run is active, or it waits on a person. idle: no run, process up. stopped: the process stopped, never an
+ * abort. archived: set only by the archive operation, left by invocation or unarchive. */
 export type SessionState = 'running' | 'idle' | 'stopped' | 'archived';
 
-export type RunOutcome = 'succeeded' | 'failed' | 'aborted';
+/** Every run end sets idle, an abort included. */
+export type RunOutcome = 'succeeded' | 'denied' | 'failed' | 'aborted';
 
 export type FailedStep = { step: string; error: string };
 
@@ -73,28 +76,24 @@ export type AskRow = {
   prompt?: AskPrompt;
 };
 
-/** One sealed artifact version, content included; verdictPassed is the verdict's boolean passed, lifted out. */
+/** One sealed version: the core deliverable only. The judge's verdict and an extension's links live in their own state. */
 export type ArtifactRow = {
   session: string;
   kind: string;
   version: number;
   hash: string;
   content: string;
-  createdAt: number;
-  verdict?: Json | null;
-  verdictPassed?: boolean;
-  links?: Array<{ label: string; url: string }>;
-  outcome?: string;
+  sealedAt: number;
   summary?: string;
-  basis?: string;
-  carriedFrom?: { sha: string; url?: string };
+  /** The artifact.delivered events, in event order. */
+  deliveries?: Array<{ where: string; link: string; at: number }>;
 };
 
 export type SessionField = 'key' | 'agent' | 'title' | 'state' | 'createdAt' | 'lastActivity' | 'cost.currencyCode' | 'cost.amountMicros' | 'tokens.input' | 'tokens.output' | 'tokens.cacheRead' | 'tokens.cacheWrite' | 'pendingAsks' | 'oldestAskAt' | 'lastRun.outcome';
 
 export type AskField = 'session' | 'type' | 'state' | 'createdAt' | 'resolvedAt' | 'tool';
 
-export type ArtifactField = 'session' | 'kind' | 'version' | 'createdAt' | 'verdict.passed';
+export type ArtifactField = 'session' | 'kind' | 'version' | 'sealedAt';
 
 type SessionValues = {
   key: string; agent: string; title: string; state: SessionState;
@@ -109,7 +108,7 @@ type AskValues = {
 };
 type ArtifactValues = {
   session: string; kind: string; version: number;
-  createdAt: number; 'verdict.passed': boolean;
+  sealedAt: number;
 };
 
 // A leaf's value type follows its field; prefix and wildcard leaves exist only on the collection's text fields.
@@ -146,7 +145,7 @@ export type SessionOrder =
 
 export type AskOrder = { field: 'createdAt'; direction: 'newest' | 'oldest' };
 
-export type ArtifactOrder = { field: 'createdAt'; direction: 'newest' };
+export type ArtifactOrder = { field: 'sealedAt'; direction: 'newest' };
 
 /** One list request; cursor is a previous page's, bound to the (where, orderBy) that issued it. */
 export type ListOptions<F extends string, O extends { field: string; direction: 'newest' | 'oldest' }> = {
@@ -165,10 +164,14 @@ export interface SessionCatalogStore {
   migrate(): Promise<void>;
   close(): Promise<void>;
 
-  /** session.created: the row starts stopped. Under another incarnation's tombstone it clears it and starts fresh. */
+  /** session.created, from the running process: the row starts idle. Under another incarnation's tombstone it starts fresh. */
   createSession(write: EventWrite, row: { key: string; agent: string; createdAt: number }): Promise<void>;
   /** The highest applied seq; undefined when the store knows no such key. */
   watermark(key: string): Promise<number | undefined>;
+  /** Moves the watermark past an event the catalog does not apply (an extension event, a stopped or archived echo).
+   * Port v5 names no key; the session's key is the second argument, as on every other write. */
+  advanceWatermark(write: EventWrite, change: { key: string }): Promise<void>;
+  /** running from idle, stopped or archived; idle from running or stopped, never archived; stopped from running or idle. */
   transitionSession(write: EventWrite, change: { key: string; to: 'running' | 'idle' }): Promise<{ applied: boolean; state?: SessionState }>;
   transitionSession(write: ActionWrite, change: { key: string; to: 'stopped' }): Promise<{ applied: boolean; state?: SessionState }>;
   /** title.set (the derived default) or a person's rename; null restores the default. */
@@ -229,27 +232,17 @@ export interface SessionCatalogStore {
     version: number;
     hash: string;
     content: string;
-    createdAt: number;
-    verdict?: Json | null;
-    links?: Array<{ label: string; url: string }>;
-    outcome?: string;
+    sealedAt: number;
     summary?: string;
-    basis?: string;
-    carriedFrom?: { sha: string; url?: string };
   }): Promise<void>;
-  /** A verdict after the seal; a no-op when the version is absent. */
-  updateArtifactVerdict(write: ActionWrite, change: {
+  /** artifact.delivered: appends one delivery, once per event id whatever its seq; a no-op when the version is absent. */
+  recordArtifactDelivery(write: EventWrite, delivery: {
     key: string;
     kind: string;
     version: number;
-    verdict: Json | null;
-  }): Promise<void>;
-  /** One link after the seal; a no-op when the version is absent. */
-  addArtifactLink(write: ActionWrite, change: {
-    key: string;
-    kind: string;
-    version: number;
-    link: { label: string; url: string };
+    where: string;
+    link: string;
+    at: number;
   }): Promise<void>;
   listArtifacts(options: ListOptions<ArtifactField, ArtifactOrder>): Promise<ListPage<ArtifactRow>>;
 }

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Json } from './port.ts';
 
 /** The action writes the core journals, by the port method each one replays through. */
-export type ActionMethod = 'setTitle' | 'archiveSession' | 'unarchiveSession' | 'resolveAsk' | 'deleteSession' | 'transitionSession' | 'updateArtifactVerdict' | 'addArtifactLink';
+export type ActionMethod = 'setTitle' | 'archiveSession' | 'unarchiveSession' | 'resolveAsk' | 'deleteSession' | 'transitionSession';
 
 /** One journal line: an action write with the channel watermark at its apply, or the incarnation a session.created began. */
 export type JournalLine = { id: string; method: ActionMethod; args: { [field: string]: Json }; watermark: number } | { incarnation: string };

@@ -5,7 +5,7 @@ import type { ArtifactField, AskField, QueryAst, SessionField } from './port.ts'
 /** A q the list cannot run: the HTTP adapter answers it 400 with this message as the detail. */
 export class QueryError extends Error {}
 
-type ValueKind = 'text' | 'string' | 'int' | 'micros' | 'date' | 'bool' | readonly string[];
+type ValueKind = 'text' | 'string' | 'int' | 'micros' | 'date' | readonly string[];
 
 // RFC 3339: a date-time carries seconds and Z or an offset, so a q means the same rows on every host; a date is UTC midnight.
 const DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2}))?$/;
@@ -15,10 +15,10 @@ const ZONELESS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
 const SESSIONS: Record<SessionField, ValueKind> = {
   key: 'text', agent: 'text', title: 'text', state: ['running', 'idle', 'stopped', 'archived'], createdAt: 'date', lastActivity: 'date',
   'cost.currencyCode': 'string', 'cost.amountMicros': 'micros', 'tokens.input': 'int', 'tokens.output': 'int', 'tokens.cacheRead': 'int', 'tokens.cacheWrite': 'int',
-  pendingAsks: 'int', oldestAskAt: 'date', 'lastRun.outcome': ['succeeded', 'failed', 'aborted'],
+  pendingAsks: 'int', oldestAskAt: 'date', 'lastRun.outcome': ['succeeded', 'denied', 'failed', 'aborted'],
 };
 const ASKS: Record<AskField, ValueKind> = { session: 'text', type: ['approval', 'question'], state: ['pending', 'resolved', 'cancelled'], createdAt: 'date', resolvedAt: 'date', tool: 'text' };
-const ARTIFACTS: Record<ArtifactField, ValueKind> = { session: 'text', kind: 'text', version: 'int', createdAt: 'date', 'verdict.passed': 'bool' };
+const ARTIFACTS: Record<ArtifactField, ValueKind> = { session: 'text', kind: 'text', version: 'int', sealedAt: 'date' };
 const { session: _askSession, ...SESSION_ASKS } = ASKS;
 const { session: _artifactSession, ...SESSION_ARTIFACTS } = ARTIFACTS;
 
@@ -27,7 +27,7 @@ export const LISTS = { sessions: SESSIONS, asks: ASKS, sessionAsks: SESSION_ASKS
 export type ListName = keyof typeof LISTS;
 type FieldOf<L extends ListName> = L extends 'sessions' ? SessionField : L extends 'asks' | 'sessionAsks' ? AskField : ArtifactField;
 
-type Value = string | number | bigint | boolean;
+type Value = string | number | bigint;
 type Leaf = Record<string, unknown> & { kind: string };
 const OPS: Record<string, 'gt' | 'gte' | 'lt' | 'le'> = { ':>': 'gt', ':>=': 'gte', ':<': 'lt', ':<=': 'le' };
 
@@ -53,10 +53,6 @@ function typed(field: string, kind: ValueKind, text: string): Value {
     return BigInt(text);
   }
   if (kind === 'date') return epochMs(field, text, bad);
-  if (kind === 'bool') {
-    if (text !== 'true' && text !== 'false') throw bad('true or false');
-    return text === 'true';
-  }
   return text;
 }
 
