@@ -89,7 +89,7 @@ test('a down store is a 503 the session retries', async () => {
   assert.equal(out.status, 503);
 });
 
-test('v8 events: deliveries append, and echoes and extension events only move the watermark', async () => {
+test('v9 events: deliveries append, and echoes and extension events only move the watermark', async () => {
   const { post, catalog } = await channel();
   const key = 'sleeper:platinum:2';
   await post({ events: [created(), { seq: 2, id: 'artifact:k:1', at: at(2), type: 'artifact.sealed', data: { kind: 'k', version: 1, hash: 'h', content: 'c', summary: 'S' } }] });

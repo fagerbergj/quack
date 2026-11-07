@@ -5,6 +5,7 @@ import type { CredentialBroker } from './credentials.ts';
 import { dockerApi, parseDockerHost, type DockerCall } from './docker-api.ts';
 import { dockerLauncher, onSessionNetwork, reapSessions } from './docker-driver.ts';
 import { parseHostConfig } from './host-config.ts';
+import { reapOrphans } from './orphans.ts';
 import { processDriver, sessionHost, type HostDriver } from './process-driver.ts';
 
 type Options = { dataDir: string; agentsDir?: string; rubricFor?: RubricFor; runtime: string; sessionPort: number; broker: CredentialBroker; onExit?: (key: string) => void };
@@ -20,7 +21,9 @@ export async function sessionDriver(env: NodeJS.ProcessEnv, o: Options, seams: S
   const base = { dataDir: o.dataDir, agentsDir: o.agentsDir, rubricFor: o.rubricFor, onExit: o.onExit };
   if (config.driver === 'process') {
     // shortcut: process sessions share this host, its secrets and its loopback, so one can still dial the public port as the tailnet; the docker driver fences it off.
-    return { listenAddress: LOOPBACK, ready: Promise.resolve(), driver: processDriver({ ...base, command: [process.execPath, o.runtime], startTimeoutMs: 60_000, env: { QUACK_INDEX_URL: `http://${LOOPBACK}:${sessionPort}` }, broker, inherit: (agentPath) => sessionEnv(agentPath) }) };
+    // Processes a previous run left are stopped before anything starts or the backfill opens a log they own.
+    const reaped = reapOrphans(o.dataDir).then((dirs) => void (dirs.length && console.warn(`stopped ${dirs.length} session processes a previous run left`)), (err) => console.error('could not stop old session processes:', err.message));
+    return { listenAddress: LOOPBACK, ready: reaped, driver: processDriver({ ...base, command: [process.execPath, o.runtime], startTimeoutMs: 60_000, env: { QUACK_INDEX_URL: `http://${LOOPBACK}:${sessionPort}` }, broker, inherit: (agentPath) => sessionEnv(agentPath) }) };
   }
   if (Number(new URL(config.distributorUrl).port) !== sessionPort) throw new Error(`QUACK_SESSION_DISTRIBUTOR_URL must name the session port ${sessionPort}, never the public one`);
   const api = seams.api ?? dockerApi(parseDockerHost(config.dockerHost));

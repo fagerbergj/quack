@@ -1,4 +1,5 @@
 // Usage: QUACK_DATA_DIR=... QUACK_CONFIG=deployment.json node packages/distributor/src/catalog-rebuild.ts   (stop the distributor first: a log has one owner)
+// The first-boot backfill marks itself done even when single sessions fail to rebuild (each is logged); this tool recovers them.
 import { readDeploymentFile } from '@quack/sdk';
 import { catalogStore, openCatalog } from '@quack/catalog';
 import { parseDeployment, priceOf } from '@quack/session';

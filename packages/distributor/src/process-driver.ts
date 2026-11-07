@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { childPort, createdAt, firstInput, lastActivity, recordedTitle, shellEnv, TITLE_MAX } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
+import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
 
 export type AgentStatus = 'draft' | 'promoted';
@@ -15,8 +16,8 @@ export type SessionInfo = { key: string; agent: string; version?: number; retent
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a switch while a run is active or an agent named on a non-submission request. */
 export class AgentError extends Error {
-  status: 404 | 409;
-  constructor(status: 404 | 409, message: string) {
+  status: 400 | 404 | 409;
+  constructor(status: 400 | 404 | 409, message: string) {
     super(message);
     this.status = status;
   }
@@ -72,6 +73,9 @@ export async function writeLaunchToken(dir: string): Promise<string> {
   await writeFile(join(dir, LAUNCH_TOKEN_FILE), token, { mode: 0o600 });
   return token;
 }
+
+/** The one session-key pattern, shared with the Sessions API and the lifecycle channel. */
+export const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
@@ -236,6 +240,8 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     const dir = sessionDir(key);
     const snapshotDir = join(dir, SNAPSHOT);
     const recorded = await readText(join(dir, 'agent'));
+    // Where a key is born it must be one the Sessions API and the lifecycle channel can address.
+    if (recorded === undefined && !SESSION_KEY.test(key)) throw new AgentError(400, 'a session key is 1 to 200 of A-Z a-z 0-9 : / # . _ @ -');
     if (recorded !== undefined && requested && requested !== recorded) throw new AgentError(409, `session runs agent ${recorded}, not ${requested}`);
     // A recorded session with no snapshot (pre-upgrade, or a lost copy) deliberately re-pins to the current definition once.
     if (recorded !== undefined && (await stat(snapshotDir).catch(() => null))) return { name: recorded, path: join(snapshotDir, 'agent.json') };
@@ -431,6 +437,9 @@ function processLauncher(opts: LauncherOptions): Launch {
     env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     if (token) proc.once('exit', () => opts.broker!.revoke(token));
+    // Recorded so a later distributor finds and stops it if this one dies first.
+    if (proc.pid !== undefined) await recordProcess(dir, proc.pid).catch(() => {});
+    proc.once('exit', () => void forgetProcess(dir).catch(() => {}));
     // Output still reaches this process's streams; the tail only rides along in a startup failure.
     let tail = '';
     const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));
