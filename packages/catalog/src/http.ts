@@ -1,4 +1,4 @@
-// The Sessions API's HTTP adapter (approved v8): the catalog's reads and a person's writes, in the approved wire shapes.
+// The Sessions API's HTTP adapter (approved v9): the catalog's reads and a person's writes, in the approved wire shapes.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
 import type { Catalog, ListRequest } from './core.ts';

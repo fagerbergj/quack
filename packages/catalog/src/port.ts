@@ -1,4 +1,4 @@
-// The session catalog's store port (approved store-port contract v5): the core depends only on this, and the
+// The session catalog's store port (approved store-port contract v6): the core depends only on this, and the
 // PostgreSQL and SQLite adapters implement it and pass one conformance suite. The contract carries the full TSDoc.
 
 /** Any JSON value; open fields such as a resolved approval's tool arguments. Extension state never crosses this port. */
@@ -168,8 +168,7 @@ export interface SessionCatalogStore {
   createSession(write: EventWrite, row: { key: string; agent: string; createdAt: number }): Promise<void>;
   /** The highest applied seq; undefined when the store knows no such key. */
   watermark(key: string): Promise<number | undefined>;
-  /** Moves the watermark past an event the catalog does not apply (an extension event, a stopped or archived echo).
-   * Port v5 names no key; the session's key is the second argument, as on every other write. */
+  /** Moves the watermark past an event the catalog does not apply (an extension event, a stopped or archived echo). */
   advanceWatermark(write: EventWrite, change: { key: string }): Promise<void>;
   /** running from idle, stopped or archived; idle from running or stopped, never archived; stopped from running or idle. */
   transitionSession(write: EventWrite, change: { key: string; to: 'running' | 'idle' }): Promise<{ applied: boolean; state?: SessionState }>;
