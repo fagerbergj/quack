@@ -204,11 +204,12 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       }
     },
     // The newest `limit` person and assistant messages, oldest first, so a reader need not hold the socket open for the transcript.
-    async messages(limit: number): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
+    // `conversation` reads another of this session's conversations; callers check it with `readable` first.
+    async messages(limit: number, conversation?: string): Promise<Array<{ role: 'user' | 'assistant'; text: string }>> {
       const found: Array<{ role: 'user' | 'assistant'; text: string }> = [];
       let cursor: unknown;
       do {
-        const page = await root.commit((tx) => tx.scanEntries({ conversationId: root.id, order: 'descending' }, 64, cursor as never), ctx);
+        const page = await root.commit((tx) => tx.scanEntries({ conversationId: (conversation ?? root.id) as never, order: 'descending' }, 64, cursor as never), ctx);
         for (const e of page.items) {
           const m = e.model?.[0] as { content?: Parameters<typeof contentText>[0] } | undefined;
           if ((e.kind === 'pi.user' || e.kind === 'pi.assistant') && m?.content && found.length < limit) found.push({ role: e.kind === 'pi.user' ? 'user' : 'assistant', text: contentText(m.content) });
@@ -216,6 +217,12 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
         cursor = page.next as never;
       } while (cursor && found.length < limit);
       return found.reverse();
+    },
+    // The root or a created child such as a subagent's; a fork (a decision's) is task-owned too, so creation is the test, not ownership.
+    async readable(conversation: string): Promise<boolean> {
+      if (conversation === String(root.id)) return true;
+      const found = await root.commit((tx) => tx.conversation(conversation as never), ctx);
+      return Boolean(found?.owner && !found.parent);
     },
     // The messages the transcript view shows, tool calls and results included; the system prompt and other log entries stay out.
     async transcript(): Promise<Array<{ kind: string; model: unknown }>> {

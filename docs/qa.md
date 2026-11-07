@@ -35,6 +35,7 @@ node tools/qa/stack.ts down
 | `home-sessions` | Home, the Sessions list and the session view of a seeded review-style session, at 1280 and 400 px, light and dark |
 | `schedules` | The Schedules page against the schedules app with two sample schedules |
 | `contracts` | The Contracts empty state, and that New contract opens its dialog (nothing is submitted) |
+| `subagent` | A QA-only agent (written beside a copy of `agents/`, shipped bundles untouched) that selects `subagent` runs one call through a scripted fake model; `GET /messages?conversation=` serves the child, and the call row nests the child's messages, at 1280 and 400 px, light and dark |
 | `contract-studio` | A seeded contract beside its chat (tabs on a phone) with the changes since version 1 highlighted, the class diagram re-centring on a type, and approving the waiting version |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed <dir>` with a copied session to check a real artifact card.

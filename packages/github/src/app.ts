@@ -1,4 +1,5 @@
 import { createSign } from 'node:crypto';
+import { limiter } from '@quack/judge';
 
 export type AppConfig = {
   appId: string; privateKey: string; apiUrl?: string;
@@ -47,21 +48,6 @@ function rateLimitWait(res: Response, text: string, now: number): number | undef
   const reset = Number(res.headers.get('x-ratelimit-reset') ?? NaN);
   if (res.headers.get('x-ratelimit-remaining') === '0') return Number.isFinite(reset) ? Math.max(0, reset * 1000 - now) : SECONDARY_WAIT_MS;
   return res.status === 429 || /rate limit/i.test(text) ? SECONDARY_WAIT_MS : undefined;
-}
-
-function limiter(max: number) {
-  let active = 0;
-  const waiting: Array<() => void> = [];
-  return async <T>(fn: () => Promise<T>): Promise<T> => {
-    while (active >= max) await new Promise<void>((r) => waiting.push(r));
-    active++;
-    try {
-      return await fn();
-    } finally {
-      active--;
-      waiting.shift()?.();
-    }
-  };
 }
 
 type Reply = { status: number; json: any; link: string };

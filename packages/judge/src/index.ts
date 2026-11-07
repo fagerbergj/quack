@@ -2,11 +2,13 @@ import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, GenerationTask, hook, LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
-import { answerUnit, type ClassifierRef, type ModelRef } from './resolve.ts';
+import { limiter } from './limit.ts';
+import { answerItems, pack, type Answered, type ClassifierRef, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type Check, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
-export type { ClassifierRef, ModelRef } from './resolve.ts';
+export { classifierTokens, type ClassifierRef, type ModelRef } from './resolve.ts';
+export { limiter } from './limit.ts';
 
 export type JudgeOptions = {
   kind: ArtifactKind;
@@ -21,6 +23,8 @@ export type JudgeOptions = {
   classifier?: ClassifierRef;
   /** Where uncertain checks escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
+  /** Escalations sent to the judge model at once; 4 by default, under a provider's usual slots. */
+  escalations?: number;
   toolName?: string;
   /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
   onCleared?: (sealed: SealedArtifact, verdict: Verdict, api: ToolExecutionApi, ctx: Context) => Promise<{ text: string; isError?: boolean } | undefined>;
@@ -71,25 +75,32 @@ export function settled(results: Map<string, CheckResult>, left: Map<string, num
   return [...results].filter(([k, r]) => !left.get(k) && !r.undecided).map(([, r]) => r);
 }
 
+// Every request starts at once: decision-model requests queue on its own limit (it answers one at a time) and escalations on theirs.
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evidence, memo: string, ctx: Context, code: CheckResult[], report?: Report): Promise<CheckResult[]> {
   const { byUnit, results } = planModelChecks(opts.rubric, ev);
   const left = new Map([...results].map(([k, r]) => [k, r.units]));
+  // Met units are counted, not summed as fractions: 23 sums of 1/23 fall short of 1 and would read as a miss.
+  const hits = new Map<string, number>();
   // A model check is final once every unit it applies to is judged; one with no unit is final at once.
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(results, left)]));
   await publish();
-  for (const { unit, checks } of byUnit.values()) {
-    const answers = await answerUnit(api, opts.classifier, opts.judgeModel, memo, unit, checks, ctx);
-    for (const [key, a] of Object.entries(answers)) {
-      const r = results.get(key)!;
-      left.set(key, left.get(key)! - 1);
-      r.resolvers[a.resolver] = (r.resolvers[a.resolver] ?? 0) + 1;
-      // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
-      if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
-      if (a.met) r.met! += 1 / r.units;
-      // A note explains a defect: a "no" on a gate or a positive check, a "yes" on a pitfall.
-      if (a.note && a.met === (typeof r.weight === 'number' && r.weight < 0)) r.notes.push(unit.whole ? a.note : `${unit.id}: ${a.note}`);
-    }
-    await publish();
+  const settings = { ref: opts.classifier, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4) };
+  const tally = async ({ check, answer: a }: Answered) => {
+    const r = results.get(check.id)!;
+    left.set(check.id, left.get(check.id)! - 1);
+    r.resolvers[a.resolver] = (r.resolvers[a.resolver] ?? 0) + 1;
+    // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
+    if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
+    if (a.met) hits.set(check.id, (hits.get(check.id) ?? 0) + 1);
+    r.met = (hits.get(check.id) ?? 0) / r.units;
+    if (!left.get(check.id)) await publish();
+  };
+  const groups = pack([...byUnit.values()], opts.classifier?.maxInputTokens);
+  const answered = (await Promise.all(groups.map((items) => answerItems(api, settings, items, ctx, tally)))).flat();
+  // Notes go in unit order, whatever order the answers came in: a "no" on a gate or a positive check, a "yes" on a pitfall.
+  for (const { unit, check, answer: a } of answered) {
+    const r = results.get(check.id)!;
+    if (a.note && a.met === (typeof r.weight === 'number' && r.weight < 0)) r.notes.push(unit.whole ? a.note : `${unit.id}: ${a.note}`);
   }
   for (const r of results.values()) if (r.undecided) r.met = null;
   return [...results.values()];

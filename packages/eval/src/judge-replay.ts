@@ -25,7 +25,8 @@ export type Row = { arm: string; rep: number; case: string; check: string; met: 
 /** A case an arm could not judge, with what its recording lacks. */
 export type Declined = { arm: string; case: string; reason: string };
 export type Replayed = { rows: Row[]; declined: Declined[] };
-export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef };
+/** `escalations` bounds each job's concurrent judge-model calls (the judge's default when unset), so the judge model sees at most concurrency × escalations. */
+export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number };
 
 const ESCALATED = ['judge-model', 'agent-model'];
 type Job = { arm: string; classifier?: ClassifierRef; rep: number; c: Case; rubric: Rubric; content: string; evidence: Evidence };
@@ -58,7 +59,7 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const opts = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, evidence: async () => j.evidence, maxRevisions: 0, classifier: j.classifier, judgeModel: o.judgeModel };
+  const opts = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, evidence: async () => j.evidence, maxRevisions: 0, classifier: j.classifier, judgeModel: o.judgeModel, escalations: o.escalations };
   const t = Date.now();
   const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;

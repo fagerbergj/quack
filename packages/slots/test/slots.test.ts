@@ -9,47 +9,12 @@ import { afterEach, test } from 'node:test';
 import { observeGeneration, serveApp, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
-import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
+import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type SlotCall, type SlotClient } from '../src/index.ts';
+import { FakeClock } from './fake-clock.ts';
 
 const TTL = 30_000;
 const GRACE = 60_000;
 const CAP = 600_000;
-
-// A hand-driven clock: time moves only in advance(), which fires due timers in order and lets promises settle between them.
-class FakeClock implements Clock {
-  t = 1_000_000;
-  #timers: Array<{ at: number; fn: () => void }> = [];
-  now = () => this.t;
-  setTimer = (fn: () => void, ms: number) => {
-    const timer = { at: this.t + ms, fn };
-    this.#timers.push(timer);
-    return () => void (this.#timers = this.#timers.filter((x) => x !== timer));
-  };
-  sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const cancel = this.setTimer(resolve, ms);
-    signal?.addEventListener('abort', () => (cancel(), reject(signal.reason)), { once: true });
-  });
-  reset() {
-    this.#timers = [];
-  }
-  async settle() {
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
-  }
-  async advance(ms: number) {
-    const end = this.t + ms;
-    for (;;) {
-      const next = this.#timers.filter((x) => x.at <= end).sort((a, b) => a.at - b.at)[0];
-      if (!next) break;
-      this.#timers = this.#timers.filter((x) => x !== next);
-      this.t = Math.max(this.t, next.at);
-      next.fn();
-      await this.settle();
-    }
-    this.t = end;
-    await this.settle();
-  }
-}
 
 const clock = new FakeClock();
 let table: SlotTable;
@@ -261,6 +226,52 @@ test('a run held past the cap requeues behind waiters at its next generation', a
   const again = begin(g);
   await clock.advance(1000);
   assert.deepEqual([waiter.granted, again.granted], [true, false]);
+});
+
+test('parallel calls in one session take one slot each and queue past the limit', async () => {
+  fresh(2);
+  const g = gate('s');
+  const tokens: SlotCall[] = [];
+  const calls = [0, 1, 2].map(() => { const state = { granted: false }; void g.begin('swap').then((t) => (tokens.push(t), (state.granted = true))); return state; });
+  await clock.settle();
+  assert.deepEqual(calls.map((c) => c.granted), [true, true, false]);
+  assert.deepEqual(heldBy().sort(), ['s', 's#1']);
+  assert.equal(notes.s, 'Waiting for a model slot (0 ahead)');
+  g.end(tokens[0]);
+  await clock.advance(1000);
+  assert.equal(calls[2].granted, true, 'the call that ended hands its slot to the queued one without waiting for the idle grace');
+});
+
+test('calls finishing out of order free their own slot, not the newest one', async () => {
+  table = new SlotTable({ dbPath: ':memory:', limits: { x: 2, y: 1 }, ttlMs: TTL, now: clock.now });
+  open.push(table);
+  const g = gate('s');
+  const x1 = await g.begin('x');
+  const y1 = await g.begin('y');
+  g.end(x1);
+  const x2 = await g.begin('x');
+  const held = () => table.snapshot().map((e) => [e.endpoint, e.held.length]);
+  assert.deepEqual(held(), [['x', 1], ['y', 1]], 'the y call is still generating, so its slot stays held');
+  const rival = { granted: false };
+  void gate('o').begin('y').then(() => (rival.granted = true));
+  await clock.advance(2000);
+  assert.equal(rival.granted, false, 'a slots: 1 provider never runs two calls');
+  g.end(y1);
+  g.end(x2);
+});
+
+test('a call reuses the idle slot of the one before it, and all slots go back after the grace', async () => {
+  fresh(2);
+  const g = gate('s');
+  await g.begin('swap');
+  await g.begin('swap');
+  g.end();
+  await g.begin('swap');
+  assert.deepEqual(heldBy().sort(), ['s', 's#1']);
+  g.end();
+  g.end();
+  await clock.advance(GRACE + 1);
+  assert.deepEqual(heldBy(), []);
 });
 
 test('the service serves acquire, heartbeat and release relative to its mount', async () => {

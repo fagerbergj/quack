@@ -116,6 +116,6 @@ test('the shipped quack definition loads with the home tools, offering every ext
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/quack/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are quack's front door/);
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []));
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['find_sessions', 'read_session', 'run_again', 'send_message', 'start', 'stop_session']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['find_sessions', 'read_session', 'run_again', 'send_message', 'start', 'stop_session', 'subagent']);
   for (const name of ['review_pull_request', 'research_question', 'run_job']) assert.match(tools.find((t) => t.name === 'start')!.description, new RegExp(`- ${name}:`));
 });

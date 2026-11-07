@@ -17,6 +17,7 @@
     "@quack/schedules": "*",
     "@quack/sdk": "*",
     "@quack/slots": "*",
+    "@quack/subagent": "*",
     "@quack/session": "*",
     "@quack/sleeper": "*",
     "@quack/traces": "*",
@@ -35,6 +36,7 @@
       "@quack/remarkable",
       "@quack/schedules",
       "@quack/slots",
+      "@quack/subagent",
       "@quack/traces"
     ]
   },

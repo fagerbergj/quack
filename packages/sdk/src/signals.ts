@@ -34,8 +34,8 @@ export function onGeneration(listener: (g: Generation) => void): () => void {
   generationListeners.add(listener);
   return () => void generationListeners.delete(listener);
 }
-/** Capacity held around each direct completion (a resource gate such as slots implements it); `after` runs even when the completion throws. */
-export type GenerationGate = { before(provider: string, signal?: AbortSignal): Promise<void>; after(): void };
+/** Capacity held around each direct completion (a resource gate such as slots implements it); `after` gets back what `before` returned and runs even when the completion throws. */
+export type GenerationGate = { before(provider: string, signal?: AbortSignal): Promise<unknown>; after(held?: unknown): void };
 const generationGates = new Set<GenerationGate>();
 export function gateGenerations(gate: GenerationGate): () => void {
   generationGates.add(gate);
@@ -46,18 +46,17 @@ export function gateGenerations(gate: GenerationGate): () => void {
 export async function observeGeneration(request: GenerationRequest, complete: (request: GenerationRequest) => Promise<AssistantMessage>): Promise<AssistantMessage> {
   const start = Date.now();
   const sent = [...request.messages];
-  const held: GenerationGate[] = [];
+  const held: Array<[GenerationGate, unknown]> = [];
   let message: AssistantMessage;
   try {
     if (request.provider) {
       for (const g of generationGates) {
-        await g.before(request.provider, request.signal);
-        held.push(g);
+        held.push([g, await g.before(request.provider, request.signal)]);
       }
     }
     message = await complete(request);
   } finally {
-    held.forEach((g) => g.after());
+    held.forEach(([g, token]) => g.after(token));
   }
   for (const l of generationListeners) {
     try {

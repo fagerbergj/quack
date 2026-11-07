@@ -34,7 +34,7 @@ function fakeApi(specs: SealedArtifact[], approved = history.approved) {
   const docs = new Map<unknown, unknown>([[Artifacts, { kinds: { 'contract.spec': { versions: specs }, 'contract.approved': { versions: approved } } }], [Approvals, { items: history.approvals }]]);
   return { conversationId: 'c', env: undefined, snapshot: async (def: unknown) => docs.get(def) ?? { items: {} } } as never;
 }
-const breaksOf = async (api: never, judged: SealedArtifact) => ((await specEvidence()(api, judged, ctx)).spec[0].state as { breaking: unknown[] }).breaking;
+const breaksOf = async (api: never, judged: SealedArtifact) => ((await specEvidence()(api, judged, ctx)).facts[0].state as { breaking: unknown[] }).breaking;
 
 test("a break a rejected version introduced is named again when the next version keeps it", async () => {
   const v3 = sealed(4, { ...v2, version: 3 }, null, 50);

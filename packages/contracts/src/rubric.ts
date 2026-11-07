@@ -1,16 +1,20 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import ts from 'typescript';
-import type { CodeResult, Evidence, Rubric } from '@quack/judge';
+import type { CodeResult, Evidence, Rubric, Unit } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
+import type { Definition } from './definitions.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
-export const guideAnchors = (skill: string) => new Set([...skill.matchAll(/^###\s+(.+)$/gm)].map((m) => slug(m[1])));
+/** Each guide rule's text by its anchor (a ### heading), up to the next heading. */
+export const guideRules = (skill: string) => new Map([...skill.matchAll(/^###\s+(.+)\n([\s\S]*?)(?=^##|(?![\s\S]))/gm)].map((m) => [slug(m[1]), m[2].trim()]));
+export const guideAnchors = (skill: string) => new Set(guideRules(skill).keys());
+const anchorOf = (ref: string) => ref.replace(/^(rest|json-schema|typescript)#|^#/, '');
 
 // A JSON pointer resolves when every segment names a key or index on the way down.
 function pointerResolves(doc: unknown, pointer: string): boolean {
@@ -44,7 +48,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
-      const ref = w.ref.replace(/^(rest|json-schema|typescript)#|^#/, '');
+      const ref = anchorOf(w.ref);
       // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
       const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(read, w.ref);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
@@ -54,10 +58,34 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
 }
 
 type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
-const state = (ev: Evidence) => ev.spec[0].state as unknown as SpecState;
+const state = (ev: Evidence) => ev.facts[0].state as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, and its workspace. */
 type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined };
+
+const json = (v: unknown) => JSON.parse(JSON.stringify(v));
+
+// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
+// and a departure nobody cited is what the check is for. The document itself is meets_intent's to read.
+function choiceUnits(spec: ContractSpec, rules: Map<string, string>): Unit[] {
+  const shared = { guide: Object.fromEntries(rules) };
+  return spec.choices.map((c) => ({ id: `choice ${c.id}`, shared, state: json({ choice: c, cites: [...new Set(c.why.filter((w) => w.source === 'guide').map((w) => anchorOf(w.ref)))] }) }));
+}
+
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The choices that decide a definition: their pointer is at or under it, or their decision names it; what the person or code asked for shows there.
+function decisionsOn(d: Definition, choices: ContractSpec['choices']) {
+  const named = d.name && new RegExp(`(?<![\\w$])${escRe(d.name)}(?![\\w$])`);
+  const on = (c: ContractSpec['choices'][number]) => (d.pointer && (c.pointer === d.pointer || c.pointer.startsWith(`${d.pointer}/`))) || (named && named.test(c.decision));
+  return choices.filter(on).map((c) => ({ choice: c.id, decision: c.decision }));
+}
+
+// The definitions that use one: a local $ref to it, or for TypeScript its name in their text; a shared shape is asked for by its users.
+function usersOf(d: Definition, defs: Definition[]): string[] {
+  const named = typeof d.definition === 'string' && d.name && new RegExp(`(?<![\\w$])${escRe(d.name)}(?![\\w$])`);
+  const uses = (o: Definition) => (named ? typeof o.definition === 'string' && named.test(o.definition) : !!d.pointer && JSON.stringify(o.definition).includes(`"#${d.pointer}"`));
+  return defs.filter((o) => o !== d && uses(o)).map((o) => o.id);
+}
 
 async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
   const spec = parseSpec(sealed.content) as ContractSpec;
@@ -73,8 +101,15 @@ async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility } = spec;
-  const unit = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, intent, choices, document, guide: kind.skill };
-  return { spec: [{ id: 'spec', whole: true, state: JSON.parse(JSON.stringify(unit)) }] };
+  const facts = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility };
+  const defs = kind.definitions(document);
+  const shared = json({ intent });
+  return {
+    facts: [{ id: 'facts', whole: true, state: json(facts) }],
+    spec: [{ id: 'spec', whole: true, state: json({ intent, choices, document }) }],
+    choice: choiceUnits(spec, guideRules(kind.skill)),
+    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition, decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) }) })),
+  };
 }
 
 const answeredIn = (items: Record<string, Question>, by = Infinity) => new Set(Object.values(items).filter((q) => q.answer && q.answer.at <= by).map((q) => q.question));
@@ -134,7 +169,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -149,8 +184,8 @@ export const contractRubric: Rubric = {
     ] },
     { id: 'matches_intent', checks: [
       { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4, scope: 'spec', question: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' },
-      { id: 'follows_guide', label: 'A choice contradicts the guide', weight: 3, scope: 'spec', question: 'Does every choice agree with the guide, or, where it departs from a guide rule, does its why say what the person or the code required?' },
-      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3, scope: 'spec', question: 'Does the document define operations, fields or guarantees that the intent never asked for, or that one of its non-goals excludes?' },
+      { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3, scope: 'choice', question: 'Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.' },
+      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3, scope: 'definition', question: 'Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.' },
     ] },
   ],
 };

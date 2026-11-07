@@ -1,5 +1,6 @@
 // Read-only Sleeper API client: it only ever issues GET.
-import { limiter, sleepFor } from './limit.ts';
+import { limiter } from '@quack/judge';
+import { sleepFor } from './limit.ts';
 import type { Json, SleeperClient } from './ports.ts';
 
 export type { Json, SleeperClient } from './ports.ts';

@@ -17,7 +17,7 @@ export { lintJsonSchema } from './json-schema-rules.ts';
 export { schemaBreaks } from './json-schema-diff.ts';
 export { lintTypeScript } from './typescript-rules.ts';
 export { typeScriptBreaks } from './typescript-diff.ts';
-export { contractRubric, guideAnchors, recordedSpecEvidence, specEvidence } from './rubric.ts';
+export { contractRubric, guideAnchors, guideRules, recordedSpecEvidence, specEvidence } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { manifest } from './manifest.ts';
 
@@ -30,14 +30,14 @@ export const specKind: ArtifactKind = { kind: CONTRACT_KIND, path: CONTRACT_PATH
 const onCleared = async (sealed: SealedArtifact, v: { passed: boolean }, api: ToolExecutionApi, ctx: Context) =>
   v.passed ? proposeVersion(sealed, api, ctx) : { text: 'This version did not pass its checks, so it cannot be put to the person for approval. Tell them what failed and ask how to go on.' };
 
-export type ContractsConfig ={ maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
+export type ContractsConfig = { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef; escalations?: number };
 
 /** The contracts extension's session half: the question tool, the spec artifact and the judge that checks it against the kind's guide; `evidence` is a seam for tests to watch what the judge reads. */
 export function contractsSessionExtensions(config: ContractsConfig = {}, evidence = specEvidence()): Extension[] {
   return [
     defineExtension({ name: 'contracts', tools: contractTools, hooks: [awaitingApproval()] }),
     artifactsExtension([specKind]),
-    judge({ kind: specKind, rubric: contractRubric, evidence, maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_contract', onCleared }),
+    judge({ kind: specKind, rubric: contractRubric, evidence, maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, escalations: config.escalations, toolName: 'submit_contract', onCleared }),
   ];
 }
 export { contractOf as contractRecordOf, contractsApp, type ContractRecord } from './app.ts';
