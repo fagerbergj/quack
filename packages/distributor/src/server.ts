@@ -521,7 +521,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   if (opts.refuse) server.on('connection', (socket) => void (opts.refuse!(socket.remoteAddress) && socket.destroy()));
   server.on('upgrade', async (req, socket, head) => {
     const target = sessionPath(req.url);
-    if (!target || target.path !== '/ws' || !principalOf(req, opts.proxySecret)) return socket.destroy();
+    const who = principalOf(req, opts.proxySecret);
+    if (!target || target.path !== '/ws' || !who) return socket.destroy();
     hold(target.key, 1);
     const open = sockets.get(target.key) ?? sockets.set(target.key, new Set()).get(target.key)!;
     open.add(socket);
@@ -532,7 +533,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       await mustExist(target.key, 'GET /ws');
       const url = await driver.ensure(target.key, target.agent);
       arm(target.key, undefined);
-      await proxyUpgrade(url, upstream(target.key), req, '/ws', socket, head);
+      await proxyUpgrade(url, upstream(target.key, who), req, '/ws', socket, head);
     } catch {
       socket.destroy();
     }
