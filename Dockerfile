@@ -31,6 +31,8 @@ COPY tools/patch-liqe.ts tools/
 RUN --mount=type=cache,target=/root/.npm npm ci
 
 FROM deps AS web
+# The page builds q strings with the sdk's escapeTerm (@quack/sdk/query), so the sdk's source is in the build too.
+COPY packages/sdk packages/sdk
 COPY packages/web packages/web
 RUN npm run build -w packages/web
 
