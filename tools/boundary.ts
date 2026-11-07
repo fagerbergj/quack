@@ -4,13 +4,8 @@ import ts from 'typescript';
 
 /** Package layers (RFC extension dependencies): arrows point down only; services and tools sit beside the stack as leaves. */
 export const LAYERS: Record<string, 'core' | 'foundation' | 'feature' | 'leaf'> = {
-<<<<<<< HEAD
   sdk: 'core', session: 'core', catalog: 'core', distributor: 'core', runtime: 'core', web: 'core',
-  judge: 'foundation', workflows: 'foundation', slots: 'foundation', traces: 'foundation',
-=======
-  sdk: 'core', session: 'core', index: 'core', catalog: 'core', distributor: 'core', runtime: 'core', web: 'core',
   judge: 'foundation', workflows: 'foundation', slots: 'foundation', traces: 'foundation', subagent: 'foundation',
->>>>>>> origin/main
   github: 'feature', home: 'feature', sleeper: 'feature', remarkable: 'feature', research: 'feature', contracts: 'feature',
   schedules: 'leaf', eval: 'leaf', cli: 'leaf',
 };
