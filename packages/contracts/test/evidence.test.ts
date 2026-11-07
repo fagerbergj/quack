@@ -76,25 +76,19 @@ test('every choice and definition unit of the approved contracts fits the decisi
   });
 });
 
-test('a choice unit holds its decision, the guide rules it cites as text, and the part of the document it governs', async () => {
+test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the intent', async () => {
   const ev = await evidenceOf(lifecycle);
   const rules = guideRules(kinds.rest.skill);
-  const errors = ev.choice.find((u) => u.id === 'choice errors')!.state as { choice: { decision: string }; guide: Record<string, string>; governs: unknown };
-  assert.equal(errors.choice.decision, lifecycle.choices.find((c) => c.id === 'errors')!.decision);
-  assert.deepEqual(errors.guide, { errors: rules.get('errors') });
+  const errors = ev.choice.find((u) => u.id === 'choice errors')!;
+  assert.deepEqual(errors.state, { choice: lifecycle.choices.find((c) => c.id === 'errors'), cites: ['errors'] });
   assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
-  assert.deepEqual(errors.governs, (lifecycle.document as { components: { schemas: Record<string, unknown> } }).components.schemas.Problem);
-  // A choice that cites no rule is held to all of them.
-  const transport = ev.choice.find((u) => u.id === 'choice transport')!.state as { guide: Record<string, string> };
-  assert.deepEqual(Object.keys(transport.guide), [...rules.keys()]);
-
-  const port = await evidenceOf(storePort);
-  const money = port.choice.find((u) => u.id === 'choice money')!.state as { governs: string };
-  assert.match(money.governs, /export type Money = /, 'a TypeScript pointer governs its declaration');
-  assert.equal('governs' in port.choice.find((u) => u.id === 'choice conformance')!.state, false, 'a spec-wide choice carries no part of the document');
+  assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
+  assert.ok(ev.choice.every((u) => u.shared === errors.shared), 'one guide for every choice, so they pack together');
+  assert.deepEqual(ev.definition[0].shared, { intent: lifecycle.intent });
+  assert.equal('intent' in ev.definition[0].state, false, 'the intent is sent once per request, not per definition');
 });
 
-// A stand-in for Clef on its wire format: every guide question is a confident yes, every unasked one a confident no.
+// A stand-in for Clef on its wire format: every pitfall question is a confident no.
 async function fakeClef(t: TestContext) {
   const asked: string[][] = [];
   const server = createServer(async (req, res) => {
@@ -102,7 +96,7 @@ async function fakeClef(t: TestContext) {
     for await (const chunk of req) body += chunk;
     const questions = Object.keys(JSON.parse(body).questions);
     asked.push(questions);
-    const answers = Object.fromEntries(questions.map((q) => [q, { type: 'noul', noul: q.endsWith('follows_guide') ? 0.95 : 0.05 }]));
+    const answers = Object.fromEntries(questions.map((q) => [q, { type: 'noul', noul: 0.05 }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 1, output_tokens: 0 } }));
   }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -125,15 +119,16 @@ test('with Clef on, Clef answers every choice and definition unit and only meets
   const content = JSON.stringify(lifecycle);
   const evidence = await evidenceOf(lifecycle);
   const { rows } = await replayJudge({
-    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'follows_guide', 'adds_unasked'], content, evidence }],
+    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked'], content, evidence }],
     arms: [{ label: 'clef', adapters, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });
   const by = Object.fromEntries(rows.map((r) => [r.check, { met: r.met, clef: r.clef, esc: r.esc }]));
   assert.deepEqual(by, {
     meets_intent: { met: 1, clef: 0, esc: 1 },
-    follows_guide: { met: 1, clef: 23, esc: 0 },
+    contradicts_guide: { met: 0, clef: 23, esc: 0 },
     adds_unasked: { met: 0, clef: 31, esc: 0 },
   });
-  assert.equal(clef.asked.length, 23 + 31, 'one request per unit');
+  assert.equal(clef.asked.flat().length, 23 + 31, 'one question per unit');
+  assert.ok(clef.asked.length <= 6, `units sharing a guide or an intent are packed: ${clef.asked.length} requests`);
 });

@@ -97,6 +97,6 @@ test('a pointer resolves for every export form the AST lists, and not for a name
   };
   const api = { conversationId: 'c', env: undefined, snapshot: async () => undefined } as never;
   const sealed = { kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null, outcome: '', summary: '' };
-  const { unresolved } = (await specEvidence()(api, sealed, BACKGROUND_CONTEXT)).spec[0].state as { unresolved: string[] };
+  const { unresolved } = (await specEvidence()(api, sealed, BACKGROUND_CONTEXT)).facts[0].state as { unresolved: string[] };
   assert.deepEqual(unresolved, ['hidden: pointer `/hidden` is not in the document', 'nope: pointer `/nope` is not in the document']);
 });

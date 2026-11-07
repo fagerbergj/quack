@@ -4,7 +4,6 @@ import ts from 'typescript';
 import type { CodeResult, Evidence, Rubric, Unit } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
-import type { Definition } from './definitions.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
@@ -16,23 +15,18 @@ export const guideRules = (skill: string) => new Map([...skill.matchAll(/^###\s+
 export const guideAnchors = (skill: string) => new Set(guideRules(skill).keys());
 const anchorOf = (ref: string) => ref.replace(/^(rest|json-schema|typescript)#|^#/, '');
 
-const MISSING = Symbol('missing');
-// The value a JSON pointer names, or MISSING when a segment names no key or index on the way down.
-function atPointer(doc: unknown, pointer: string): unknown {
-  let at: unknown = doc;
-  for (const raw of pointer.split('/').slice(1)) {
-    const key = raw.replaceAll('~1', '/').replaceAll('~0', '~');
-    if (typeof at !== 'object' || at === null || !Object.hasOwn(at, key)) return MISSING;
-    at = (at as Record<string, unknown>)[key];
-  }
-  return at;
-}
-
+// A JSON pointer resolves when every segment names a key or index on the way down.
 function pointerResolves(doc: unknown, pointer: string): boolean {
   if (pointer === '') return true;
   // A TypeScript document is source text; its pointer is "/" plus the name of an export.
   if (typeof doc === 'string') return exportsOf(ts.createSourceFile('contract.d.ts', doc, ts.ScriptTarget.ES2022, true)).some((e) => `/${e.name}` === pointer);
-  return atPointer(doc, pointer) !== MISSING;
+  let at: unknown = doc;
+  for (const raw of pointer.split('/').slice(1)) {
+    const key = raw.replaceAll('~1', '/').replaceAll('~0', '~');
+    if (typeof at !== 'object' || at === null || !Object.hasOwn(at, key)) return false;
+    at = (at as Record<string, unknown>)[key];
+  }
+  return true;
 }
 
 type Reader = (path: string) => Promise<string | undefined>;
@@ -63,30 +57,18 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
 }
 
 type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
-const state = (ev: Evidence) => ev.spec[0].state as unknown as SpecState;
+const state = (ev: Evidence) => ev.facts[0].state as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, and its workspace. */
 type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined };
 
 const json = (v: unknown) => JSON.parse(JSON.stringify(v));
 
-// A spec-wide choice (empty pointer) governs the whole document, which only meets_intent reads; a TypeScript pointer names a declaration.
-function governed(document: unknown, defs: Definition[], pointer: string): unknown {
-  if (pointer === '') return undefined;
-  if (typeof document === 'string') return defs.find((d) => d.id === pointer)?.definition;
-  const v = atPointer(document, pointer);
-  return v === MISSING ? undefined : v;
-}
-
-// A choice is judged on the guide rules it cites; one citing none on every rule, since most choices cite only answers and code,
-// and a departure nobody cited is what the check is for.
-function choiceUnits(spec: ContractSpec, rules: Map<string, string>, defs: Definition[]): Unit[] {
-  return spec.choices.map((c) => {
-    const cited = [...new Set(c.why.filter((w) => w.source === 'guide').map((w) => anchorOf(w.ref)))].filter((a) => rules.has(a));
-    const governs = governed(spec.document, defs, c.pointer);
-    const guide = Object.fromEntries((cited.length ? cited : [...rules.keys()]).map((a) => [a, rules.get(a)]));
-    return { id: `choice ${c.id}`, state: json({ choice: c, guide, ...(governs === undefined ? {} : { governs }) }) };
-  });
+// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
+// and a departure nobody cited is what the check is for. The document itself is meets_intent's to read.
+function choiceUnits(spec: ContractSpec, rules: Map<string, string>): Unit[] {
+  const shared = { guide: Object.fromEntries(rules) };
+  return spec.choices.map((c) => ({ id: `choice ${c.id}`, shared, state: json({ choice: c, cites: [...new Set(c.why.filter((w) => w.source === 'guide').map((w) => anchorOf(w.ref)))] }) }));
 }
 
 async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
@@ -103,12 +85,14 @@ async function evidenceIn(sealed: SealedArtifact, w: World): Promise<Evidence> {
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility } = spec;
-  const unit = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, intent, choices, document };
+  const facts = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility };
   const defs = kind.definitions(document);
+  const shared = json({ intent });
   return {
-    spec: [{ id: 'spec', whole: true, state: json(unit) }],
-    choice: choiceUnits(spec, guideRules(kind.skill), defs),
-    definition: defs.map((d) => ({ id: `definition ${d.id}`, state: json({ definition: d.id, text: d.definition, intent }) })),
+    facts: [{ id: 'facts', whole: true, state: json(facts) }],
+    spec: [{ id: 'spec', whole: true, state: json({ intent, choices, document }) }],
+    choice: choiceUnits(spec, guideRules(kind.skill)),
+    definition: defs.map((d) => ({ id: `definition ${d.id}`, shared, state: json({ definition: d.id, text: d.definition }) })),
   };
 }
 
@@ -184,7 +168,7 @@ export const contractRubric: Rubric = {
     ] },
     { id: 'matches_intent', checks: [
       { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4, scope: 'spec', question: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' },
-      { id: 'follows_guide', label: 'A choice contradicts the guide', weight: 3, scope: 'choice', question: 'Does this choice agree with the guide rules shown, or, where it departs from one, does its why say what the person or the code required?' },
+      { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3, scope: 'choice', question: 'Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.' },
       { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3, scope: 'definition', question: 'Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs) was asked for.' },
     ] },
   ],
