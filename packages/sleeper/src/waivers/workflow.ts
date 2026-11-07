@@ -10,12 +10,12 @@ import type { LineupDeps } from '../lineup/workflow.ts';
 import type { LineupInput } from '../lineup/facts.ts';
 import { buildWaiversCard, type WaiverDecision } from './card.ts';
 import { buildWaiverFacts, type Valued, type WaiverFacts } from './facts.ts';
-import { waiversEvidence, waiversRubric } from './rubric.ts';
+import { WAIVERS_NEWS, waiversEvidence, waiversRubric } from './rubric.ts';
 import { newsGated } from '../rubric-kit.ts';
 
 export const WAIVERS_WORKFLOW = 'sleeper.waivers';
 
-/** The facts the card was judged on, kept in the session so eval can rebuild the judge's evidence from a recording. */
+/** The facts the card was judged on, kept in the session beside the card. */
 export const WAIVERS_FACTS_KIND = 'sleeper.waivers.facts';
 export const WaiversFactsDoc = defineDoc<{ facts: JsonObject | null }>({ kind: WAIVERS_FACTS_KIND, version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ facts: null }), checkpointWhen: () => false });
 
@@ -51,7 +51,7 @@ function factsPrompt(f: WaiverFacts): string {
 /** Waivers job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function waiversWorkflow(deps: WaiversDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(waiversRubric, ['close_call_news'], !!deps.news, 'close-call news');
+  const { rubric, notes } = newsGated(waiversRubric, WAIVERS_NEWS, !!deps.news);
   const judgeOptions = (f: WaiverFacts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: waiversEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: WAIVERS_WORKFLOW,

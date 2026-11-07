@@ -14,7 +14,7 @@ const note: EvalAdapter = {
   },
 };
 const adapters = adaptersOf([{ name: 'acme', evalAdapters: [note] }, { name: 'bare' }] as ExtensionManifest[]);
-const record = (content: string): SessionRecord => ({ inputs: [], outcome: { status: 'pending' }, turns: 0, usage: { input: 0, output: 0, cacheRead: 0 }, docs: {}, artifacts: { 'acme.note': [{ kind: 'acme.note', version: 1, hash: 'h', content, sealedAt: 0, verdict: null }] } });
+const record = (content: string): SessionRecord => ({ inputs: [], outcome: { status: 'pending' }, turns: 0, usage: { input: 0, output: 0, cacheRead: 0 }, docs: {}, runs: [], artifacts: { 'acme.note': [{ kind: 'acme.note', version: 1, hash: 'h', content, sealedAt: 0, verdict: null }] } });
 
 test('adapters are looked up by kind from the manifests that carry them, so eval names no extension', () => {
   assert.deepEqual(adapters, [note]);

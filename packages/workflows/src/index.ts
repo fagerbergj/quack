@@ -83,7 +83,7 @@ export function defineWorkflow(def: { name: string; steps: Step[]; chat?: Chat }
   if (!steps.length || names.size !== steps.length) throw new Error(`workflow ${name} needs at least one step and unique step names`);
 
   const task = defineTask<Input, Checkpoint, Results, object>({
-    name: `quack.workflow.${name}`,
+    name: `${TASK_PREFIX}${name}`,
     version: 1,
     initial: (i) => i.resume ?? { phase: steps[0].name, results: {} },
     phases: Object.fromEntries(steps.map((step, i) => [step.name, (running: RunningTask<Input, Checkpoint, Results>, rt: Runtime, ctx: Context) => runStep(steps, i, running, rt, ctx)])) as never,
@@ -137,6 +137,10 @@ export async function resumeWorkflow(harness: Harness, root: Conversation, workf
     return created;
   }, ctx);
 }
+
+const TASK_PREFIX = 'quack.workflow.';
+/** Whether a stored task is a workflow run. */
+export const isWorkflowRun = (taskKind: string) => taskKind.startsWith(TASK_PREFIX);
 
 /** The step results a recorded run's steps saw, from its task's stored state: the checkpoint while it can run, the result once completed, what a failed run kept. */
 export function runResults(doc: { kept?: Results | null }, state: { checkpoint?: unknown; outcome?: { status: string; result?: unknown } }): Results | undefined {

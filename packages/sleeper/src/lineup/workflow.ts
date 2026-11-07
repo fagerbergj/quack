@@ -7,7 +7,7 @@ import type { SleeperClient } from '../client.ts';
 import { liveLeague } from '../snapshot.ts';
 import { buildCard, cardsKind, type Decision } from './card.ts';
 import { buildFacts, type Facts, type FactsDeps, type LineupInput, type PlayerFact } from './facts.ts';
-import { lineupEvidence, lineupRubric } from './rubric.ts';
+import { LINEUP_NEWS, lineupEvidence, lineupRubric } from './rubric.ts';
 import { newsGated } from '../rubric-kit.ts';
 
 export const LINEUP_WORKFLOW = 'sleeper.lineup';
@@ -46,7 +46,7 @@ function factsPrompt(f: Facts): string {
 /** Lineup job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function lineupWorkflow(deps: LineupDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(lineupRubric, ['close_call_news'], !!deps.news, 'close-call news');
+  const { rubric, notes } = newsGated(lineupRubric, LINEUP_NEWS, !!deps.news);
   const judgeOptions = (f: Facts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: lineupEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: LINEUP_WORKFLOW,

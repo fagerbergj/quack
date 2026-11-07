@@ -1,5 +1,5 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { factsOf as factsIn, parseCard, share } from '../rubric-kit.ts';
+import { factsOf as factsIn, parseCard, share, type NewsGate } from '../rubric-kit.ts';
 import { closeCalls, type Facts } from './facts.ts';
 import type { LineupCard, Row } from './card.ts';
 
@@ -72,3 +72,6 @@ export const lineupRubric: Rubric = {
     ] },
   ],
 };
+
+/** The lineup job's news checks, gated by the live judge and its replay alike. */
+export const LINEUP_NEWS: NewsGate = { checks: ['close_call_news'], what: 'close-call news' };

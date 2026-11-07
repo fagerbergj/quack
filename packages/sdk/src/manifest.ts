@@ -68,7 +68,7 @@ export type RecordedSession = {
   artifacts: Record<string, SealedArtifact[]>;
   /** The person's messages, in order. */
   inputs?: string[];
-  /** The step results of the session's latest workflow run, by step name. */
+  /** The step results of the workflow run that sealed the judged version, by step name. */
   results?: JsonObject;
   /** A file of the session's workspace by its workspace-relative path; undefined when the recording kept none there. */
   readFile?: (path: string) => Promise<string | undefined>;

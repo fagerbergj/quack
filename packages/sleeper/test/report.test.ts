@@ -193,12 +193,13 @@ async function run(make: Make, input: object, decision: object, news?: News) {
 
 test('the digest workflow seals a recap and a preview card and the judge passes them, saying what was not checked', async () => {
   const recap = await run(digestWorkflow, RECAP, digestDecision);
-  assert.deepEqual(await replayed(recap.record, recap.sealed.content), await digestEvidence(await digestFacts())(null, recap.sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(recap.record, recap.sealed), await digestEvidence(await digestFacts())(null, recap.sealed), 'the recording rebuilds the evidence the judge read');
   assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed], ['digest', 'sleeper.digest@3', [], true]);
   assert.ok(recap.judged.some((q) => /real story/.test(q)));
   assert.ok(!recap.verdict.checks.some((k) => k.id === 'preview_news_decides'));
   assert.deepEqual(recap.verdict.notes, ['preview_news_decides not checked: no news source']);
   const preview = await run(digestWorkflow, PREVIEW, previewDecision, newsStub);
+  await replayed(preview.record, preview.sealed);
   assert.deepEqual([(JSON.parse(preview.sealed.content) as DigestCard).past, preview.verdict.gatesFailed, preview.verdict.passed, preview.verdict.notes], [false, [], true, []]);
   assert.ok(preview.judged.some((q) => /swings it/.test(q)));
 });
@@ -207,11 +208,12 @@ test('the retro workflow seals a card whose figures are the facts\' and the judg
   const f = await retroFacts(fixtures, newsStub);
   const decision: RetroDecision = { misses: [{ index: 0, why: 'Dash had the flex role.', knowable: true, signalUrl: f.misses[0].news[0].url }], waiverMisses: [{ index: 0, why: 'No signal before the run.', knowable: false }], lessons: ['Check Saturday\'s report.'], summary: 'Dan Dash over Ned Nope cost 12.' };
   const { sealed, verdict, judged, record } = await run(retroWorkflow, RECAP, decision, newsStub);
-  assert.deepEqual(await replayed(record, sealed.content), await retroEvidence(f)(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), await retroEvidence(f)(null, sealed), 'the recording rebuilds the evidence the judge read');
   const card = JSON.parse(sealed.content) as RetroCard;
   assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['retro', 12, true, 'sleeper.retro@3', [], true, []]);
   assert.ok(judged.some((q) => /not the same injury designation restated/.test(q)));
   const bare = await run(retroWorkflow, RECAP, { ...decision, misses: [{ index: 0, why: 'x', knowable: false }] });
+  await replayed(bare.record, bare.sealed);
   assert.deepEqual(bare.verdict.notes, ['signal_is_evidence not checked: no news source']);
 });
 

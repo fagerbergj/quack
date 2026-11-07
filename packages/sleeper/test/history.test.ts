@@ -125,7 +125,7 @@ async function run(d: HistoryDecision) {
 
 test('the workflow seals a history card whose figures are the tools and the judge passes it', async () => {
   const { sealed, verdict, judged, record } = await run(decision);
-  assert.deepEqual(await replayed(record, sealed.content), await historyEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), await historyEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
   const c = JSON.parse(sealed.content) as HistoryCard;
   assert.deepEqual([c.kind, c.seasons.map((s) => s.season), c.seasons[1].draft!.length], ['history', ['2026', '2025'], 3]);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@4', [], true]);

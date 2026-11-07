@@ -9,7 +9,7 @@ import type { LineupInput } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildTrendsCard, KINDS, when, type TrendsDecision } from './card.ts';
 import { buildTrendsFacts, type SnapshotRef, type TrendsFacts } from './facts.ts';
-import { NEWS_CHECKS, TEXT_MAX, trendsEvidence, trendsRubric } from './rubric.ts';
+import { TEXT_MAX, TRENDS_NEWS, trendsEvidence, trendsRubric } from './rubric.ts';
 import { newsGated } from '../rubric-kit.ts';
 
 export const TRENDS_WORKFLOW = 'sleeper.trends';
@@ -54,7 +54,7 @@ export function factsPrompt(f: TrendsFacts): string {
 /** Trends job: facts, one model step for prose, a sealed card, then the judge's verdict on it. */
 export function trendsWorkflow(deps: TrendsDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const { rubric, notes } = newsGated(trendsRubric, NEWS_CHECKS, !!deps.news, 'source conflicts and original sources');
+  const { rubric, notes } = newsGated(trendsRubric, TRENDS_NEWS, !!deps.news);
   const judgeOptions = (f: TrendsFacts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: trendsEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: TRENDS_WORKFLOW,

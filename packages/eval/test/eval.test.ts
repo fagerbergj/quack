@@ -117,7 +117,7 @@ test('datasets are created once, items upsert, and every page of items is read',
 const result: ReplayResult = {
   item: { id: 'item-1', input: { inputs: ['x'], pins: {} } },
   seconds: 42,
-  record: { inputs: ['x'], outcome: { status: 'done', answer: 'ok' }, turns: 7, usage: { input: 100, output: 20, cacheRead: 900 }, docs: {},
+  record: { inputs: ['x'], outcome: { status: 'done', answer: 'ok' }, turns: 7, usage: { input: 100, output: 20, cacheRead: 900 }, docs: {}, runs: [],
     artifacts: { 'github.review': [{ kind: 'github.review', version: 1, hash: 'h', content: 'v1', sealedAt: 0, verdict: { score: 0.6, passed: false } }, { kind: 'github.review', version: 2, hash: 'h2', content: 'v2', sealedAt: 0, verdict: { score: 0.95, passed: true } }] } },
   captured: [{ event: 'APPROVE' }],
   codeScores: {},

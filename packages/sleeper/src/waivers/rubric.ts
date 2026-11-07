@@ -1,5 +1,5 @@
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import { factsOf as factsIn, parseCard, share } from '../rubric-kit.ts';
+import { factsOf as factsIn, parseCard, share, type NewsGate } from '../rubric-kit.ts';
 import type { Candidate, WaiversCard } from './card.ts';
 import { worth, type WaiverFacts } from './facts.ts';
 
@@ -89,3 +89,6 @@ export const waiversRubric: Rubric = {
     ] },
   ],
 };
+
+/** The waivers job's news checks, gated by the live judge and its replay alike. */
+export const WAIVERS_NEWS: NewsGate = { checks: ['close_call_news'], what: 'close-call news' };

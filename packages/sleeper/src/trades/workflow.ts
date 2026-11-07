@@ -9,7 +9,7 @@ import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildFinderCard, buildTradeCard, type FinderDecision, type TradeDecision } from './card.ts';
 import { buildTradeFacts, dealable, playerOf, type FinderInput, type Side, type TPlayer, type TradeFacts, type TradeInput } from './facts.ts';
-import { tradeEvidence, tradeRubric } from './rubric.ts';
+import { TRADE_NEWS, tradeEvidence, tradeRubric } from './rubric.ts';
 import { newsGated } from '../rubric-kit.ts';
 
 export const TRADE_WORKFLOW = 'sleeper.trade';
@@ -66,7 +66,7 @@ function tradePrompt(f: TradeFacts, news: News): string {
 }
 
 const judgeOf = (deps: TradeJobDeps, f: TradeFacts) => {
-  const { rubric, notes } = newsGated(tradeRubric, ['news_per_traded_player'], !!deps.news, 'news');
+  const { rubric, notes } = newsGated(tradeRubric, TRADE_NEWS, !!deps.news);
   const options: JudgeOptions = { kind: cardsKind, rubric, evidence: tradeEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier };
   return { options, notes };
 };

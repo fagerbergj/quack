@@ -156,7 +156,7 @@ const deps = (news?: (p: { name: string }) => Promise<unknown[]>) => ({ client: 
 test('the trade workflow seals a card whose news the code searched for each traded player, and the judge passes it', async () => {
   const searched: string[] = [];
   const { sealed, verdict, judged, record } = await run(tradeWorkflow(deps(async (p) => (searched.push(p.name), [item]))), OFFER, tradeDecision);
-  assert.deepEqual(await replayed(record, sealed.content), await tradeEvidence(await factsOf(OFFER))(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), await tradeEvidence(await factsOf(OFFER))(null, sealed), 'the recording rebuilds the evidence the judge read');
   const c = JSON.parse(sealed.content) as TradeCard;
   assert.deepEqual([c.kind, c.partner.team, c.offers[0].verdict, c.offers[0].news.length, searched], ['trade', 'Pintail Pride', 'send', 2, ['Bo Bench', 'Tom Tail']]);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@4', [], true, []]);
@@ -165,7 +165,8 @@ test('the trade workflow seals a card whose news the code searched for each trad
 });
 
 test('without a news source the trade verdict says so and does not score news', async () => {
-  const { verdict } = await run(tradeWorkflow(deps()), OFFER, tradeDecision);
+  const { verdict, record, sealed } = await run(tradeWorkflow(deps()), OFFER, tradeDecision);
+  await replayed(record, sealed);
   assert.deepEqual([verdict.passed, verdict.notes], [true, ['news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'news_per_traded_player'));
 });
@@ -173,7 +174,7 @@ test('without a news source the trade verdict says so and does not score news', 
 test('the finder searches news once for every player a deal may name, gives it to the model before it decides, and seals a ranked card', async () => {
   const searched: string[] = [];
   const { sealed, verdict, asked, record } = await run(finderWorkflow(deps(async (p) => (searched.push(p.name), [{ ...item, title: `${p.name} report` }]))), FINDER, finderDecision);
-  assert.deepEqual(await replayed(record, sealed.content), await tradeEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), await tradeEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
   const c = JSON.parse(sealed.content) as FinderCard;
   const dealt = dealable(await factsOf()).map((p) => p.name);
   assert.deepEqual([...searched].sort(), [...dealt].sort(), 'each dealable player once, before the decision');

@@ -9,7 +9,7 @@ import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { rejudge, type ClassifierRef, type Evidence, type ModelRef, type Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { driveTool } from './driver.ts';
-import { readSession } from './record.ts';
+import { asJudged, readSession } from './record.ts';
 
 /** A recorded artifact to judge: from a session directory, or with its content and evidence given inline (for a kind whose adapter cannot rebuild evidence). */
 export type Case = { case: string; kind: string; checks?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence };
@@ -43,18 +43,17 @@ function watch(rubric: Rubric, names: string[] | undefined): Rubric {
 
 // An adapter that throws is declining the case for a reason (what the recording lacks); a case file without content is an error.
 async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> {
-  const record: RecordedSession = c.session ? await readSession(c.session) : { docs: {}, artifacts: {} };
+  // Adapters find the judged version by content, so they see the session as it was judged: a later version with the same content is not it.
+  const record: RecordedSession = c.session ? asJudged(await readSession(c.session), c.kind, c.version) : { docs: {}, artifacts: {} };
   const versions = record.artifacts[c.kind] ?? [];
   const content = c.content ?? (c.version ? versions.find((v) => v.version === c.version) : versions.at(-1))?.content;
   if (content === undefined) throw new Error(`${c.case}: no ${c.kind} content in the case or its session`);
-  // Adapters find the judged version by content, so they see the kind only up to it: a later version with the same content is not it.
-  const upTo = c.version ? { ...record, artifacts: { ...record.artifacts, [c.kind]: versions.filter((v) => v.version <= c.version!) } } : record;
-  const reasons: string[] = [];
+  const reasons = new Set<string>();
   for (const a of arm.adapters.filter((x) => x.kind === c.kind && x.judge)) {
-    const evidence = c.evidence ?? (await a.judge!.evidence(upTo, content).catch((err: Error) => void reasons.push(err.message)));
+    const evidence = c.evidence ?? (await a.judge!.evidence(record, content).catch((err: Error) => void reasons.add(err.message)));
     if (evidence) return { arm: arm.label, classifier: arm.classifier, c, content, evidence: evidence as Evidence, rubric: watch(a.judge!.rubric as Rubric, c.checks) };
   }
-  return { arm: arm.label, case: c.case, reason: reasons.join('; ') || `no adapter judges ${c.kind} with this evidence` };
+  return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {

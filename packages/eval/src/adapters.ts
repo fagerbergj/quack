@@ -1,6 +1,6 @@
 import type { EvalAdapter, ExtensionManifest } from '@quack/sdk';
 import { codeResults, score, type Evidence, type Rubric } from '@quack/judge';
-import type { SessionRecord } from './record.ts';
+import { asJudged, type SessionRecord } from './record.ts';
 import type { EvalServices } from './replay.ts';
 import type { Blocks } from './report.ts';
 
@@ -24,7 +24,7 @@ export async function adapterScores(adapters: EvalAdapter[], record: SessionReco
     const content = record.artifacts[a.kind]?.at(-1)?.content;
     if (!a.judge || content === undefined) continue;
     const rubric = a.judge.rubric as Rubric;
-    const evidence = (await a.judge.evidence(record, content)) as Evidence | undefined;
+    const evidence = (await a.judge.evidence(asJudged(record, a.kind), content)) as Evidence | undefined;
     if (!evidence) continue;
     const s = score(rubric, codeResults(rubric, content, evidence));
     out[`${a.kind}.code_score`] = s.score;
