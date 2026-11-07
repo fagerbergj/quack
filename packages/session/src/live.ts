@@ -4,9 +4,9 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { ConversationTranscript, type TranscriptItem, type TranscriptView } from '@earendil-works/pi-durable';
 import { MAX_IMAGE_CHARS, MAX_IMAGES, parseImages } from './images.ts';
 import type { ImageContent } from '@earendil-works/pi-ai';
-import { Approvals, Artifacts, failedRows, Failures, pendingQuestions, Questions } from '@quack/sdk';
+import { Approvals, Artifacts, failedRows, Failures, pendingQuestions, type Principal, Questions } from '@quack/sdk';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { Session } from './runtime.ts';
+import type { Caller, Session } from './runtime.ts';
 
 // The same budget as an HTTP invocation body. JSON escapes grow a character up to six (\u0000), so maxPayload allows
 // for that and every in-budget input reaches the polite length check.
@@ -79,7 +79,7 @@ async function watchStanding(session: Session, ws: WebSocket) {
 }
 
 // Streams pi-durable's conversation view: the transcript items when they change, the live, usage and inbox state on every change.
-async function stream(session: Session, ws: WebSocket) {
+async function stream(session: Session, ws: WebSocket, caller: Caller) {
   const { root } = session;
   const transcript = new ConversationTranscript((query, limit, c) => root.entries(query, limit, undefined, c));
   let sentItems: unknown;
@@ -109,7 +109,7 @@ async function stream(session: Session, ws: WebSocket) {
     try {
       if (input.type === 'earlier') return void (await render(await transcript.loadEarlier(BACKGROUND_CONTEXT)));
       if (input.type === 'gap') return void (await render(await transcript.fillGap(input.gap, BACKGROUND_CONTEXT)));
-      if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer'));
+      if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer', caller));
       const result = await session.submit(input.input, input.requestId, false, input.whenBusy, input.images);
       ws.send(JSON.stringify({ type: 'accepted', ...result, requestId }));
     } catch (err) {
@@ -121,8 +121,8 @@ async function stream(session: Session, ws: WebSocket) {
 
 export function liveUpgrade(session: Session) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + MAX_IMAGES * MAX_IMAGE_CHARS + 1024 });
-  return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+  return (req: IncomingMessage, socket: Duplex, head: Buffer, who?: Principal) => {
     if (req.url !== '/ws') return socket.destroy();
-    wss.handleUpgrade(req, socket, head, (ws) => void stream(session, ws).catch(() => ws.close(1011)));
+    wss.handleUpgrade(req, socket, head, (ws) => void stream(session, ws, who ?? 'service').catch(() => ws.close(1011)));
   };
 }

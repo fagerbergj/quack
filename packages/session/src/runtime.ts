@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type ImageContent, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, LiveDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { Failures, pendingApprovals, statusNote } from '@quack/sdk';
+import { closeQuestions, Failures, pendingApprovals, statusNote, type Principal } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -52,6 +52,9 @@ export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: R
 // pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
 
+/** Who stopped or changed queued work, for the log line: the principal the distributor named, another service, or the run ceiling. */
+export type Caller = Principal | 'service' | 'run-ceiling';
+
 const REPORTED = new Set(['task_interrupted', 'task_faulted', 'extension_error', 'host_error']);
 const EXPORTED = new Set(['pi.user', 'pi.assistant', 'pi.tool-result']);
 
@@ -64,20 +67,22 @@ export function reportLine({ error, ...info }: Report): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth.
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
   registry.install(cutOffExtension());
   // The sink needs the harness, which opens after the registry; hooks only call it once a run is going.
   let open: Harness | undefined;
+  const log = opts.log ?? console.error;
+  const note = (event: string, fields: Record<string, unknown>) => log(JSON.stringify({ event: `session.${event}`, key: opts.key, ...fields }));
   registry.install(unknownToolExtension(async (id) => (await (await open!.conversation(id, ctx))!.agent(ctx)).tools.map((t) => t.name)));
   registry.install(runCeilingExtension(opts.agent.turnCeiling ?? TURN_CEILING, {
     async record(id, run, error) {
       const conversation = await open!.conversation(id, ctx);
       await conversation!.commit(async (tx) => { (await tx.doc(Failures, id)).items.runaway = { error, run: Number(run) || 0, at: Date.now() }; }, ctx);
-      // Not awaited: abort waits for the hook's own task to settle.
-      if (error) void conversation!.abort(ctx).catch(() => undefined);
+      // Not awaited: the abort waits for the hook's own task to settle.
+      if (error) void stopRun(conversation!).then((r) => note('abort', { caller: 'run-ceiling', ...r }), () => undefined);
     },
   }));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
@@ -87,7 +92,6 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   await mkdir(workspace, { recursive: true });
   const sees = !!opts.models.getModel(opts.agent.model.provider, opts.agent.model.modelId)?.input.includes('image');
   const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
-  const log = opts.log ?? console.error;
   const onReport = (report: Report) => {
     const line = reportLine(report);
     if (line) log(line);
@@ -113,6 +117,30 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   if (stale) await root.configure({ model: agent.model, instructions: agent.instructions ?? null }, ctx);
   harness.resume();
   await watchModelFaults(harness, root, log);
+  // A process that stopped mid-abort left the queue with nothing to run it. A close ends the wait; a storage error reaches onReport.
+  void root.waitForIdle(ctx).then(() => startQueued(root)).catch(() => undefined);
+
+  // Stops the conversation's current work only. Conversation.abort() withdraws queued inputs, so this aborts the work's
+  // tasks instead and lets the inputs queued behind it start the next run.
+  async function stopRun(c: Conversation) {
+    const run = (await harness.snapshot(LiveDoc, c.id, ctx))?.run;
+    const top = (await harness.inspect(ctx)).tasks.map((t) => t.record).filter((t) => t.conversationId === c.id && t.owner === undefined && !t.background);
+    await Promise.all(top.map((t) => harness.abortTask(t.id, ctx)));
+    await Promise.all(top.map((t) => harness.waitForTask(t.id, ctx)));
+    // Before the next run starts, so a question it asks stays open.
+    await closeQuestions(c, ctx);
+    return { aborted: (run?.inputs ?? []).map(String), ...(await startQueued(c)) };
+  }
+
+  // A continue places the queued inputs, oldest first, as the next run's input; in one commit, so a racing input or withdraw wins cleanly.
+  function startQueued(c: Conversation) {
+    return c.commit(async (tx) => {
+      const kept = (await tx.doc(InboxDoc, c.id)).items.filter((i) => i.mode !== 'write').map((i) => String(i.id));
+      const idle = (await tx.doc(LiveDoc, c.id)).run === undefined;
+      if (kept.length && idle) await c.submit(tx, { type: 'continue' });
+      return { kept, queue: !kept.length ? 'empty' : idle ? 'started the next run' : 'placed by the run already going' };
+    }, ctx);
+  }
 
   const dispatch = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.dispatch)?.dispatch;
   const resume = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.resume)?.resume;
@@ -203,13 +231,20 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       const inbox = await harness.snapshot(InboxDoc, root.id, ctx);
       return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]), content: i.content as UserInput }] : []));
     },
+    // Stops the current run; input queued behind it is kept and starts the next run.
+    async abort(caller: Caller) {
+      const result = await stopRun(root);
+      note('abort', { caller, ...result });
+      return result;
+    },
     // Withdraws a queued follow-up; false when the run already took it. With `steer`, sends its text again as a steer.
-    async withdraw(id: string, steer = false): Promise<boolean> {
+    async withdraw(id: string, steer = false, caller: Caller = 'service'): Promise<boolean> {
       const item = (await this.queuedItems()).find((q) => q.id === id);
       const submission = item && (await harness.submission(id as never, ctx));
-      if (!item || (await submission!.abort(ctx)) !== 'aborted') return false;
-      if (steer) await this.submitContent(item.content, undefined, false, 'steer');
-      return true;
+      const removed = !!item && (await submission!.abort(ctx)) === 'aborted';
+      const steered = removed && steer ? (await this.submitContent(item.content, undefined, false, 'steer')).submissionId : undefined;
+      note(steer ? 'steer' : 'withdraw', { caller, submission: id, queue: removed ? 'removed' : 'not queued', ...(steered && { steered }) });
+      return removed;
     },
     // Images ride in the user message, so the transcript shows them after a reload; a model without image input is refused.
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp', images: ImageContent[] = []): Promise<SubmitResult> {

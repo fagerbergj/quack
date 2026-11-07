@@ -25,7 +25,7 @@ const deployment = await resolveDeployment(config, fetch, referencedProviders(de
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions);
 const { name: agentName, version: agentVersion, extensions } = definition;
 
-const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec });
+const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, key: process.env.QUACK_SESSION_KEY });
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
   ? await startPublisher(session, { url: process.env.QUACK_INDEX_URL, token: process.env.QUACK_INDEX_TOKEN, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion }, priceOf: priceOf(deployment) })
   : undefined;

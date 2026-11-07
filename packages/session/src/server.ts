@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { answerQuestion, type AnswerInput, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp } from '@quack/sdk';
+import { answerQuestion, type AnswerInput, Artifacts, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
@@ -105,9 +105,9 @@ async function exported(session: Session): Promise<[number, unknown]> {
   return [200, { transcript: await session.transcript(), artifacts: sealed }];
 }
 
-async function abort(session: Session): Promise<[number, unknown]> {
-  await session.root.abort(ctx);
-  await closeQuestions(session.root, ctx);
+// With no principal named, the caller is a service on the distributor's session listener.
+async function abort(session: Session, _req: IncomingMessage, _match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {
+  await session.abort(who ?? 'service');
   return [200, { aborted: true }];
 }
 
@@ -165,7 +165,7 @@ export function createSessionServer(session: Session, opts: { token?: string } =
     if (!admitted(req)) return socket.destroy();
     live.add(socket);
     socket.once('close', () => live.delete(socket));
-    upgrade(req, socket, head);
+    upgrade(req, socket, head, who(req));
   });
   /** Stops listening and ends every connection, live sockets and held invocations included; resolves once the server has closed. */
   const shutdown = () => new Promise<void>((resolve) => {
