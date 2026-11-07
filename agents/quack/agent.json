@@ -1,11 +1,12 @@
 {
   "name": "quack",
-  "version": 1,
+  "version": 2,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
   "extensions": {
-    "home": {}
+    "home": {},
+    "subagent": {}
   },
   "retention": {
     "idleDays": 30

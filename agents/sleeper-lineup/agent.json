@@ -1,13 +1,14 @@
 {
   "name": "sleeper-lineup",
-  "version": 4,
+  "version": 5,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
   "extensions": {
     "workflows": {
       "workflow": "sleeper.lineup"
-    }
+    },
+    "subagent": {}
   },
   "retention": {
     "idleDays": 30
