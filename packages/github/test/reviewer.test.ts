@@ -226,6 +226,21 @@ test('a second passing version on the same checkout is not posted; a later reque
   await session.close();
 });
 
+test('a reply to an own comment on the reviewed head is worth another look: the next request checks out and shows it', async () => {
+  const thread = { id: 1, path: 'app.ts', line: 1, commit: 'a'.repeat(40), at: '2026-11-09T22:58:17Z', outdated: false, body: '**question**: is the route exposed?', replies: [] as object[], repliesCut: 0 };
+  const feedback = { reviews: [], comments: [], ownThreads: [thread], ownThreadsCut: 0 };
+  const { seen, session, live } = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [checkout(), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')), checkout(), step(fauxAssistantMessage('Nothing to do.')), checkout(), step(fauxAssistantMessage('Looking again.'))];
+  }, { feedback });
+  await session.submit('/review', 'gh-2', true);
+  assert.match(seen[3], /already reviewed \w{40}: nothing to do this turn/);
+  live.feedback = { ...feedback, ownThreads: [{ ...thread, replies: [{ author: 'dev', at: '2026-11-09T23:01:23Z', body: 'Checked on prod: it 302s to the login.' }] }] };
+  await session.submit('/review', 'gh-3', true);
+  assert.match(seen[4], /Checked out \w{40}.*- reply by dev at 2026-11-09T23:01:23Z:\\n  Checked on prod/);
+  await session.close();
+});
+
 test('reply_mention sends the answer to the service with the thread it was given', async () => {
   const { seen, service, session } = await reviewRun((seen) => [call('reply_mention', { repository: 'acme/widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }), recorder(seen)(fauxAssistantMessage('Answered.'))]);
   assert.match(seen[0], /Replied: https:\/\/github.com\/acme\/widgets\/pull\/7#discussion_r56/);

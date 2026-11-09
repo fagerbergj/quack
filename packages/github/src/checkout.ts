@@ -67,8 +67,8 @@ export async function fetchRecord(config: SessionConfig, owner: string, repo: st
 }
 
 const alreadyPosted = (doc: { posted?: number[]; reviewed?: Record<string, string> } | undefined, sha: string) => !!doc?.posted?.some((v) => doc.reviewed?.[String(v)] === sha);
-// What a review read besides the code: a new description or CI result is worth another look at the same head.
-const seen = (pr: PullRequestRecord | null | undefined) => JSON.stringify(pr && [pr.headSha, pr.body, pr.checks]);
+// What a review read besides the code: a new description, CI result or reply to its comments is worth another look at the same head.
+const seen = (pr: PullRequestRecord | null | undefined) => JSON.stringify(pr && [pr.headSha, pr.body, pr.checks, renderOwnThreads(pr.feedback)]);
 const skipReason = (pr: PullRequestRecord, prior: (Parameters<typeof alreadyPosted>[0] & { pr?: PullRequestRecord | null }) | undefined) =>
   pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) && seen(prior?.pr) === seen(pr) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
 const staleNote = (asked: string | undefined, live: string) => (asked && asked !== live ? `The request was for ${asked}, an older head; this reviews the live head ${live}.` : '');
