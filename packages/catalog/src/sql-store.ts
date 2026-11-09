@@ -182,6 +182,10 @@ export function sqlStore(driver: Driver, opts: { currency: string }): SessionCat
       });
     },
 
+    recordTurn(w, { key, at }) {
+      return onEvent(key, w, undefined, (sql) => sql.run('update catalog_sessions set last_activity = ? where key = ?', [at, key]));
+    },
+
     recordSpend(w, { key, cost, tokens }) {
       type Out = { applied: boolean; refused?: 'currency' | 'regressed' };
       return onEvent<Out>(key, w, { applied: false }, async (sql, row) => {
