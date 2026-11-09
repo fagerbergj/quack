@@ -24,6 +24,10 @@ const spec = (version: number, content: object, verdict: Verdict | null = pass):
 const approvedRec = (artifact: number, version: number): SealedArtifact => ({ kind: 'contract.approved', version: 1, hash: 'r', content: JSON.stringify({ version, artifact, note: `Approved version ${version}`, approval: 'old' }), sealedAt: 10, verdict: null });
 const proposal = (artifact: number, version: number, breaks: object[] = []) => ({ id: 'p/1', tool: 'propose_contract', args: { summary: `Approve GET /apps/sleeper/schedule v${version}`, version, artifact, hash: `h${artifact}`, findings: [], breaks }, requestedAt: 20 });
 
+// The contracts app's status read, as the page fetches it for this session.
+const STATUS = `GET /apps/contracts/contracts/${KEY}`;
+const status = (...versions: Array<[number, string]>) => ({ key: 'contracts:s1', versions: versions.map(([artifact, st]) => ({ artifact, version: artifact, status: st })) });
+
 function open(artifacts: SealedArtifact[], approvals: object[] = []) {
   live[KEY] = { artifacts, approvals };
   location.hash = `#/s/${KEY}`;
@@ -51,22 +55,37 @@ test('a semantic diff marks the elements that changed, by the pointer each is dr
   expect([...code.marks]).toEqual([['/A/n', 'changed'], ['/A/m', 'added'], ['/B', 'added'], ['/B/x', 'added']]);
 });
 
-test('only a version the judge passed and put up can be approved; every other state says why not', () => {
-  const v = (verdict: Verdict | null) => ({ a: spec(2, v2, verdict), spec: v2 as ContractSpec });
-  expect(approvalState(v(null), undefined, undefined, true)).toEqual({ can: false, text: "Version 2 can't be approved yet: its checks are still running." });
-  expect(approvalState(v(fail), undefined, undefined, true).text).toBe("Version 2 can't be approved: it didn't pass its checks (A choice's link doesn't resolve). The agent is revising it.");
-  expect(approvalState(v({ ...fail, limitReached: true }), undefined, undefined, false).text).toMatch(/Tell the agent what to change\.$/);
-  expect(approvalState(v(pass), undefined, undefined, true).can).toBe(false);
-  expect(approvalState(v(pass), undefined, undefined, false).text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
-  expect(approvalState(v(pass), proposal(2, 2), undefined, true)).toEqual({ can: true, text: 'Version 2 passed its checks.' });
-  expect(approvalState(v(pass), undefined, 2, false)).toEqual({ can: false, done: true, text: 'Version 2 is approved.' });
+test('only a version put up for approval can be approved; every other status says why not, a verdict explaining a draft', () => {
+  const v = (verdict?: Verdict | null) => ({ a: verdict === undefined ? bare(2, v2) : spec(2, v2, verdict), spec: v2 as ContractSpec });
+  expect(approvalState(v(), undefined, undefined, false)).toEqual({ can: false, text: 'Reading where version 2 stands…' });
+  expect(approvalState(v(null), undefined, undefined, true, 'draft')).toEqual({ can: false, text: "Version 2 can't be approved yet: its checks are still running." });
+  expect(approvalState(v(fail), undefined, undefined, true, 'draft').text).toBe("Version 2 can't be approved: it didn't pass its checks (A choice's link doesn't resolve). The agent is revising it.");
+  expect(approvalState(v({ ...fail, limitReached: true }), undefined, undefined, false, 'draft').text).toMatch(/Tell the agent what to change\.$/);
+  expect(approvalState(v(), undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
+  expect(approvalState(v(), undefined, undefined, true, 'proposed').can).toBe(false);
+  expect(approvalState(v(), undefined, undefined, false, 'proposed').text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
+  expect(approvalState(v(), undefined, undefined, false, 'changes_requested').text).toBe('You asked for changes to version 2.');
+  expect(approvalState(v(), proposal(2, 2), undefined, true, 'proposed')).toEqual({ can: true, text: 'Version 2 passed its checks.' });
+  expect(approvalState(v(), undefined, 2, false, 'approved')).toEqual({ can: false, done: true, text: 'Version 2 is approved.' });
+});
+
+test('until the status answers, nothing is compared and no version carries a status label', async () => {
+  localStorage.setItem('quack.contracts.seen.contracts:s1', '1');
+  const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`));
+  expect(within(pane).queryByRole('heading', { name: /since version/ })).toBeNull();
+  const from = screen.getByRole('combobox', { name: 'Compare from' });
+  expect(from).toHaveValue('');
+  expect(within(from).getAllByRole('option').map((o) => o.textContent)).toEqual(['none', 'Version 2', 'Version 1']);
+  expect(within(bar()).getByRole('status')).toHaveTextContent('Reading where version 2 stands…');
 });
 
 test('the contract sits beside the conversation with what changed since this viewer last looked, and approving it decides the waiting proposal', async () => {
   localStorage.setItem('quack.contracts.seen.contracts:s1', '1');
   routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, [{ text: 'runs are now oldest first' }])]);
-  expect(within(pane).getByRole('heading', { name: /^\d+ new · \d+ changed.* since version 1$/ })).toBeInTheDocument();
+  expect(await within(pane).findByRole('heading', { name: /^\d+ new · \d+ changed.* since version 1$/ })).toBeInTheDocument();
   expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
   expect(within(bar()).getByText(/Breaks callers of the approved version, checked in code: runs are now oldest first/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Reject/ }), 'the pane decides it, not a transcript card').toBeNull();
@@ -77,10 +96,12 @@ test('the contract sits beside the conversation with what changed since this vie
 });
 
 test('each sealed draft replaces the shown one live: checking, then failed, each refused with its reason', async () => {
+  routes[STATUS] = status([1, 'approved']);
   const { ws } = open([spec(1, v1), approvedRec(1, 1)]);
-  expect(within(bar()).getByRole('status')).toHaveTextContent('Version 1 is approved.');
+  expect(await within(bar()).findByText('Version 1 is approved.')).toBeInTheDocument();
+  routes[STATUS] = status([1, 'approved'], [2, 'draft']);
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, null)] });
-  expect(within(bar()).getByRole('status')).toHaveTextContent("Version 2 can't be approved yet: its checks are still running.");
+  expect(await within(bar()).findByText("Version 2 can't be approved yet: its checks are still running.")).toBeInTheDocument();
   expect(screen.getByText('the approved version'), 'a viewer who never looked compares with the approved version').toBeInTheDocument();
   expect(screen.getByRole('combobox', { name: 'Compare from' })).toHaveValue('1');
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
@@ -109,9 +130,6 @@ test('an approval another tab already decided says so instead of failing silentl
   expect(await within(bar()).findByRole('alert')).toHaveTextContent('already decided');
 });
 
-// The contracts app's status read, as the page fetches it for this session.
-const STATUS = `GET /apps/contracts/contracts/${KEY}`;
-const status = (...versions: Array<[number, string]>) => ({ key: 'contracts:s1', versions: versions.map(([artifact, st]) => ({ artifact, version: artifact, status: st })) });
 // A version as the catalog lists it: no verdict at all.
 const bare = (version: number, content: object): SealedArtifact => { const { verdict: _, ...a } = spec(version, content); return a; };
 const tsSpec = (version: number, document: string) => ({ kind: 'typescript', title: 'Shapes', version, intent: { purpose: 'Shapes' }, choices: [], document });
@@ -170,11 +188,14 @@ test('on a phone the contract and the chat are tabs, and the chat tab counts wai
 test('on a phone a version counts as looked at only while the Contract tab shows it', async () => {
   stubViewport(false);
   const seen = () => localStorage.getItem('quack.contracts.seen.contracts:s1');
+  routes[STATUS] = status([1, 'proposed']);
   const { ws } = open([spec(1, v1)]);
-  expect(seen()).toBe('1');
+  await waitFor(() => expect(seen()).toBe('1'));
+  routes[STATUS] = status([1, 'proposed'], [2, 'proposed']);
   const tabs = screen.getByRole('tablist', { name: 'Show' });
   await userEvent.click(within(tabs).getByRole('tab', { name: 'Chat' }));
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), spec(2, v2)] });
+  await waitFor(() => expect(within(screen.getByRole('combobox', { name: 'Compare from' })).getByRole('option', { name: 'Version 2, awaiting approval' })).toBeInTheDocument());
   expect(seen(), 'version 2 sealed while the chat tab was shown').toBe('1');
   await userEvent.click(within(tabs).getByRole('tab', { name: 'Contract' }));
   expect(seen()).toBe('2');

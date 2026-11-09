@@ -15,13 +15,12 @@ export const VIEWS = { rest: RestView, 'json-schema': JsonSchemaView, typescript
 
 /** One sealed spec artifact and the spec it holds. */
 export type Version = { a: SealedArtifact; spec: ContractSpec };
-const passed = (a: SealedArtifact) => a.verdict?.passed === true;
 /** Where a version stands with the person, from the contracts app. */
 export type StatusOf = (v: Version) => VersionStatus;
 const offered = (p: Approval) => (p.tool === 'propose_contract' ? (p.args as { artifact?: number } | null)?.artifact : undefined);
 
 /** Each version's status from the contracts app, read again whenever a version is sealed, a proposal opens or is decided, or a run ends;
- * undefined while the app is not mounted, and then the judge's verdicts decide as they did before it. */
+ * undefined until the first read answers. */
 function useStatus(sessionKey: string, artifacts: SealedArtifact[], approvals: Approval[], running: boolean): StatusOf | undefined {
   const asked = approvals.map(offered).filter((n) => n !== undefined);
   const { data } = useLoad(() => contractVersions(sessionKey), [sessionKey, artifacts.length, asked.join(), running], undefined);
@@ -30,24 +29,17 @@ function useStatus(sessionKey: string, artifacts: SealedArtifact[], approvals: A
   return (v) => { const s = data.get(v.a.version) ?? 'draft'; return s === 'draft' && asked.includes(v.a.version) ? 'proposed' : s; };
 }
 
-/** The artifact the newest approval approved: its record names it, or an older record only its spec version, the last passing artifact of it. */
-export function approvedArtifact(artifacts: SealedArtifact[], versions: Version[]): number | undefined {
-  const rec = artifacts.filter((a) => a.kind === 'contract.approved').at(-1);
-  if (!rec) return undefined;
-  const { version, artifact } = JSON.parse(rec.content) as { version: number; artifact?: number };
-  return artifact ?? versions.findLast((v) => passed(v.a) && v.spec.version === version)?.a.version;
-}
-
 type State = { can: boolean; done?: boolean; text: string };
 
-// A version not up for approval: the judge's verdict when the socket carries one, else its status; only a passed version is ever proposed.
+// A version not up for approval, by its status; a verdict the socket carries only explains a draft the judge failed or is still checking.
 function waiting(n: number, v: Verdict | null | undefined, status: VersionStatus | undefined, running: boolean): State {
+  if (!status) return { can: false, text: `Reading where version ${n} stands…` };
+  if (status === 'proposed') return { can: false, text: running ? `Version ${n} passed; the agent puts it up for approval when this step ends.` : `Version ${n} is not up for approval. Send a message and the agent puts it up again.` };
   if (v && !v.passed) {
     const failed = v.checks.filter(checkFailed).map((c) => c.label).join('; ');
     return { can: false, text: `Version ${n} can't be approved: it didn't pass its checks (${failed || v.gatesFailed.join(', ')}). ${v.limitReached ? 'Tell the agent what to change.' : 'The agent is revising it.'}` };
   }
-  if (v?.passed || status === 'proposed') return { can: false, text: running ? `Version ${n} passed; the agent puts it up for approval when this step ends.` : `Version ${n} is not up for approval. Send a message and the agent puts it up again.` };
-  if (v === null || !status) return { can: false, text: `Version ${n} can't be approved yet: its checks are still running.` };
+  if (v === null) return { can: false, text: `Version ${n} can't be approved yet: its checks are still running.` };
   return { can: false, text: running ? `Version ${n} is a draft: the agent puts it up for approval once it passes its checks.` : `Version ${n} is a draft and not up for approval. Send a message and the agent goes on.` };
 }
 
@@ -86,8 +78,7 @@ export function useSeen(key: string, newest: number | undefined, visible: boolea
 }
 
 const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
-const suffix = (v: Version, status?: StatusOf) => (status ? `, ${LABEL[status(v)]}` : !v.a.verdict ? ', checking' : passed(v.a) ? '' : ', failed');
-const nameOf = (v: Version, all: Version[], status?: StatusOf) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}${suffix(v, status)}`;
+const nameOf = (v: Version, all: Version[], status?: StatusOf) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}${status ? `, ${LABEL[status(v)]}` : ''}`;
 
 // A TypeScript spec is compared through its parsed declarations, which load with the compiler; until then there is no comparison.
 function useDiff(from: Version | undefined, to: Version) {
@@ -177,16 +168,16 @@ export function ContractStudio({ sessionKey, artifacts, approvals, running, deci
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
   const newest = versions.at(-1);
   const status = useStatus(sessionKey, artifacts, approvals, running);
-  // A version counts once it was put to the person; without the app, once the judge passed it.
-  const base = useSeen(sessionKey, versions.findLast((v) => (status ? status(v) !== 'draft' : passed(v.a)))?.a.version, visible);
+  // A version counts once it was put to the person; until the status answers, none does and nothing is compared.
+  const base = useSeen(sessionKey, status && versions.findLast((v) => status(v) !== 'draft')?.a.version, visible);
   const [picked, pick] = useState<{ from?: number; to: number }>();
   if (!newest) return <p className="m-0 p-5 text-sm text-muted">The contract shows here as soon as the agent writes its first version.</p>;
   const proposal = approvals.find((a) => offered(a) === newest.a.version);
-  const approved = status ? versions.findLast((v) => status(v) === 'approved')?.a.version : approvedArtifact(artifacts, versions);
+  const approved = status && versions.findLast((v) => status(v) === 'approved')?.a.version;
   const state = approvalState(newest, proposal, approved, running, status?.(newest));
   const to = versions.find((v) => v.a.version === (picked?.to ?? newest.a.version)) ?? newest;
   // A viewer who has not looked yet is shown what changed since the approved version.
-  const since = base ?? approved;
+  const since = status && (base ?? approved);
   const from = versions.find((v) => v.a.version === (picked ? picked.from : since) && v !== to);
   return (
     <div className="mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5">
