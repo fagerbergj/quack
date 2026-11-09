@@ -1,8 +1,10 @@
 // The contracts extension's own read: each Contract Studio session's contract, from its sealed artifacts in the catalog.
+import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { escapeTerm, sendProblem, serviceHttp, type App, type AppContext } from '@quack/sdk';
 import { APPROVED_KIND, CHANGES_KIND } from './approval.ts';
-import { CONTRACT_KIND } from './spec.ts';
+import { parseFilter, QueryError } from './filter.ts';
+import { CONTRACT_KIND, SPEC_KINDS } from './spec.ts';
 
 /** One contract as the Contracts page shows it. Versions are the contract's own spec versions, not artifact numbers. */
 export type ContractRecord = {
@@ -25,7 +27,28 @@ const { send } = serviceHttp();
 export const PAGE = /^\/contracts(?:\/[^/]+)?$/;
 const ONE = /^\/contracts\/([^/]+)$/;
 const keyOf = (path: string) => { try { return decodeURIComponent(ONE.exec(path)?.[1] ?? ''); } catch { return ''; } };
-const parse = (content: string | undefined): Record<string, unknown> => { try { return JSON.parse(content ?? '') ?? {}; } catch { return {}; } };
+// A pageSize or pageToken the list cannot read, including a token the catalog refuses: the 400.
+class BadRequest extends Error {}
+function sizeOf(param: string | null): number {
+  const size = param === null ? 100 : /^\d+$/.test(param) ? Number(param) : 0;
+  if (size < 1 || size > 1000) throw new BadRequest('pageSize must be an integer from 1 to 1000');
+  return size;
+}
+// A filter that matches little would otherwise walk the whole catalog in one request; a short page with a token is allowed.
+const MAX_CATALOG_PAGES = 10;
+// The page token is the catalog's cursor bound to the whole q, so a token sent with any other q is refused (AIP-158).
+const digestOf = (q: string) => createHash('sha256').update(q.trim()).digest('base64url').slice(0, 22);
+const tokenOf = (cursor: string, q: string) => Buffer.from(JSON.stringify([cursor, digestOf(q)])).toString('base64url');
+function cursorOf(token: string | null, q: string): string {
+  if (!token) return '';
+  let parsed: unknown;
+  try { parsed = JSON.parse(Buffer.from(token, 'base64url').toString()); } catch { parsed = undefined; }
+  const [cursor, digest] = Array.isArray(parsed) ? parsed : [];
+  if (typeof cursor !== 'string' || !cursor) throw new BadRequest('pageToken is not one this list issued');
+  if (digest !== digestOf(q)) throw new BadRequest('pageToken was issued for a different q');
+  return cursor;
+}
+const parse =(content: string | undefined): Record<string, unknown> => { try { return JSON.parse(content ?? '') ?? {}; } catch { return {}; } };
 const newest = (all: Artifact[], kind: string) => all.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version).at(-1);
 const versionOf = (a: Artifact | undefined) => (typeof parse(a?.content).version === 'number' ? (parse(a?.content).version as number) : undefined);
 
@@ -35,7 +58,7 @@ export function contractOf(key: string, fallbackTitle: string | undefined, artif
   const proposals = asks.filter((a) => a.toolCall?.tool === 'propose_contract');
   const proposed = Math.max(...proposals.map((a) => Number((a.toolCall?.args as { version?: unknown } | null)?.version) || 0));
   return {
-    key, title: typeof spec.title === 'string' ? spec.title : (fallbackTitle ?? 'New contract'), kind: typeof spec.kind === 'string' ? spec.kind : 'rest',
+    key, title: typeof spec.title === 'string' ? spec.title : (fallbackTitle ?? 'New contract'), kind: (SPEC_KINDS as readonly unknown[]).includes(spec.kind) ? (spec.kind as string) : 'rest',
     ...(typeof spec.version === 'number' && { draft: spec.version }), ...(proposed > 0 && { proposed }),
     ...(versionOf(newest(artifacts, APPROVED_KIND)) !== undefined && { approved: versionOf(newest(artifacts, APPROVED_KIND)) }),
     ...(versionOf(newest(artifacts, CHANGES_KIND)) !== undefined && { changesRequested: versionOf(newest(artifacts, CHANGES_KIND)) }),
@@ -83,13 +106,29 @@ export function contractsApp(ctx: AppContext): App {
     const [artifacts, asks] = await Promise.all([all<Artifact>(`${base}/artifacts?q=${encodeURIComponent('kind:contract.*')}`, 'artifacts'), all<Ask>(`${base}/asks?q=${encodeURIComponent('tool:propose_contract')}`, 'asks')]);
     return { artifacts, asks };
   }
-  async function list(): Promise<ContractRecord[]> {
-    const q = encodeURIComponent(`key:${escapeTerm('contracts:')}* AND -state:archived`);
-    const sessions = await all<{ key: string; title?: string }>(`/sessions?q=${q}`, 'sessions');
-    return Promise.all(sessions.map(async (s) => {
-      const { artifacts, asks } = await records(s.key);
-      return contractOf(s.key, s.title, artifacts, asks);
-    }));
+  // One catalog page of live contract sessions; createdAt never moves (ties fall to the key), so the keyset holds while sessions run.
+  async function sessions(q: string, pageSize: number, token: string) {
+    const res = await ctx.fetch(`${ctx.distributorUrl}/sessions?q=${encodeURIComponent(q)}&orderBy=createdAt&pageSize=${pageSize}${token && `&pageToken=${encodeURIComponent(token)}`}`);
+    if (res.status === 400) throw new BadRequest(String(((await res.json().catch(() => ({}))) as { detail?: unknown }).detail ?? 'bad request'));
+    if (!res.ok) throw new Error(`/sessions answered ${res.status}`);
+    return (await res.json()) as { sessions?: Array<{ key: string; title?: string }>; nextPageToken?: string };
+  }
+  // Fills one page across catalog pages, asking each for only what is still missing, so the next cursor is the catalog's own.
+  async function list(params: URLSearchParams): Promise<{ contracts: ContractRecord[]; nextPageToken?: string }> {
+    const pageSize = sizeOf(params.get('pageSize'));
+    const asked = params.get('q') ?? '';
+    const { test, pushed } = parseFilter(asked);
+    const q = [`key:${escapeTerm('contracts:')}*`, '-state:archived', ...pushed.map((p) => `(${p})`)].join(' AND ');
+    const contracts: ContractRecord[] = [];
+    let cursor = cursorOf(params.get('pageToken'), asked);
+    for (let walked = 0; walked < MAX_CATALOG_PAGES && contracts.length < pageSize; walked++) {
+      const page = await sessions(q, pageSize - contracts.length, cursor);
+      const read = await Promise.all((page.sessions ?? []).map(async (s) => { const r = await records(s.key); return contractOf(s.key, s.title, r.artifacts, r.asks); }));
+      contracts.push(...read.filter(test));
+      cursor = page.nextPageToken ?? '';
+      if (!cursor) break;
+    }
+    return { contracts, ...(cursor && { nextPageToken: tokenOf(cursor, asked) }) };
   }
   // One contract with every spec version's status; undefined when the catalog has no such session.
   async function one(key: string): Promise<(ContractRecord & { versions: SpecVersion[] }) | undefined> {
@@ -100,19 +139,20 @@ export function contractsApp(ctx: AppContext): App {
     const { artifacts, asks } = await records(key);
     return { ...contractOf(key, title, artifacts, asks), versions: versionsOf(artifacts, asks) };
   }
-  async function route(path: string, res: ServerResponse) {
-    if (path === '/contracts') return send(res, 200, { contracts: await list() });
-    const key = keyOf(path);
+  async function route(url: URL, res: ServerResponse) {
+    if (url.pathname === '/contracts') return send(res, 200, await list(url.searchParams));
+    const key = keyOf(url.pathname);
     const found = key.startsWith('contracts:') ? await one(key) : undefined;
     return found ? send(res, 200, found) : sendProblem(res, 404, 'no such contract');
   }
   return {
     async handle(req: IncomingMessage, res: ServerResponse) {
-      const path = new URL(req.url ?? '', 'http://x').pathname;
-      if (req.method !== 'GET' || !PAGE.test(path)) return sendProblem(res, 404, 'not found');
+      const url = new URL(req.url ?? '', 'http://x');
+      if (req.method !== 'GET' || !PAGE.test(url.pathname)) return sendProblem(res, 404, 'not found');
       try {
-        await route(path, res);
+        await route(url, res);
       } catch (err) {
+        if (err instanceof BadRequest || err instanceof QueryError) return sendProblem(res, 400, err.message);
         sendProblem(res, 503, `the catalog is unavailable: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
