@@ -1,40 +1,56 @@
 import { createElement, useEffect, useMemo, useRef, useState } from 'react';
-import { checkFailed, decideApproval, type Approval, type SealedArtifact } from '../../api.ts';
+import { checkFailed, decideApproval, type Approval, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import type { StudioProps } from '../../extension.ts';
+import { useLoad } from '../../useLoad.ts';
 import { DiffContext, diffUnits, units, type Diff } from './diff.ts';
 import { JsonSchemaView } from './JsonSchemaView.tsx';
 import { Inline } from './Info.tsx';
 import { card, label, RestView } from './RestView.tsx';
 import { parseSpec, type ContractSpec } from './spec.ts';
+import { contractVersions, type VersionStatus } from './status.ts';
 import { TypeScriptView, useModel } from './TypeScriptView.tsx';
 
 export const VIEWS = { rest: RestView, 'json-schema': JsonSchemaView, typescript: TypeScriptView };
 
 /** One sealed spec artifact and the spec it holds. */
 export type Version = { a: SealedArtifact; spec: ContractSpec };
-const passed = (a: SealedArtifact) => a.verdict?.passed === true;
+/** Where a version stands with the person, from the contracts app. */
+export type StatusOf = (v: Version) => VersionStatus;
+const offered = (p: Approval) => (p.tool === 'propose_contract' ? (p.args as { artifact?: number } | null)?.artifact : undefined);
 
-/** The artifact the newest approval approved: its record names it, or an older record only its spec version, the last passing artifact of it. */
-export function approvedArtifact(artifacts: SealedArtifact[], versions: Version[]): number | undefined {
-  const rec = artifacts.filter((a) => a.kind === 'contract.approved').at(-1);
-  if (!rec) return undefined;
-  const { version, artifact } = JSON.parse(rec.content) as { version: number; artifact?: number };
-  return artifact ?? versions.findLast((v) => passed(v.a) && v.spec.version === version)?.a.version;
+/** Each version's status from the contracts app, read again whenever a version is sealed, a proposal opens or is decided, or a run ends;
+ * undefined until the first read answers. */
+function useStatus(sessionKey: string, artifacts: SealedArtifact[], approvals: Approval[], running: boolean): StatusOf | undefined {
+  const asked = approvals.map(offered).filter((n) => n !== undefined);
+  const { data } = useLoad(() => contractVersions(sessionKey), [sessionKey, artifacts.length, asked.join(), running], undefined);
+  if (!data) return undefined;
+  // The socket can show a proposal before the catalog has it.
+  return (v) => { const s = data.get(v.a.version) ?? 'draft'; return s === 'draft' && asked.includes(v.a.version) ? 'proposed' : s; };
 }
 
-/** Whether the newest version can be approved now, and the reason shown either way. Only one the judge passed is ever put up for approval. */
-export function approvalState(newest: Version | undefined, proposal: Approval | undefined, approved: number | undefined, running: boolean): { can: boolean; done?: boolean; text: string } {
-  if (!newest) return { can: false, text: 'Nothing to approve yet: the agent has not written a version.' };
-  const n = newest.spec.version, v = newest.a.verdict;
-  if (approved === newest.a.version) return { can: false, done: true, text: `Version ${n} is approved.` };
-  if (!v) return { can: false, text: `Version ${n} can't be approved yet: its checks are still running.` };
-  if (!v.passed) {
+type State = { can: boolean; done?: boolean; text: string };
+
+// A version not up for approval, by its status; a verdict the socket carries only explains a draft the judge failed or is still checking.
+function waiting(n: number, v: Verdict | null | undefined, status: VersionStatus | undefined, running: boolean): State {
+  if (!status) return { can: false, text: `Reading where version ${n} stands…` };
+  if (status === 'proposed') return { can: false, text: running ? `Version ${n} passed; the agent puts it up for approval when this step ends.` : `Version ${n} is not up for approval. Send a message and the agent puts it up again.` };
+  if (v && !v.passed) {
     const failed = v.checks.filter(checkFailed).map((c) => c.label).join('; ');
     return { can: false, text: `Version ${n} can't be approved: it didn't pass its checks (${failed || v.gatesFailed.join(', ')}). ${v.limitReached ? 'Tell the agent what to change.' : 'The agent is revising it.'}` };
   }
+  if (v === null) return { can: false, text: `Version ${n} can't be approved yet: its checks are still running.` };
+  return { can: false, text: running ? `Version ${n} is a draft: the agent puts it up for approval once it passes its checks.` : `Version ${n} is a draft and not up for approval. Send a message and the agent goes on.` };
+}
+
+/** Whether the newest version can be approved now, and the reason shown either way. Only one the judge passed is ever put up for approval. */
+export function approvalState(newest: Version | undefined, proposal: Approval | undefined, approved: number | undefined, running: boolean, status?: VersionStatus): State {
+  if (!newest) return { can: false, text: 'Nothing to approve yet: the agent has not written a version.' };
+  const n = newest.spec.version;
+  if (approved === newest.a.version) return { can: false, done: true, text: `Version ${n} is approved.` };
+  if (status === 'changes_requested') return { can: false, text: `You asked for changes to version ${n}.` };
   if (proposal) return { can: true, text: `Version ${n} passed its checks.` };
-  return { can: false, text: running ? `Version ${n} passed; the agent puts it up for approval when this step ends.` : `Version ${n} is not up for approval. Send a message and the agent puts it up again.` };
+  return waiting(n, newest.a.verdict, status, running);
 }
 
 const SEEN = (key: string) => `quack.contracts.seen.${key}`;
@@ -47,7 +63,7 @@ function readSeen(key: string): number | undefined {
   }
 }
 
-/** The passed version this viewer looked at before the newest passed one, by artifact number; a version counts as looked at only while the pane is
+/** The version put to the person that this viewer looked at before the newest such one, by artifact number; it counts as looked at only while the pane is
  * `visible`. Kept in this browser, so it is per viewer and needs no server state; a lost store only means nothing is highlighted. */
 export function useSeen(key: string, newest: number | undefined, visible: boolean): number | undefined {
   const [base, setBase] = useState(() => readSeen(key));
@@ -61,7 +77,8 @@ export function useSeen(key: string, newest: number | undefined, visible: boolea
   return base === newest ? undefined : base;
 }
 
-const nameOf = (v: Version, all: Version[]) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (draft ${v.a.version})` : ''}${!v.a.verdict ? ', checking' : passed(v.a) ? '' : ', failed'}`;
+const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
+const nameOf = (v: Version, all: Version[], status?: StatusOf) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}${status ? `, ${LABEL[status(v)]}` : ''}`;
 
 // A TypeScript spec is compared through its parsed declarations, which load with the compiler; until then there is no comparison.
 function useDiff(from: Version | undefined, to: Version) {
@@ -76,7 +93,7 @@ function useDiff(from: Version | undefined, to: Version) {
 const btn = 'min-h-11 cursor-pointer rounded-full border-0 bg-ink px-4 text-[14px] font-semibold text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-9';
 type Break = { text: string };
 
-function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionKey: string; state: ReturnType<typeof approvalState>; proposal?: Approval; decided: (id: string) => void; breaks?: Break[] }) {
+function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionKey: string; state: State; proposal?: Approval; decided: (id: string) => void; breaks?: Break[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const approve = async () => {
@@ -104,9 +121,9 @@ function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionK
   );
 }
 
-function Compare({ versions, from, to, auto, pick }: { versions: Version[]; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
+function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
   const sel = 'h-11 min-w-0 rounded-full border border-line bg-soft px-3 text-[13px] outline-none lg:h-9';
-  const opts = versions.map((v) => <option key={v.a.version} value={v.a.version}>{nameOf(v, versions)}</option>).reverse();
+  const opts = versions.map((v) => <option key={v.a.version} value={v.a.version}>{nameOf(v, versions, status)}</option>).reverse();
   return (
     <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink-2">
       <label className="flex items-center gap-2">Changes since
@@ -150,20 +167,22 @@ function Shown({ from, to }: { from?: Version; to: Version }) {
 export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, visible }: StudioProps) {
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
   const newest = versions.at(-1);
-  const base = useSeen(sessionKey, versions.findLast((v) => passed(v.a))?.a.version, visible);
+  const status = useStatus(sessionKey, artifacts, approvals, running);
+  // A version counts once it was put to the person; until the status answers, none does and nothing is compared.
+  const base = useSeen(sessionKey, status && versions.findLast((v) => status(v) !== 'draft')?.a.version, visible);
   const [picked, pick] = useState<{ from?: number; to: number }>();
   if (!newest) return <p className="m-0 p-5 text-sm text-muted">The contract shows here as soon as the agent writes its first version.</p>;
-  const proposal = approvals.find((a) => a.tool === 'propose_contract' && (a.args as { artifact?: number } | null)?.artifact === newest.a.version);
-  const approved = approvedArtifact(artifacts, versions);
-  const state = approvalState(newest, proposal, approved, running);
+  const proposal = approvals.find((a) => offered(a) === newest.a.version);
+  const approved = status && versions.findLast((v) => status(v) === 'approved')?.a.version;
+  const state = approvalState(newest, proposal, approved, running, status?.(newest));
   const to = versions.find((v) => v.a.version === (picked?.to ?? newest.a.version)) ?? newest;
   // A viewer who has not looked yet is shown what changed since the approved version.
-  const since = base ?? approved;
+  const since = status && (base ?? approved);
   const from = versions.find((v) => v.a.version === (picked ? picked.from : since) && v !== to);
   return (
     <div className="mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5">
       <ApproveBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} breaks={approved === undefined ? undefined : (proposal?.args as { breaks?: Break[] } | null)?.breaks} />
-      <Compare versions={versions} from={from?.a.version} to={to.a.version} auto={picked ? undefined : base ? 'the version you last looked at' : 'the approved version'} pick={pick} />
+      <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} auto={picked ? undefined : base ? 'the version you last looked at' : 'the approved version'} pick={pick} />
       <Shown from={from} to={to} />
     </div>
   );

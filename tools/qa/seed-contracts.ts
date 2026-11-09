@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { contractsSessionExtensions, type ContractSpec } from '@quack/contracts';
+import { contractDeclaration, contractsSessionExtensions, type ContractSpec } from '@quack/contracts';
 import { sessionDirName } from '@quack/distributor';
 import { Approvals, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
@@ -91,11 +91,15 @@ const CONTRACTS: Contract[] = [
   },
 ];
 
-// Judge questions get "yes" (the pitfall one "no"); every other turn writes the next version and submits it.
+// A check whose aggregate names its passing answers (a pitfall passes on "no") gets that answer; every other judge question gets "yes".
+const PASSING = Object.values(contractDeclaration.checks).flatMap((c) => ('pass' in c.aggregate && c.aggregate.pass ? [[c.question.instructions, c.aggregate.pass[0]!] as const] : []));
+const answer = (asked: string) => PASSING.find(([q]) => asked.includes(q))?.[1] ?? 'yes';
+
+// Judge questions get the passing answer; every other turn writes the next version and submits it.
 function scripted(versions: ContractSpec[]) {
   const faux = fauxProvider({ models: [{ id: 'seed' }] });
   const queue = versions.flatMap((v) => [() => writeSpec(v), () => toolCall('submit_contract', {}), () => fauxAssistantMessage(`Version ${v.version} is approved.`)]);
-  faux.setResponses(Array.from({ length: 200 }, () => (c: Msgs) => (last(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: last(c).includes('never asked for') ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!())));
+  faux.setResponses(Array.from({ length: 200 }, () => (c: Msgs) => (last(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: answer(last(c)), confidence: 1, reason: 'fine' })) : queue.shift()!())));
   return faux;
 }
 
