@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Row } from '../sessions.ts';
 import { useLoad, type Loaded } from '../useLoad.ts';
 import { lookupPulls, type Pulls } from './pulls.ts';
@@ -7,10 +7,33 @@ const GITHUB_KEY = /^github:[^/]+\/[^#]+#\d+$/;
 const PrStateContext = createContext<Loaded<Pulls>>({ data: {}, error: '' });
 const NONE: Pulls = {};
 
-/** The github service's PR states for every listed review session, read once per set of keys; empty when the service is not connected. */
+// The service takes a webhook's merge at once and re-reads open PRs from GitHub every 10 min, so a minute here is the most a chip lags.
+const REREAD_MS = 60_000;
+
+// A merge changes no row, so the states are read again on return to the page and each minute while it is shown.
+function useShownTick() {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const bump = () => setTick((t) => t + 1);
+    let timer = document.visibilityState === 'visible' ? setInterval(bump, REREAD_MS) : undefined;
+    const changed = () => {
+      clearInterval(timer);
+      timer = undefined;
+      if (document.visibilityState !== 'visible') return;
+      bump();
+      timer = setInterval(bump, REREAD_MS);
+    };
+    document.addEventListener('visibilitychange', changed);
+    return () => (clearInterval(timer), document.removeEventListener('visibilitychange', changed));
+  }, []);
+  return tick;
+}
+
+/** The github service's PR states for every listed review session, kept until a re-read answers; empty when the service is not connected. */
 export function PrStates({ rows, children }: { rows: Row[] | undefined; children: ReactNode }) {
   const keys = (rows ?? []).filter((r) => r.state !== 'archived' &&GITHUB_KEY.test(r.key)).map((r) => r.key).sort().join(',');
-  const pulls = useLoad(async () => (keys ? ((await lookupPulls(keys.split(','))) ?? NONE) : NONE), [keys], NONE);
+  const tick = useShownTick();
+  const pulls = useLoad(async () => (keys ? ((await lookupPulls(keys.split(','))) ?? NONE) : NONE), [keys, tick], NONE);
   return <PrStateContext value={pulls}>{children}</PrStateContext>;
 }
 
