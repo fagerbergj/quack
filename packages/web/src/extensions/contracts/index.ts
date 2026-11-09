@@ -25,7 +25,7 @@ export const contracts: Extension = {
   studio: { match: (key) => key.startsWith('contracts:'), label: 'Contract', owns: (a) => a.tool === 'propose_contract', Pane: ContractStudio },
   nav: { route: 'contracts', label: 'Contracts', icon: ICON, page: Contracts },
   session: {
-    label: 'contract', noun: () => 'Contract', group: 'Contracts', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
+    label: 'contract', noun: () => 'Contract', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
     name: (r) => plain(r.title ?? 'New contract'),
     words: () => ({ run: 'Drafting the contract', done: 'Draft ready', none: 'Starting' }),
   },

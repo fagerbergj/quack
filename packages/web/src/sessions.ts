@@ -1,7 +1,9 @@
+import { escapeTerm } from '@quack/sdk/query';
 import { spendOf, type Failure, type Session, type Spend } from './api.ts';
 import type { Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
-import { searchText, sessionTitle } from './kinds.ts';
+import { sessionTitle } from './kinds.ts';
+import { searchTerms, type FilterValues } from './SearchFilter.tsx';
 
 /** A session as the lists show it; `failures` are its last run's failed steps, empty while a new run works on them. */
 export type Row = Session & { failures: Failure[]; multiRepo: boolean; spend: Spend };
@@ -9,7 +11,6 @@ export type Row = Session & { failures: Failure[]; multiRepo: boolean; spend: Sp
 export const rowOf = (s: Session, multiRepo: boolean): Row =>
   ({ ...s, multiRepo, spend: spendOf(s), failures: s.state !== 'running' && s.lastRun?.outcome === 'failed' ? s.lastRun.failedSteps : [] });
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
-export type Filters = { text: string; agent: string; start: string; view: '' | 'archived' };
 
 // The display title as one string, e.g. "#1927 Add retries"; the full key stays in the row's tooltip.
 export function titleOf(s: Parameters<typeof sessionTitle>[0]): string {
@@ -29,10 +30,14 @@ export function startOf(key: string): string {
   return prefix === 'ui' ? 'You' : (EXTENSIONS.find((e) => e.start?.prefix === prefix)?.start?.label ?? prefix);
 }
 
-export function matches(s: Row, f: Filters): boolean {
-  const q = f.text.trim().toLowerCase();
-  const hit = !q || [...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
-  return hit && (s.state === 'archived') === (f.view === 'archived') && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
+/** The Sessions list's q: `start` is a key prefix, and the default view leaves archived sessions out. */
+export function sessionQuery(text: string, f: FilterValues): string {
+  return [
+    f.view === 'archived' ? 'state:archived' : 'NOT state:archived',
+    ...(f.agent ? [`agent:${escapeTerm(f.agent)}`] : []),
+    ...(f.start ? [`key:${escapeTerm(`${f.start}:`)}*`] : []),
+    ...searchTerms(text),
+  ].join(' AND ');
 }
 
 const asks = (r: Row) => r.pendingAsks > 0 || r.failures.length > 0;
