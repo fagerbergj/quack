@@ -91,7 +91,7 @@ export function Pending({ attach }: { attach: Attachments }) {
   return (
     <div className="flex flex-col gap-1.5 px-1">
       {attach.problem && <p role="alert" className="m-0 text-[13px] text-danger">{attach.problem}</p>}
-      <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+      <ul data-unsaved={attach.images.length > 0 || undefined} className="m-0 flex list-none flex-wrap gap-2 p-0">
         {attach.images.map((img, i) => (
           <li key={i} className="relative size-16 flex-none">
             <img src={dataUrl(img)} alt={`Attached image ${i + 1}`} className="size-16 rounded-xl object-cover ring-1 ring-line-strong" />
