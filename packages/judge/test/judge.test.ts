@@ -161,6 +161,25 @@ test('a pitfall keeps the reason where it is present, a met check keeps none', a
   assert.deepEqual([notes('takeaway_actionable'), notes('says_why'), notes('preference_only')], [[], [], ['f1: only taste']]);
 });
 
+// A legacy plan (no aggregate) whose units are already answered, as Clef answers them: confident and without a reason.
+const answeredPlan = (id: string, weight: number, answers: Array<boolean | null>, whole = false): Plan => ({
+  key: `c.${id}`, result: { criterion: 'c', id, label: id, weight, met: 0, units: answers.length, resolvers: {}, notes: [] }, ask: { id: `c.${id}`, question: { type: 'bool', instructions: '?' } },
+  pitfall: weight < 0, left: 0, units: answers.map((_, i) => ({ id: `f${i + 1}`, state: {}, ...(whole ? { whole: true as const } : {}) })),
+  answers: new Map(answers.map((met, i) => [`f${i + 1}`, { met, resolver: 'clef' }])),
+});
+
+test('a failing item Clef answered without a reason is still named in the notes', () => {
+  const [why, pref, takeaway] = settled([answeredPlan('says_why', 3, [true, false]), answeredPlan('preference_only', -3, [true, false]), answeredPlan('takeaway', 2, [false], true)]);
+  assert.deepEqual([why.met, why.notes], [0.5, ['f2: flagged by clef (no reason given)']]);
+  assert.deepEqual([pref.met, pref.notes], [0.5, ['f1: flagged by clef (no reason given)']], 'a pitfall names where it is present');
+  assert.deepEqual(takeaway.notes, ['flagged by clef (no reason given)']);
+  assert.deepEqual(feedback([why]), ['missed c.says_why (1 of 2): f2: flagged by clef (no reason given)']);
+});
+
+test('a share over every unit met is exactly 1: units are counted, not summed as fractions', () => {
+  for (const n of [3, 6, 7, 10, 23]) assert.equal(settled([answeredPlan('k', 3, Array(n).fill(true))])[0].met, 1, `${n} units`);
+});
+
 test('a check without a scope is an error, not a default scope', () => {
   assert.throws(() => unitsFor(undefined, { review: [] }), /name its evidence scope/);
   assert.deepEqual(unitsFor('review', { review: [] }), []);
