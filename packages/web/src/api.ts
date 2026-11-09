@@ -61,7 +61,7 @@ export type Artifact = { session: string; kind: string; version: number; hash: s
 export const listArtifacts = async (key: string): Promise<SealedArtifact[]> =>
   (await listAll<Artifact>(`${base(key)}/artifacts`, 'artifacts')).map((a) => ({ kind: a.kind, version: a.version, hash: a.hash, content: a.content ?? '', sealedAt: Date.parse(a.sealedAt), summary: a.summary }));
 /** Sealed versions across sessions, without content, newest first. */
-export const listAllArtifacts = () => listAll<Artifact>('artifacts', 'artifacts');
+export const listAllArtifacts = (q?: string) => listAll<Artifact>('artifacts', 'artifacts', q);
 /** Sealed versions as the session socket sends them, with the judge's verdicts. */
 export const sealedFrom = (artifacts: SealedArtifact[]) => artifacts.map(named);
 // Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.

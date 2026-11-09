@@ -35,12 +35,6 @@ export function look(r: Row): Look {
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
 }
 
-// What search matches besides the key and agent: the title as shown, and the kind's name.
-export const searchText = (r: Row): string[] => {
-  const l = look(r);
-  return [l.full, l.num ?? '', l.title, l.label];
-};
-
 export type SessionTitle = { repo?: string; number?: string; text: string; full: string; icon: string; kind: string };
 
 // The one place a session is named: list rows, the session header, Home and Artifacts all read this.
@@ -50,8 +44,5 @@ export function sessionTitle(s: Nameable): SessionTitle {
   return { repo: n.repo, number: n.num, text: n.title, full: n.full, icon: kind.icon, kind: kind.label };
 }
 
-/** How the Artifacts page names a session's artifacts: the kind's noun and the filter chip it falls under. */
-export function artifactKind(r: Row | undefined): { noun: string; group: string } {
-  const k = r && kindOf(r);
-  return { noun: (r && k?.noun?.(r)) || '', group: k?.group ?? 'Other' };
-}
+/** How the Artifacts page names a session's artifacts: the kind's noun. */
+export const artifactKind = (r: Row | undefined): { noun: string } => ({ noun: (r && kindOf(r).noun?.(r)) || '' });

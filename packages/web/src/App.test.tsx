@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
@@ -10,6 +10,22 @@ const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: '
 
 // GET /asks is left unrouted: Home reads it only when a row says something is pending, and a test that expects it routes it.
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /artifacts': { artifacts: [] } }));
+
+// A list read with q, as the route the fake fetch answers.
+const listed = (path: string, q: string, token?: string) => `GET /${path}?${new URLSearchParams({ pageSize: '1000', q, ...(token && { pageToken: token }) })}`;
+const ACTIVE = 'NOT state:archived';
+const queries = (path: string) => fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === `/${path}`).map((u) => u.searchParams.get('q'));
+
+// Types one character per change, faster than the debounce, then lets the pause elapse on a fake clock.
+function typeQuickly(box: HTMLElement, text: string) {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    for (let i = 1; i <= text.length; i++) fireEvent.change(box, { target: { value: text.slice(0, i) } });
+    act(() => void vi.advanceTimersByTime(250));
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 async function openSession() {
   location.hash = '#/s/ui%3Au1';
@@ -33,8 +49,8 @@ test('the list is newest-created first however the server pages it, and labels r
 });
 
 test('sessions past the first page are listed: the pages are followed to the end', async () => {
-  routes['GET /sessions?pageSize=1000'] = { sessions: [sess('gh:1', { title: 'First page' })], nextPageToken: 'p2' };
-  routes['GET /sessions?pageSize=1000&pageToken=p2'] = { sessions: [sess('gh:2', { title: 'Second page' })] };
+  routes[listed('sessions', ACTIVE)] = { sessions: [sess('gh:1', { title: 'First page' })], nextPageToken: 'p2' };
+  routes[listed('sessions', ACTIVE, 'p2')] = { sessions: [sess('gh:2', { title: 'Second page' })] };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -99,7 +115,7 @@ test('review rows show their repo only when the list holds reviews from two repo
 const iso = (ms: number) => new Date(ms).toISOString();
 const ran = (outcome = 'succeeded') => ({ lastRun: { outcome, endedAt: iso(1), failedSteps: [] } });
 
-test('each kind of session shows its own title and how its last run ended, and search finds it by kind', async () => {
+test('each kind of session shows its own title and how its last run ended', async () => {
   routes['GET /sessions'] = { sessions: [
     sess('github:o/r#7', { title: 'Fix the cache', state: 'running', ...ran() }),
     sess('github:o/r#8', { title: 'Add retries', ...ran() }),
@@ -131,23 +147,44 @@ test('each kind of session shows its own title and how its last run ended, and s
   expect(idle.getByText('Reviewed')).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /#10 Sleeper/ })).toBeInTheDocument();
   expect((await row(/ui:x/)).getByText('coder')).toBeInTheDocument();
-  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'lineup');
-  expect(screen.queryByRole('link', { name: /Campaign Notes/ })).toBeNull();
-  expect(screen.getByRole('link', { name: /Lineup · wk 8/ })).toBeInTheDocument();
 });
 
-test('search and the agent filter narrow the list', async () => {
-  routes['GET /sessions'] = { sessions: [sess('github:1', { title: 'Fix the flake' }), sess('ui:2', { agent: 'researcher', title: 'Compare sandboxes' })] };
+test('search and the filters narrow the list on the server, by q', async () => {
+  const flake = sess('github:1', { title: 'Fix the flake' });
+  const sandboxes = sess('ui:2', { agent: 'researcher', title: 'Compare sandboxes' });
+  routes['GET /sessions'] = { sessions: [flake, sandboxes] };
+  routes[listed('sessions', `${ACTIVE} AND sandbox*`)] = { sessions: [sandboxes] };
+  routes[listed('sessions', `${ACTIVE} AND key:github\\:*`)] = { sessions: [flake] };
   render(<App />);
   await screen.findByRole('link', { name: /Fix the flake/ });
-  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'sandbox');
-  expect(screen.queryByRole('link', { name: /Fix the flake/ })).toBeNull();
+  typeQuickly(screen.getByRole('searchbox', { name: 'Search sessions' }), 'sandbox');
+  await waitFor(() => expect(screen.queryByRole('link', { name: /Fix the flake/ })).toBeNull());
   expect(screen.getByRole('link', { name: /Compare sandboxes/ })).toBeInTheDocument();
   await userEvent.clear(screen.getByRole('searchbox', { name: 'Search sessions' }));
   await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Started by' }), 'GitHub');
+  await waitFor(() => expect(screen.queryByRole('link', { name: /Compare sandboxes/ })).toBeNull());
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toBeInTheDocument();
-  expect(screen.queryByRole('link', { name: /Compare sandboxes/ })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Remove Started by: GitHub' })).toBeInTheDocument();
+});
+
+test('quick typing sends one search request, after the pause, and clearing applies at once', async () => {
+  render(<App />);
+  await waitFor(() => expect(queries('sessions')).toContain(ACTIVE));
+  const box = screen.getByRole('searchbox', { name: 'Search sessions' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    for (const v of ['f', 'fl', 'fla', 'flak', 'flake']) fireEvent.change(box, { target: { value: v } });
+    act(() => void vi.advanceTimersByTime(249));
+    expect(queries('sessions').filter((q) => q?.includes('*'))).toEqual([]);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(queries('sessions').filter((q) => q?.includes('*'))).toEqual([`${ACTIVE} AND flake*`]);
+    const before = queries('sessions').length;
+    fireEvent.change(box, { target: { value: '' } });
+    expect(queries('sessions').slice(before)).toEqual([ACTIVE]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('selecting a session opens it in the main pane and marks its row', async () => {
@@ -209,7 +246,7 @@ test('the first Home send asks only for home:main, by an escaped key term', asyn
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   await waitFor(() => expect(FakeSocket.all).toHaveLength(1));
   const queried = fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === '/sessions' && u.searchParams.has('q'));
-  expect(queried.map((u) => u.searchParams.get('q'))).toEqual(['key:home\\:main']);
+  expect(queried.map((u) => u.searchParams.get('q')).filter((q) => q !== ACTIVE), 'besides the sidebar list').toEqual(['key:home\\:main']);
   expect(fetchMock.mock.calls.some(([u]) => String(u).includes('filter='))).toBe(false);
 });
 
@@ -1084,7 +1121,7 @@ test('Artifacts lists sealed versions across sessions and opens one in the Work 
   expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('artifacts?'))).toHaveLength(1);
 });
 
-test('Artifacts rows say what each is and its summary, and chips filter by kind', async () => {
+test('Artifacts rows say what each is and its summary, and the kind filter asks the server', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:o/r#7', { title: 'feat: Declare requires' }), sess('ui:r1', { agent: 'researcher', title: 'Why is it slow?', state: 'running' })] };
   routes['GET /artifacts'] = { artifacts: [
     { session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', summary: 'Approve · 1 nit', sealedAt: iso(2) },
@@ -1098,8 +1135,11 @@ test('Artifacts rows say what each is and its summary, and chips filter by kind'
   const research = screen.getByRole('button', { name: 'Open Why is it slow?' });
   expect(research).toHaveTextContent('Research report · Cold caches dominate');
   expect(screen.getByRole('button', { name: 'Open ui:old' })).not.toHaveTextContent('·');
-  await userEvent.click(screen.getByRole('button', { name: 'Reviews' }));
-  expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);
+  routes[listed('artifacts', 'kind:github\\.review')] = { artifacts: [{ session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', sealedAt: iso(2) }] };
+  await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Filter' }));
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Kind' }), 'Review');
+  await waitFor(() => expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1));
+  expect(screen.getByRole('option', { name: 'Report' })).toBeInTheDocument();
 });
 
 test('Artifacts shows why when the list cannot be read', async () => {
@@ -1399,14 +1439,17 @@ test('Rename saves the title, reloads the list and the header shows the new name
 });
 
 test('archived sessions leave the list and Home, and the Archived filter shows them', async () => {
-  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Plan the trip', state: 'archived' }), sess('ui:u2', { title: 'Other' })] };
+  const trip = sess('ui:u1', { title: 'Plan the trip', state: 'archived' });
+  routes['GET /sessions'] = { sessions: [trip, sess('ui:u2', { title: 'Other' })] };
+  routes[listed('sessions', ACTIVE)] = { sessions: [sess('ui:u2', { title: 'Other' })] };
+  routes[listed('sessions', 'state:archived')] = { sessions: [trip] };
   render(<App />);
   await screen.findByRole('link', { name: /Other/ });
   expect(screen.queryByRole('link', { name: /Plan the trip/ })).toBeNull();
   expect(screen.queryByRole('region', { name: 'Running' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await userEvent.selectOptions(screen.getByLabelText('Show'), 'Archived');
-  expect(screen.getByRole('link', { name: /Plan the trip/ })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: /Plan the trip/ })).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /Other/ })).toBeNull();
 });
 

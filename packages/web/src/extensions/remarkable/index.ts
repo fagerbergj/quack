@@ -18,7 +18,7 @@ const ICON = 'M4 20h4L19 9l-4-4L4 16ZM13.5 6.5l4 4';
 
 export const remarkable: Extension = {
   session: {
-    label: 'reMarkable', noun: () => 'Transcript', group: 'Notes', match: (r) => r.key.startsWith('remarkable:'), icon: ICON, tint: BLUE,
+    label: 'reMarkable', noun: () => 'Transcript', match: (r) => r.key.startsWith('remarkable:'), icon: ICON, tint: BLUE,
     name: (r) => plain(r.title ?? r.key.slice('remarkable:'.length)),
     words: () => ({ run: 'Transcribing', done: 'Transcribed', none: 'Not transcribed yet' }),
   },

@@ -15,9 +15,8 @@ export type Nameable = Pick<Row, 'key' | 'agent' | 'title'> & { multiRepo?: bool
 /** How one family of sessions reads in lists and headers; the first kind whose `match` hits names the row. */
 export type SessionKind = {
   label: string;
-  /** What this kind's artifacts are called on the Artifacts page ("Review"), and the filter chip that groups them ("Reviews"). */
+  /** What this kind's artifacts are called on the Artifacts page ("Review"). */
   noun?: (r: Row) => string;
-  group?: string;
   match: (r: Nameable) => boolean;
   icon: string;
   tint: string;
