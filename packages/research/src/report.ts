@@ -39,18 +39,23 @@ export function findingItems(report: string): Array<{ first: string; text: strin
   return items.map((l) => ({ first: l[0].trim(), text: l.join('\n') }));
 }
 
-const squash = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/`/g, '');
+/** Only the words, in order: punctuation, quote style, dashes, markdown emphasis and link targets differ between a page and a faithful quote of it. */
+// Not padded to word edges: extracted pages glue words ("QuoteA basic rule"), so a quote's end words may sit inside longer ones.
+const words = (s: string) => (s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ');
 const MIN_QUOTE = 12;
 
-/** Quoted spans of a finding, split at elisions; shorter ones are scare quotes or names, not evidence. Edge punctuation is dropped: American style puts the sentence's comma or period inside the marks. */
+/** Quoted spans of a finding, split at elisions and [bracketed] insertions; shorter ones are scare quotes or names, not evidence. Edge punctuation is dropped: American style puts the sentence's comma or period inside the marks. */
 export function quotedSpans(text: string): string[] {
   return [...text.matchAll(/["“]([^"”\n]+)["”]/g)]
     .filter((m) => m[1].length >= MIN_QUOTE)
-    .flatMap((m) => m[1].split(/\.\.\.|…/).map((p) => p.replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, '')).filter((p) => p.length >= 6));
+    .flatMap((m) => m[1].split(/\.\.\.|…|\[[^\]]*\]/).map((p) => p.replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, '')).filter((p) => p.length >= 6));
 }
 
-/** The finding's quoted spans that none of the cited source texts contain. */
-export const missingQuotes = (finding: string, texts: string[]) => quotedSpans(finding).filter((q) => !texts.map(squash).some((t) => t.includes(squash(q))));
+/** The finding's quoted spans that none of the cited source texts contain, word for word. */
+export function missingQuotes(finding: string, texts: string[]): string[] {
+  const pages = texts.map(words);
+  return quotedSpans(finding).filter((q) => !pages.some((t) => t.includes(words(q))));
+}
 
 /** A finding named by its opening words; its bullet id means nothing to a reader or the reviser. */
 function opening(first: string | undefined): string {
@@ -174,7 +179,7 @@ const FAIR = ' Judge only from the text shown; a fact you do not recognise is no
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 3,
+  version: 4,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [

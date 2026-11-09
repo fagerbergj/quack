@@ -413,6 +413,45 @@ test('missingQuotes: a changed word still fails, with or without trailing punctu
   assert.deepEqual(missingQuotes('"because documents still sending it are rejected"', ['Removing a field is breaking.']), ['because documents still sending it are rejected']);
 });
 
+test('missingQuotes: single and double, straight and curly quote marks inside a quote are one', () => {
+  assert.deepEqual(missingQuotes(`"we are not interested in 'vibe-coded' PRs that degrade the quality" [s14]`, ['we are not interested in “vibe-coded” PRs that degrade the quality of the codebase.']), []);
+  assert.deepEqual(missingQuotes(`"fixes to issues marked as 'good first issue'" [s1]`, ['It\'s prohibited to use AI to automate fixes to issues marked as "good first issue".']), []);
+});
+
+test('missingQuotes: a markdown link in the source is compared by its text', () => {
+  const rust = 'The best way to get started is by asking for help in the [#new\nmembers](https://rust-lang.zulipchat.com/#narrow/stream/122652-new-members)\nZulip stream.';
+  assert.deepEqual(missingQuotes('"the best way to get started is by asking for help in the #new members Zulip stream" [s8]', [rust]), []);
+});
+
+test('missingQuotes: markdown emphasis on either side is not part of the quote', () => {
+  const electron = 'We encourage contributors to treat AI tools as a **quality multiplier**, not just a speed multiplier.';
+  assert.deepEqual(missingQuotes('a "**quality multiplier, not just a speed multiplier**" [s3]', [electron]), []);
+});
+
+test('missingQuotes: a [bracketed] insertion is the writer\'s, so the source need not contain it', () => {
+  const curl = 'We ban users immediately who submit made up fake reports to the project. AI code must still follow coding standards, be written clearly, be documented.';
+  assert.deepEqual(missingQuotes('curl will "ban[s] users immediately who submit made up fake reports" [s18]', [curl]), []);
+  assert.deepEqual(missingQuotes('code must "still follow[s] coding standards, be[s] written clearly, be[s] documented" [s18]', [curl]), []);
+});
+
+test('missingQuotes: dash variants and punctuation between words do not matter', () => {
+  assert.deepEqual(missingQuotes('"expect 1–2 weeks to review and merge your PR" [s11]', ['“I am busy, expect 1-2 weeks to review and merge your PR”.']), []);
+  const node = 'Pull requests must not be opened by automated tooling, unless specifically\napproved in advance.';
+  assert.deepEqual(missingQuotes('"pull requests must not be opened by automated tooling unless specifically approved in advance" [s1]', [node]), []);
+});
+
+test('missingQuotes: changed words and the writer\'s own phrases in quote marks still fail', () => {
+  const cases: Array<[string, string]> = [
+    ['"must be made by contributors based on their own judgement"', 'Decisions should be made by contributors based on their own judgement.'],
+    ['"intentionally conservative to maintain the standard of quality"', 'Build an intentionally conservative policy that lets us maintain the standard of quality.'],
+    ['"helps reduce the number of iterations"', 'Any details you can give will help reduce the number of iterations a contributor needs.'],
+    ['"allow people to onboard themselves"', 'The contributing guide allows people to onboard themselves without assistance.'],
+    ['"no AI authorship trailer"', 'AI agents must not add Signed-off-by tags; use an Assisted-by tag.'],
+    ['"human-in-the-loop + same bar"', 'A human must review every contribution, which meets the same bar as any other.'],
+  ];
+  for (const [finding, page] of cases) assert.deepEqual(missingQuotes(finding, [page]), [finding.slice(1, -1)]);
+});
+
 test('a report with a real quote passes all gates; an invented quote and a bare finding fail with marks that deliveredReport places', async () => {
   const base = await web();
   const verdictOf = async (content: string) => {
