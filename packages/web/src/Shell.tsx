@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, type ReactNode } from 'react';
 import { CORE, HOME, PAGES, useBar, type Item } from './bottomBar.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { shortCommit, useVersion } from './useVersion.ts';
@@ -27,15 +27,23 @@ const TITLES = Object.fromEntries([{ route: 'more', label: 'More' }, ...MAIN, ..
 const NAV_ICONS = Object.fromEntries(EXTENSIONS.flatMap((e) => e.nav ?? []).map((n) => [n.route, n.icon]));
 export const MORE = GROUPS.flatMap((g) => g.items);
 
-// The logo duck's shapes in currentColor, so the Agents tab colours like the stroked icons; the eye is cut out in the canvas colour.
+// The logo's shapes, shared with public/favicon.svg, which tools/icons.ts renders to the PNG icons.
+const BODY = 'M38 22c9.4 0 16 6.6 16 15.2 0 4.3-1.6 7.9-4.3 10.8 5.6-.3 11.4-1.5 16.6-3.8 4.6-2 8.6-4.9 11.6-8.4.9-1 2.5-.5 2.6.9.6 7.5-.4 15.6-4 22.4C71.4 70.6 61.6 76 49 76H38c-11.9 0-20-6.9-20-16.4 0-6.1 3.4-10.9 8.6-13.6-2.8-2.9-4.6-6.6-4.6-10.6C22 28.4 29 22 38 22z';
+const BILL = 'M23.6 33.2c-4.7-.5-9.6.3-12.8 2.2-1.6 1-1.5 3.1.2 3.9 3.6 1.7 8.4 2 12.8 1.3z';
+const WING = 'M44 60c6 4.6 15.2 5 22.6.2';
+
+// The duck without its tile, in currentColor like the stroked icons; the mask cuts the eye and wing through to whatever is behind.
 function DuckGlyph() {
+  const id = useId();
   return (
-    <svg width="16" height="16" viewBox="4 11 80 80" fill="currentColor" aria-hidden="true" className="flex-none">
-      <ellipse cx="52" cy="62" rx="26" ry="14" />
-      <circle cx="38" cy="40" r="14" />
-      <path d="M26 37 L9 42 L26 47 Z" />
-      <path d="M70 56 Q80 52 78 62" />
-      <circle cx="34" cy="36" r="3" style={{ fill: 'var(--color-canvas)' }} />
+    <svg width="16" height="16" viewBox="9.5 13 72 72" aria-hidden="true" className="flex-none">
+      <mask id={id}>
+        <path d={BODY} fill="#fff" />
+        <path d={BILL} fill="#fff" />
+        <circle cx="36.5" cy="32.5" r="2.7" fill="#000" />
+        <path d={WING} fill="none" stroke="#000" strokeWidth="3.6" strokeLinecap="round" />
+      </mask>
+      <rect x="9.5" y="13" width="72" height="72" fill="currentColor" mask={`url(#${id})`} />
     </svg>
   );
 }
@@ -52,12 +60,11 @@ export function Icon({ route }: { route: Route }) {
 function Duck({ size, className = '' }: { size: number; className?: string }) {
   return (
     <svg width={size} height={size} viewBox="0 0 96 96" aria-hidden="true" className={className}>
-      <rect width="96" height="96" rx="26" fill="#1f7a63" />
-      <ellipse cx="52" cy="62" rx="26" ry="14" fill="#fff" />
-      <circle cx="38" cy="40" r="14" fill="#fff" />
-      <path d="M26 37 L9 42 L26 47 Z" fill="#e3a92b" />
-      <circle cx="34" cy="36" r="2.6" fill="#0f1513" />
-      <path d="M70 56 Q80 52 78 62" fill="#fff" />
+      <rect width="96" height="96" rx="24" fill="#1f7a63" />
+      <path d={BODY} fill="#fff" />
+      <path d={BILL} fill="#e3a92b" />
+      <circle cx="36.5" cy="32.5" r="2.7" fill="#0f1513" />
+      <path d={WING} fill="none" stroke="#1f7a63" strokeWidth="3.6" strokeLinecap="round" />
     </svg>
   );
 }
