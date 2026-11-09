@@ -1,4 +1,4 @@
-import type { CodeResult, Declaration, Evidence, Question, Rubric, Scope } from '@quack/judge';
+import { registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
 import { parseReview, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
@@ -95,7 +95,16 @@ const findings = (where?: 'truthy' | 'falsy'): Scope => ({
   context: { ci: { name: 'json', from: 'facts', pointer: '/ci' } },
 });
 
-/** How each model check of reviewerRubric is asked: per finding with its cited code, per promise of the PR with the diff, per Verified item, or of the review whole. */
+// A PR description splits at its own ## and ### headings, its opening first: each part makes its own promises. Parts named in `skip`
+// (what was run to verify it) promise no behaviour. Deterministic, so no model call sits before the promises are asked.
+function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const skip = new Set((o.skip ?? []).map((n) => n.toLowerCase()));
+  const parts = [o.from].flat().flatMap((name) => inputs[name].split(/^(?=#{2,3} )/m));
+  return parts.map((text) => ({ id: /^#{2,3} (.+)/.exec(text)?.[1].trim() ?? 'opening', text: text.trim() })).filter((c) => c.text && !skip.has(c.id.toLowerCase()));
+}
+registerSplitter('github.descriptionParts', descriptionParts);
+
+/** How each model check of reviewerRubric is asked: per finding with its cited code, per part of the PR description with the diff, per Verified item, or of the review whole. */
 export const reviewDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
@@ -105,11 +114,11 @@ export const reviewDeclaration: Declaration = {
     finding: findings(),
     blocking: findings('truthy'),
     nonblocking: findings('falsy'),
-    // The description is free-form, so the model splits it. Each promise sees the whole diff (cut as before at 120k characters): hunks
-    // retrieved by word overlap missed the helper that delivers a promise, and absence from part of a diff proves nothing.
+    // Each part sees the whole diff (cut as before at 120k characters): hunks retrieved by word overlap missed the helper that
+    // delivers a promise, and the parts of one review share it, so their escalations go to the judge model in one request.
     promise: {
-      split: { name: 'llm', from: ['description', 'issues'], instruction: 'one behaviour the pull request says this change delivers (a change in what the code does); not one it defers to a follow-up, a test, a command it ran, or where the code lives' },
-      piece: 'promise',
+      split: { name: 'github.descriptionParts', from: ['description', 'issues'], skip: ['Verification', 'Verified', 'Tests', 'Testing', 'Commands', 'Checked', 'Evidence'] },
+      piece: 'part',
       context: {
         diff: { name: 'whole', from: 'diff', maxChars: 120_000 },
         review: { name: 'whole', from: 'review' },
@@ -119,11 +128,12 @@ export const reviewDeclaration: Declaration = {
   checks: {
     approval_grounded: { scope: 'approve', aggregate: ALL, question: yes('This review approves. Do its Takeaway and Verified sections say what about the change makes it safe to merge (which behaviour was checked and how it was checked), rather than only praising the change or asserting that it looks good or that tests pass?') },
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
-    promises_handled: { scope: 'promise', aggregate: ALL, question: yes('The pull request says this change delivers this behaviour. Is it present in the diff, or reported in the review as a blocking delivery finding? A loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
+    // Promises and Verified items earn the share that holds (owner's call): `all` over many items flipped on one noisy answer.
+    promises_handled: { scope: 'promise', aggregate: SHARE, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, or reported in the review as a blocking finding? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
     toolchain_as_defect: { scope: 'finding', aggregate: SHARE, question: defect('Does this finding report a sandbox, toolchain or network failure as a code defect while the CI checks are green?') },
     matches_cited_code: { scope: 'finding', aggregate: SHARE, question: yes('Does the cited code show what this finding says about it?') },
     shows_how: { scope: 'blocking', aggregate: SHARE, question: yes('Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?') },
-    verified_names_evidence: { scope: 'verified', aggregate: ALL, question: yes('Does this item under Verified name what was read or run and what it showed, rather than only asserting that tests pass or the logic is correct?') },
+    verified_names_evidence: { scope: 'verified', aggregate: SHARE, question: yes('Does this item under Verified name what was read or run and what it showed, rather than only asserting that tests pass or the logic is correct?') },
     contradicted: { scope: 'finding', aggregate: SHARE, question: defect('Does the cited code contradict this finding?') },
     says_why: { scope: 'finding', aggregate: SHARE, question: yes('Does this finding say why it matters: the risk, the principle or the benefit, not only that something is wrong?') },
     shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show that code in a fenced block with a language tag (or does it propose no specific change)?') },

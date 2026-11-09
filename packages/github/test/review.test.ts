@@ -81,17 +81,22 @@ test('approval_grounded judges an approve on the review alone, and has no item o
   for (const v of ['request_changes', 'comment']) assert.deepEqual((await evidence(v)).approve, []);
 });
 
-test('each finding is an item with its cited code, sorted by label, all sharing the CI result; the model splits the promises', async () => {
-  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: 'Adds a flag.', baseRef: 'main', headSha: 'abc', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [] };
+test('each finding is an item with its cited code, sorted by label, all sharing the CI result; the description splits at its headings', async () => {
+  const body = 'Adds a flag.\n\n## What changed\n- the flag\n\n## Verification\n- npm test: ok\n\n### Rollout\nbehind a setting';
+  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body, baseRef: 'main', headSha: 'abc', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [{ number: 3, title: 'flag', body: 'we need a flag' }] };
   const api = { conversationId: 'c', snapshot: async () => ({ pr }), env: { exec: async () => ({ ok: true, value: { exitCode: 0 } }), readTextFile: async () => ({ ok: true, value: 'const a = 1;\nconst b = 2;\n' }) } };
   const inputs = await reviewInputs()(api as never, { content: review } as never, {} as never);
-  const asked: string[] = [];
-  const built = await buildEvidence(reviewDeclaration, inputs, async (text) => (asked.push(text), [{ item: 'adds a flag', span: 'Adds a flag.' }]));
+  const built = await buildEvidence(reviewDeclaration, inputs);
   assert.deepEqual(built.evidence.blocking.map((u) => u.id), ['blocking 1']);
   assert.deepEqual(built.evidence.nonblocking.map((u) => u.id), ['nonblocking 2', 'nonblocking 3']);
   assert.deepEqual(built.evidence.finding[0], { id: 'finding 1', state: { finding: { text: 'blocking (defect): internal/eval/replay.go:214 adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```', citedCode: '(the cited lines do not exist)' } }, shared: { ci: 'ci=success' } });
-  assert.deepEqual(built.evidence.promise.map((u) => u.state.promise), ['adds a flag']);
-  assert.match(asked[0], /^t\n\nAdds a flag\./);
+  assert.deepEqual(built.evidence.promise.map((u) => [u.id, u.state.part]), [
+    ['promise opening', 't\n\nAdds a flag.'],
+    ['promise What changed', '## What changed\n- the flag'],
+    ['promise Rollout', '### Rollout\nbehind a setting'],
+    ['promise Linked issue #3: flag', '## Linked issue #3: flag\nwe need a flag'],
+  ], 'what was run to verify it promises nothing, so it is skipped');
+  assert.deepEqual(Object.keys(built.evidence.promise[0].shared!), ['diff', 'review'], 'the parts share the diff and the review');
   assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
 });
 

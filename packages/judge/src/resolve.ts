@@ -1,7 +1,8 @@
 import type { Context } from '@earendil-works/chord/context';
 import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
-import { agentModel, decide, modelResolver, observeGeneration } from '@quack/sdk';
+import { createHash } from 'node:crypto';
+import { agentModel, decide, modelResolver, observeGeneration, parseDecision } from '@quack/sdk';
 import type { ModelSplit, Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
@@ -48,12 +49,18 @@ export const classifierTokens = (unit: Unit | Unit[], checks: Ask[]) =>
   JSON.stringify(request((Array.isArray(unit) ? unit : [unit]).map((u) => ({ unit: u, checks })))).length / BYTES_PER_TOKEN;
 const tokensOf = (items: Item[]) => JSON.stringify(request(items)).length / BYTES_PER_TOKEN;
 
-/** Units that share context are packed in order into requests up to the cap; one that alone is over it goes by itself and escalates. */
+/** Units that share context are packed in order into requests up to the cap; those that alone are over it go together, to escalate as one. */
 export function pack(items: Item[], cap: number | undefined): Item[][] {
   const out: Item[][] = [];
   const open = new Map<string, Item[]>();
+  const over = new Map<string, Item[]>();
   for (const it of items) {
     const group = it.unit.shared && cap ? JSON.stringify(it.unit.shared) : undefined;
+    const big = group !== undefined && tokensOf([it]) > cap! ? over.get(group) : undefined;
+    if (big) {
+      big.push(it);
+      continue;
+    }
     const current = group === undefined ? undefined : open.get(group);
     if (current && tokensOf([...current, it]) <= cap!) {
       current.push(it);
@@ -61,7 +68,7 @@ export function pack(items: Item[], cap: number | undefined): Item[][] {
     }
     const fresh = [it];
     out.push(fresh);
-    if (group !== undefined) open.set(group, fresh);
+    if (group !== undefined) (tokensOf([it]) > cap! ? over : open).set(group, fresh);
   }
   return out;
 }
@@ -100,6 +107,45 @@ function point(memo: string, unit: Unit, ask: Ask) {
   return { name: `${memo}:${unit.id}:${ask.id}`, question, options: q.type === 'choice' ? Object.keys(q.options) : ['yes', 'no'], evidence: JSON.stringify(state, null, 1) };
 }
 
+const optionsOf = (q: Question) => (q.type === 'choice' ? Object.keys(q.options) : ['yes', 'no']);
+
+/** One unsure question of a packed group: its unit, which item that unit is in the request, and the check. */
+type Pending = { i: number; unit: Unit; check: Ask };
+
+// The context goes once, as on the decision model; the questions follow the evidence so a long context does not bury them.
+function packedPrompt(pending: Pending[]): string {
+  const units = [...new Set(pending.map((p) => p.unit))];
+  const evidence = { context: units[0].shared, items: units.map((u) => ({ id: u.id, ...u.state })) };
+  const questions = pending.map((p, n) => `- q${n}: About items[${units.indexOf(p.unit)}] (${p.unit.id}): ${point('', p.unit, p.check).question}\n  Options: ${optionsOf(p.check.question).join(', ')}`);
+  return `Evidence:\n${JSON.stringify(evidence, null, 1)}\n\nDecide each question below from the evidence.\n${questions.join('\n')}\n\nAnswer with one JSON object and nothing else, one entry per question id: {"q0": {"choice": "<one option exactly>", "confidence": <0 to 1>, "reason": "<one sentence>"}, ...}`;
+}
+
+function parsePacked(text: string, pending: Pending[]): Array<{ choice: string; reason: string } | null> {
+  let all: Record<string, unknown> = {};
+  try {
+    all = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) ?? {};
+  } catch {
+    // A reply that is not JSON answers nothing; every question falls back to its own escalation.
+  }
+  return pending.map((p, n) => parseDecision(JSON.stringify(all[`q${n}`] ?? null), { name: '', question: '', options: optionsOf(p.check.question) }) ?? null);
+}
+
+// One judge-model request for a packed group's unsure questions, memoized per call; one it leaves unanswered escalates alone.
+async function escalatePacked(api: ToolExecutionApi, s: Settings, pending: Pending[], ctx: Context): Promise<Answer[]> {
+  const key = `${s.memo}:escalation:${createHash('sha256').update(pending.map((p) => `${p.unit.id}:${p.check.id}`).join('\n')).digest('hex').slice(0, 16)}`;
+  let replies = await api.memo<Array<{ choice: string; reason: string } | null>>(key, ctx);
+  if (!replies) {
+    const ref = s.judgeModel ?? (await api.agent(ctx)).model;
+    const model = ref && api.models.getModel(ref.provider, ref.modelId);
+    const messages = [{ role: 'user' as const, content: packedPrompt(pending), timestamp: api.now() }];
+    const reply = model && (await observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal })));
+    ctx.abortSignal?.throwIfAborted();
+    replies = await api.memo(key, reply && reply.stopReason !== 'error' ? parsePacked(contentText(reply.content), pending) : pending.map(() => null), ctx);
+  }
+  const resolver = s.judgeModel ? 'judge-model' : 'agent-model';
+  return Promise.all(pending.map((p, n) => (replies![n] ? { met: passing(p.check).includes(replies![n]!.choice), resolver, note: replies![n]!.reason } : escalate(api, s.judgeModel, s.memo, p.unit, p.check, ctx))));
+}
+
 async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, unit: Unit, ask: Ask, ctx: Context): Promise<Answer> {
   const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId), id: 'judge-model' } : agentModel;
   const d = await decide(api, point(memo, unit, ask), [resolver], ctx);
@@ -121,20 +167,38 @@ async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[]
   return fresh === undefined ? undefined : api.memo(key, fresh, ctx);
 }
 
-// One decision-model request per packed group; confident answers stand, the rest escalate concurrently within the escalation limit.
+// A packed group's unsure questions, the ones whose check can still change, go to the judge model in one request within the limit.
+async function escalateTogether(api: ToolExecutionApi, s: Settings, pending: Pending[], ctx: Context, need: Need): Promise<Array<Answer | undefined>> {
+  if (!pending.some((p) => need(p.unit, p.check))) return pending.map(() => undefined);
+  return s.escalations(async () => {
+    const still = pending.filter((p) => need(p.unit, p.check));
+    const answers = still.length ? await escalatePacked(api, s, still, ctx) : [];
+    return pending.map((p) => answers[still.indexOf(p)]);
+  });
+}
+
+// One decision-model request per packed group; confident answers stand and are counted first, so a decided check asks no more.
+// The rest escalate: a packed group's together in one request, a lone unit's questions concurrently, all within the escalation limit.
 export async function answerItems(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context, onAnswer?: (a: Answered) => Promise<void>, need: Need = () => true): Promise<Answered[]> {
   const packed = !!items[0].unit.shared;
   const probabilities = await probabilitiesOf(api, s, items, ctx);
   const act = s.ref?.act ?? 0.8;
-  const unsure = (unit: Unit, check: Ask) => (need(unit, check) ? s.escalations(() => (need(unit, check) ? escalate(api, s.judgeModel, s.memo, unit, check, ctx) : Promise.resolve(undefined))) : undefined);
-  const jobs = items.flatMap((it, i) => it.checks.map(async (check) => {
-    const p = probabilities?.[qid(check, i, packed)];
-    const answer = p !== undefined && (p >= act || 1 - p >= act) ? { met: p >= act, resolver: s.ref!.modelId } : await unsure(it.unit, check);
-    const a = { unit: it.unit, check, answer };
-    await onAnswer?.(a);
-    return a;
-  }));
-  return Promise.all(jobs);
+  const asked = items.flatMap((it, i) => it.checks.map((check) => ({ i, unit: it.unit, check, p: probabilities?.[qid(check, i, packed)] })));
+  const sure = (p?: number) => p !== undefined && (p >= act || 1 - p >= act);
+  const out = new Map<Pending, Answered>();
+  const done = async (a: Pending, answer: Answer | undefined) => {
+    const answered = { unit: a.unit, check: a.check, answer };
+    out.set(a, answered);
+    await onAnswer?.(answered);
+  };
+  for (const a of asked.filter((x) => sure(x.p))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
+  const unsure = asked.filter((x) => !sure(x.p));
+  const alone = (a: Pending) => (need(a.unit, a.check) ? s.escalations(() => (need(a.unit, a.check) ? escalate(api, s.judgeModel, s.memo, a.unit, a.check, ctx) : Promise.resolve(undefined))) : undefined);
+  if (packed && unsure.length > 1) {
+    const answers = await escalateTogether(api, s, unsure, ctx, need);
+    for (const [n, a] of unsure.entries()) await done(a, answers[n]);
+  } else await Promise.all(unsure.map(async (a) => done(a, await alone(a))));
+  return asked.map((a) => out.get(a)!);
 }
 
 const ITEMS = /\[[\s\S]*\]/;

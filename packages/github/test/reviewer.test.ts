@@ -65,14 +65,10 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(responses(seen, advance));
-  // The judge model splits the PR description into its promises; this one finds none, so the worker's script is untouched.
-  const judgeFaux = fauxProvider({ provider: 'judge', models: [{ id: 'judge' }] });
-  judgeFaux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage('[]')));
   const models = buildModels(parseDeployment({ defaultModel: 'clef/clef', providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
-  models.setProvider(judgeFaux.provider);
   const m = faux.getModel();
-  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'judge' } })];
+  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
   return { done, seen, service, head, session, live };

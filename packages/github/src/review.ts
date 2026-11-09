@@ -196,7 +196,7 @@ export function reviewInputs(repoDir = 'repo') {
       // Only an approve is asked whether it says why the change is safe; any other verdict leaves this empty, so it has no item.
       approve: r.verdict === 'approve' ? sealed.content : '',
       description: pr ? `${pr.title}\n\n${pr.body}` : '(unknown)',
-      issues: pr ? pr.linkedIssues.map((i) => `Linked issue #${i.number} ${i.title}\n${i.body}`).join('\n\n') : '',
+      issues: pr ? pr.linkedIssues.map((i) => `## Linked issue #${i.number}: ${i.title}\n${i.body}`).join('\n\n') : '',
       diff,
       findings: JSON.stringify(findings),
       facts: JSON.stringify(facts),
