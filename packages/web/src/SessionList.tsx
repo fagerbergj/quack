@@ -23,16 +23,18 @@ function Tile({ l, kind }: { l: Look; kind: Kind }) {
 function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boolean; now: number }) {
   const l = look(r);
   return (
-    <a
-      href={`#/s/${encodeURIComponent(r.key)}`}
-      aria-current={current ? 'true' : undefined}
-      title={`${l.full}\n${r.key}`}
-      aria-description={`${l.full} (${r.key})`}
-      className={`row mx-2 flex min-h-11 items-start gap-3 rounded-xl px-2 py-2.5 text-ink no-underline hover:bg-soft/70 lg:gap-2.5 lg:rounded-[10px] lg:py-2 ${kind === 'failed' ? 'bg-danger-bg' : kind === 'needs' ? 'bg-warm' : ''}`}
-    >
-      <Tile l={l} kind={kind} />
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex gap-2">
+    // The chips may be links, which cannot nest in the row's link: a subgrid lays them beside it, both placed explicitly so they may overlap,
+    // and its before: box stretches the row's target under them.
+    <div className={`row relative mx-2 grid min-h-11 grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 rounded-xl px-2 py-2.5 hover:bg-soft/70 lg:gap-x-2.5 lg:rounded-[10px] lg:py-2 ${kind === 'failed' ? 'bg-danger-bg' : kind === 'needs' ? 'bg-warm' : ''}`}>
+      <a
+        href={`#/s/${encodeURIComponent(r.key)}`}
+        aria-current={current ? 'true' : undefined}
+        title={`${l.full}\n${r.key}`}
+        aria-description={`${l.full} (${r.key})`}
+        className="col-span-3 col-start-1 row-span-2 row-start-1 grid grid-cols-subgrid grid-rows-subgrid text-ink no-underline before:absolute before:inset-0 before:rounded-[inherit]"
+      >
+        <span className="row-span-2 self-start"><Tile l={l} kind={kind} /></span>
+        <span className="col-span-2 flex gap-2">
           <span className={`min-w-0 flex-1 truncate text-[15px] lg:text-[13.5px] ${kind === 'recent' ? 'font-medium' : 'font-semibold'}`}>
             {l.repo && <><span className="text-[11px] font-normal text-muted">{l.repo}</span>{' '}</>}
             {l.num && <><span className="font-medium text-muted">{l.num}</span>{' '}</>}
@@ -40,13 +42,13 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
           </span>
           <time dateTime={r.createdAt} className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.createdAt, now)}</time>
         </span>
-        <span className="flex gap-2">
-          <span className={`min-w-0 flex-1 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
-          <SessionChips sessionKey={r.key} />
-          <SpendChip spend={r.spend} className="text-xs text-muted" />
-        </span>
+        <span className={`min-w-0 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
+      </a>
+      <span className="col-start-3 row-start-2 flex items-center gap-2">
+        <SessionChips sessionKey={r.key} />
+        <SpendChip spend={r.spend} className="text-xs text-muted" />
       </span>
-    </a>
+    </div>
   );
 }
 

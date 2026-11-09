@@ -83,15 +83,17 @@ test('review rows carry their PR state from one lookup, and read plainly when th
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' }), sess('github:a/one#3', { title: 'fix: third' }), sess('gh:9', { title: 'Plain' })] };
   routes[`GET /apps/github/pulls?keys=${keys}`] = { pulls: { 'a/one#1': { state: 'open', at: '2026-11-01T00:00:00Z' }, 'a/one#2': { state: 'merged', at: '2026-11-02T00:00:00Z' } } };
   const view = render(<App />);
-  const row = async (name: RegExp) => await screen.findByRole('link', { name });
+  // The chip sits beside the row's link, so a row is the link's parent.
+  const row = async (name: RegExp) => (await screen.findByRole('link', { name })).parentElement!;
   await waitFor(async () => expect(await row(/#2 Second/)).toHaveTextContent('Merged'));
   expect(await row(/#1 First/)).toHaveTextContent('Open');
-  expect(await row(/#3 Third/)).not.toHaveTextContent(/Open|Merged|Closed/);
-  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(within(await row(/#3 Third/)).getByRole('link', { name: '#3 on GitHub' })).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed|on GitHub/);
   expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(1);
   view.unmount();
   delete routes[`GET /apps/github/pulls?keys=${keys}`];
   render(<App />);
+  expect(await screen.findByRole('link', { name: '#1 on GitHub' })).toBeInTheDocument();
   expect(await row(/#1 First/)).not.toHaveTextContent(/Open|Merged|Closed/);
 });
 
@@ -99,7 +101,7 @@ test('a closed PR reads Closed on its row', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' })] };
   routes[`GET /apps/github/pulls?keys=${encodeURIComponent('github:a/one#1')}`] = { pulls: { 'a/one#1': { state: 'closed', at: '2026-11-01T00:00:00Z' } } };
   render(<App />);
-  await waitFor(async () => expect(await screen.findByRole('link', { name: /#1 First/ })).toHaveTextContent('Closed'));
+  expect(await screen.findByRole('link', { name: 'Pull request #1, closed, on GitHub' })).toHaveTextContent('Closed');
 });
 
 test('review rows show their repo only when the list holds reviews from two repos', async () => {
@@ -1688,9 +1690,11 @@ test('session rows show their spend from the cost in micros: dollars when priced
   const usd = (amountMicros: string) => ({ currencyCode: 'USD', amountMicros });
   routes['GET /sessions'] = { sessions: [sess('gh:1', { title: 'Priced', cost: usd('420000'), tokens: tokens(9000) }), sess('gh:2', { title: 'Unpriced', cost: usd('0'), tokens: tokens(12000) }), sess('gh:3', { title: 'Fresh', cost: usd('0'), tokens: tokens(0) })] };
   render(<App />);
-  expect(await screen.findByRole('link', { name: /Priced/ })).toHaveTextContent('$0.42');
-  expect(screen.getByRole('link', { name: /Unpriced/ })).toHaveTextContent('12k tokens');
-  expect(screen.getByRole('link', { name: /Fresh/ })).not.toHaveTextContent(/tokens|\$/);
+  const row = (name: RegExp) => screen.getByRole('link', { name }).parentElement!;
+  await screen.findByRole('link', { name: /Priced/ });
+  expect(row(/Priced/)).toHaveTextContent('$0.42');
+  expect(row(/Unpriced/)).toHaveTextContent('12k tokens');
+  expect(row(/Fresh/)).not.toHaveTextContent(/tokens|\$/);
 });
 
 describe('images', () => {
