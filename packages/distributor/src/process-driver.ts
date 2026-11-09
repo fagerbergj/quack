@@ -144,14 +144,14 @@ async function readReport(dir: string): Promise<Report | undefined> {
 }
 
 // What a child that never reported a port was doing: a diagnostic report (SIGUSR2) taken before the caller kills it.
-async function stuckReport(proc: ChildProcess, dir: string): Promise<string> {
+async function stuckReport(proc: ChildProcess, dir: string, waitMs: number): Promise<string> {
   proc.kill('SIGUSR2');
   let report: Report | undefined;
-  for (let i = 0; i < 100 && !report; i++) {
+  for (let i = 0; i < waitMs / 50 && !report; i++) {
     report = await readReport(dir).catch(() => undefined);
     if (!report) await new Promise((r) => setTimeout(r, 50));
   }
-  if (!report) return 'no diagnostic report within 5s';
+  if (!report) return `no diagnostic report within ${waitMs / 1000}s`;
   const active = (report.libuv ?? []).filter((h) => h.is_active).map((h) => h.type).join(',');
   return `stack: ${report.javascriptStack?.stack?.join(' <- ') ?? 'none'}; active handles: ${active || 'none'}`;
 }
@@ -434,7 +434,7 @@ export function processDriver(opts: LauncherOptions & { dataDir: string; agentsD
   return sessionHost(opts, processLauncher(opts));
 }
 
-type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a silent process gets to write its diagnostic report. */ reportWaitMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
 
 // Below the distributor's 20 s drain, so a drain still finishes after a kill.
 const STOP_TIMEOUT_MS = 10_000;
@@ -484,7 +484,7 @@ function processLauncher(opts: LauncherOptions): Launch {
       };
     } catch (err) {
       const silent = (err as NodeJS.ErrnoException).code === 'E_NO_PORT';
-      const detail = silent ? await stuckReport(proc, reportDir) : '';
+      const detail = silent ? await stuckReport(proc, reportDir, opts.reportWaitMs ?? 5_000) : '';
       proc.kill('SIGKILL');
       if (silent) {
         console.error(`session start failed for ${key}: ${detail}; output: ${tail.trim() || '(none)'}`);

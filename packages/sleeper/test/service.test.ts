@@ -73,7 +73,7 @@ test('the snapshot day follows America/New_York, not UTC', () => {
 });
 
 test('a malformed league id escape is a 400', async () => {
-  const { service, call } = await setup({ at: new Date() });
+  const { service, call } = await setup({ at: new Date('2026-11-01T15:00:00Z') });
   try {
     assert.equal((await call('GET', '/leagues/bad%zz/snapshots')).status, 400);
   } finally {
@@ -82,7 +82,7 @@ test('a malformed league id escape is a 400', async () => {
 });
 
 test('the page routes are relative to the mount: the league id, and an unknown path is a 404', async () => {
-  const { service, call } = await setup({ at: new Date() });
+  const { service, call } = await setup({ at: new Date('2026-11-01T15:00:00Z') });
   try {
     assert.equal((await call('GET', '/')).status, 501, 'no league configured');
     assert.equal((await call('GET', '/nope')).status, 404);
