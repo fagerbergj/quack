@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { Failures, pendingApprovals, Questions, statusNote, type Principal } from '@quack/sdk';
+import { Failures, MODEL_RETRY, pendingApprovals, Questions, statusNote, type Principal } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -50,8 +50,7 @@ export type Dispatch = (session: { harness: Harness; root: Conversation }, input
 export type Resume = (session: { harness: Harness; root: Conversation }) => Promise<SubmitResult | null>;
 export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: Resume };
 
-// pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
-export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
+export { MODEL_RETRY };
 
 /** Who stopped or changed queued work, for the log line: the principal the distributor named, another service, or the run ceiling. */
 export type Caller = Principal | 'service' | 'run-ceiling';

@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
-import { agentModel, decide, modelResolver, observeGeneration } from '@quack/sdk';
+import { agentModel, decide, modelResolver, observeGeneration, retryModelCall, type RetrySeams } from '@quack/sdk';
 import type { ModelSplit, Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
@@ -72,12 +72,14 @@ function massOf(ask: Ask, a: { type: string; probability?: number; probabilities
 }
 
 // null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
-async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[], clef: Limit, ctx: Context): Promise<Record<string, number> | null | undefined> {
+async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[], s: Settings, ctx: Context): Promise<Record<string, number> | null | undefined> {
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
   if (tokensOf(items) > ref.maxInputTokens) return null;
   const model = api.models.getAllModels(ref.provider).find((m) => m.id === ref.modelId && m.type === 'classifier') as ClassifierModel<never> | undefined;
   if (!model) return null;
-  const result = await clef(() => api.models.classify(model, request(items), { signal: ctx.abortSignal }).catch(() => undefined));
+  // maxRetries 0: pi-ai's own provider retry would multiply under ours.
+  const ask = (fetch: typeof globalThis.fetch) => api.models.classify(model, request(items), { signal: ctx.abortSignal, fetch, maxRetries: 0 });
+  const result = await s.clef(() => retryModelCall(`${ref.provider}/${ref.modelId}`, ask, ctx.abortSignal, s.retry).catch(() => undefined));
   ctx.abortSignal?.throwIfAborted();
   if (result?.stopReason !== 'stop') return undefined;
   const asks = new Map(items.flatMap((it, i) => it.checks.map((c) => [qid(c, i, !!items[0].unit.shared), c] as const)));
@@ -98,14 +100,16 @@ function point(memo: string, unit: Unit, ask: Ask) {
   return { name: `${memo}:${unit.id}:${ask.id}`, question, options: q.type === 'choice' ? Object.keys(q.options) : ['yes', 'no'], evidence: JSON.stringify(state, null, 1) };
 }
 
-async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, unit: Unit, ask: Ask, ctx: Context): Promise<Answer> {
-  const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId), id: 'judge-model' } : agentModel;
+async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask, ctx: Context): Promise<Answer> {
+  const { judgeModel, memo } = s;
+  const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId, s.retry), id: 'judge-model' } : agentModel;
   const d = await decide(api, point(memo, unit, ask), [resolver], ctx);
   if (!d) return { met: null, resolver: 'none', note: 'no resolver could decide' };
   return { met: passing(ask).includes(d.choice), resolver: d.resolver, note: d.reason };
 }
 
-export type Settings = { ref?: ClassifierRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit };
+/** `retry` is the model calls' retry test seam. */
+export type Settings = { ref?: ClassifierRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams };
 /** `answer` is absent when the item was not escalated because its check had already decided. */
 export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 /** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
@@ -115,7 +119,7 @@ async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[]
   const key = items.length === 1 ? `${s.memo}:${items[0].unit.id}:classifier` : `${s.memo}:${items[0].unit.id}+${items.length}:classifier`;
   const stored = await api.memo<Record<string, number> | null>(key, ctx);
   if (stored !== undefined) return stored;
-  const fresh = s.ref ? await classify(api, s.ref, items, s.clef, ctx) : null;
+  const fresh = s.ref ? await classify(api, s.ref, items, s, ctx) : null;
   return fresh === undefined ? undefined : api.memo(key, fresh, ctx);
 }
 
@@ -124,7 +128,7 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   const packed = !!items[0].unit.shared;
   const probabilities = await probabilitiesOf(api, s, items, ctx);
   const act = s.ref?.act ?? 0.8;
-  const unsure = (unit: Unit, check: Ask) => (need(unit, check) ? s.escalations(() => (need(unit, check) ? escalate(api, s.judgeModel, s.memo, unit, check, ctx) : Promise.resolve(undefined))) : undefined);
+  const unsure = (unit: Unit, check: Ask) => (need(unit, check) ? s.escalations(() => (need(unit, check) ? escalate(api, s, unit, check, ctx) : Promise.resolve(undefined))) : undefined);
   const jobs = items.flatMap((it, i) => it.checks.map(async (check) => {
     const p = probabilities?.[qid(check, i, packed)];
     const answer = p !== undefined && (p >= act || 1 - p >= act) ? { met: p >= act, resolver: s.ref!.modelId } : await unsure(it.unit, check);
@@ -160,7 +164,7 @@ export function modelSplit(api: ToolExecutionApi, judgeModel: ModelRef | undefin
     const model = ref && api.models.getModel(ref.provider, ref.modelId);
     if (!model) return undefined;
     const messages = [{ role: 'user' as const, content: splitPrompt(text, o.instruction), timestamp: api.now() }];
-    const reply = await observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal }));
+    const reply = await retryModelCall(`${ref.provider}/${ref.modelId}`, (fetch) => observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal, fetch })), ctx.abortSignal);
     const items = reply.stopReason === 'error' ? undefined : parseItems(contentText(reply.content));
     return items && api.memo(key, items, ctx);
   };
