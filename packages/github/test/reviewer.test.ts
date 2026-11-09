@@ -185,6 +185,13 @@ test('a request naming an old head reviews the live head and says so', async () 
   await session.close();
 });
 
+test('a re-review checkout shows the reviewer its own earlier inline comments with their replies', async () => {
+  const ownThreads = [{ id: 1, path: 'app.ts', line: 1, commit: 'a'.repeat(40), at: '2026-11-09T22:58:17Z', outdated: false, body: '**question**: is the route exposed?', replies: [{ author: 'dev', at: '2026-11-09T23:01:23Z', body: 'Checked on prod: it 302s to the login.' }], repliesCut: 0 }];
+  const { seen, session } = await reviewRun((seen) => [checkout(), recorder(seen)(fauxAssistantMessage('Stopped.'))], { feedback: { reviews: [], comments: [], ownThreads, ownThreadsCut: 0 } });
+  assert.match(seen[0], /Your earlier inline comments on this pull request, newest first.*### app\.ts:1, commented on aaaaaaaa at 2026-11-09T22:58:17Z; the commented line is unchanged in the current diff\\n\*\*question\*\*: is the route exposed\?\\n- reply by dev at 2026-11-09T23:01:23Z:\\n  Checked on prod/);
+  await session.close();
+});
+
 test('a second passing version on the same checkout is not posted; a later request for the reviewed head ends without checkout unless the description or CI changed', async () => {
   const revised = review.replace('approve.', 'approve, with one nit.');
   const { done, seen, service, session, live } = await reviewRun((seen) => {

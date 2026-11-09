@@ -5,7 +5,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, type SealedArtifact } from '@quack/sdk';
-import type { ReviewFeedback } from './feedback.ts';
+import { renderOwnThreads, type ReviewFeedback } from './feedback.ts';
 
 export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?: string; /** Where repositories are cloned from; tests use a local directory. */ gitBaseUrl?: string };
 
@@ -168,7 +168,7 @@ export function checkoutTool(config: SessionConfig) {
   const dir = config.repoDir ?? 'repo';
   return defineTool({
     name: 'checkout_pr',
-    description: `Check out a pull request into ./${dir} at its head, with its base fetched, and return its description, CI checks, linked issues and the repo's conventions. Call it first.`,
+    description: `Check out a pull request into ./${dir} at its head, with its base fetched, and return its description, CI checks, linked issues, your earlier inline comments with their replies, and the repo's conventions. Call it first.`,
     parameters: obj({ repository: str({ description: 'owner/repo' }), number: int({ minimum: 1 }), head: opt(str({ description: 'the head sha the request named, if any' })) }, { open: true }),
     replay: 'safe',
     async execute(args, api, ctx) {
@@ -201,6 +201,7 @@ export function checkoutTool(config: SessionConfig) {
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
         ...prFacts(pr),
+        renderOwnThreads(pr.feedback),
         `Changed files:\n${stat}`,
         await conventions(api, dir, ctx),
       ].filter(Boolean).join('\n\n');
