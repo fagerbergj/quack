@@ -16,14 +16,14 @@ const spec = (version: number, title = 'Sleeper schedule endpoint', kind = 'rest
 const record = (kind: string, n: number, version: number) => ev('artifact.sealed', { kind, version: n, hash: `r${n}`, content: JSON.stringify({ version, note: '', approval: `a${n}` }) });
 const proposal = (id: string, version: number) => ev('ask.opened', { id, type: 'approval', createdAt: seq, toolCall: { tool: 'propose_contract', args: { version } } });
 
-async function setup() {
+async function setup(wrap: (f: typeof fetch) => typeof fetch = (f) => f) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-contracts-app-'));
   const store = sqliteCatalog(join(dir, 'c.sqlite'), { currency: 'USD' });
   const catalog = createCatalog({ store, journal: fileJournal(join(dir, 'journal')), log: () => {} });
   cleanups.push(async () => { await store.close(); await rm(dir, { recursive: true, force: true }); });
   // The distributor as the app reaches it in process: the Sessions API over the catalog, called as the tailnet.
   const api = sessionsApi(catalog, { deleteSession: async () => 'deleted', answer: async () => true });
-  const fetch = inProcessFetch(async (req, res) => void ((await api(req, res, { kind: 'tailnet' })) || res.writeHead(404).end('{}')));
+  const fetch = wrap(inProcessFetch(async (req, res) => void ((await api(req, res, { kind: 'tailnet' })) || res.writeHead(404).end('{}'))));
   const app = await manifest.app!({ settings: {}, dbPath: ':memory:', distributorUrl: 'http://distributor.local', fetch, peerFetch: () => fetch, deployment: {}, env: {} });
   const server = serveApp(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -93,4 +93,126 @@ test('GET /contracts/{key} gives each sealed spec its status from the approval r
     { artifact: 15, version: 4, status: 'draft' },
   ]);
   for (const key of ['contracts:missing', 'review:x', '%E0']) assert.equal((await fetch(`${url}/contracts/${encodeURIComponent(key)}`)).status, 404, key);
+});
+
+// Five contracts: a and c wait on an approval; d has sealed nothing; archived and review sessions never list.
+async function five(catalog: Awaited<ReturnType<typeof setup>>['catalog']) {
+  const seeds: Record<string, () => CatalogEvent[]> = {
+    a: () => [spec(1), proposal('p1', 1)],
+    b: () => [spec(3, 'Extension SDK', 'typescript')],
+    c: () => [spec(2, 'Payments API', 'json-schema'), proposal('p2', 2)],
+    d: () => [ev('title.set', { title: 'Draft d' })],
+    e: () => [spec(1, 'Sleeper roster')],
+  };
+  for (const [id, events] of Object.entries(seeds)) {
+    seq = 0;
+    await catalog.publish(`contracts:${id}`, [created(`contracts:${id}`), ...events()]);
+  }
+  seq = 0;
+  await catalog.publish('contracts:gone', [created('contracts:gone'), spec(1)]);
+  await catalog.archive('contracts:gone');
+  seq = 0;
+  await catalog.publish('review:x', [created('review:x')]);
+}
+
+type Page = { contracts: Array<{ key: string }>; nextPageToken?: string };
+// Every page of one listing, as the keys each held.
+async function pages(url: string, query: string): Promise<string[][]> {
+  const out: string[][] = [];
+  for (let token: string | undefined = ''; token !== undefined;) {
+    const res: Response = await fetch(`${url}/contracts?${query}${token && `&pageToken=${encodeURIComponent(token)}`}`);
+    assert.equal(res.status, 200, await res.clone().text());
+    const page = (await res.json()) as Page;
+    out.push(page.contracts.map((c) => c.key));
+    token = page.nextPageToken;
+  }
+  return out;
+}
+const keys = (ids: string) => ids.split('').map((id) => `contracts:${id}`);
+const spy = (calls: string[]) => (f: typeof fetch): typeof fetch => (input, init) => (calls.push(String(input)), f(input, init));
+
+test('GET /contracts pages by pageSize with no record skipped or repeated, and reads only the sessions of the page it returns', async () => {
+  const calls: string[] = [];
+  const { catalog, url } = await setup(spy(calls));
+  await five(catalog);
+  calls.length = 0;
+  const all = await pages(url, 'pageSize=2');
+  assert.deepEqual(all.map((p) => p.length), [2, 2, 1]);
+  assert.deepEqual(all.flat().sort(), keys('abcde'));
+  assert.equal(calls.filter((c) => /\/sessions\/contracts%3A/.test(c)).length, 2 * 5, 'two reads per listed session, each read once');
+  calls.length = 0;
+  await fetch(`${url}/contracts`);
+  assert.match(calls[0]!, /[?&]pageSize=100(&|$)/, 'the default page is 100');
+});
+
+test('GET /contracts filters by q on key, title, kind and pendingApproval, ANDing terms and negating with -', async () => {
+  const { catalog, url } = await setup();
+  await five(catalog);
+  const listed = async (q: string) => (await pages(url, `q=${encodeURIComponent(q)}`)).flat().sort();
+  assert.deepEqual(await listed('key:contracts\\:a'), keys('a'));
+  assert.deepEqual(await listed('key:contracts\\:? -key:*b'), keys('acde'), 'a ? wildcard and a negated key');
+  assert.deepEqual(await listed('title:"Extension SDK"'), keys('b'), 'the spec title, not the session title');
+  assert.deepEqual(await listed('title:Sleeper*'), keys('ae'));
+  assert.deepEqual(await listed('title:Draft?d'), keys('d'), 'the session title when nothing is sealed');
+  assert.deepEqual(await listed('kind:typescript'), keys('b'));
+  assert.deepEqual(await listed('kind:rest'), keys('ade'), 'rest when no spec names a kind');
+  assert.deepEqual(await listed('pendingApproval:true'), keys('ac'));
+  assert.deepEqual(await listed('-pendingApproval:true'), keys('bde'));
+  assert.deepEqual(await listed('pendingApproval:true kind:rest'), keys('a'));
+  assert.deepEqual(await listed('kind:typescript OR (title:Payments* AND NOT key:contracts\\:z)'), keys('bc'));
+});
+
+test('GET /contracts pushes key terms down to the catalog, and fills a filtered page across catalog pages', async () => {
+  const calls: string[] = [];
+  const { catalog, url } = await setup(spy(calls));
+  await five(catalog);
+  calls.length = 0;
+  assert.deepEqual(await pages(url, `q=${encodeURIComponent('-key:contracts\\:b pendingApproval:false')}`), [keys('de')]);
+  assert.equal(new URL(calls[0]!).searchParams.get('q'), 'key:contracts\\:* AND -state:archived AND (-key:contracts\\:b)');
+  const paged = await pages(url, `pageSize=1&q=${encodeURIComponent('pendingApproval:false')}`);
+  assert.deepEqual(paged.flat().sort(), keys('bde'));
+  assert.ok(paged.slice(0, -1).every((p) => p.length === 1), 'each page but the last is full');
+});
+
+test('GET /contracts answers 400 problem+json for a bad pageSize, an unreadable pageToken, or a q it cannot run', async () => {
+  const { catalog, url } = await setup();
+  await five(catalog);
+  const bad = ['pageSize=0', 'pageSize=1001', 'pageSize=two', 'pageSize=', 'pageToken=nonsense',
+    ...['nope:x', 'kind:soap', 'kind:re*', 'pendingApproval:maybe', 'Sleeper', 'title:[a TO b]', 'key:>a', 'title:/x/', '(key:a'].map((q) => `q=${encodeURIComponent(q)}`)];
+  for (const query of bad) {
+    const res = await fetch(`${url}/contracts?${query}`);
+    assert.equal(res.status, 400, query);
+    assert.equal(res.headers.get('content-type'), 'application/problem+json', query);
+    const body = (await res.json()) as Record<string, unknown>;
+    assert.deepEqual([body.type, body.title, body.status, body.error], ['about:blank', 'Bad Request', 400, body.detail], query);
+    assert.ok(typeof body.detail === 'string' && body.detail, query);
+  }
+  const { nextPageToken } = (await (await fetch(`${url}/contracts?pageSize=1`)).json()) as Page;
+  const other = await fetch(`${url}/contracts?pageSize=1&pageToken=${encodeURIComponent(nextPageToken!)}&q=${encodeURIComponent('key:contracts\\:a*')}`);
+  assert.equal(other.status, 400, 'a token issued for another q');
+});
+
+test('GET /contracts/{key} answers 404 problem+json for an archived, unknown, non-contracts or badly encoded key', async () => {
+  const { catalog, url } = await setup();
+  await five(catalog);
+  for (const path of ['contracts%3Agone', 'contracts%3Amissing', 'review%3Ax', '%E0']) {
+    const res = await fetch(`${url}/contracts/${path}`);
+    assert.equal(res.status, 404, path);
+    assert.equal(res.headers.get('content-type'), 'application/problem+json', path);
+    assert.deepEqual(await res.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'no such contract', error: 'no such contract' }, path);
+  }
+  assert.equal((await fetch(`${url}/contracts/contracts%3Aa`)).status, 200);
+});
+
+test('both routes answer 503 problem+json while the catalog is unavailable', async () => {
+  const { url } = await setup(() => async () => new Response('{}', { status: 500 }));
+  for (const path of ['/contracts', '/contracts/contracts%3Aa']) {
+    const res = await fetch(`${url}${path}`);
+    assert.equal(res.status, 503, path);
+    assert.equal(res.headers.get('content-type'), 'application/problem+json', path);
+    const body = (await res.json()) as { title: string; detail: string; error: string };
+    assert.equal(body.title, 'Service Unavailable');
+    assert.match(body.detail, /^the catalog is unavailable: /);
+    assert.equal(body.error, body.detail);
+  }
 });

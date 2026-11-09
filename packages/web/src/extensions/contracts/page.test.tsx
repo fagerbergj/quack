@@ -31,7 +31,12 @@ test("each contract shows its kind, version and approval status from the contrac
     { key: 'contracts:b', title: 'Extension SDK', kind: 'typescript', draft: 3, proposed: 3, changesRequested: 3, pendingApproval: false },
     { key: 'contracts:c', title: 'Payments API', kind: 'json-schema', draft: 4, proposed: 3, approved: 3, pendingApproval: false },
   ];
-  const fetchMock = vi.fn(async (url: string) => (url === 'apps/contracts/contracts' ? Response.json({ contracts: records }) : new Response('{}', { status: 404 })));
+  // Two pages: the page reads every record, following nextPageToken.
+  const pages: Record<string, object> = {
+    'apps/contracts/contracts?pageSize=1000': { contracts: records.slice(0, 2), nextPageToken: 'a b' },
+    'apps/contracts/contracts?pageSize=1000&pageToken=a%20b': { contracts: records.slice(2) },
+  };
+  const fetchMock = vi.fn(async (url: string) => (pages[url] ? Response.json(pages[url]) : new Response('{}', { status: 404 })));
   vi.stubGlobal('fetch', fetchMock);
   render(<Contracts rows={[row('a'), row('b'), row('c'), row('new')]} />);
   await waitFor(() => expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('Sleeper schedule endpoint'));
@@ -41,7 +46,7 @@ test("each contract shows its kind, version and approval status from the contrac
     'Draft newIdle',
     'Payments APIJSON Schema · v4 · v4 is not approved yetApproved v3',
   ]);
-  expect(fetchMock).toHaveBeenCalledWith('apps/contracts/contracts');
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(Object.keys(pages));
 });
 
 test('the page still lists contracts from their rows when the contracts app is not mounted', async () => {

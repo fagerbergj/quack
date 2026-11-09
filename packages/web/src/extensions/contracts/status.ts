@@ -31,12 +31,17 @@ export function contractOf(row: Row, rec?: ContractRecord): Contract {
 export const contractRows = (rows: Row[], records: ReadonlyMap<string, ContractRecord> = new Map()) =>
   rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map((r) => contractOf(r, records.get(r.key))).sort((a, b) => a.rank - b.rank);
 
-/** The contracts extension's records by session key; an app that is not mounted reads as none, and the rows still show. */
+/** The contracts extension's records by session key, every page of them; an app that is not mounted reads as none, and the rows still show. */
 export async function contractRecords(): Promise<Map<string, ContractRecord>> {
-  const res = await fetch('apps/contracts/contracts').catch(() => undefined);
-  if (!res?.ok) return new Map();
-  const body = (await res.json().catch(() => ({}))) as { contracts?: ContractRecord[] };
-  return new Map((body.contracts ?? []).map((c) => [c.key, c]));
+  const records = new Map<string, ContractRecord>();
+  for (let token = ''; ;) {
+    const res = await fetch(`apps/contracts/contracts?pageSize=1000${token && `&pageToken=${encodeURIComponent(token)}`}`).catch(() => undefined);
+    if (!res?.ok) return records;
+    const body = (await res.json().catch(() => ({}))) as { contracts?: ContractRecord[]; nextPageToken?: string };
+    for (const c of body.contracts ?? []) records.set(c.key, c);
+    if (!body.nextPageToken) return records;
+    token = body.nextPageToken;
+  }
 }
 
 /** Where one sealed spec stands with the person, as the contracts extension reads it from the session's approval records and proposals. */
