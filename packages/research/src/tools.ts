@@ -53,7 +53,9 @@ export function htmlToText(html: string): string {
   const body = html
     .replace(/<(script|style|noscript|svg|head|title)\b[\s\S]*?<\/\1>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\/(p|div|li|h[1-6]|tr|section|article)>|<br\s*\/?>/gi, '\n')
+    // Opening and closing block tags both break the line (a run of them breaks it once), or a <summary> label fuses with the quote under it; inline tags vanish so words stay whole.
+    .replace(/<\/?t[dh]\b[^>]*>/gi, ' ')
+    .replace(/(?:\s*<\/?(?:p|div|br|hr|li|[duo]l|d[dt]|h[1-6]|tr|t(?:able|head|body|foot)|caption|blockquote|pre|figure|figcaption|details|summary|section|article|aside|header|footer|nav|main|address|form|fieldset|legend)\b[^>]*>)+\s*/gi, '\n')
     .replace(/<[^>]+>/g, '');
   const text = decode(body).replace(/[ \t\f\r]+/g, ' ').replace(/ ?\n ?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   return title ? `${decode(title).trim()}\n\n${text}` : text;

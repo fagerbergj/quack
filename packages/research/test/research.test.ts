@@ -92,6 +92,17 @@ test('text extraction and result shaping', () => {
   assert.equal(formatResults([]), 'No results.');
 });
 
+test('page text breaks at block boundaries and keeps inline-split words whole', async () => {
+  const curl = htmlToText(await readFile(join(import.meta.dirname, 'fixtures/summary-quote.html'), 'utf8'));
+  assert.match(curl, /^Quote\nA basic rule of thumb/m);
+  assert.doesNotMatch(curl, /QuoteA/);
+  assert.deepEqual(missingQuotes('curl: "A basic rule of thumb is that if someone can spot that the contribution was made with the help of AI, you have more work to do." [s1]', [curl]), []);
+  assert.equal(htmlToText('<p>An <em>ex</em>ample of <a href="/x">li</a>nks</p>'), 'An example of links');
+  assert.equal(htmlToText('<div>Label<p>One</p>\n\n<p>Two</p></div>'), 'Label\nOne\nTwo');
+  assert.equal(htmlToText('<ul><li>a</li><li>b</li></ul>x<br>y<br/>z'), 'a\nb\nx\ny\nz');
+  assert.equal(htmlToText('<table><tr><td>1</td><td>2</td></tr><tr><th>3</th></tr></table><pre>p</pre><path/>q'), '1 2\n3\np\nq');
+});
+
 test('a report must have its sections and cite a source', () => {
   assert.deepEqual(validateReport('## Summary\nx\n## Assumptions\n-\n## Findings\n- y [s1]\n'), []);
   assert.deepEqual(validateReport('## Summary\nx\n'), ['missing a "## Assumptions" section', 'missing a "## Findings" section', 'no source is cited; cite fetched sources as [s1], [s2]']);
