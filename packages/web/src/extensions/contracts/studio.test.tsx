@@ -157,8 +157,9 @@ test('with no verdicts, a REST contract marks the operations that changed since 
 test('with no verdicts, a TypeScript contract marks the declarations that changed and the ones added', async () => {
   const pane = await proposeTwo(tsSpec(1, 'export type A = { n: number };'), tsSpec(2, 'export type A = { n: string; m?: B };\nexport type B = { x: number };'));
   expect(await within(pane).findByRole('heading', { name: /since version 1$/ })).toBeInTheDocument();
-  expect(within(within(pane).getByRole('article', { name: 'B' })).getAllByText('New').length).toBeGreaterThan(0);
-  expect(within(within(pane).getByRole('article', { name: 'A' })).getByText('Changed')).toBeInTheDocument();
+  // The cards render once the lazy code-contract chunk and the TypeScript model load, after the summary heading.
+  expect((await within(await within(pane).findByRole('article', { name: 'B' })).findAllByText('New')).length).toBeGreaterThan(0);
+  expect(await within(await within(pane).findByRole('article', { name: 'A' })).findByText('Changed')).toBeInTheDocument();
 });
 
 test("each version is labelled by where it stands with the person, and the approval bar reads the newest one's status", async () => {

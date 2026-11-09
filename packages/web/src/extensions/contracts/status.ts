@@ -42,7 +42,8 @@ export async function contractRecords(): Promise<Map<string, ContractRecord>> {
 /** Where one sealed spec stands with the person, as the contracts extension reads it from the session's approval records and proposals. */
 export type VersionStatus = 'draft' | 'proposed' | 'approved' | 'changes_requested';
 
-/** Each spec artifact's status by artifact number (GET apps/contracts/contracts/{key}); undefined when the app is not mounted or fails. */
+/** Each spec artifact's status by artifact number (GET apps/contracts/contracts/{key}); undefined when the app answers not found or an error,
+ * or the request fails, which Studio shows as no answer yet. */
 export async function contractVersions(key: string): Promise<Map<number, VersionStatus> | undefined> {
   const res = await fetch(`apps/contracts/contracts/${encodeURIComponent(key)}`).catch(() => undefined);
   if (!res?.ok) return undefined;
