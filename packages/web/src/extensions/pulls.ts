@@ -1,19 +1,22 @@
 import { json } from '../api.ts';
 
-export type PrState = { state: 'open' | 'merged' | 'closed'; at: string };
-export type Pulls = { [key: string]: PrState };
+/** GitHub's pull request, cut to the subset the github app mirrors: https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request */
+export type Pull = { number: number; state: 'open' | 'closed'; merged: boolean; merged_at: string | null; closed_at: string | null; html_url: string; title: string };
+/** GitHub's pull_request webhook event as the app's /events stream relays it: https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request */
+export type PullEvent = { action: string; repository: { full_name: string }; pull_request: Pull };
 
-// The github service answers at most this many keys per lookup and flags the rest as truncated.
-const BATCH = 100;
+const KEY = /^github:([^/]+\/[^#]+)#(\d+)$/;
 
-/** PR states for github session keys, looked up in batches the service accepts; undefined when the service is not connected. */
-export async function lookupPulls(keys: string[]): Promise<Pulls | undefined> {
-  const batches = Array.from({ length: Math.ceil(keys.length / BATCH) }, (_, i) => keys.slice(i * BATCH, (i + 1) * BATCH));
-  const pages = await Promise.all(batches.map(async (batch) => {
-    const res = await fetch(`apps/github/pulls?keys=${encodeURIComponent(batch.join(','))}`);
-    return res.status === 404 ? undefined : json<{ pulls: Pulls; truncated?: boolean }>(res);
-  }));
-  if (pages.some((p) => p === undefined)) return undefined;
-  if (pages.some((p) => p!.truncated)) throw new Error('the GitHub service answered only part of the lookup');
-  return Object.assign({}, ...pages.map((p) => p!.pulls));
+/** owner/repo#n, lowercased because GitHub matches owner and repo in any case; undefined for a key that is not a github PR. */
+export const pullKey = (sessionKey: string) => {
+  const m = KEY.exec(sessionKey);
+  return m ? `${m[1].toLowerCase()}#${m[2]}` : undefined;
+};
+export const eventKey = (e: PullEvent) => `${e.repository.full_name.toLowerCase()}#${e.pull_request.number}`;
+
+/** The PR behind a pullKey from the app's GitHub mirror; undefined when the app, its installation or the PR is not there. */
+export async function readPull(key: string): Promise<Pull | undefined> {
+  const [repo, n] = key.split('#');
+  const res = await fetch(`apps/github/repos/${repo}/pulls/${n}`);
+  return res.status === 404 ? undefined : json<Pull>(res);
 }

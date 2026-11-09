@@ -1,7 +1,27 @@
+import { createHmac } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Browser, Locator, Page } from 'playwright';
-import type { StackOpts } from './stack.ts';
+import { QA_WEBHOOK_SECRET, type StackOpts } from './stack.ts';
+
+let delivery = 0;
+
+/** Signs and sends a pull_request webhook as GitHub would, so the github app (`--apps github`) writes the PR to its mirror and streams it. */
+export async function prWebhook(url: string, fullName: string, number: number, state: 'open' | 'merged' | 'closed') {
+  const at = state === 'open' ? null : '2026-11-09T12:00:00Z';
+  const pull_request = { number, state: state === 'open' ? 'open' : 'closed', merged: state === 'merged', merged_at: state === 'merged' ? at : null, closed_at: at, html_url: `https://github.com/${fullName}/pull/${number}`, title: `PR ${number}` };
+  const [login, name] = fullName.split('/');
+  const body = JSON.stringify({ action: state === 'open' ? 'reopened' : 'closed', repository: { full_name: fullName, name, owner: { login } }, pull_request });
+  const signature = `sha256=${createHmac('sha256', QA_WEBHOOK_SECRET).update(body).digest('hex')}`;
+  const res = await fetch(`${url}/apps/github/webhook`, { method: 'POST', body, headers: { 'x-github-event': 'pull_request', 'x-hub-signature-256': signature, 'x-github-delivery': `qa-${process.pid}-${++delivery}` } });
+  if (!res.ok) throw new Error(`webhook ${state} ${fullName}#${number}: ${res.status} ${await res.text()}`);
+}
+
+/** Starts a quack session under a github review key through the stack's fake model, so the list and header have a review to show. */
+export async function seedReview(url: string, key: string) {
+  const res = await fetch(`${url}/sessions/${encodeURIComponent(key)}/invocations?agent=quack`, { method: 'POST', body: JSON.stringify({ input: `Review PR ${key.split('#')[1]}`, wait: true }) });
+  if (!res.ok) throw new Error(`seed ${key}: ${res.status} ${await res.text()}`);
+}
 
 export type StepResult = { name: string; ok: boolean; error?: string; shots: string[] };
 export type Ctx = {

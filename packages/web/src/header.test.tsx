@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from './App.tsx';
-import { FakeSocket, routes, sess, snapshot, stubViewport, useHarness } from './test-harness.ts';
+import { FakeEventSource, FakeSocket, routes, sess, snapshot, stubViewport, useHarness } from './test-harness.ts';
 
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /artifacts': { artifacts: [] } }));
 
@@ -19,7 +19,7 @@ const SESSIONS = [
 
 async function header(key: string) {
   routes['GET /sessions'] = { sessions: SESSIONS };
-  routes[`GET /apps/github/pulls?keys=${encodeURIComponent(SESSIONS.filter((s) => s.key.startsWith('github:')).map((s) => s.key).sort().join(','))}`] = { pulls: { 'fagerbergj/quack#2243': { state: 'open', at: '2026-11-08T00:00:00Z' } } };
+  routes['GET /apps/github/repos/fagerbergj/quack/pulls/2243'] = { number: 2243, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: 'https://github.com/fagerbergj/quack/pull/2243', title: 't' };
   routes[`GET /sessions/contracts%3Ac1/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
   stubViewport(false);
   location.hash = `#/s/${encodeURIComponent(key)}`;
@@ -32,12 +32,14 @@ async function header(key: string) {
   return { line1: line2.previousElementSibling as HTMLElement, line2, bar: line2.parentElement!.parentElement! };
 }
 
-test('a review leads with its number and PR title; the repo, PR state and cost sit on line 2', async () => {
+test('a review leads with its PR title; its PR badge (state and number), repo and cost sit on line 2', async () => {
   const { line1, line2 } = await header(REVIEW);
   expect(line1).toHaveTextContent(/^#2243 Every failing item is named in the verdict$/);
+  expect(within(line1).getByText('#2243'), 'the badge shows the number; line 1 keeps it for screen readers').toHaveClass('sr-only');
   expect(line1).toHaveAttribute('title', 'Every failing item is named in the verdict');
-  await screen.findByText('Open');
-  expect(line2).toHaveTextContent(/^IdleOpenfagerbergj\/quack\$0\.11$/);
+  FakeEventSource.all.at(-1)!.open();
+  expect(await within(line2).findByRole('link', { name: 'Pull request #2243, open, on GitHub' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/pull/2243');
+  expect(line2).toHaveTextContent(/^Idle#2243fagerbergj\/quack\$0\.11$/);
 });
 
 test.each([

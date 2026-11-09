@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -52,6 +53,16 @@ async function waitFor(check: () => Promise<boolean>, what: string, ms = 60_000)
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`timed out waiting for ${what}`);
+}
+
+/** What QA signs github webhooks with. */
+export const QA_WEBHOOK_SECRET = 'qa-webhook-secret';
+
+// A throwaway app key: signed webhooks reach the github app, and anything it asks GitHub is refused.
+function githubEnv(tmp: string): Record<string, string> {
+  const key = join(tmp, 'github-app.pem');
+  writeFileSync(key, generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey);
+  return { QUACK_GH_APP_ID: '1', QUACK_GH_PRIVATE_KEY_FILE: key, QUACK_GH_WEBHOOK_SECRET: QA_WEBHOOK_SECRET };
 }
 
 const reachable = (url: string) => async () => (await fetch(url)).ok;
@@ -159,7 +170,7 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts)), extensions }));
     launch(parts, ['packages/distributor/src/main.ts'], {
       PORT: String(port), QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
-      QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x',
+      QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', ...(opts.apps?.includes('github') && githubEnv(parts.tmp)),
     });
     await waitFor(reachable(`${url}/version`), 'the distributor');
     if (opts.seed === 'demo') await seedDemo(url);

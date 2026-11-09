@@ -3,7 +3,8 @@ import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge,
 import { GithubError, NoInstallation, RateLimited, type GithubApp } from './app.ts';
 import { allReviews, reviewFeedback } from './feedback.ts';
 import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused, settled } from './notice.ts';
-import { prStateKey, pullStates, stateOf } from './pulls.ts';
+import { pullEventStream } from './events.ts';
+import { MIRROR_PATH, pullOf, pullStates } from './pulls.ts';
 import { waitingQueue, type WaitingStore } from './queue.ts';
 import { sqliteWaiting } from './waiting-store.ts';
 import { closedIssues, stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
@@ -140,12 +141,11 @@ async function startQueued(app: GithubApp, config: ServiceConfig, state: RunStat
 
 type States = ReturnType<typeof pullStates>;
 
-// A close or reopen only updates the PR's recorded state; it never starts a run.
+// A close or reopen only updates the PR's mirrored state; it never starts a run.
 function recordState(states: States, event: string | undefined, p: Record<string, any>): boolean {
   const pr = p.pull_request;
   if (event !== 'pull_request' || !pr || !['closed', 'reopened'].includes(p.action)) return false;
-  const at = pr.merged_at ?? pr.closed_at ?? pr.updated_at ?? new Date().toISOString();
-  states.record(prStateKey(p.repository.owner.login, p.repository.name, pr.number), p.action === 'reopened' ? 'open' : stateOf(pr), at);
+  states.write(p.repository.full_name, pullOf(pr), p.action);
   return true;
 }
 
@@ -353,9 +353,28 @@ export async function invocationMeta(app: GithubApp, owner: string, repo: string
   }
 }
 
-async function pullStatesRoute(req: IncomingMessage, res: ServerResponse, app: GithubApp, states: States) {
-  const keys = (new URL(req.url ?? '', 'http://x').searchParams.get('keys') ?? '').split(',').filter(Boolean);
-  send(res, 200, await states.lookup(app, keys));
+const githubDown = (err: unknown) => err instanceof RateLimited || (err instanceof GithubError && err.status >= 500);
+
+// A GitHub outage answers with the stored copy, marked stale per RFC 9111 (Age, Warning 110), so a badge outlasts the blip.
+function sendStale(res: ServerResponse, kept: { pull: unknown; age: number }, what: string, err: unknown) {
+  console.warn(`github: serving ${what} from ${kept.age}s ago; GitHub failed: ${(err as Error).message}`);
+  res.setHeader('age', String(kept.age));
+  res.setHeader('warning', '110 - "Response is Stale"');
+  send(res, 200, kept.pull);
+}
+
+// GitHub's "Get a pull request", cut to the Pull subset and served from the store while fresh.
+async function mirrorPull(res: ServerResponse, app: GithubApp, states: States, [, owner, repo, n]: RegExpExecArray) {
+  try {
+    const pull = await states.read(app, owner, repo, Number(n));
+    if (pull) send(res, 200, pull);
+    else sendProblem(res, 404, `no pull request ${owner}/${repo}#${n}`);
+  } catch (err) {
+    const kept = githubDown(err) ? states.stored(owner, repo, Number(n)) : undefined;
+    if (kept) return sendStale(res, kept, `${owner}/${repo}#${n}`, err);
+    if (err instanceof RateLimited) res.setHeader('retry-after', String(Math.ceil(err.retryAfterMs / 1000)));
+    sendProblem(res, err instanceof NoInstallation ? 404 : err instanceof RateLimited ? 503 : err instanceof GithubError ? 502 : 500, (err as Error).message);
+  }
 }
 
 // By cause, so a caller retries only what can succeed: GitHub's refusals keep their status, its outages are a bad gateway, a rate limit is 503, a fault here is 500.
@@ -372,13 +391,17 @@ function failureStatus(err: unknown): number {
 export function createGithubService(app: GithubApp, config: ServiceConfig): App & { resume(): void; stop(): void; sweep(): Promise<void> } {
   const state: RunState = { posted: new Map(), watched: new Set() };
   const states = pullStates(config.statesFile);
+  const events = pullEventStream(states.subscribe);
   const queue = waitingQueue<Queued>(config.waiting ?? sqliteWaiting(':memory:'), (_key, q) => startQueued(app, config, state, q), config.queuePollMs);
-  return { resume: queue.resume, stop: queue.stop, sweep: queue.sweep, handle: async (req, res) => {
+  const stop = () => { queue.stop(); events.stop(); };
+  return { resume: queue.resume, stop, sweep: queue.sweep, handle: async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;
       if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state, states, queue);
-      const get = req.method === 'GET' ? { '/git-credential': () => gitCredential(req, res, app), '/pulls': () => pullStatesRoute(req, res, app, states) }[path] : undefined;
+      const get = req.method === 'GET' ? { '/git-credential': () => gitCredential(req, res, app), '/events': () => events.handle(req, res) }[path] : undefined;
       if (get) return await get();
+      const mirror = req.method === 'GET' ? MIRROR_PATH.exec(path) : null;
+      if (mirror) return await mirrorPull(res, app, states, mirror);
       const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
       if (!(await itemRoute(req, res, app, config, path))) send(res, 404, { error: 'not found' });
