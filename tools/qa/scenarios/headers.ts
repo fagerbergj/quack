@@ -50,6 +50,12 @@ const scenario: Scenario = {
       await visible(page.getByRole('button', { name: /OpenAPI file/ }).first());
       await ctx.shot(page, `contract-${label}`);
     });
+    await eachView(ctx, 'contract with a pending question', async (page, label) => {
+      await page.goto(`${ctx.url}/#/s/${encodeURIComponent('contracts:qa-draft')}`);
+      await visible(page.getByRole('heading', { level: 1 }).filter({ hasText: 'GitHub webhook contract' }));
+      await visible(page.getByRole('tab', { name: /Contract/ }).or(page.getByRole('region', { name: 'Question' })).first());
+      await ctx.shot(page, `contract-question-${label}`);
+    });
     await eachView(ctx, 'contracts page header', async (page, label) => {
       await page.goto(`${ctx.url}/#/contracts`);
       await visible(page.getByRole('button', { name: 'New contract' }));

@@ -143,7 +143,7 @@ function Side({ name, versions, status, value, none, title, onPick }: { name: st
   const choose = (n?: number) => { menu.close(); onPick(n); };
   return (
     <div ref={menu.root} onKeyDown={menu.keys} className="relative">
-      <button ref={menu.button} type="button" aria-haspopup="menu" aria-expanded={menu.open} aria-label={`${name}: ${v ? nameOf(v, versions, status) : none}`} title={title} onClick={menu.toggle} className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-soft px-3 text-[13px] text-ink lg:h-9">
+      <button ref={menu.button} type="button" aria-haspopup="menu" aria-expanded={menu.open} aria-label={`${name}: ${v ? nameOf(v, versions, status) : none}`} title={title} onClick={menu.toggle} className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-soft px-3 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
         <span className="font-mono font-semibold whitespace-nowrap">{v ? short(v, versions) : 'none'}</span>{v && status && <Badge s={status(v)} />}{chevron}
       </button>
       {menu.open && (
@@ -169,7 +169,7 @@ function Compare({ versions, status, from, to, auto, pick }: { versions: Version
       <Side name="Compare to" versions={versions} status={status} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
       <span className="flex-1" />
       {auto === undefined && (
-        <button type="button" aria-label="Follow the newest" title="Follow the newest version" onClick={() => pick(undefined)} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:text-ink lg:h-9 lg:w-9">
+        <button type="button" aria-label="Follow the newest version" title="Follow the newest version" onClick={() => pick(undefined)} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" /></svg>
         </button>
       )}

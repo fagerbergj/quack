@@ -342,7 +342,7 @@ function StudioTabs({ live: { studio, tab, setTab }, waiting }: { live: Live; wa
   return (
     <div role="tablist" aria-label="Show" className="flex border-b border-line lg:hidden">
       <button type="button" role="tab" aria-selected={tab === 'pane'} onClick={() => setTab('pane')} className={cls}>
-        {studio.label}{waiting > 0 && ' '}{waiting > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] font-semibold text-warning">{waiting}</span>}
+        {studio.label}{waiting > 0 && ' '}{waiting > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] leading-4 font-semibold text-warning">{waiting}</span>}
       </button>
       <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')} className={cls}>Chat</button>
     </div>

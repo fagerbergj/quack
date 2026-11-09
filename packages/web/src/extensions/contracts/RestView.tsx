@@ -13,7 +13,7 @@ export const label = 'text-xs font-semibold uppercase tracking-wider text-muted'
 const dt = 'w-20 flex-none whitespace-nowrap';
 export const card = 'rounded-[18px] border border-line bg-surface';
 // The pane header's actions: one 44px icon button each, named by aria-label and title.
-const round = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border border-line-strong bg-transparent text-ink-2 no-underline hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
+const round = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 no-underline hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
 const svg = (d: string) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
 
 function Method({ m }: { m: string }) {

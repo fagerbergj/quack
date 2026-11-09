@@ -20,14 +20,15 @@ const SESSIONS = [
 async function header(key: string) {
   routes['GET /sessions'] = { sessions: SESSIONS };
   routes[`GET /apps/github/pulls?keys=${encodeURIComponent(SESSIONS.filter((s) => s.key.startsWith('github:')).map((s) => s.key).sort().join(','))}`] = { pulls: { 'fagerbergj/quack#2243': { state: 'open', at: '2026-11-08T00:00:00Z' } } };
+  routes[`GET /sessions/contracts%3Ac1/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
   stubViewport(false);
   location.hash = `#/s/${encodeURIComponent(key)}`;
   render(<App />);
   FakeSocket.all[0]!.open();
   FakeSocket.all[0]!.frame(snapshot());
-  // The session header's h1 is the one with the status line under it.
-  const status = await screen.findByRole('status');
-  const line2 = status.parentElement!;
+  // The session header's h1 is the one with the status line under it; a studio pane has statuses of its own.
+  const statuses = await screen.findAllByRole('status');
+  const line2 = statuses.map((s) => s.parentElement!).find((p) => p.previousElementSibling?.tagName === 'H1')!;
   return { line1: line2.previousElementSibling as HTMLElement, line2, bar: line2.parentElement!.parentElement! };
 }
 
