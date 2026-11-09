@@ -6,7 +6,8 @@ import { parseSpec } from './spec.ts';
 import { ContractStudio, VIEWS } from './Studio.tsx';
 
 const KIND = 'contract.spec';
-const ICON = 'M7 3h7l4 4v14H7zM14 3v4h4M9.5 14l2 2 3.5-4';
+// Braces around a ring: a contract is a declared shape; full 24-unit width like the other nav icons.
+const ICON = 'M8 4C6.3 4 6 5.2 6 6.5V10c0 1.1-.9 2-2 2 1.1 0 2 .9 2 2v3.5C6 18.8 6.3 20 8 20M16 4c1.7 0 2 1.2 2 2.5V10c0 1.1.9 2 2 2-1.1 0-2 .9-2 2v3.5c0 1.3-.3 2.5-2 2.5M14.5 12a2.5 2.5 0 1 1-5 0 2.5 2.5 0 1 1 5 0';
 
 const NAMES: Record<string, string> = { 'contract.approved': 'Approval', 'contract.changes': 'Changes requested' };
 
