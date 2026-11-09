@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Conversation, ConversationView, Harness } from '@earendil-works/pi-durable';
 import { Approvals, Failures, failedRows, onGeneration } from '@quack/sdk';
-import { append, LifecycleStream, readStream, type PriceOf, type SessionFacts, type Spend, type WireEvent } from './lifecycle.ts';
+import { append, LifecycleStream, openRun, readStream, type PriceOf, type SessionFacts, type Spend, type WireEvent } from './lifecycle.ts';
 
 const ctx = BACKGROUND_CONTEXT;
 const SEND_TIMEOUT_MS = 10_000;
@@ -144,7 +144,7 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     await commit(async (tx) => {
       const doc = await tx.doc(LifecycleStream, root.id);
       const open = doc.runs.at(-1)?.endedAt === null ? doc.runs.at(-1) : undefined;
-      if (running && !open) doc.runs.push({ n: doc.runs.length + 1, startedAt: at, endedAt: null, failedSteps: [], lastMessage: null, cancelled: [] });
+      if (running && !open) openRun(doc, at);
       if (!running && !open && booting) doc.boots = [...(doc.boots ?? []), at];
       if (running || !open) return;
       // An approval still without a verdict when its run ends is cancelled: nobody waits on it.

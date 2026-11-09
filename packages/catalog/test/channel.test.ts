@@ -66,6 +66,7 @@ test('a malformed batch is a 400 that names what is wrong', async () => {
     [{ events: [{ seq: 1, id: 's', at: at(1), type: 'state.changed', data: { state: 'paused' } }] }, /running, idle, stopped or archived/],
     [{ events: [{ seq: 1, id: 'a', at: 'yesterday', type: 'run.started', data: { run: 1 } }] }, /RFC 3339/],
     [{ events: [{ seq: 1, id: 'r', at: at(1), type: 'ask.resolved', data: { id: 'a', choice: 'approve', by: { kind: 'person' } } }] }, /person with an id/],
+    [{ events: [{ seq: 1, id: 'run:1:turn:0:ended', at: at(1), type: 'turn.ended', data: { run: 1, index: 0 } }] }, /index must be an integer of at least 1/],
     [{ events: Array.from({ length: 501 }, (_, i) => spend(i + 1, '1')) }, /at most 500/],
   ];
   for (const [body, why] of bad) {
@@ -102,4 +103,16 @@ test('v9 events: deliveries append, and echoes and extension events only move th
   assert.deepEqual(row?.deliveries, [{ where: 'github', link: 'https://x/1', at: Date.parse(at(3)) }], 'one delivery per event id');
   await post({ events: [{ seq: 7, id: 'run:1:ended', at: at(7), type: 'run.ended', data: { run: 1, outcome: 'denied', failedSteps: [] } }] });
   assert.equal((await catalog.getSession(key))?.lastRun?.outcome, 'denied');
+});
+
+test('v10 turn.ended: a session mid-run with two ended turns shows lastActivity at the second turn\'s at', async () => {
+  const { post, catalog } = await channel();
+  const key = 'sleeper:platinum:2';
+  const turn = (seq: number, index: number) => ({ seq, id: `run:1:turn:${index}:ended`, at: at(seq * 10), type: 'turn.ended', data: { run: 1, index } });
+  const batch = { events: [created(), { seq: 2, id: 'run:1:started', at: at(2), type: 'run.started', data: { run: 1 } }, turn(3, 1), turn(4, 2)] };
+  assert.deepEqual(await post(batch), { status: 200, body: { acked: 4 } });
+  const row = await catalog.getSession(key);
+  assert.deepEqual([row?.state, row?.lastActivity, row?.lastRun], ['running', Date.parse(at(40)), undefined]);
+  assert.deepEqual(await post({ events: [turn(3, 1)] }), { status: 200, body: { acked: 4 } });
+  assert.equal((await catalog.getSession(key))?.lastActivity, Date.parse(at(40)), 'a redelivered turn.ended neither applies twice nor regresses');
 });

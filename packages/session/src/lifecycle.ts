@@ -8,7 +8,11 @@ export type WireEvent = { seq: number; id: string; at: string; type: string; dat
 type Logical = Omit<WireEvent, 'seq'>;
 
 /** One run as the session recorded it when it started and ended. */
-export type RunRecord = { n: number; startedAt: number; endedAt: number | null; failedSteps: Array<{ step: string; error: string }>; lastMessage: string | null; cancelled: string[] };
+export type RunRecord = {
+  n: number; startedAt: number; endedAt: number | null; failedSteps: Array<{ step: string; error: string }>; lastMessage: string | null; cancelled: string[];
+  /** Each ended tool round, by the assistant entry that called its tools; absent in runs recorded before turn.ended. */
+  turns?: Array<{ entry: string; at: number }>;
+};
 export type Spend = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; at: number };
 
 // Every revision of every event, append-only, so a replay from any watermark is contiguous; `signatures` finds what changed.
@@ -49,6 +53,7 @@ function runEvents(runs: RunRecord[], facts: SessionFacts, failures: Array<{ ste
   }
   return runs.flatMap((r) => [
     ev(`run:${r.n}:started`, 'run.started', r.startedAt, { run: r.n }),
+    ...(r.turns ?? []).map((t, i) => ev(`run:${r.n}:turn:${i + 1}:ended`, 'turn.ended', t.at, { run: r.n, index: i + 1 })),
     ...(r.endedAt === null ? [] : [
       // shortcut: an aborted run reads as failed or succeeded; report aborted once the harness exposes how a run ended.
       ev(`run:${r.n}:ended`, 'run.ended', r.endedAt, { run: r.n, outcome: r.failedSteps.length ? 'failed' : 'succeeded', failedSteps: r.failedSteps, ...(r.lastMessage && { lastMessage: r.lastMessage }) }),
@@ -162,6 +167,22 @@ export function append(doc: StreamDoc, fresh: WireEvent[]): void {
     doc.events.push(e);
     doc.signatures[e.id] = signature(e);
   }
+}
+
+/** Opens the next run unless one is open; the sender on a run start, and a turn that ends before the sender saw its run. */
+export function openRun(doc: StreamDoc, at: number): RunRecord {
+  const open = doc.runs.at(-1)?.endedAt === null ? doc.runs.at(-1)! : undefined;
+  if (open) return open;
+  const run: RunRecord = { n: doc.runs.length + 1, startedAt: at, endedAt: null, failedSteps: [], lastMessage: null, cancelled: [] };
+  doc.runs.push(run);
+  return run;
+}
+
+/** Records a tool round's end in the open run, once per assistant entry, so a hook re-run on recovery adds nothing. */
+export function recordTurn(doc: StreamDoc, entry: string, at: number): void {
+  if (doc.runs.some((r) => r.turns?.some((t) => t.entry === entry))) return;
+  const run = openRun(doc, at);
+  run.turns = [...(run.turns ?? []), { entry, at }];
 }
 
 /** The highest spend the stream has already reported, so a later revision never reports less. */

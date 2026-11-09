@@ -77,6 +77,7 @@ const DATA: Record<CoreEvent['type'], (d: Obj, what: string) => unknown> = {
     need(['succeeded', 'denied', 'failed', 'aborted'].includes(d.outcome as string), `${w}.outcome must be succeeded, denied, failed or aborted`);
     return { run: int(d, 'run', w), outcome: d.outcome, failedSteps: steps(d.failedSteps, w), ...(d.lastMessage !== undefined && { lastMessage: str(d, 'lastMessage', w) }) };
   },
+  'turn.ended': (d, w) => ({ run: int(d, 'run', w), index: int(d, 'index', w) }),
   'ask.opened': (d, w) => {
     need(d.type === 'approval' || d.type === 'question', `${w}.type must be approval or question`);
     need(d.type !== 'approval' || (isObj(d.toolCall) && typeof d.toolCall.tool === 'string' && 'args' in d.toolCall), `${w}.toolCall must have a tool and args`);

@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
+import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
 import { EVENT_MAX_BYTES, eventBytes, inProcessFetch } from '@quack/sdk';
 import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, startLifecycleSender } from '../src/index.ts';
@@ -54,17 +56,19 @@ test('an over-cap run end is cut with a marker until it fits; other events are l
   assert.ok(data.lastMessage.endsWith(' … [truncated]') || data.failedSteps[0]!.error.endsWith(' … [truncated]'));
 });
 
-async function harness(key = KEY) {
+type Setup = { responses?: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0]; extensions?: Extension[]; now?: () => Date };
+
+async function harness(key = KEY, setup: Setup = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-lifecycle-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   await writeFile(join(dir, 'agent'), 'quack');
   await writeFile(join(dir, 'created'), String(facts.createdAt));
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
-  faux.setResponses([fauxAssistantMessage('All done here.'), fauxAssistantMessage('Second answer.')]);
+  faux.setResponses(setup.responses ?? [fauxAssistantMessage('All done here.'), fauxAssistantMessage('Second answer.')]);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: setup.extensions }, ...(setup.now && { now: setup.now }) });
   const store = sqliteCatalog(join(dir, 'catalog.sqlite'), { currency: 'USD' });
   const catalog = createCatalog({ store, journal: fileJournal(join(dir, 'journal')), log: () => {} });
   const route = eventsRoute(catalog);
@@ -82,7 +86,7 @@ async function harness(key = KEY) {
   const fire = () => timers.splice(0).forEach((fn) => fn());
   const sender = await startLifecycleSender(session, {
     url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: (fn) => (timers.push(fn), () => {}),
-    lastMessage: async () => (await session.messages(4)).filter((x) => x.role === 'assistant').at(-1)?.text,
+    lastMessage: async () => (await session.messages(4)).filter((x) => x.role === 'assistant').at(-1)?.text, ...(setup.now && { now: () => +setup.now!() }),
   });
   cleanups.push(async () => { await sender.stop(); await session.close(); await store.close(); });
   const stream = () => session.harness.snapshot(LifecycleStream, session.root.id, ctx);
@@ -172,4 +176,35 @@ test('a process that comes up without a run reports idle, after the distributor 
   await again.stop();
   assert.equal((await h.catalog.getSession(KEY))?.state, 'idle');
   assert.deepEqual((await h.stream())?.events.filter((e) => e.id.startsWith('state:boot:')).map((e) => e.id), ['state:boot:1', 'state:boot:2']);
+});
+
+test('a session mid-run with two ended turns shows lastActivity at the second turn\'s end', async () => {
+  let clock = Date.parse('2026-11-06T10:00:00Z');
+  let release!: () => void;
+  let reached!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  const third = new Promise<void>((r) => (reached = r));
+  let calls = 0;
+  // Each round takes a minute on the fake clock; the third holds the run open.
+  const step = defineTool({
+    name: 'step', description: 'one step', parameters: obj({}, { open: true }), replay: 'safe',
+    execute: async () => {
+      clock += 60_000;
+      if (++calls === 3) { reached(); await held; }
+      return { output: [{ type: 'text', text: 'ok' }] };
+    },
+  });
+  const round = () => fauxAssistantMessage(fauxToolCall('step', {}), { stopReason: 'toolUse' });
+  const h = await harness(KEY, { responses: [round(), round(), round(), fauxAssistantMessage('Done.')], extensions: [defineExtension({ name: 'steps', tools: [step] })], now: () => new Date(clock) });
+  await h.session.submit('go', undefined, false);
+  await third;
+  await h.settle();
+  const row = await h.catalog.getSession(KEY);
+  assert.deepEqual([row?.state, row?.lastActivity, row?.lastRun], ['running', Date.parse('2026-11-06T10:02:00Z'), undefined]);
+  release();
+  await h.session.root.waitForIdle(ctx);
+  await h.settle();
+  const turns = (await h.stream())!.events.filter((e) => e.type === 'turn.ended');
+  assert.deepEqual(turns.map((e) => [e.id, e.data]), [1, 2, 3].map((index) => [`run:1:turn:${index}:ended`, { run: 1, index }]), 'one event per tool round, one-based');
+  assert.equal((await h.catalog.getSession(KEY))?.lastActivity, (await h.catalog.getSession(KEY))?.lastRun?.endedAt, 'the run end, later in the channel, is the row\'s');
 });

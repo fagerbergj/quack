@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type ImageContent, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, LiveDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -11,6 +11,7 @@ import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
 import { CANNOT_SEE_IMAGES } from './images.ts';
+import { LifecycleStream, recordTurn } from './lifecycle.ts';
 import { resumeModelFault, watchModelFaults } from './model-fault.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
@@ -74,6 +75,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   registry.install(cutOffExtension());
   // The sink needs the harness, which opens after the registry; hooks only call it once a run is going.
   let open: Harness | undefined;
+  let turnsOf: Conversation | undefined;
   const log = opts.log ?? console.error;
   const note = (event: string, fields: Record<string, unknown>) => log(JSON.stringify({ event: `session.${event}`, key: opts.key, ...fields }));
   registry.install(unknownToolExtension(async (id) => (await (await open!.conversation(id, ctx))!.agent(ctx)).tools.map((t) => t.name)));
@@ -85,6 +87,14 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       if (error) void stopRun(conversation!).then((r) => note('abort', { caller: 'run-ceiling', ...r }), () => undefined);
     },
   }));
+  // A tool round's end goes in the root's lifecycle stream, the catalog's outbox, as turn.ended (lifecycle channel v10).
+  registry.install(defineExtension({ name: 'turn-ends', hooks: [hook(GenerationTask, {
+    async afterTools(assistant, _results, api) {
+      const root = turnsOf;
+      if (api.conversationId !== root?.id) return;
+      await root.commit(async (tx) => recordTurn(await tx.doc(LifecycleStream, root.id), String(assistant), +(opts.now?.() ?? Date.now())), ctx);
+    },
+  })] }));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
   const storage = await openNodeSqliteStorage(join(opts.dir, 'session.sqlite'));
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
@@ -111,6 +121,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   open = harness;
   const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
   const root = await harness.root(ctx, { agent });
+  turnsOf = root;
   // A session reopened under a newer definition takes its model and instructions; its history stays.
   const current = await root.agent(ctx);
   const stale = current.instructions !== agent.instructions || current.model?.provider !== agent.model.provider || current.model?.modelId !== agent.model.modelId;

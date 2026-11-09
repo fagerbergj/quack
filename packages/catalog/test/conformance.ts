@@ -12,7 +12,7 @@ export type Fresh = () => Promise<{ store: SessionCatalogStore; catalog: Catalog
 export const T0 = Date.parse('2026-11-01T00:00:00Z');
 const BIG = 2n ** 53n + 1n;
 
-const CORE = new Set(['session.created', 'run.started', 'run.ended', 'ask.opened', 'ask.resolved', 'ask.cancelled', 'artifact.sealed', 'artifact.delivered', 'spend.recorded', 'title.set', 'state.changed']);
+const CORE = new Set(['session.created', 'run.started', 'run.ended', 'turn.ended', 'ask.opened', 'ask.resolved', 'ask.cancelled', 'artifact.sealed', 'artifact.delivered', 'spend.recorded', 'title.set', 'state.changed']);
 type Data<T extends CatalogEvent['type']> = Extract<CatalogEvent, { type: T }>['data'];
 /** A session's event stream: seq counts up, `at` is seq seconds past T0 unless given. */
 export function stream(key: string, incarnation = 'session') {
@@ -192,6 +192,20 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await store.setTitle(action('late2'), { key: 's0', title: 'x' });
       await store.openAsk(event('late3', 30), { key: 's0', id: 'z', type: 'approval', createdAt: T0 });
       assert.deepEqual(await snapshot(store, 's0'), { session: undefined, watermark: undefined, asks: [], artifacts: [] }, 'nothing lands under a tombstone');
+
+      await at('turns', 'running');
+      await store.openAsk(event('o', 4), { key: 'turns', id: 'q', type: 'question', createdAt: T0 + 1, prompt: { question: 'Q?', options: ['y'], freeText: false } });
+      await store.recordSpend(event('sp', 5), { key: 'turns', cost: usd(7n), tokens: { ...zero, input: 3 } });
+      await store.recordRunOutcome(event('run:1:ended', 6), { key: 'turns', outcome: 'failed', endedAt: T0 + 10, failedSteps: [{ step: 's', error: 'e' }], lastMessage: 'm' });
+      const prior = await snapshot(store, 'turns');
+      await store.recordTurn(event('run:2:turn:1:ended', 7), { key: 'turns', at: T0 + 20 });
+      assert.deepEqual(await snapshot(store, 'turns'), { ...prior, session: { ...prior.session!, lastActivity: T0 + 20 }, watermark: 7 }, 'recordTurn moves lastActivity and nothing else');
+      // A redelivery at or below the watermark is a no-op, whatever it carries.
+      await store.recordTurn(event('run:2:turn:1:ended', 7), { key: 'turns', at: T0 + 15 });
+      assert.equal((await store.getSession('turns'))?.lastActivity, T0 + 20, 'a redelivered turn neither applies twice nor regresses');
+      await store.recordRunOutcome(event('run:2:ended', 8), { key: 'turns', outcome: 'succeeded', endedAt: T0 + 30, failedSteps: [] });
+      await store.recordTurn(event('run:3:turn:1:ended', 9), { key: 'turns', at: T0 + 40 });
+      assert.deepEqual([(await store.getSession('turns'))?.lastActivity, (await store.getSession('turns'))?.lastRun?.endedAt], [T0 + 40, T0 + 30], 'the later of a run end and a turn end is the row\'s');
     });
 
     test('(4) a lifecycle write is one point of consistency: no torn row is visible', async () => {

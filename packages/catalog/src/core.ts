@@ -10,6 +10,7 @@ export type CoreEvent = { seq: number; id: string; at: number } & (
   | { type: 'session.created'; data: { agent: string; version?: number | null; createdAt: number } }
   | { type: 'run.started'; data: { run: number } }
   | { type: 'run.ended'; data: { run: number; outcome: RunOutcome; failedSteps: FailedStep[]; lastMessage?: string } }
+  | { type: 'turn.ended'; data: { run: number; index: number } }
   | { type: 'ask.opened'; data: { id: string; type: AskType; createdAt: number; toolCall?: { tool: string; args: Json }; prompt?: AskPrompt } }
   | { type: 'ask.resolved'; data: { id: string; choice: string; text?: string; reason?: string; by: Principal } }
   | { type: 'ask.cancelled'; data: { id: string; run: number } }
@@ -86,6 +87,7 @@ export function createCatalog(opts: { store: SessionCatalogStore; journal: Journ
     'state.changed': (key, w, e) => (e.data.state === 'stopped' || e.data.state === 'archived' ? store.advanceWatermark(w, { key }) : store.transitionSession(w, { key, to: e.data.state })),
     'artifact.delivered': (key, w, e) => store.recordArtifactDelivery(w, { key, ...e.data }),
     'run.ended': (key, w, e) => store.recordRunOutcome(w, { key, outcome: e.data.outcome, endedAt: e.at, failedSteps: e.data.failedSteps, ...(e.data.lastMessage !== undefined && { lastMessage: e.data.lastMessage }) }),
+    'turn.ended': (key, w, e) => store.recordTurn(w, { key, at: e.at }),
     'ask.opened': (key, w, e) => store.openAsk(w, { key, ...e.data }),
     'ask.resolved': (key, w, e) => store.resolveAsk(w, { key, ...e.data, resolvedAt: e.at }),
     'ask.cancelled': (key, w, e) => store.cancelAsk(w, { key, id: e.data.id }),

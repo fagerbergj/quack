@@ -1,4 +1,4 @@
-// The session catalog's store port (approved store-port contract v6): the core depends only on this, and the
+// The session catalog's store port (approved store-port contract v7): the core depends only on this, and the
 // PostgreSQL and SQLite adapters implement it and pass one conformance suite. The contract carries the full TSDoc.
 
 /** Any JSON value; open fields such as a resolved approval's tool arguments. Extension state never crosses this port. */
@@ -187,6 +187,8 @@ export interface SessionCatalogStore {
     failedSteps: FailedStep[];
     lastMessage?: string;
   }): Promise<void>;
+  /** turn.ended: lastActivity becomes at and nothing else moves; the later of a turn and a run end in channel order wins. */
+  recordTurn(write: EventWrite, change: { key: string; at: number }): Promise<void>;
   /** spend.recorded: cumulative totals; another currency or a lower total is refused with the watermark unchanged. */
   recordSpend(write: EventWrite, spend: {
     key: string;
