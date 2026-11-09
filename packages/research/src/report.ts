@@ -40,8 +40,8 @@ export function findingItems(report: string): Array<{ first: string; text: strin
 }
 
 /** Only the words, in order: punctuation, quote style, dashes, markdown emphasis and link targets differ between a page and a faithful quote of it. */
-// Not padded to word edges: extracted pages glue words ("QuoteA basic rule"), so a quote's end words may sit inside longer ones.
-const words = (s: string) => (s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ');
+// Space-padded so a quote matches whole words: "must" must not pass inside "mustn't", nor "able" inside "unable".
+const words = (s: string) => ` ${(s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ')} `;
 const MIN_QUOTE = 12;
 
 /** Quoted spans of a finding, split at elisions and [bracketed] insertions; shorter ones are scare quotes or names, not evidence. Edge punctuation is dropped: American style puts the sentence's comma or period inside the marks. */

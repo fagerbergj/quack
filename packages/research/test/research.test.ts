@@ -448,6 +448,8 @@ test('missingQuotes: changed words and the writer\'s own phrases in quote marks 
     ['"allow people to onboard themselves"', 'The contributing guide allows people to onboard themselves without assistance.'],
     ['"no AI authorship trailer"', 'AI agents must not add Signed-off-by tags; use an Assisted-by tag.'],
     ['"human-in-the-loop + same bar"', 'A human must review every contribution, which meets the same bar as any other.'],
+    ['"before release the agent must"', "Before release the agent mustn't merge it."],
+    ['"able to fix it alone"', 'The reviewer is unable to fix it alone.'],
   ];
   for (const [finding, page] of cases) assert.deepEqual(missingQuotes(finding, [page]), [finding.slice(1, -1)]);
 });
