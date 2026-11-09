@@ -30,7 +30,9 @@ export function Contracts({ rows }: { rows: Row[] | undefined }) {
     <div className="mx-auto w-full max-w-[960px] px-4 pt-4 pb-10 sm:px-6 lg:pt-8">
       <div className="mb-4 flex items-center gap-3">
         <h1 className="m-0 hidden flex-1 text-[22px] font-bold tracking-[-0.02em] lg:block">Contracts</h1>
-        <button type="button" onClick={() => setAdding(true)} className="ml-auto min-h-11 cursor-pointer rounded-full border-0 bg-ink px-4 text-[14px] font-semibold text-on-ink hover:bg-ink-2 lg:min-h-9">New contract</button>
+        <button type="button" aria-label="New contract" title="New contract" onClick={() => setAdding(true)} className="ml-auto grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
       </div>
       {rows && !list.length && <p className="text-sm text-muted">A contract is the agreed shape of an interface, such as a REST endpoint, that you approve before anyone builds against it.</p>}
       <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-[22px] border border-line bg-surface p-0 shadow-card empty:hidden">

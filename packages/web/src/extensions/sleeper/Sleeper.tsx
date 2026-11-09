@@ -4,8 +4,9 @@ import type { Row } from '../../sessions.ts';
 import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
-import { useLeagueSessions, useResults, wanted, weekResult, type Result } from './week.ts';
+import { useLeagueSessions, useResults, wanted, weekResult, type Result, type Sess } from './week.ts';
 import { Dialog } from '../../Dialog.tsx';
+import { MoreIcon } from '../../MoreIcon.tsx';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
 type Player = { id: string; name: string; pos: string; team: string | null; inj: string | null };
@@ -203,31 +204,49 @@ const CURRENT = ['waivers', 'trade-finder', 'trends', 'digest', 'retro', 'histor
 const PAST = ['digest', 'retro', 'lineup', 'waivers', 'trade-finder', 'trade', 'trends', 'history'];
 const JOBS: Array<[string, string]> = [['lineup', 'Lineup'], ['waivers', 'Waivers'], ['trade-finder', 'Trade finder'], ['trends', 'Trends'], ['digest', 'Recap'], ['retro', 'Retro'], ['history', 'League history']];
 
-type SheetProps = { found: Result[]; runs: Run[]; running: (job: string) => boolean; status: string; onRun: (job: string, name: string) => void; onJump: (job: string) => void; onClose: () => void };
+/** A job's session while it starts ('') or runs (its key); undefined when it can be run. */
+type LiveKey = (job: string) => string | undefined;
+type SheetProps = { found: Result[]; runs: Run[]; live: LiveKey; status: string; onRun: (job: string, name: string) => void; onClose: () => void };
 
-function JobSheet({ found, runs, running, status, onRun, onJump, onClose }: SheetProps) {
+const jobRow = 'flex min-h-14 w-full items-center gap-3 rounded-xl border-0 bg-transparent px-3 py-2 text-left no-underline hover:bg-soft focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-link';
+const glyph = (d: string) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none text-muted"><path d={d} /></svg>;
+
+// The whole row runs the job; once started it becomes a link to the run, so a second tap cannot start another.
+function JobRow({ job, name, line, live, onRun }: { job: string; name: string; line: string; live: string | undefined; onRun: SheetProps['onRun'] }) {
+  const text = (second: string) => (
+    <span className="flex min-w-0 flex-1 flex-col">
+      <span className="text-[14px] font-medium text-ink">{name}</span>{' '}
+      <span id={`job-${job}`} className="truncate text-[12px] text-muted">{second}</span>
+    </span>
+  );
+  if (live) return <a href={`#/s/${encodeURIComponent(live)}`} className={jobRow}>{text('Running · open')}{glyph('M9 6l6 6-6 6')}</a>;
+  const starting = live === '';
+  return (
+    <button type="button" aria-label={`Run ${name}`} aria-describedby={`job-${job}`} disabled={starting} onClick={() => onRun(job, name)} className={`${jobRow} cursor-pointer disabled:cursor-default disabled:hover:bg-transparent`}>
+      {text(starting ? 'Starting…' : line)}
+      {!starting && glyph('M8 5l11 7-11 7z')}
+    </button>
+  );
+}
+
+function JobSheet({ found, runs, live, status, onRun, onClose }: SheetProps) {
   return (
     // The frame only places the sheet; clicks beside it reach the backdrop beneath.
     <Dialog label="Run a job" onClose={onClose} className="pointer-events-none fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="pointer-events-auto relative flex max-h-[85dvh] w-full flex-col overflow-y-auto rounded-t-[22px] border border-line bg-canvas px-4 pt-3 pb-[calc(1rem+var(--safe-b))] shadow-lift sm:max-w-md sm:rounded-[22px]">
-        <div className="flex items-center gap-2">
+      <div className="pointer-events-auto relative flex max-h-[85dvh] w-full flex-col rounded-t-[22px] border border-line bg-canvas pt-3 shadow-lift sm:max-w-md sm:rounded-[22px]">
+        <div className="flex items-center gap-2 px-4">
           <h2 className="m-0 flex-1 text-[16px] font-semibold">Run a job</h2>
-          <button type="button" data-autofocus aria-label="Close" onClick={onClose} className="grid h-11 w-11 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft">✕</button>
+          <button type="button" data-autofocus aria-label="Close" title="Close" onClick={onClose} className={nav}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
         </div>
-        {status && <p role="status" className="m-0 mb-1 text-[13px] text-ink-2">{status}</p>}
-        <ul className="m-0 flex list-none flex-col p-0">
+        {status && <p role="status" className="m-0 mb-1 px-4 text-[13px] text-danger">{status}</p>}
+        <ul className="m-0 flex min-h-0 list-none flex-col overflow-y-auto overscroll-contain px-1 pt-1 pb-[calc(0.75rem+var(--safe-b))]">
           {JOBS.map(([job, name]) => {
             const last = found.find((r) => r.job === job);
             const next = runs.find((r) => r.job === job);
-            return (
-              <li key={job} className="flex items-center gap-3 border-t border-line py-2 first:border-t-0">
-                <button type="button" onClick={() => onJump(job)} disabled={!last} className="flex min-h-11 min-w-0 flex-1 cursor-pointer flex-col items-start justify-center border-0 bg-transparent p-0 text-left disabled:cursor-default">
-                  <span className="text-[14px] font-medium text-ink">{name}</span>
-                  <span className="text-[12px] text-muted">{running(job) ? 'Running now' : [last ? `${titleOf(last)} · ${weekday(last.artifact.sealedAt)}` : 'Nothing yet', next && `next ${slot(Date.parse(next.at))}`].filter(Boolean).join(' · ')}</span>
-                </button>
-                <button type="button" aria-label={`Run ${name}`} disabled={running(job)} onClick={() => onRun(job, name)} className="min-h-11 cursor-pointer rounded-lg bg-ink px-4 text-xs font-semibold text-on-ink disabled:cursor-default disabled:opacity-50">Run</button>
-              </li>
-            );
+            const line = [last ? `${titleOf(last)} · ${weekday(last.artifact.sealedAt)}` : 'Nothing yet', next && `next ${slot(Date.parse(next.at))}`].filter(Boolean).join(' · ');
+            return <li key={job}><JobRow job={job} name={name} line={line} live={live(job)} onRun={onRun} /></li>;
           })}
         </ul>
       </div>
@@ -235,22 +254,26 @@ function JobSheet({ found, runs, running, status, onRun, onJump, onClose }: Shee
   );
 }
 
-const nav = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-[22px] text-ink-2 hover:bg-soft disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent';
+const nav = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-[22px] text-ink-2 hover:bg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent';
 
 type HeaderProps = { week?: number; team?: string; prev?: number; next?: number; past: boolean; onWeek: (w: number | undefined) => void; onMenu: () => void };
 
+// The trailing action has a fixed column mirrored by an empty one, so Week N stays centred whichever action shows.
 function Header({ week, team, prev, next, past, onWeek, onMenu }: HeaderProps) {
   return (
-    <header className="flex items-center gap-1">
-      <button type="button" aria-label="Earlier week" disabled={prev === undefined} onClick={() => onWeek(prev)} className={nav}>‹</button>
-      <div className="min-w-0 flex-1 text-center">
-        <h1 className="m-0 text-[22px] font-bold tracking-[-0.02em]">{week === undefined ? 'Sleeper' : `Week ${week}`}</h1>
-        {team && <p className="m-0 truncate text-[13px] text-ink-2">{team}</p>}
+    <header className="grid grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center">
+      <span aria-hidden="true" />
+      <div className="flex min-w-0 items-center justify-center gap-1">
+        <button type="button" aria-label="Earlier week" title="Earlier week" disabled={prev === undefined} onClick={() => onWeek(prev)} className={nav}>‹</button>
+        <div className="min-w-0 text-center">
+          <h1 className="m-0 text-[22px] font-bold tracking-[-0.02em]">{week === undefined ? 'Sleeper' : `Week ${week}`}</h1>
+          {team && <p className="m-0 truncate text-[13px] text-ink-2">{team}</p>}
+        </div>
+        <button type="button" aria-label="Later week" title="Later week" disabled={next === undefined} onClick={() => onWeek(next)} className={nav}>›</button>
       </div>
-      <button type="button" aria-label="Later week" disabled={next === undefined} onClick={() => onWeek(next)} className={nav}>›</button>
       {past
-        ? <button type="button" onClick={() => onWeek(undefined)} className="min-h-11 flex-none cursor-pointer rounded-full border border-line bg-soft px-4 text-[13px] font-medium text-ink">This week</button>
-        : <button type="button" aria-label="Run a job" onClick={onMenu} className={nav}>⋯</button>}
+        ? <button type="button" aria-label="This week" title="This week" onClick={() => onWeek(undefined)} className={nav}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4" /><circle cx="12" cy="15" r="1.6" fill="currentColor" /></svg></button>
+        : <button type="button" aria-label="Run a job" title="Run a job" aria-haspopup="dialog" onClick={onMenu} className={nav}><MoreIcon /></button>}
     </header>
   );
 }
@@ -274,12 +297,31 @@ function Alerts({ note, error }: { note: string; error: string }) {
   );
 }
 
+// A job started here stays live (pending, then its session) until the league list shows that session itself.
+function useJobs(all: Sess[], current: number | undefined, started: () => void) {
+  const [mine, setMine] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState('');
+  const run = useCallback((job: string) => {
+    setStatus('');
+    setMine((m) => ({ ...m, [job]: '' }));
+    runJob(job).then(({ sessionKey }) => (setMine((m) => ({ ...m, [job]: sessionKey })), started()), (e: Error) => {
+      setMine(({ [job]: _, ...m }) => m);
+      setStatus(`Could not start: ${e.message}`);
+    });
+  }, []);
+  const running = (job: string) => all.find((s) => s.job === job && s.week === current && s.running)?.key;
+  const live: LiveKey = (job) => {
+    const own = mine[job];
+    return running(job) ?? (own === '' || (own && !all.some((s) => s.key === own)) ? own : undefined);
+  };
+  return { run, running, live, status };
+}
+
 export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now?: () => number }) {
   const [league, setLeague] = useState<string>();
   const [unconfigured, setUnconfigured] = useState('');
   const [picked, setPicked] = useState<number>();
   const [menu, setMenu] = useState(false);
-  const [status, setStatus] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [live, setLive] = useState<Live>({ runs: [] });
   const runs = live.runs;
@@ -294,12 +336,7 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
   const need = useMemo(() => (week === undefined ? [] : wanted(all, week, current!)), [all, week, current]);
   const { results, error } = useResults(need, refresh);
   const found = need.flatMap((s) => results[s.key] ?? []);
-  const run = useCallback((job: string, name: string) => {
-    setStatus('Starting…');
-    runJob(job).then(() => (setStatus(`${name} started. Its result appears here when it is ready.`), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
-  }, []);
-  const jump = (job: string) => (setMenu(false), document.getElementById(`sleeper-${job}`)?.scrollIntoView?.({ block: 'start' }));
-  const running = (job: string) => all.some((s) => s.job === job && s.week === current && s.running);
+  const jobs = useJobs(all, current, () => setRefresh((n) => n + 1));
   const lineup = found.find((r) => r.job === 'lineup' && r.week === week);
   const shown = (past ? PAST : CURRENT).flatMap((j) => found.filter((r) => r.job === j && (!past || r.week === week)));
   const team = found.find((r) => r.card.team)?.card.team as string | undefined;
@@ -308,11 +345,11 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
       <Header week={week} team={team} prev={weeks.filter((w) => w < (week ?? 0)).at(-1)} next={weeks.find((w) => w > (week ?? 0))} past={past} onWeek={setPicked} onMenu={() => setMenu(true)} />
       <Alerts note={unconfigured} error={error || listError} />
       {league && week === undefined && <p className="m-0 text-[13px] text-ink-2">No results yet. Run a job from the menu.</p>}
-      {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} runs={runs} /><Lineup r={lineup} running={running('lineup')} /></>}
+      {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} runs={runs} /><Lineup r={lineup} running={jobs.running('lineup') !== undefined} /></>}
       {past && <Outcome week={week!} results={found} />}
       {shown.map((r) => <ResultCard key={r.key} r={r} compact={past} />)}
       {past && shown.length === 0 && <p className="m-0 text-[13px] text-ink-2">Nothing from this week.</p>}
-      {menu && <JobSheet found={found} runs={runs} running={running} status={status} onRun={run} onJump={jump} onClose={() => setMenu(false)} />}
+      {menu && <JobSheet found={found} runs={runs} live={jobs.live} status={jobs.status} onRun={jobs.run} onClose={() => setMenu(false)} />}
     </div>
   );
 }

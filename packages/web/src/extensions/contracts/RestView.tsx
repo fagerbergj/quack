@@ -12,7 +12,9 @@ const METHOD: Record<string, string> = { GET: 'bg-link-bg text-link', POST: 'bg-
 export const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
 const dt = 'w-20 flex-none whitespace-nowrap';
 export const card = 'rounded-[18px] border border-line bg-surface';
-export const pill = 'inline-flex min-h-11 flex-none cursor-pointer items-center rounded-full border border-line-strong bg-transparent px-4 text-[13.5px] text-ink-2 hover:text-ink';
+// The pane header's actions: one 44px icon button each, named by aria-label and title.
+const round = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border border-line-strong bg-transparent text-ink-2 no-underline hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
+const svg = (d: string) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
 
 function Method({ m }: { m: string }) {
   return <span className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${METHOD[m] ?? 'bg-warning-bg text-warning'}`}>{m}</span>;
@@ -179,7 +181,7 @@ export function download(body: string, type: string, filename: string) {
 export function FullViewLink({ version }: { version: number }) {
   const ctx = useContext(SessionKeyContext);
   const key = ctx === undefined ? /^#\/s\/([^/?]+)/.exec(location.hash)?.[1] : encodeURIComponent(ctx);
-  return key ? <a href={`#/s/${key}/spec?v=${version}`} className={`${pill} no-underline`}>Open full view</a> : null;
+  return key ? <a href={`#/s/${key}/spec?v=${version}`} aria-label="Open full view" title="Open full view" className={round}>{svg('M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7')}</a> : null;
 }
 
 export const decisionCount = (spec: ContractSpec) => `${spec.choices.length} ${spec.choices.length === 1 ? 'decision' : 'decisions'} · ${spec.choices.filter((c) => c.why.some((w) => w.source === 'answer')).length} answered by you`;
@@ -200,9 +202,7 @@ export function Header({ spec, count, full, file, verdict, info = [] }: { spec: 
         <span className="text-xs text-muted">{count} · version {spec.version}</span>
       </div>
       {!full && <FullViewLink version={spec.version} />}
-      <button type="button" onClick={file.save} aria-label={`Download ${file.label}`} title={`Download ${file.label}`} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:text-ink lg:h-9 lg:w-9">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
-      </button>
+      <button type="button" aria-label={`Download ${file.label}`} title={`Download ${file.label}`} onClick={file.save} className={round}>{svg('M12 4v11M7 10l5 5 5-5M5 20h14')}</button>
     </header>
   );
 }

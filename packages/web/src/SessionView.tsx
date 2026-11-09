@@ -16,6 +16,7 @@ import { useDesktop } from './useDesktop.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
+import { MoreIcon } from './MoreIcon.tsx';
 import { SessionChips, studioFor } from './slots.tsx';
 import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
@@ -160,17 +161,11 @@ const Composer = memo(function Composer({ sessionKey, state, busy, send, queued,
 });
 
 type Tone = 'wait' | 'run' | 'idle' | 'fail';
-const TONES: Record<Tone, string> = {
-  wait: 'text-warning lg:bg-warning-bg',
-  run: 'text-info lg:bg-info-bg',
-  idle: 'text-muted lg:bg-soft',
-  fail: 'text-danger lg:bg-danger-bg',
-};
+const TONES: Record<Tone, string> = { wait: 'text-warning', run: 'text-info', idle: '', fail: 'text-danger' };
 
-// A line under the title on phones, a pill beside it from lg.
-function StatusChip({ text, tone }: { text: string; tone: Tone }) {
+function StatusText({ text, tone }: { text: string; tone: Tone }) {
   return (
-    <span role="status" className={`flex items-center gap-1.5 text-[12px] lg:rounded-full lg:px-2 lg:py-0.5 lg:font-semibold ${TONES[tone]}`}>
+    <span role="status" className={`flex flex-none items-center gap-1.5 ${TONES[tone]}`}>
       {tone === 'run' && <span aria-hidden="true" className="live-dot h-1.5 w-1.5 rounded-full bg-info" />}
       {text}
     </span>
@@ -178,16 +173,28 @@ function StatusChip({ text, tone }: { text: string; tone: Tone }) {
 }
 
 const ICON = { width: 18, height: 18, viewBox: '0 0 24 24', 'aria-hidden': true } as const;
-const iconBtn = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 no-underline hover:text-ink lg:h-9 lg:w-9';
+// Every header action is this one 44px icon button; text actions live in the overflow menu.
+const iconBtn = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 no-underline hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
+const dot = "before:mr-1.5 before:content-['·']";
 
-// The name comes from sessionTitle, the one place a session is named.
-function Title({ name }: { name: SessionTitle }) {
-  const lead = [name.repo, name.number].filter(Boolean).join(' ');
+type Facts = { sessionKey: string; name: SessionTitle; status: string; tone: Tone; spend?: Spend; archived?: boolean };
+
+// Line 1 identifies the session (a review's number and whole PR title, never its repo), cut by width alone; line 2 holds facts that may truncate.
+function Title({ sessionKey, name, status, tone, spend, archived }: Facts) {
   return (
-    <h1 className="m-0 min-w-0 truncate font-sans text-[15px] font-semibold" title={name.full}>
-      {lead && <span className="font-medium text-muted">{`${lead} `}</span>}
-      {name.text}
-    </h1>
+    <div className="flex min-w-0 flex-1 flex-col justify-center">
+      <h1 className="m-0 truncate font-sans text-[15px] leading-5 font-semibold" title={name.full}>
+        {name.number && <span className="font-medium text-muted">{`${name.number} `}</span>}
+        {name.full}
+      </h1>
+      <p className="m-0 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] leading-[18px] whitespace-nowrap text-muted">
+        <StatusText text={status} tone={tone} />
+        <SessionChips sessionKey={sessionKey} />
+        {name.scope && <span className={`min-w-0 truncate ${dot}`}>{name.scope}</span>}
+        <SpendChip spend={spend} className={`flex-none ${dot}`} />
+        {archived && <span className={`flex-none ${dot}`}>Archived</span>}
+      </p>
+    </div>
   );
 }
 
@@ -223,7 +230,7 @@ function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; 
   if (!running && !latest && !manage) return null;
   return (
     <div ref={menu.root} onKeyDown={menu.keys} className="relative">
-      <button ref={menu.button} type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu.open} onClick={menu.toggle} className={iconBtn}><svg {...ICON} fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg></button>
+      <button ref={menu.button} type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu.open} onClick={menu.toggle} title="More actions" className={iconBtn}><MoreIcon /></button>
       {menu.open && (
         <div role="menu" aria-label="More actions" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
           {groupsOf(running, latest, onAbort, onOpen, manage).map((g, i) => (
@@ -235,29 +242,31 @@ function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; 
   );
 }
 
-function Header({ sessionKey, name, back, status, tone, spend, link, onDetails, children }: { sessionKey: string; name: SessionTitle; back: { href: string; label: string }; status: string; tone: Tone; spend?: Spend; link?: { url: string; label: string }; onDetails?: () => void; children: ReactNode }) {
+type HeaderProps = Facts & { back: { href: string; label: string }; link?: { url: string; label: string }; onDetails?: () => void; children: ReactNode };
+
+function Header({ back, link, onDetails, children, ...facts }: HeaderProps) {
   return (
-    <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
-        <a href={back.href} aria-label={back.label} className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+    <div className="flex min-h-[calc(3.5rem+env(safe-area-inset-top,0px))] items-center gap-0.5 border-b border-line bg-canvas/70 px-1 pt-[env(safe-area-inset-top,0px)] lg:gap-1 lg:px-3">
+      <a href={back.href} aria-label={back.label} title={back.label} className={`${iconBtn} lg:hidden`}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+      </a>
+      <span aria-hidden="true" className="hidden h-11 w-9 flex-none place-items-center text-link lg:grid">
+        <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={facts.name.icon} /></svg>
+      </span>
+      <Title {...facts} />
+      {/* Below 1440px the rail is a sheet and this is its only way in, so it stays one tap away, not in the menu. */}
+      {onDetails && (
+        <button type="button" aria-label="Details" title="Details" onClick={onDetails} className={iconBtn}>
+          <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v14H4zM15 5v14" /></svg>
+        </button>
+      )}
+      {link && (
+        <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
+          <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
         </a>
-        <span aria-hidden="true" className="hidden h-[26px] w-[26px] flex-none place-items-center rounded-lg bg-link-bg text-link lg:grid">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d={name.icon} /></svg>
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col lg:flex-row lg:items-center lg:gap-3">
-          <Title name={name} />
-          <StatusChip text={status} tone={tone} />
-        </div>
-        <SessionChips sessionKey={sessionKey} />
-        <SpendChip spend={spend} className="mr-1 flex-none text-[12.5px] text-muted" />
-        {onDetails && <button type="button" onClick={onDetails} className="h-11 flex-none cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-link hover:bg-soft lg:h-9">Details</button>}
-        {link && (
-          <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
-            <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
-          </a>
-        )}
-        {children}
-      </div>
+      )}
+      {children}
+    </div>
   );
 }
 
@@ -376,8 +385,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const live = useStudio(sessionKey, approvals, send, pending.decide, setError, view.running);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} link={externalLink(sessionKey)} onDetails={details.show}>
-        {manage?.archived && <span className="rounded-full bg-soft px-2 py-0.5 text-[12px] text-muted">Archived</span>}
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} link={externalLink(sessionKey)} onDetails={details.show}>
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
