@@ -68,6 +68,7 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/19') return reply(500, { message: 'Server Error' });
     if (url === '/repos/acme/widgets/pulls/24') return res.writeHead(429, { 'retry-after': '3600' }).end('{"message":"rate limited"}');
     if (url === '/repos/acme/widgets/pulls/25') return reply(503, { message: 'unavailable' });
+    if (url === '/repos/acme/widgets/pulls/26') return res.writeHead(429, { 'retry-after': '3600' }).end('{"message":"rate limited"}');
     if (url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
     // Every page full: a commit whose check runs never end.
     if (url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
@@ -703,7 +704,7 @@ test('the mirror answers problem+json: 404 for a repo without the app or an unkn
   assert.equal((await fetch(`${service}/pulls?keys=acme/widgets%2310`)).status, 404, 'the keyed lookup is gone');
 });
 
-test('a GitHub outage serves a stored PR as stale, with its Age; with nothing stored it is a 502', async () => {
+test('a GitHub outage serves a stored PR as stale, with its Age; with nothing stored it is a 502, or a 503 with Retry-After for a rate limit', async () => {
   const statesFile = join(mkdtempSync(join(tmpdir(), 'pulls-')), 'p.json');
   const checked = Date.now() - 11 * 60_000;
   writeFileSync(statesFile, JSON.stringify({ 'acme/widgets#24': { number: 24, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: 'https://github.com/acme/widgets/pull/24', title: 't', checked } }));
@@ -713,6 +714,8 @@ test('a GitHub outage serves a stored PR as stale, with its Age; with nothing st
   assert.ok(Number(stale.headers.get('age')) >= 660, `age ${stale.headers.get('age')}`);
   const none = await fetch(`${svc}/repos/acme/widgets/pulls/25`);
   assert.deepEqual([none.status, none.headers.get('content-type')], [502, 'application/problem+json']);
+  const limited = await fetch(`${svc}/repos/acme/widgets/pulls/26`);
+  assert.deepEqual([limited.status, limited.headers.get('retry-after'), limited.headers.get('content-type')], [503, '3600', 'application/problem+json']);
 });
 
 test('an oversized body is a 413 problem', async () => {

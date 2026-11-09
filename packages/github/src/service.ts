@@ -372,7 +372,8 @@ async function mirrorPull(res: ServerResponse, app: GithubApp, states: States, [
   } catch (err) {
     const kept = githubDown(err) ? states.stored(owner, repo, Number(n)) : undefined;
     if (kept) return sendStale(res, kept, `${owner}/${repo}#${n}`, err);
-    sendProblem(res, err instanceof NoInstallation ? 404 : err instanceof GithubError ? 502 : 500, (err as Error).message);
+    if (err instanceof RateLimited) res.setHeader('retry-after', String(Math.ceil(err.retryAfterMs / 1000)));
+    sendProblem(res, err instanceof NoInstallation ? 404 : err instanceof RateLimited ? 503 : err instanceof GithubError ? 502 : 500, (err as Error).message);
   }
 }
 
