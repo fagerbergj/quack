@@ -77,6 +77,7 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     sessions: (p: Page): Promise<Json> => call(`sessions${query(p)}`),
     session: async (key: string): Promise<Json> => call(path(key)),
     agents: async (): Promise<Json[]> => (await call('agents')).agents,
+    version: (): Promise<Json> => call('version'),
     /** Pending and past asks of one session, or of every session without a key. */
     asks: (p: Page, key?: string): Promise<Json> => call(`${under(key)}asks${query(p)}`),
     artifacts: (p: Page, key?: string): Promise<Json> => call(`${under(key)}artifacts${query(p)}`),

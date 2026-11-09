@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
@@ -48,6 +48,7 @@ let streaming = false;
 let defaultSize = 100;
 let verdictless = false;
 let sockets = 0;
+let xdg: string;
 
 // One page of `rows` for the request's pageSize and pageToken, as every v9 list answers.
 function page(field: string, rows: unknown[], q: URLSearchParams) {
@@ -72,6 +73,7 @@ const ROUTES: Array<[string, RegExp, (m: RegExpExecArray, q: URLSearchParams) =>
   ['GET', /^\/sessions\/[^/]+\/artifacts$/, (_, q) => [200, page('artifacts', artifactsFor(q.get('q') ?? ''), q)]],
   ['GET', /^\/sessions\/[^/]+\/messages$/, (_, q) => [200, { messages: messages.slice(-Number(q.get('limit'))) }]],
   ['GET', /^\/sessions\/[^/]+\/export$/, () => [200, { session: sessions[0], transcript: [], artifacts: sealed }]],
+  ['GET', /^\/version$/, () => [200, { commit: 'abcdef1234567890', builtAt: 't' }]],
   ['GET', /^\/agents$/, () => [200, { agents: [{ name: 'chat', version: 3 }] }]],
   ['DELETE', /^\/sessions\/ui:b$/, () => [409, { error: 'session is running' }]],
   ['GET', /^\/apps\/contracts\/contracts$/, () => [200, contractRows]],
@@ -120,13 +122,13 @@ before(async () => {
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 after(() => server.close());
-beforeEach(() => { calls = []; frames = []; sockets = 0; queue = [{ id: 'f1', text: 'later' }]; });
+beforeEach(async () => { xdg = await mkdtemp(join(tmpdir(), 'quack-xdg-')); calls = []; frames = []; sockets = 0; queue = [{ id: 'f1', text: 'later' }]; });
 afterEach(() => assert.deepEqual(calls.filter((c) => c.path.startsWith('/index')), [], 'the index routes are retired'));
 
 async function cli(args: string[], env: Record<string, string> = {}) {
   let stdout = '';
   let stderr = '';
-  const code = await run(args, { QUACK_URL: url, ...env }, { stdout: (s) => (stdout += s), stderr: (s) => (stderr += s) });
+  const code = await run(args, { QUACK_URL: url, XDG_CONFIG_HOME: xdg, ...env }, { stdout: (s) => (stdout += s), stderr: (s) => (stderr += s) });
   return { code, stdout, stderr };
 }
 
@@ -415,6 +417,7 @@ describe('quack', () => {
     assert.match(bash, /complete -F _quack quack/);
     assert.match(bash, /compgen -W "sessions show new send /);
     assert.match(bash, /show\|/);
+    assert.match(bash, /--server \]; then COMPREPLY=\(\$\(compgen -W "\$\(quack server list --keys/);
     assert.match((await cli(['completion', 'zsh'])).stdout, /bashcompinit/);
     assert.equal((await cli(['completion', 'fish'])).code, 1);
   });
@@ -506,5 +509,78 @@ describe('quack', () => {
     const r = await cli(['agents'], { QUACK_URL: 'http://127.0.0.1:1' });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /cannot reach/);
+  });
+});
+
+describe('quack server', () => {
+  const config = () => join(xdg, 'quack', 'config.json');
+  const saveConfig = async (body: string) => { await mkdir(join(xdg, 'quack'), { recursive: true }); await writeFile(config(), body); };
+  // QUACK_URL empty, so the saved servers decide.
+  const bare = { QUACK_URL: '' };
+  const serverNow = async (args: string[], env: Record<string, string> = bare) => (await cli([...args, '--help'], env)).stdout.split('\n').at(-1);
+
+  it('picks --url, then --server, then $QUACK_URL, then the current saved server, then localhost', async () => {
+    assert.equal(await serverNow([]), 'Server now: default http://localhost:8080');
+    await saveConfig(JSON.stringify({ current: 'a', servers: { a: { url: 'http://a' }, b: { url: 'http://b' } } }));
+    assert.equal(await serverNow([]), 'Server now: a http://a');
+    assert.equal(await serverNow([], { QUACK_URL: 'http://env' }), 'Server now: $QUACK_URL http://env');
+    assert.equal(await serverNow(['--server', 'b'], { QUACK_URL: 'http://env' }), 'Server now: b http://b');
+    assert.equal(await serverNow(['--server', 'b', '--url', 'http://flag']), 'Server now: --url http://flag');
+    const r = await cli(['agents', '--server', 'nope'], bare);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no saved server nope/);
+  });
+
+  it('sends a saved server\'s token, and $QUACK_ADMIN_TOKEN for one saved without', async () => {
+    await saveConfig(JSON.stringify({ current: 'tok', servers: { tok: { url, token: 'saved' }, plain: { url } } }));
+    await cli(['agents'], { ...bare, QUACK_ADMIN_TOKEN: 'env' });
+    await cli(['agents', '--server', 'plain'], { ...bare, QUACK_ADMIN_TOKEN: 'env' });
+    assert.deepEqual(calls.map((c) => c.auth), ['Bearer saved', 'Bearer env']);
+  });
+
+  it('add checks /version and saves 0600, use makes it current, list marks it, remove forgets it', async () => {
+    const added = await cli(['server', 'add', 'prod', `${url}/`, '--token', 'secret'], bare);
+    assert.equal(added.code, 0, added.stderr);
+    assert.equal(added.stdout, `saved prod: ${url}, version abcdef123456 built t`);
+    assert.equal((await stat(config())).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(await readFile(config(), 'utf8')), { servers: { prod: { url, token: 'secret' } } });
+    await chmod(config(), 0o644);
+    assert.equal((await cli(['server', 'use', 'prod'], bare)).stdout, `current server: prod ${url}`);
+    assert.equal((await stat(config())).mode & 0o777, 0o600);
+    assert.match((await cli(['server', 'list'], bare)).stdout, new RegExp(`^\\s+NAME\\s+URL\\s+TOKEN\\n\\*\\s+prod\\s+${url}\\s+saved$`));
+    assert.doesNotMatch((await cli(['server', 'list', '--json'], bare)).stdout, /secret/);
+    assert.equal((await cli(['server', 'list', '--keys'], bare)).stdout, 'prod');
+    calls = [];
+    assert.equal((await cli(['sessions', '--page-size', '3'], bare)).code, 0);
+    assert.deepEqual([calls[0]!.path, calls[0]!.auth], ['/sessions', 'Bearer secret']);
+    assert.equal((await cli(['server'], bare)).stdout, `prod  ${url}  reachable, version abcdef123456 built t`);
+    assert.equal((await cli(['server', 'remove', 'prod'], bare)).code, 0);
+    assert.deepEqual(JSON.parse(await readFile(config(), 'utf8')), { servers: {} });
+    assert.equal((await cli(['server', 'use', 'prod'], bare)).code, 2);
+  });
+
+  it('add refuses a server that is not a distributor, an unreachable one and a bad URL, saving nothing', async () => {
+    assert.equal((await cli(['server', 'add', 'x', `${url}/apps/nope`], bare)).code, 2);
+    const other = await cli(['server', 'add', 'x', `${url}/elsewhere`], bare);
+    assert.match(other.stderr, /not as a quack distributor/);
+    assert.match((await cli(['server', 'add', 'x', 'http://127.0.0.1:1'], bare)).stderr, /cannot reach/);
+    assert.match((await cli(['server', 'add', 'x', 'ftp://h'], bare)).stderr, /not an http or https URL/);
+    assert.equal((await cli(['server', 'add', '__proto__', url], bare)).code, 1);
+    await assert.rejects(stat(config()), { code: 'ENOENT' });
+  });
+
+  it('a corrupt config warns and falls back to localhost, and is never overwritten', async () => {
+    await saveConfig('{not json');
+    const help = await cli(['--help'], bare);
+    assert.equal(help.code, 0);
+    assert.match(help.stderr, /config\.json is not a quack config; fix or delete it; using http:\/\/localhost:8080/);
+    assert.match(help.stdout, /Server now: default http:\/\/localhost:8080$/);
+    const list = await cli(['server', 'list'], bare);
+    assert.equal(list.code, 1);
+    assert.doesNotMatch(list.stderr, /\n\s+at /);
+    assert.equal((await cli(['server', 'add', 'prod', url], bare)).code, 1);
+    assert.equal(await readFile(config(), 'utf8'), '{not json');
+    await saveConfig(JSON.stringify({ servers: { a: { token: 1 } } }));
+    assert.match((await cli(['server', 'list'], bare)).stderr, /not a quack config/);
   });
 });

@@ -1,6 +1,6 @@
 # The quack CLI
 
-`packages/cli`: operations and scripting against a distributor, no chat TUI. `quack --help` lists every command; `--json` prints the API's JSON unchanged. The URL is `--url`, else `$QUACK_URL`, else `http://localhost:8080`; `$QUACK_ADMIN_TOKEN` is sent when set. An API error prints its problem `detail`. Exit codes: 0 ok, 1 error or failed run, 2 not found.
+`packages/cli`: operations and scripting against a distributor, no chat TUI. `quack --help` lists every command; `--json` prints the API's JSON unchanged. The server is `--url`, else `--server NAME`, else `$QUACK_URL`, else the current saved server (see [Servers](#servers)), else `http://localhost:8080`. A saved server sends its saved token; otherwise `$QUACK_ADMIN_TOKEN` is sent when set. An API error prints its problem `detail`. Exit codes: 0 ok, 1 error or failed run, 2 not found.
 
 | Command | Does |
 | --- | --- |
@@ -18,8 +18,27 @@
 | `app <name> <path>` | `GET /apps/<name><path>` of an extension app, path and query as the app's API documents them. |
 | `stop`, `resume`, `rename`, `archive`, `unarchive`, `delete`, `export` | Housekeeping, as in the web UI. |
 | `agents` | Agent versions. |
-| `completion bash\|zsh` | Print a completion script: `source <(quack completion bash)`. Keys complete from `quack sessions --keys`. |
+| `server [add <name> <url> [--token T] \| use <name> \| list [--keys] \| remove <name>]` | Saved servers; `server` alone prints where commands go now and whether it answers. |
+| `completion bash\|zsh` | Print a completion script: `source <(quack completion bash)`. Keys complete from `quack sessions --keys`, server names from `quack server list --keys`. |
 | `eval <args>` | Runs `packages/eval/src/main.ts` with the arguments as given (needs the `LANGFUSE_*` variables). |
+
+## Servers
+
+`server add` saves a distributor under a name once it answers `GET /version`, and `server use` makes it the one every command reaches without `--url`. `--server NAME` picks another saved one for a single command.
+
+```
+$ quack server add prod http://100.64.0.6:18081
+saved prod: http://100.64.0.6:18081, version eca6df0c2618 built 2026-11-09T22:15:04Z
+$ quack server use prod
+current server: prod http://100.64.0.6:18081
+$ quack server list
+   NAME  URL                      TOKEN
+*  prod  http://100.64.0.6:18081
+$ quack server
+prod  http://100.64.0.6:18081  reachable, version eca6df0c2618 built 2026-11-09T22:15:04Z
+```
+
+`--token T` saves an admin token with the server, sent in place of `$QUACK_ADMIN_TOKEN`; `list` says only whether one is saved. `server remove NAME` forgets one, and removing the current server leaves none current. The servers live in `$XDG_CONFIG_HOME/quack/config.json` (`~/.config/quack/config.json` by default), written whole with mode 0600. A config the CLI cannot read is never overwritten: commands warn and fall back to `http://localhost:8080`, and `server add`, `use` and `remove` refuse until it is fixed or deleted.
 
 ## Queries and pages
 

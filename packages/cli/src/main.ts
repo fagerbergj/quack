@@ -6,15 +6,18 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { escapeTerm } from '@quack/sdk/query';
 import { ApiError, client, whole, type Client, type Page } from './api.ts';
+import { configPath, DEFAULT_URL, readConfig, target, writeConfig, type Config, type Target } from './servers.ts';
 
 type Out = { stdout: (s: string) => void; stderr: (s: string) => void };
+type Env = Record<string, string | undefined>;
+type Ctx = { env: Env; target: Target };
 type Opts = {
   state?: string; agent?: string; key?: string; version?: string; json?: boolean; url?: string; help?: boolean; print?: boolean; follow?: boolean; keys?: boolean; verdict?: boolean;
-  session?: string; text?: string; reason?: string; messages?: string; 'order-by'?: string; 'page-size'?: string; 'page-token'?: string;
+  session?: string; server?: string; token?: string; text?: string; reason?: string; messages?: string; 'order-by'?: string; 'page-size'?: string; 'page-token'?: string;
 };
 // A command returns the API's JSON and how to print it for a person; `next` says how to read the next page, on stderr.
 type Result = { data: unknown; text: string; streamed?: boolean; next?: string };
-type Command = { usage: string; run: (c: Client, pos: string[], o: Opts, out: Out) => Promise<Result> };
+type Command = { usage: string; run: (c: Client, pos: string[], o: Opts, out: Out, ctx: Ctx) => Promise<Result> };
 
 // The UI's groups as q: a session waiting on a person needs you whatever else it is doing.
 const STATES: Record<string, string> = {
@@ -251,6 +254,83 @@ async function exportSession(c: Client, [key, file]: string[]): Promise<Result> 
   return { data: body, text: `wrote ${path}` };
 }
 
+// /version is the distributor's cheapest read, and the commit field in its answer tells a distributor from any other server.
+async function probe(c: Client, url: string): Promise<string> {
+  const v = await c.version();
+  if (!v || typeof v !== 'object' || !('commit' in v)) throw new ApiError(`${url} answered /version, but not as a quack distributor`, -1);
+  return v.commit ? `${String(v.commit).slice(0, 12)}${v.builtAt ? ` built ${v.builtAt}` : ''}` : 'unknown (a dev build)';
+}
+
+async function edit(env: Env, change: (config: Config) => void) {
+  const path = configPath(env);
+  const config = await readConfig(path);
+  change(config);
+  await writeConfig(path, config);
+}
+
+const savedName = (config: Config, name: string | undefined, usage: string): string => {
+  if (!name) throw usageError(`usage: quack server ${usage}`);
+  if (!Object.hasOwn(config.servers, name)) throw new ApiError(`no saved server ${name}; see quack server list`, 404);
+  return name;
+};
+
+function serverUrl(url: string): string {
+  if (!URL.canParse(url) || !/^https?:$/.test(new URL(url).protocol)) throw usageError(`${url} is not an http or https URL`);
+  return url.replace(/\/+$/, '');
+}
+
+type ServerCommand = (pos: string[], o: Opts, ctx: Ctx, c: Client) => Promise<Result>;
+// The token is never printed, --json included; list says only whether one is saved.
+const SERVER: Record<string, ServerCommand> = {
+  add: async ([name, url], o, { env }) => {
+    if (!name || !url) throw usageError('usage: quack server add <name> <url> [--token T]');
+    if (!/^[A-Za-z0-9][\w.-]*$/.test(name)) throw usageError('a server name is letters, digits, dots, dashes and underscores');
+    const root = serverUrl(url);
+    const version = await probe(client(root, o.token), root);
+    await edit(env, (config) => { config.servers[name] = { url: root, ...(o.token && { token: o.token }) }; });
+    return { data: { name, url: root, version }, text: `saved ${name}: ${root}, version ${version}` };
+  },
+  use: async ([name], _o, { env }) => {
+    let url = '';
+    await edit(env, (config) => { config.current = savedName(config, name, 'use <name>'); url = config.servers[config.current]!.url; });
+    return { data: { current: name, url }, text: `current server: ${name} ${url}` };
+  },
+  remove: async ([name], _o, { env }) => {
+    await edit(env, (config) => {
+      delete config.servers[savedName(config, name, 'remove <name>')];
+      if (config.current === name) delete config.current;
+    });
+    return ok({ removed: name });
+  },
+  list: async (_pos, o, { env }) => {
+    const config = await readConfig(configPath(env));
+    const servers = Object.entries(config.servers).map(([name, s]) => ({ name, url: s.url, current: name === config.current, token: !!s.token }));
+    const data = { current: config.current ?? null, servers };
+    if (o.keys) return { data, text: servers.map((s) => s.name).join('\n') };
+    if (!servers.length) return { data, text: 'no saved servers; add one with quack server add <name> <url>' };
+    return { data, text: table(servers.map((s) => [s.current ? '*' : '', s.name, s.url, s.token ? 'saved' : '']), ['', 'NAME', 'URL', 'TOKEN']) };
+  },
+  // Where this command would go, by the same precedence as every other command.
+  '': async (_pos, _o, { target: t }, c) => {
+    const where = { server: t.from, url: t.url };
+    try {
+      const version = await probe(c, t.url);
+      return { data: { ...where, reachable: true, version }, text: `${t.from}  ${t.url}  reachable, version ${version}` };
+    } catch (e) {
+      if (!(e instanceof ApiError)) throw e;
+      return { data: { ...where, reachable: false, error: e.message }, text: `${t.from}  ${t.url}  unreachable: ${e.message}` };
+    }
+  },
+};
+
+const SERVER_USAGE = 'server [add <name> <url> [--token T] | use <name> | list [--keys] | remove <name>]';
+
+async function server(c: Client, [sub = '', ...pos]: string[], o: Opts, ctx: Ctx): Promise<Result> {
+  const command = Object.hasOwn(SERVER, sub) ? SERVER[sub] : undefined;
+  if (!command) throw usageError(`usage: quack ${SERVER_USAGE}`);
+  return command(pos, o, ctx, c);
+}
+
 const COMMANDS: Record<string, Command> = {
   sessions: { usage: 'sessions [--state running|needs_you|failed|done] [--agent A] [--order-by "F [asc|desc]"] [--page-size N] [--page-token T] [--keys] [q]', run: sessions },
   show: { usage: 'show [-f] [--verdict] [--messages N] <key>', run: show },
@@ -273,12 +353,13 @@ const COMMANDS: Record<string, Command> = {
   artifacts: { usage: 'artifacts [--page-size N] [--page-token T] [<key>]', run: artifacts },
   artifact: { usage: 'artifact <key> <kind> [--version N]', run: artifact },
   app: { usage: 'app <name> <path>', run: app },
+  server: { usage: SERVER_USAGE, run: (c, pos, o, _out, ctx) => server(c, pos, o, ctx) },
   completion: { usage: 'completion bash|zsh', run: async (_c, pos) => completion(pos) },
   eval: { usage: 'eval <args>', run: async () => { throw usageError('eval takes its own arguments: quack eval <command> ...'); } },
   agents: { usage: 'agents', run: async (c) => { const list = await c.agents(); return { data: { agents: list }, text: table(list.map((a) => [a.name, a.version]), ['NAME', 'VERSION']) }; } },
 };
 
-// Static: the subcommand list and, after a key-taking command, the live keys from `quack sessions --keys`.
+// Static: the subcommand list and, after a key-taking command, the live keys from `quack sessions --keys`; server names from `quack server list --keys`.
 function completion([shell]: string[]): Result {
   if (shell !== 'bash' && shell !== 'zsh') throw usageError('usage: quack completion bash|zsh');
   const names = Object.keys(COMMANDS).join(' ');
@@ -286,7 +367,11 @@ function completion([shell]: string[]): Result {
   const script = [
     ...(shell === 'zsh' ? ['autoload -U +X bashcompinit && bashcompinit'] : []),
     '_quack() {',
-    `  if [ "$COMP_CWORD" -eq 1 ]; then COMPREPLY=($(compgen -W "${names}" -- "$2"))`,
+    `  if [ "$3" = --server ]; then COMPREPLY=($(compgen -W "$(quack server list --keys 2>/dev/null)" -- "$2"))`,
+    `  elif [ "$COMP_CWORD" -eq 1 ]; then COMPREPLY=($(compgen -W "${names}" -- "$2"))`,
+    `  elif [ "\${COMP_WORDS[1]}" = server ]; then`,
+    `    if [ "$COMP_CWORD" -eq 2 ]; then COMPREPLY=($(compgen -W "${Object.keys(SERVER).filter(Boolean).join(' ')}" -- "$2"))`,
+    `    else case "\${COMP_WORDS[2]}" in use|remove) COMPREPLY=($(compgen -W "$(quack server list --keys 2>/dev/null)" -- "$2"));; esac; fi`,
     `  else case "\${COMP_WORDS[1]}" in ${keyed}) COMPREPLY=($(compgen -W "$(quack sessions --keys 2>/dev/null)" -- "$2"));; esac; fi`,
     '}',
     'complete -F _quack quack',
@@ -299,12 +384,17 @@ const EVAL = fileURLToPath(new URL('../../eval/src/main.ts', import.meta.url));
 const evalPassthrough = (args: string[], env: Record<string, string | undefined>) =>
   new Promise<number>((resolve) => spawn(process.execPath, [EVAL, ...args], { stdio: 'inherit', env }).on('close', (code) => resolve(code ?? 1)));
 
-const help = () => ['usage: quack [--url URL] [--json] <command>', '', ...Object.values(COMMANDS).map((c) => `  quack ${c.usage}`), '', 'URL defaults to $QUACK_URL, else http://localhost:8080. $QUACK_ADMIN_TOKEN is sent when set.'].join('\n');
+const help = (t: Target) => [
+  'usage: quack [--url URL | --server NAME] [--json] <command>', '', ...Object.values(COMMANDS).map((c) => `  quack ${c.usage}`), '',
+  `The server is --url, else --server NAME, else $QUACK_URL, else the current saved server (quack server use), else ${DEFAULT_URL}.`,
+  'A saved server sends its saved token, else $QUACK_ADMIN_TOKEN is sent when set.',
+  `Server now: ${t.from} ${t.url}`,
+].join('\n');
 
 const string = { type: 'string' } as const;
 const flag = { type: 'boolean' } as const;
 const OPTIONS = {
-  state: string, agent: string, key: string, version: string, session: string, text: string, reason: string, messages: string, 'order-by': string, 'page-size': string, 'page-token': string,
+  state: string, agent: string, key: string, version: string, session: string, server: string, token: string, text: string, reason: string, messages: string, 'order-by': string, 'page-size': string, 'page-token': string,
   json: flag, url: string, help: { ...flag, short: 'h' }, print: { ...flag, short: 'p' }, follow: { ...flag, short: 'f' }, keys: flag, verdict: flag,
 } as const;
 
@@ -328,12 +418,15 @@ export async function run(argv: string[], env: Record<string, string | undefined
     const { values, positionals } = parseArgs({ args: joinDirection(argv), allowPositionals: true, options: OPTIONS });
     const [name, ...pos] = positionals;
     const command = name ? COMMANDS[name] : undefined;
+    const t = await target(values, env);
+    // A server subcommand reads the config itself and says what is wrong with it.
+    if (t.warning && !(name === 'server' && pos.length)) out.stderr(`quack: ${t.warning}`);
     if (values.help || !name) {
-      out.stdout(help());
+      out.stdout(help(t));
       return 0;
     }
     if (!command) throw usageError(`unknown command ${name}; try --help`);
-    const result = await command.run(client(values.url ?? env.QUACK_URL ?? 'http://localhost:8080', env.QUACK_ADMIN_TOKEN), pos, values, out);
+    const result = await command.run(client(t.url, t.token), pos, values, out, { env, target: t });
     print(result, values.json, out);
     return 0;
   } catch (e) {
