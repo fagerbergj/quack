@@ -27,6 +27,17 @@ const sealed = [
   { session: 'ui:a', kind: 'plan', version: 1, hash: 'h1', content: 'old plan', sealedAt: 't1', summary: 's1' },
 ];
 const messages = [{ role: 'user', text: 'hello' }, { role: 'assistant', text: 'hi there' }];
+const check = (id: string, weight: number | 'gate', met: number | null, notes: string[] = []) => ({ criterion: 'sound', id, label: `${id} label`, weight, met, notes });
+// The socket's ledger: every version with its verdict, null for one the judge has not given.
+const ledger = [
+  { ...sealed[1], verdict: { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'plan@1', checks: [] } },
+  { ...sealed[0], verdict: {
+    passed: false, limitReached: false, score: 0.6666667, gatesFailed: ['sound.clean'], rubric: 'plan@2',
+    checks: [check('clean', 'gate', 0, [`line one\n  ${'x'.repeat(200)}`, 'second note']), check('kept', 'gate', 1), check('extra', -3, 1), check('moot', 2, null), check('says_why', 2, 0.5)],
+  } },
+  { session: 'ui:a', kind: 'notes', version: 1, hash: 'h3', content: 'n', sealedAt: 't3', verdict: null },
+];
+const contractRows = { contracts: [{ key: 'contracts:x', title: 'Sessions API', approved: 10, pendingApproval: true }], nextPageToken: 'n/1' };
 
 let server: Server;
 let url: string;
@@ -35,6 +46,8 @@ let frames: unknown[];
 let queue: Array<{ id: string; text: string }>;
 let streaming = false;
 let defaultSize = 100;
+let verdictless = false;
+let sockets = 0;
 
 // One page of `rows` for the request's pageSize and pageToken, as every v9 list answers.
 function page(field: string, rows: unknown[], q: URLSearchParams) {
@@ -61,6 +74,9 @@ const ROUTES: Array<[string, RegExp, (m: RegExpExecArray, q: URLSearchParams) =>
   ['GET', /^\/sessions\/[^/]+\/export$/, () => [200, { session: sessions[0], transcript: [], artifacts: sealed }]],
   ['GET', /^\/agents$/, () => [200, { agents: [{ name: 'chat', version: 3 }] }]],
   ['DELETE', /^\/sessions\/ui:b$/, () => [409, { error: 'session is running' }]],
+  ['GET', /^\/apps\/contracts\/contracts$/, () => [200, contractRows]],
+  ['GET', /^\/apps\/contracts\/contracts\/([^/]+)$/, ([, k]) => [200, { key: k, versions: [{ version: 1 }] }]],
+  ['GET', /^\/apps\/nope\//, () => [404, { title: 'Not Found', status: 404, detail: 'no app nope' }]],
 ];
 
 before(async () => {
@@ -81,6 +97,7 @@ before(async () => {
   });
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
+    sockets += 1;
     const entry = (role: string, text: string) => ({ kind: 'entry', entry: { model: [{ role, content: [{ type: 'text', text }] }] } });
     if (streaming) {
       ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go')], live: { run: {} } }));
@@ -90,6 +107,7 @@ before(async () => {
     }
     ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'hello')], live: {} }));
     ws.send(JSON.stringify({ type: 'queued', items: queue }));
+    ws.send(JSON.stringify({ type: 'artifacts', artifacts: verdictless ? ledger.map((a) => ({ ...a, verdict: null })) : ledger }));
     ws.on('message', (d) => {
       const frame = JSON.parse(String(d));
       frames.push(frame);
@@ -102,7 +120,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 after(() => server.close());
-beforeEach(() => { calls = []; frames = []; queue = [{ id: 'f1', text: 'later' }]; });
+beforeEach(() => { calls = []; frames = []; sockets = 0; queue = [{ id: 'f1', text: 'later' }]; });
 afterEach(() => assert.deepEqual(calls.filter((c) => c.path.startsWith('/index')), [], 'the index routes are retired'));
 
 async function cli(args: string[], env: Record<string, string> = {}) {
@@ -118,7 +136,7 @@ describe('quack', () => {
   it('lists commands for --help', async () => {
     const r = await cli(['--help']);
     assert.equal(r.code, 0);
-    for (const c of ['sessions', 'show', 'new', 'send', 'steer', 'withdraw', 'stop', 'resume', 'rename', 'archive', 'unarchive', 'delete', 'export', 'asks', 'answer', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'agents', 'completion', 'eval']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
+    for (const c of ['sessions', 'show', 'new', 'send', 'steer', 'withdraw', 'stop', 'resume', 'rename', 'archive', 'unarchive', 'delete', 'export', 'asks', 'answer', 'approvals', 'approve', 'reject', 'artifacts', 'artifact', 'app', 'agents', 'completion', 'eval']) assert.match(r.stdout, new RegExp(`quack ${c}\\b`));
   });
 
   it('sessions prints the API page unchanged with --json and drops archived ones by default', async () => {
@@ -152,6 +170,27 @@ describe('quack', () => {
     assert.deepEqual([last.stdout, last.stderr], ['ui:c', '']);
     assert.equal(calls.at(0)!.query.pageToken, '2');
     assert.equal(JSON.parse((await cli(['sessions', '--json', '--page-size', '2'])).stdout).nextPageToken, '2');
+  });
+
+  it('--order-by takes an AIP-132 direction, quoted or not, and sends the field alone', async () => {
+    for (const args of [['--order-by', 'createdAt', 'desc'], ['--order-by', 'createdAt desc'], ['--order-by', 'createdAt', 'DESC'], ['--order-by', 'createdAt'], ['--order-by=createdAt', 'desc'], ['--order-by=createdAt desc']]) {
+      calls = [];
+      assert.equal((await cli(['sessions', ...args])).code, 0);
+      assert.deepEqual(calls[0]!.query, { q: '-state:archived', orderBy: 'createdAt' });
+    }
+    calls = [];
+    await cli(['sessions', '--order-by', 'oldestAskAt', 'asc', 'agent:chat']);
+    assert.deepEqual(calls[0]!.query, { q: '(agent:chat)', orderBy: 'oldestAskAt' });
+    calls = [];
+    await cli(['artifacts', '--order-by', 'sealedAt desc']);
+    assert.equal(calls[0]!.query.orderBy, 'sealedAt');
+    calls = [];
+    const wrong = await cli(['sessions', '--order-by', 'createdAt', 'asc']);
+    assert.deepEqual([wrong.code, calls], [1, []]);
+    assert.match(wrong.stderr, /--order-by takes lastActivity desc, createdAt desc, oldestAskAt asc/);
+    assert.equal((await cli(['sessions', '--order-by', 'title desc'])).code, 1);
+    assert.equal((await cli(['asks', '--order-by', 'createdAt desc'])).code, 1, 'the cross-session asks run oldest first');
+    assert.equal((await cli(['asks', '--session', 'ui:b', '--order-by', 'createdAt desc'])).code, 0);
   });
 
   it('sessions --keys prints one key per line', async () => {
@@ -207,6 +246,34 @@ describe('quack', () => {
     assert.deepEqual(j.asks, asks);
     assert.deepEqual(j.messages, messages);
     assert.match((await cli(['show', 'ui:b'])).stdout, /q1\s+question\s+\S+\s+Which\?/);
+  });
+
+  it('show --verdict prints each newest version\'s verdict from the socket ledger, and --json carries them', async () => {
+    assert.doesNotMatch((await cli(['show', 'ui:a'])).stdout, /Verdicts/);
+    assert.equal(sockets, 0, 'a plain show opens no socket, so it starts no stopped session');
+    const r = await cli(['show', '--verdict', 'ui:a']);
+    assert.equal(sockets, 1);
+    assert.equal(r.code, 0);
+    const block = r.stdout.slice(r.stdout.indexOf('Verdicts'), r.stdout.indexOf('\n\nAsks'));
+    assert.deepEqual(block.split('\n'), [
+      'Verdicts',
+      'plan v2  failed  score 0.67  plan@2  gates failed: sound.clean',
+      `  sound.clean: line one ${'x'.repeat(110)}…`,
+      '  sound.extra: extra label',
+      '  sound.says_why: says_why label',
+    ]);
+    const j = JSON.parse((await cli(['show', '--verdict', '--json', 'ui:a'])).stdout);
+    assert.deepEqual(j.verdicts, [{ kind: 'plan', version: 2, verdict: ledger[1]!.verdict }]);
+    assert.equal(JSON.parse((await cli(['show', '--json', 'ui:a'])).stdout).verdicts, undefined);
+  });
+
+  it('show --verdict leaves out the ledger\'s nulls, which an unjudged kind carries too', async () => {
+    verdictless = true;
+    try {
+      assert.match((await cli(['show', '--verdict', 'ui:a'])).stdout, /Verdicts\nnone\n/);
+    } finally {
+      verdictless = false;
+    }
   });
 
   it('show --messages N prints the last N messages and refuses what the server would cut', async () => {
@@ -278,20 +345,48 @@ describe('quack', () => {
     ]);
   });
 
-  it('new starts a session through invocations and prints its key', async () => {
-    const r = await cli(['new', '--agent', 'chat', 'plan', 'it']);
+  it('new starts a session through invocations and prints its key, minted under the agent\'s name', async () => {
+    const r = await cli(['new', '--agent', 'contracts', 'plan', 'it']);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /^ui:[0-9a-f-]{36}$/);
+    assert.match(r.stdout, /^contracts:[0-9a-f-]{36}$/);
     const post = calls.find((c) => c.method === 'POST')!;
-    assert.deepEqual([post.path, post.query], [`/sessions/${r.stdout}/invocations`, { agent: 'chat' }]);
+    assert.deepEqual([post.path, post.query], [`/sessions/${r.stdout}/invocations`, { agent: 'contracts' }]);
     assert.equal((post.body as { input: string }).input, 'plan it');
+    assert.match((await cli(['new', 'hi'])).stdout, /^ui:[0-9a-f-]{36}$/);
     assert.equal((await cli(['new'])).code, 1);
+  });
+
+  it('new --key starts the session at that key and refuses one that exists', async () => {
+    const r = await cli(['new', '--key', 'contracts:mine', '--agent', 'contracts', 'go']);
+    assert.deepEqual([r.code, r.stdout], [0, 'contracts:mine']);
+    assert.deepEqual(calls.map((c) => [c.method, c.path]), [['GET', '/sessions/contracts:mine'], ['POST', '/sessions/contracts:mine/invocations']]);
+    calls = [];
+    const taken = await cli(['new', '--key', 'ui:a', 'go']);
+    assert.equal(taken.code, 1);
+    assert.match(taken.stderr, /session ui:a exists; send to it with quack send/);
+    assert.deepEqual(calls.map((c) => c.method), ['GET']);
+  });
+
+  it('app GETs an extension app\'s route, as a table when it is one list of flat rows', async () => {
+    const r = await cli(['app', 'contracts', '/contracts?q=pendingApproval:true']);
+    assert.equal(r.code, 0);
+    assert.deepEqual([calls[0]!.path, calls[0]!.query], ['/apps/contracts/contracts', { q: 'pendingApproval:true' }]);
+    assert.match(r.stdout, /^KEY\s+TITLE\s+APPROVED\s+PENDINGAPPROVAL\ncontracts:x\s+Sessions API\s+10\s+true$/);
+    assert.equal(r.stderr, 'next page: add pageToken=n%2F1 to the path');
+    assert.deepEqual(JSON.parse((await cli(['app', 'contracts', 'contracts/contracts:x'])).stdout), { key: 'contracts:x', versions: [{ version: 1 }] });
+    assert.deepEqual(JSON.parse((await cli(['app', 'contracts', '/contracts', '--json'])).stdout), contractRows);
+    const missing = await cli(['app', 'nope', '/x']);
+    assert.deepEqual([missing.code, missing.stderr], [2, 'quack: no app nope']);
+    assert.equal((await cli(['app', 'contracts'])).code, 1);
+    calls = [];
+    await cli(['app', 'contracts', '/contracts'], { QUACK_ADMIN_TOKEN: 'tok' });
+    assert.deepEqual(calls.map((c) => [c.path, c.auth]), [['/apps/contracts/contracts', undefined]], 'the app gateway 401s any bearer but a launch credential');
   });
 
   it('-p waits for the run and prints only the answer, failing non-zero when it does not finish', async () => {
     const n = await cli(['new', '-p', '--agent', 'chat', 'hi']);
     assert.deepEqual([n.code, n.stdout], [0, 'final answer']);
-    assert.match(n.stderr, /^session ui:/);
+    assert.match(n.stderr, /^session chat:/);
     assert.equal((calls.find((c) => c.method === 'POST')!.body as { wait: boolean }).wait, true);
     const s = await cli(['send', '-p', 'ui:a', 'hi']);
     assert.deepEqual([s.code, s.stdout], [0, 'final answer']);

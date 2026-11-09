@@ -38,8 +38,8 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
   const path = (key: string) => `sessions/${encodeURIComponent(key)}`;
   const under = (key?: string) => (key ? `${path(key)}/` : '');
 
-  async function call(route: string, method = 'GET', body?: object): Promise<Json> {
-    const headers = { ...(body && { 'content-type': 'application/json' }), ...(adminToken && { authorization: `Bearer ${adminToken}` }) };
+  async function call(route: string, method = 'GET', body?: object, token = adminToken): Promise<Json> {
+    const headers = { ...(body && { 'content-type': 'application/json' }), ...(token && { authorization: `Bearer ${token}` }) };
     const res = await fetch(`${root}/${route}`, { method, headers, body: body && JSON.stringify(body) }).catch((e: Error) => {
       throw new ApiError(`cannot reach ${root}: ${e.cause instanceof Error ? e.cause.message : e.message}`, 0);
     });
@@ -106,6 +106,11 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     follow: (key: string, onFrame: (items: any[] | undefined) => void) =>
       socket<true>(key, undefined, (f) => (f.type !== 'view' ? undefined : (onFrame(f.items), f.live?.run === undefined ? true : undefined)), 0),
     remove: (key: string) => call(path(key), 'DELETE'),
+    /** The session's sealed versions as its socket sends them, with the judge's verdicts, which REST rows do not carry. */
+    ledger: (key: string) => socket<Json[]>(key, undefined, (f) => (f.type === 'artifacts' ? f.artifacts : undefined)),
+    /** A GET of an extension app's route, `route` starting with / and carrying its own query. It sends no bearer:
+     * the app gateway takes one only as a session's launch credential and refuses the admin token with 401. */
+    app: (name: string, route: string): Promise<Json> => call(`apps/${encodeURIComponent(name)}${route}`, 'GET', undefined, ''),
     /** Returns once the server accepts the message; the run is not streamed. A steer goes into the running turn instead of queueing behind it. */
     send: (key: string, input: string, whenBusy?: 'steer') =>
       socket<{ submissionId: string; status: string }>(key, (ws) => ws.send(JSON.stringify({ type: 'input', input, whenBusy })), (f) => (f.type === 'accepted' ? f : undefined)),
