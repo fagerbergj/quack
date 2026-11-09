@@ -106,6 +106,10 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     follow: (key: string, onFrame: (items: any[] | undefined) => void) =>
       socket<true>(key, undefined, (f) => (f.type !== 'view' ? undefined : (onFrame(f.items), f.live?.run === undefined ? true : undefined)), 0),
     remove: (key: string) => call(path(key), 'DELETE'),
+    /** The session's sealed versions as its socket sends them, with the judge's verdicts, which REST rows do not carry. */
+    ledger: (key: string) => socket<Json[]>(key, undefined, (f) => (f.type === 'artifacts' ? f.artifacts : undefined)),
+    /** A GET of an extension app's route; `route` starts with / and carries its own query. */
+    app: (name: string, route: string): Promise<Json> => call(`apps/${encodeURIComponent(name)}${route}`),
     /** Returns once the server accepts the message; the run is not streamed. A steer goes into the running turn instead of queueing behind it. */
     send: (key: string, input: string, whenBusy?: 'steer') =>
       socket<{ submissionId: string; status: string }>(key, (ws) => ws.send(JSON.stringify({ type: 'input', input, whenBusy })), (f) => (f.type === 'accepted' ? f : undefined)),
