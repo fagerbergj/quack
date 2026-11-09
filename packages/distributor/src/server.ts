@@ -291,13 +291,12 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   }
 
   // One self-contained file: the session's metadata beside its transcript and sealed artifacts, as a download.
-  async function exportSession(info: SessionInfo, url: string, res: ServerResponse) {
-    const exported = await fetch(`${url}/export`, { headers: upstream(info.key) });
-    if (!exported.ok) return sendProblem(res, 502, 'session export failed');
+  function sendExport(info: SessionInfo, exported: object | undefined, res: ServerResponse) {
+    if (!exported) return sendProblem(res, 502, 'session export failed');
     const { running: _running, ...session } = info;
     const name = `quack-${info.key.replace(/[^A-Za-z0-9._-]+/g, '-')}.json`;
     res.writeHead(200, { 'content-type': 'application/json', 'content-disposition': `attachment; filename="${name}"` });
-    res.end(JSON.stringify({ session, ...(await exported.json() as object) }, null, 2));
+    res.end(JSON.stringify({ session, ...exported }, null, 2));
   }
 
   // Only a submission starts a session; any other request for an unknown or deleted key is a 404 that creates nothing.
@@ -328,10 +327,20 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     }
   }
 
+  // A read never starts a process: a running session answers from its process, a stopped one from its store.
   async function exportRoute(key: string, agent: string | undefined, res: ServerResponse) {
+    await stopping.get(key)?.catch(() => {});
+    await removing.get(key);
     const info = await driver.session(key);
     if (!info) return sendProblem(res, 404, 'no such session');
-    await withSession(key, agent, 'GET /export', async (url) => void (await exportSession(info, url, res)));
+    if (driver.running().includes(key)) {
+      return withSession(key, agent, 'GET /export', async (url) => {
+        const found = await fetch(`${url}/export`, { headers: upstream(key) });
+        sendExport(info, found.ok ? ((await found.json()) as object) : undefined, res);
+      });
+    }
+    if (agent && agent !== info.agent) throw new AgentError(409, `session runs agent ${info.agent}, not ${agent}`);
+    sendExport(info, await driver.exported(key).catch((err) => void console.error(`session ${key}: export from its store failed: ${err.message}`)), res);
   }
 
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {

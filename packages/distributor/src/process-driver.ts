@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { childPort, createdAt, firstInput, lastActivity, recordedTitle, shellEnv, TITLE_MAX } from '@quack/session';
+import { childPort, createdAt, firstInput, lastActivity, readExport, recordedTitle, shellEnv, TITLE_MAX, type SessionExport } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -40,6 +40,8 @@ export type HostDriver = {
   sessions(): Promise<SessionInfo[]>;
   /** One session's row, read from its directory alone; undefined when it does not exist. */
   session(key: string): Promise<SessionInfo | undefined>;
+  /** The session's export read from its store on disk, starting nothing; rejects when the store cannot be read. */
+  exported(key: string): Promise<SessionExport>;
   /** Stops the session's process; a start in flight is waited out and then stopped. */
   stop(key: string): Promise<void>;
   /** Stops any process the session has, starting ones included, then deletes its directory (log, workspace, snapshot); false when no such session exists. The caller has checked it has no work. */
@@ -426,7 +428,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
+  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, exported: (key) => readExport(sessionDir(key)), stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
