@@ -31,7 +31,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
         aria-current={current ? 'true' : undefined}
         title={`${l.full}\n${r.key}`}
         aria-description={`${l.full} (${r.key})`}
-        className="col-span-3 col-start-1 row-span-2 row-start-1 grid grid-cols-subgrid grid-rows-subgrid text-ink no-underline before:absolute before:inset-0 before:rounded-[inherit]"
+        className="col-span-3 col-start-1 row-span-2 row-start-1 grid grid-cols-subgrid grid-rows-subgrid text-ink no-underline before:absolute before:inset-0"
       >
         <span className="row-span-2 self-start"><Tile l={l} kind={kind} /></span>
         <span className="col-span-2 flex gap-2">
