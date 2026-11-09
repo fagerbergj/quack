@@ -145,14 +145,16 @@ export function Remarkable(_: { rows: Row[] | undefined }) {
   return (
     <div className="mx-auto max-w-3xl pt-3 pb-44 lg:pt-8">
       <header className="flex items-center gap-2.5 px-4 pb-2">
-        <span className="grid size-[34px] flex-none place-items-center rounded-[10px] bg-soft text-ink-2" aria-hidden="true">
+        <span className="grid size-11 flex-none place-items-center rounded-[10px] bg-soft text-ink-2" aria-hidden="true">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h4L19 9l-4-4L4 16Z" /><path d="M13.5 6.5l4 4" /></svg>
         </span>
         <div className="min-w-0">
           <h1 className="m-0 text-[19px] leading-tight">reMarkable</h1>
           {tree && <p className="m-0 text-[12.5px] text-muted">{changed ? `${changed} changed since last ingest` : 'Everything is up to date'}</p>}
         </div>
-        <button type="button" onClick={() => void reload()} className="ml-auto min-h-11 cursor-pointer rounded-lg border-0 bg-transparent px-3 text-[13px] text-muted hover:bg-soft hover:text-ink">Refresh</button>
+        <button type="button" aria-label="Refresh" title="Refresh" onClick={() => void reload()} className="ml-auto grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
+        </button>
       </header>
       {error && <p role="alert" className="mx-4 text-sm text-danger">{error}</p>}
       {tree && (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 const SCRIM = 'fixed inset-0 z-40 bg-ink/25 backdrop-blur-[2px]';
@@ -36,12 +37,14 @@ export function Dialog({ label, labelledBy, onClose, className, scrim = SCRIM, c
       (e.shiftKey ? f.at(-1) : f[0])?.focus();
     }
   };
-  return (
+  // On body, so no fixed ancestor's stacking context can put the phone tab bar over it.
+  return createPortal(
     <>
       <div aria-hidden="true" onClick={onClose} className={scrim} />
       <section ref={panel} role="dialog" aria-modal="true" aria-label={label} aria-labelledby={labelledBy} tabIndex={-1} onKeyDown={keys} className={className}>
         {children}
       </section>
-    </>
+    </>,
+    document.body,
   );
 }

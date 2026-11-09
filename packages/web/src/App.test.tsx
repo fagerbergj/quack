@@ -427,12 +427,16 @@ test('the header shows the token total and Waiting on you for a pending approval
   expect(screen.getByText('2k tokens')).toBeInTheDocument();
 });
 
-test('a GitHub session header links to the pull request', async () => {
+test("a GitHub session's menu opens the pull request in a new tab", async () => {
   (live['github%3Ao%2Fr%231'] ??= {}).approvals = [];
   (live['github%3Ao%2Fr%231'] ??= {}).artifacts = [];
   location.hash = '#/s/github%3Ao%2Fr%231';
   render(<App />);
-  expect(await screen.findByRole('link', { name: 'View on GitHub' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
+  await userEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  const item = screen.getByRole('menuitem', { name: 'Open on GitHub' });
+  expect(item).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
+  expect(item).toHaveAttribute('target', '_blank');
+  expect(item).not.toHaveAttribute('download');
 });
 
 test('a send while a run works is a server-side follow-up shown as a chip; Send now steers it and the cross withdraws it', async () => {

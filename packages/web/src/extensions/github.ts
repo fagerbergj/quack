@@ -59,7 +59,7 @@ export const github: Extension = {
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {
     const m = KEY.exec(key);
-    return m ? { url: `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}`, label: 'View on GitHub' } : undefined;
+    return m ? { url: `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}`, label: 'Open on GitHub' } : undefined;
   },
   scope: (key) => /^github:([^#]+)#/.exec(key)?.[1],
 };

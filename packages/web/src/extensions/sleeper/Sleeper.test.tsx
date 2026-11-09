@@ -208,29 +208,33 @@ test('Run a job lists every job with its last result and starts one through the 
   page();
   await userEvent.click(await screen.findByRole('button', { name: 'Run a job' }));
   const sheet = within(await screen.findByRole('dialog', { name: 'Run a job' }));
-  expect(sheet.getAllByRole('button', { name: /^Run / })).toHaveLength(7);
-  expect(sheet.getByText('Running now')).toBeInTheDocument();
-  expect(sheet.getByRole('button', { name: 'Run Lineup' })).toBeDisabled();
-  expect(sheet.getByText(/Recap · week 7 · Sun/)).toBeInTheDocument();
+  // The running lineup is a link to its session, not a second run; every other row is one button.
+  expect(sheet.getAllByRole('button', { name: /^Run / })).toHaveLength(6);
+  expect(sheet.getByRole('link', { name: /^Lineup Running · open/ })).toHaveAttribute('href', `#/s/${encodeURIComponent(key(9, 'lineup'))}`);
+  expect(sheet.getByRole('button', { name: 'Run Recap' })).toHaveAccessibleDescription(/Recap · week 7 · Sun/);
   expect(sheet.getAllByText(/next Tue 1:15 AM/)).toHaveLength(2);
   await userEvent.click(sheet.getByRole('button', { name: 'Run Waivers' }));
-  expect(await sheet.findByRole('status')).toHaveTextContent('Waivers started');
-  const post = calls.find(([, i]) => i?.method === 'POST')!;
-  expect(post[0]).toBe('apps/sleeper/waivers');
-  expect(post[1]?.headers).toBeUndefined();
+  expect(await sheet.findByRole('link', { name: /^Waivers Running · open/ })).toHaveAttribute('href', `#/s/${encodeURIComponent(key(9, 'waivers'))}`);
+  expect(sheet.queryByRole('button', { name: 'Run Waivers' })).toBeNull();
+  const posts = calls.filter(([, i]) => i?.method === 'POST');
+  expect(posts.map(([u]) => u)).toEqual(['apps/sleeper/waivers']);
+  expect(posts[0]![1]?.headers).toBeUndefined();
 });
 
-test('a refused Run shows the reason, and tapping a job name closes the sheet at its card', async () => {
+test('a run shows Starting… and cannot start twice; a refused one shows the reason and runs again', async () => {
   page();
   await userEvent.click(await screen.findByRole('button', { name: 'Run a job' }));
-  vi.mocked(fetch).mockImplementationOnce(async () => new Response(JSON.stringify({ error: 'on-demand jobs are not configured' }), { status: 501 }));
+  let refuse!: (r: Response) => void;
+  vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>((ok) => (refuse = ok)));
   await userEvent.click(screen.getByRole('button', { name: 'Run Trends' }));
+  const row = screen.getByRole('button', { name: 'Run Trends' });
+  expect(row).toBeDisabled();
+  expect(row).toHaveAccessibleDescription('Starting…');
+  refuse(new Response(JSON.stringify({ error: 'on-demand jobs are not configured' }), { status: 501 }));
   expect(await screen.findByRole('status')).toHaveTextContent('Could not start: on-demand jobs are not configured');
-  const scroll = vi.fn();
-  Element.prototype.scrollIntoView = scroll;
-  await userEvent.click(screen.getByRole('button', { name: /^Trends/ }));
+  expect(screen.getByRole('button', { name: 'Run Trends' })).toBeEnabled();
+  await userEvent.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).toBeNull();
-  expect(scroll).toHaveBeenCalled();
 });
 
 test('the page asks the server for its league by key prefix, following pages, and ignores other leagues', async () => {
