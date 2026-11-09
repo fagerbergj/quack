@@ -109,6 +109,54 @@ test('an approval another tab already decided says so instead of failing silentl
   expect(await within(bar()).findByRole('alert')).toHaveTextContent('already decided');
 });
 
+// The contracts app's status read, as the page fetches it for this session.
+const STATUS = `GET /apps/contracts/contracts/${KEY}`;
+const status = (...versions: Array<[number, string]>) => ({ key: 'contracts:s1', versions: versions.map(([artifact, st]) => ({ artifact, version: artifact, status: st })) });
+// A version as the catalog lists it: no verdict at all.
+const bare = (version: number, content: object): SealedArtifact => { const { verdict: _, ...a } = spec(version, content); return a; };
+const tsSpec = (version: number, document: string) => ({ kind: 'typescript', title: 'Shapes', version, intent: { purpose: 'Shapes' }, choices: [], document });
+
+// Versions seen one after another, none carrying a verdict: the base is the last one put to this viewer.
+async function proposeTwo(one: object, two: object) {
+  routes[STATUS] = status([1, 'proposed']);
+  const { ws, pane } = open([bare(1, one)], [proposal(1, 1)]);
+  await waitFor(() => expect(localStorage.getItem('quack.contracts.seen.contracts:s1')).toBe('1'));
+  routes[STATUS] = status([1, 'proposed'], [2, 'proposed']);
+  ws.frame({ type: 'artifacts', artifacts: [bare(1, one), bare(2, two)] });
+  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [proposal(2, 2)] });
+  return pane;
+}
+
+test('with no verdicts, a REST contract marks the operations that changed since the version this viewer was shown', async () => {
+  const pane = await proposeTwo(v1, v2);
+  expect(await within(pane).findByRole('heading', { name: /since version 1$/ })).toBeInTheDocument();
+  expect(within(pane).getAllByText('Changed').length).toBeGreaterThan(0);
+  expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
+  expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 passed its checks.');
+  expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeEnabled();
+});
+
+test('with no verdicts, a TypeScript contract marks the declarations that changed and the ones added', async () => {
+  const pane = await proposeTwo(tsSpec(1, 'export type A = { n: number };'), tsSpec(2, 'export type A = { n: string; m?: B };\nexport type B = { x: number };'));
+  expect(await within(pane).findByRole('heading', { name: /since version 1$/ })).toBeInTheDocument();
+  expect(within(within(pane).getByRole('article', { name: 'B' })).getAllByText('New').length).toBeGreaterThan(0);
+  expect(within(within(pane).getByRole('article', { name: 'A' })).getByText('Changed')).toBeInTheDocument();
+});
+
+test("each version is labelled by where it stands with the person, and the approval bar reads the newest one's status", async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'changes_requested'], [3, 'proposed'], [4, 'draft']);
+  open([bare(1, v1), approvedRec(1, 1), bare(2, v2), bare(3, v2), bare(4, v2)]);
+  const from = screen.getByRole('combobox', { name: 'Compare from' });
+  await waitFor(() => expect(within(from).getAllByRole('option').map((o) => o.textContent)).toEqual(['none', 'Version 2 (#4), draft', 'Version 2 (#3), awaiting approval', 'Version 2 (#2), changes requested', 'Version 1, approved']));
+  expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 is a draft and not up for approval.');
+  expect(from, 'a viewer who never looked compares with the approved version').toHaveValue('1');
+  const v = { a: bare(2, v2), spec: v2 as ContractSpec };
+  expect(approvalState(v, undefined, undefined, false, 'changes_requested').text).toBe('You asked for changes to version 2.');
+  expect(approvalState(v, undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
+  expect(approvalState(v, undefined, undefined, false, 'proposed').text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
+  expect(approvalState(v, undefined, 2, false, 'approved').done).toBe(true);
+});
+
 test('on a phone the contract and the chat are tabs, and the chat tab counts waiting questions', async () => {
   stubViewport(false);
   const { ws } = open([spec(1, v1)]);

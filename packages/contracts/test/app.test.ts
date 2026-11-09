@@ -62,5 +62,35 @@ test('a contract session with nothing sealed yet reads as its session title, and
   const { contracts } = (await (await fetch(`${url}/contracts`)).json()) as { contracts: unknown[] };
   assert.deepEqual(contracts, [{ key: 'contracts:new', title: 'Payments API', kind: 'rest', pendingApproval: false }]);
   assert.equal((await fetch(`${url}/nope`)).status, 404);
-  assert.deepEqual(manifest.pages, [{ method: 'GET', path: '/contracts' }], 'the page reaches it through the proxy');
+  const page = manifest.pages![0]!.path as RegExp;
+  assert.deepEqual(['/contracts', '/contracts/contracts%3Aa', '/contracts/a/b', '/other'].map((p) => page.test(p)), [true, true, false, false], 'the page reaches both reads through the proxy');
+});
+
+test('GET /contracts/{key} gives each sealed spec its status from the approval records and proposals, never from a verdict', async () => {
+  const { catalog, url } = await setup();
+  seq = 0;
+  const offer = (id: string, version: number, artifact: number) => ev('ask.opened', { id, type: 'approval', createdAt: seq, toolCall: { tool: 'propose_contract', args: { version, artifact, hash: `h${version}` } } });
+  const decision = (kind: string, n: number, version: number, artifact: number) => ev('artifact.sealed', { kind, version: n, hash: `d${n}`, content: JSON.stringify({ version, artifact, note: '', approval: `p${n}` }) });
+  await catalog.publish('contracts:s', [
+    created('contracts:s'), spec(1), offer('p1', 1, 11), decision('contract.approved', 1, 1, 11),
+    spec(2), offer('p2', 2, 12), decision('contract.changes', 1, 2, 12),
+    spec(3), offer('p3', 3, 13), spec(4), offer('p4', 4, 14),
+    ev('artifact.sealed', { kind: 'contract.spec', version: 15, hash: 'h4b', content: JSON.stringify({ kind: 'rest', title: 'Sleeper schedule endpoint', version: 4, intent: {}, document: {} }) }),
+  ]);
+  await catalog.resolve('contracts:s', 'p1', { by: { kind: 'tailnet' }, choice: 'approve' });
+  await catalog.resolve('contracts:s', 'p2', { by: { kind: 'tailnet' }, choice: 'reject' });
+  // Approved, its record not sealed yet: the answered proposal says so.
+  await catalog.resolve('contracts:s', 'p3', { by: { kind: 'tailnet' }, choice: 'approve' });
+  const res = await fetch(`${url}/contracts/${encodeURIComponent('contracts:s')}`);
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { key: string; pendingApproval: boolean; versions: unknown[] };
+  assert.deepEqual([body.key, body.pendingApproval], ['contracts:s', true]);
+  assert.deepEqual(body.versions, [
+    { artifact: 11, version: 1, status: 'approved' },
+    { artifact: 12, version: 2, status: 'changes_requested' },
+    { artifact: 13, version: 3, status: 'approved' },
+    { artifact: 14, version: 4, status: 'proposed' },
+    { artifact: 15, version: 4, status: 'draft' },
+  ]);
+  for (const key of ['contracts:missing', 'review:x', '%E0']) assert.equal((await fetch(`${url}/contracts/${encodeURIComponent(key)}`)).status, 404, key);
 });
