@@ -9,7 +9,7 @@ import { artifactName } from './Artifacts.tsx';
 import { CheckProgress, liveChecks, progressLabel } from './CheckResult.tsx';
 import { SessionKeyContext, type StudioProps } from './extension.ts';
 import { Work } from './Work.tsx';
-import { ContextRail, useDetails } from './Rail.tsx';
+import { ContextRail, openingOf, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { useMenu } from './useMenu.ts';
 import { useDesktop } from './useDesktop.ts';
@@ -304,6 +304,8 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
 }
 
 const NO_META: Array<Record<string, unknown>> = [];
+// A running step names itself; waiting, idle or failed reads as the header's status.
+const activityOf = (status: string, tone: Tone, view: View) => (tone === 'run' ? stepLabel(view) : status);
 
 // The reason a studio's approval is declined with when the person writes instead of approving; their message says the rest.
 export const SUPERSEDED = 'Sent a message instead';
@@ -327,16 +329,16 @@ function useStudio(sessionKey: string, approvals: Approval[], send: Send, decide
 }
 type Live = ReturnType<typeof useStudio>;
 
-// Below lg a studio session is one pane at a time; the chat tab counts the questions waiting there.
+// Below lg a studio session is one pane at a time; the pane's tab counts the questions it shows.
 function StudioTabs({ live: { studio, tab, setTab }, waiting }: { live: Live; waiting: number }) {
   if (!studio) return null;
   const cls = 'flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1.5 border-0 border-b-2 border-transparent bg-transparent text-[13.5px] text-muted aria-selected:border-ink aria-selected:font-semibold aria-selected:text-ink';
   return (
     <div role="tablist" aria-label="Show" className="flex border-b border-line lg:hidden">
-      <button type="button" role="tab" aria-selected={tab === 'pane'} onClick={() => setTab('pane')} className={cls}>{studio.label}</button>
-      <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')} className={cls}>
-        Chat{waiting > 0 && ' '}{waiting > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] font-semibold text-warning">{waiting}</span>}
+      <button type="button" role="tab" aria-selected={tab === 'pane'} onClick={() => setTab('pane')} className={cls}>
+        {studio.label}{waiting > 0 && ' '}{waiting > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] font-semibold text-warning">{waiting}</span>}
       </button>
+      <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')} className={cls}>Chat</button>
     </div>
   );
 }
@@ -349,6 +351,8 @@ function Side({ live, rail, ...props }: Omit<StudioProps, 'visible'> & { live: L
   if (!Pane) return rail;
   return (
     <section aria-label={live.studio!.label} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
+      {/* Questions come first in the pane, so the person answers them there instead of on the chat tab. */}
+      {props.questions.length > 0 && <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 px-4 pt-4 sm:px-5"><SessionQuestions sessionKey={props.sessionKey} items={props.questions} /></div>}
       <Pane {...props} visible={visible} />
     </section>
   );
@@ -388,7 +392,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
             </SessionKeyContext>
             <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.cards} decide={pending.decide} />
-            <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
+            {/* A studio pane answers its session's questions above the contract, so the chat does not repeat them. */}
+            {!live.studio && <SessionQuestions sessionKey={sessionKey} items={standing.questions} />}
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
             <Running view={view} waiting={waiting > 0} active={tone === 'run'} />
           </div>
@@ -400,7 +405,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
           </div>
         </div>
       </div>
-      <Side live={live} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} rail={<ContextRail {...rail} details={details} placement="rail" />} />
+      <Side live={live} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />
       {work && <Work artifact={work} session={sessionKey} onClose={() => setWork(null)} />}

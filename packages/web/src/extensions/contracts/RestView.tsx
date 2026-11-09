@@ -18,9 +18,10 @@ function Method({ m }: { m: string }) {
   return <span className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${METHOD[m] ?? 'bg-warning-bg text-warning'}`}>{m}</span>;
 }
 
+// Under a comparison the Studio lists the real changes, so the agent's account of them stands back.
 export function Changes({ spec }: { spec: ContractSpec }) {
   const byId = new Map(spec.choices.map((c) => [c.id, c]));
-  if (!spec.changes?.length) return null;
+  if (useContext(DiffContext) || !spec.changes?.length) return null;
   return (
     <section aria-label="What changed" className={`${card} overflow-hidden`}>
       <h3 className={`m-0 px-4 py-3 font-sans ${label}`}>Changed from version {spec.version - 1}</h3>
@@ -199,7 +200,9 @@ export function Header({ spec, count, full, file, verdict, info = [] }: { spec: 
         <span className="text-xs text-muted">{count} · version {spec.version}</span>
       </div>
       {!full && <FullViewLink version={spec.version} />}
-      <button type="button" onClick={file.save} className={pill}>{file.label}</button>
+      <button type="button" onClick={file.save} aria-label={`Download ${file.label}`} title={`Download ${file.label}`} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:text-ink lg:h-9 lg:w-9">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
+      </button>
     </header>
   );
 }

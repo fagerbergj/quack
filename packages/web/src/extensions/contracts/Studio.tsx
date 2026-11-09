@@ -3,10 +3,13 @@ import { checkFailed, decideApproval, type Approval, type SealedArtifact, type V
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import type { StudioProps } from '../../extension.ts';
 import { useLoad } from '../../useLoad.ts';
+import { useMenu } from '../../useMenu.ts';
+import { ChangeList } from './ChangeList.tsx';
+import { Decided, Progress } from './Progress.tsx';
 import { DiffContext, diffUnits, units, type Diff } from './diff.ts';
 import { JsonSchemaView } from './JsonSchemaView.tsx';
 import { Inline } from './Info.tsx';
-import { card, label, RestView } from './RestView.tsx';
+import { card, RestView } from './RestView.tsx';
 import { parseSpec, type ContractSpec } from './spec.ts';
 import { contractVersions, type VersionStatus } from './status.ts';
 import { TypeScriptView, useModel } from './TypeScriptView.tsx';
@@ -112,8 +115,8 @@ function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionK
   return (
     <section aria-label="Approval" className={`${card} sticky top-0 z-10 flex flex-col gap-2 px-4 py-3 shadow-card`}>
       <div className="flex flex-wrap items-center gap-3">
-        <p role="status" className={`m-0 min-w-0 flex-1 basis-56 text-[13.5px] ${state.done ? 'font-semibold text-success' : 'text-ink-2'}`}>{state.text}</p>
-        {!state.done && <button type="button" disabled={!state.can || busy} onClick={() => void approve()} className={btn}>{busy ? 'Approving…' : 'Approve'}</button>}
+        <p role="status" className="m-0 min-w-0 flex-1 basis-56 text-[13.5px] text-ink-2">{state.text}</p>
+        <button type="button" disabled={!state.can || busy} onClick={() => void approve()} className={btn}>{busy ? 'Approving…' : 'Approve'}</button>
       </div>
       {state.can && breaks && <p className="m-0 text-[12.5px] text-muted">{breaks.length ? <Inline text={`Breaks callers of the approved version, checked in code: ${breaks.map((b) => b.text).join('; ')}`} /> : 'Checked in code: nothing breaks callers of the approved version.'}</p>}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
@@ -121,40 +124,64 @@ function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionK
   );
 }
 
-function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
-  const sel = 'h-11 min-w-0 rounded-full border border-line bg-soft px-3 text-[13px] outline-none lg:h-9';
-  const opts = versions.map((v) => <option key={v.a.version} value={v.a.version}>{nameOf(v, versions, status)}</option>).reverse();
+const TONE: Record<VersionStatus, [string, string]> = {
+  draft: ['draft', 'bg-soft text-muted'], proposed: ['awaiting', 'bg-warning-bg text-warning'], approved: ['approved', 'bg-success-bg text-success'], changes_requested: ['changes asked', 'bg-danger-bg text-danger'],
+};
+const short = (v: Version, all: Version[]) => `v${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` #${v.a.version}` : ''}`;
+
+function Badge({ s }: { s: VersionStatus }) {
+  return <span aria-hidden="true" className={`rounded px-1.5 text-[10.5px] font-semibold tracking-wide whitespace-nowrap uppercase ${TONE[s][1]}`}>{TONE[s][0]}</span>;
+}
+
+const item = 'flex min-h-11 w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 text-left text-[13px] text-ink hover:bg-soft aria-[current=true]:font-semibold lg:min-h-9';
+const chevron = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>;
+
+// One side of the comparison: a version and its status, a menu of every version to pick another; `none` offers the whole contract instead.
+function Side({ name, versions, status, value, none, title, onPick }: { name: string; versions: Version[]; status?: StatusOf; value?: number; none?: string; title?: string; onPick: (v?: number) => void }) {
+  const menu = useMenu();
+  const v = versions.find((x) => x.a.version === value);
+  const choose = (n?: number) => { menu.close(); onPick(n); };
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink-2">
-      <label className="flex items-center gap-2">Changes since
-        <select aria-label="Compare from" value={from ?? ''} onChange={(e) => pick({ from: e.target.value ? Number(e.target.value) : undefined, to })} className={sel}>
-          <option value="">none</option>{opts}
-        </select>
-      </label>
-      <label className="flex items-center gap-2">in
-        <select aria-label="Compare to" value={to} onChange={(e) => pick({ from, to: Number(e.target.value) })} className={sel}>{opts}</select>
-      </label>
-      {auto !== undefined ? <span className="text-muted">{from ? auto : ''}</span> : <button type="button" onClick={() => pick(undefined)} className="min-h-11 cursor-pointer border-0 bg-transparent text-link lg:min-h-0">Follow the newest</button>}
+    <div ref={menu.root} onKeyDown={menu.keys} className="relative">
+      <button ref={menu.button} type="button" aria-haspopup="menu" aria-expanded={menu.open} aria-label={`${name}: ${v ? nameOf(v, versions, status) : none}`} title={title} onClick={menu.toggle} className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-soft px-3 text-[13px] text-ink lg:h-9">
+        <span className="font-mono font-semibold whitespace-nowrap">{v ? short(v, versions) : 'none'}</span>{v && status && <Badge s={status(v)} />}{chevron}
+      </button>
+      {menu.open && (
+        <div role="menu" aria-label={name} className="absolute left-0 z-20 mt-1 min-w-60 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
+          {none && <button type="button" role="menuitem" aria-current={!v || undefined} tabIndex={-1} onClick={() => choose(undefined)} className={item}>{none}</button>}
+          {[...versions].reverse().map((x) => (
+            <button key={x.a.version} type="button" role="menuitem" aria-current={x === v || undefined} tabIndex={-1} onClick={() => choose(x.a.version)} className={item}>
+              <span className="flex-1">{nameOf(x, versions)}</span>{status && <Badge s={status(x)} />}<span className="sr-only">{status && `, ${LABEL[status(x)]}`}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function Summary({ diff, from }: { diff: Diff; from: Version }) {
-  const count = (m: string) => [...diff.marks.values()].filter((x) => x === m).length;
-  const parts = [[count('added'), 'new'], [count('changed'), 'changed'], [diff.removed.length, 'removed']].filter(([n]) => n).map(([n, w]) => `${n} ${w}`);
+// The two versions compared on one row; once the person picks, an icon goes back to following the newest version.
+function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
   return (
-    <section aria-label="What changed" className={`${card} flex flex-col gap-1.5 px-4 py-3`}>
-      <h3 className={`m-0 font-sans ${label}`}>{parts.length ? `${parts.join(' · ')} since version ${from.spec.version}` : `Nothing changed since version ${from.spec.version}`}</h3>
-      {diff.removed.length > 0 && <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[13px]">{diff.removed.map((r) => <li key={r} className="text-danger"><span aria-hidden="true">− </span><span className="sr-only">Removed </span>{r}</li>)}</ul>}
-    </section>
+    <div className="flex items-center gap-1.5">
+      <Side name="Compare from" versions={versions} status={status} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
+      <span aria-hidden="true" className="text-muted">→</span>
+      <Side name="Compare to" versions={versions} status={status} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
+      <span className="flex-1" />
+      {auto === undefined && (
+        <button type="button" aria-label="Follow the newest" title="Follow the newest version" onClick={() => pick(undefined)} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:text-ink lg:h-9 lg:w-9">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" /></svg>
+        </button>
+      )}
+    </div>
   );
 }
 
-function Shown({ from, to }: { from?: Version; to: Version }) {
+function Shown({ from, to, reason }: { from?: Version; to: Version; reason?: string }) {
   const diff = useDiff(from, to);
   return (
     <>
-      {from && diff && <Summary diff={diff} from={from} />}
+      {from && diff && <ChangeList changes={diff.changes} spec={to.spec} reason={reason} />}
       <DiffContext value={diff?.marks}>
         <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[to.spec.kind], { key: to.a.version, spec: to.spec, full: true, verdict: to.a.verdict })}</ArtifactBoundary>
       </DiffContext>
@@ -162,16 +189,19 @@ function Shown({ from, to }: { from?: Version; to: Version }) {
   );
 }
 
+const layout = 'mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5';
+
 /** The contract as it stands, live beside the conversation: the newest draft with what changed since this viewer last looked, any two
  * versions on request, and one approve action for the newest version once the judge has passed it and it is up for approval. */
-export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, visible }: StudioProps) {
+export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, visible, questions, brief, activity }: StudioProps) {
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
   const newest = versions.at(-1);
   const status = useStatus(sessionKey, artifacts, approvals, running);
   // A version counts once it was put to the person; until the status answers, none does and nothing is compared.
   const base = useSeen(sessionKey, status && versions.findLast((v) => status(v) !== 'draft')?.a.version, visible);
   const [picked, pick] = useState<{ from?: number; to: number }>();
-  if (!newest) return <p className="m-0 p-5 text-sm text-muted">The contract shows here as soon as the agent writes its first version.</p>;
+  const decisions = <Decided sessionKey={sessionKey} asked={questions.length} running={running} open={!newest} />;
+  if (!newest) return <div className={layout}><Progress activity={activity} brief={brief} waiting={questions.length > 0} />{decisions}</div>;
   const proposal = approvals.find((a) => offered(a) === newest.a.version);
   const approved = status && versions.findLast((v) => status(v) === 'approved')?.a.version;
   const state = approvalState(newest, proposal, approved, running, status?.(newest));
@@ -179,11 +209,13 @@ export function ContractStudio({ sessionKey, artifacts, approvals, running, deci
   // A viewer who has not looked yet is shown what changed since the approved version.
   const since = status && (base ?? approved);
   const from = versions.find((v) => v.a.version === (picked ? picked.from : since) && v !== to);
+  const auto = picked ? undefined : base ? 'the version you last looked at' : 'the approved version';
   return (
-    <div className="mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5">
-      <ApproveBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} breaks={approved === undefined ? undefined : (proposal?.args as { breaks?: Break[] } | null)?.breaks} />
-      <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} auto={picked ? undefined : base ? 'the version you last looked at' : 'the approved version'} pick={pick} />
-      <Shown from={from} to={to} />
+    <div className={layout}>
+      {!state.done && <ApproveBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} breaks={approved === undefined ? undefined : (proposal?.args as { breaks?: Break[] } | null)?.breaks} />}
+      <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} auto={auto} pick={pick} />
+      <Shown from={from} to={to} reason={auto} />
+      {decisions}
     </div>
   );
 }
