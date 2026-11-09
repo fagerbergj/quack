@@ -23,5 +23,5 @@ export const remarkable: Extension = {
     words: () => ({ run: 'Transcribing', done: 'Transcribed', none: 'Not transcribed yet' }),
   },
   artifact: (a) => (a.kind === 'remarkable.transcript' ? { name: 'Transcript' } : undefined),
-  nav: { route: 'remarkable', label: 'reMarkable', icon: ICON, tint: 'bg-paper text-paper-ink', page: Remarkable, status: useStatus },
+  nav: { route: 'remarkable', label: 'reMarkable', icon: ICON, tint: 'bg-soft text-ink-2', page: Remarkable, status: useStatus },
 };
