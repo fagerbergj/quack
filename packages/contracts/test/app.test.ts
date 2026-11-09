@@ -192,6 +192,36 @@ test('GET /contracts answers 400 problem+json for a bad pageSize, an unreadable 
   assert.equal(other.status, 400, 'a token issued for another q');
 });
 
+test('a pageToken is bound to the whole q: changing any term, a post-read one included, answers 400', async () => {
+  const { catalog, url } = await setup();
+  await five(catalog);
+  const first = (await (await fetch(`${url}/contracts?pageSize=1&q=${encodeURIComponent('kind:rest')}`)).json()) as Page;
+  assert.ok(first.nextPageToken);
+  const token = encodeURIComponent(first.nextPageToken);
+  const res = await fetch(`${url}/contracts?pageSize=1&q=${encodeURIComponent('kind:typescript')}&pageToken=${token}`);
+  assert.equal(res.status, 400);
+  assert.match(((await res.json()) as { detail: string }).detail, /different q/);
+  assert.equal((await fetch(`${url}/contracts?pageSize=1&q=${encodeURIComponent('kind:rest')}&pageToken=${token}`)).status, 200, 'the same q pages on');
+});
+
+test('a filter that matches nothing walks a bounded number of catalog pages, then answers a short page with a token', async () => {
+  const calls: string[] = [];
+  const { catalog, url } = await setup(spy(calls));
+  await five(catalog);
+  for (let i = 0; i < 12; i++) {
+    seq = 0;
+    await catalog.publish(`contracts:z${i}`, [created(`contracts:z${i}`)]);
+  }
+  calls.length = 0;
+  const q = encodeURIComponent('title:nothing');
+  const first = (await (await fetch(`${url}/contracts?pageSize=1&q=${q}`)).json()) as Page;
+  assert.deepEqual(first.contracts, []);
+  assert.ok(first.nextPageToken, 'a token while catalog rows remain');
+  assert.equal(calls.filter((c) => c.includes('/sessions?')).length, 10, 'ten catalog pages at most');
+  const second = (await (await fetch(`${url}/contracts?pageSize=1&q=${q}&pageToken=${encodeURIComponent(first.nextPageToken)}`)).json()) as Page;
+  assert.deepEqual([second.contracts, second.nextPageToken], [[], undefined], 'the remaining 7 sessions end the list');
+});
+
 test('GET /contracts/{key} answers 404 problem+json for an archived, unknown, non-contracts or badly encoded key', async () => {
   const { catalog, url } = await setup();
   await five(catalog);

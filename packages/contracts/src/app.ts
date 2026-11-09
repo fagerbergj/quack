@@ -1,4 +1,5 @@
 // The contracts extension's own read: each Contract Studio session's contract, from its sealed artifacts in the catalog.
+import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { escapeTerm, sendProblem, serviceHttp, type App, type AppContext } from '@quack/sdk';
 import { APPROVED_KIND, CHANGES_KIND } from './approval.ts';
@@ -33,7 +34,21 @@ function sizeOf(param: string | null): number {
   if (size < 1 || size > 1000) throw new BadRequest('pageSize must be an integer from 1 to 1000');
   return size;
 }
-const parse = (content: string | undefined): Record<string, unknown> => { try { return JSON.parse(content ?? '') ?? {}; } catch { return {}; } };
+// A filter that matches little would otherwise walk the whole catalog in one request; a short page with a token is allowed.
+const MAX_CATALOG_PAGES = 10;
+// The page token is the catalog's cursor bound to the whole q, so a token sent with any other q is refused (AIP-158).
+const digestOf = (q: string) => createHash('sha256').update(q.trim()).digest('base64url').slice(0, 22);
+const tokenOf = (cursor: string, q: string) => Buffer.from(JSON.stringify([cursor, digestOf(q)])).toString('base64url');
+function cursorOf(token: string | null, q: string): string {
+  if (!token) return '';
+  let parsed: unknown;
+  try { parsed = JSON.parse(Buffer.from(token, 'base64url').toString()); } catch { parsed = undefined; }
+  const [cursor, digest] = Array.isArray(parsed) ? parsed : [];
+  if (typeof cursor !== 'string' || !cursor) throw new BadRequest('pageToken is not one this list issued');
+  if (digest !== digestOf(q)) throw new BadRequest('pageToken was issued for a different q');
+  return cursor;
+}
+const parse =(content: string | undefined): Record<string, unknown> => { try { return JSON.parse(content ?? '') ?? {}; } catch { return {}; } };
 const newest = (all: Artifact[], kind: string) => all.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version).at(-1);
 const versionOf = (a: Artifact | undefined) => (typeof parse(a?.content).version === 'number' ? (parse(a?.content).version as number) : undefined);
 
@@ -98,20 +113,22 @@ export function contractsApp(ctx: AppContext): App {
     if (!res.ok) throw new Error(`/sessions answered ${res.status}`);
     return (await res.json()) as { sessions?: Array<{ key: string; title?: string }>; nextPageToken?: string };
   }
-  // Fills one page across catalog pages, asking each for only what is still missing, so the next token is the catalog's own.
+  // Fills one page across catalog pages, asking each for only what is still missing, so the next cursor is the catalog's own.
   async function list(params: URLSearchParams): Promise<{ contracts: ContractRecord[]; nextPageToken?: string }> {
     const pageSize = sizeOf(params.get('pageSize'));
-    const { test, pushed } = parseFilter(params.get('q'));
+    const asked = params.get('q') ?? '';
+    const { test, pushed } = parseFilter(asked);
     const q = [`key:${escapeTerm('contracts:')}*`, '-state:archived', ...pushed.map((p) => `(${p})`)].join(' AND ');
     const contracts: ContractRecord[] = [];
-    let token = params.get('pageToken') ?? '';
-    do {
-      const page = await sessions(q, pageSize - contracts.length, token);
+    let cursor = cursorOf(params.get('pageToken'), asked);
+    for (let walked = 0; walked < MAX_CATALOG_PAGES && contracts.length < pageSize; walked++) {
+      const page = await sessions(q, pageSize - contracts.length, cursor);
       const read = await Promise.all((page.sessions ?? []).map(async (s) => { const r = await records(s.key); return contractOf(s.key, s.title, r.artifacts, r.asks); }));
       contracts.push(...read.filter(test));
-      token = page.nextPageToken ?? '';
-    } while (token && contracts.length < pageSize);
-    return { contracts, ...(token && { nextPageToken: token }) };
+      cursor = page.nextPageToken ?? '';
+      if (!cursor) break;
+    }
+    return { contracts, ...(cursor && { nextPageToken: tokenOf(cursor, asked) }) };
   }
   // One contract with every spec version's status; undefined when the catalog has no such session.
   async function one(key: string): Promise<(ContractRecord & { versions: SpecVersion[] }) | undefined> {
