@@ -444,6 +444,9 @@ test('findingItems: a mark on the paragraph above a list or on the bullet a sub-
     ['- **Disagreement:** follow the house standard.', false],
   ]);
   assert.deepEqual(cited('## Findings\n- One.\n\nA paragraph after the list. [s2]\n'), [['- One.', false]], 'a later paragraph is not the bullet\'s');
+  const texts = findingItems(r).map((f) => f.text);
+  assert.equal(texts[0], 'A-MAC scores each memory on factors: [s16]\n- Utility: an LLM rates future use.', 'a marked lead-in is the claim\'s context');
+  assert.equal(texts[3], '- Encoding depth: four tiers.', 'an unmarked lead-in is left out of the claim the judge reads');
 });
 
 test('quotes_exist: a quote the cited source lacks fails the gate with the quote as its mark', () => {

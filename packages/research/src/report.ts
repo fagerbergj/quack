@@ -40,7 +40,9 @@ function bullet(p: Parse, line: string, indent: number) {
   // A list's lead-in is the paragraph directly above it; a code block or table between them does not part them.
   if (!parent && p.para.length) [p.intro, p.para] = [p.para, []];
   if (parent) parent.kids++;
-  const item = { indent, lines: [line], context: parent ? [...parent.context, ...parent.lines] : p.intro, kids: 0 };
+  // Context is there to cite the bullet; an unmarked heading line ("Attleboro:") would only reframe the claim for the judge.
+  const marked = (lines: string[]) => (/\[s\d+\]/.test(lines.join(' ')) ? lines : []);
+  const item = { indent, lines: [line], context: parent ? [...parent.context, ...marked(parent.lines)] : marked(p.intro), kids: 0 };
   p.items.push(item);
   p.open.push(item);
 }
