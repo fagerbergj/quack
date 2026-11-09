@@ -18,6 +18,7 @@ test('a replay is served the pinned pull request, and its reviews are captured, 
   const auth = { authorization: `Bearer ${svc.env.QUACK_INDEX_TOKEN}` };
   try {
     assert.deepEqual(await (await fetch(`${url}/apps/github/pulls/acme/widgets/7`, { headers: auth })).json(), pr);
+    assert.deepEqual(await (await fetch(`${url}/apps/github/pulls/acme/widgets/7/head`, { headers: auth })).json(), { headSha: 'abc', body: '' }, 'the head submit_review checks before posting');
     assert.equal((await fetch(`${url}/pulls/acme/widgets/8`, { headers: auth })).status, 404, 'only the pinned PR exists');
     assert.equal((await fetch(`${url}/git-credential?url=https://github.com/acme/widgets`, { headers: auth })).status, 404, 'no credentials, so nothing can be pushed');
     assert.equal((await fetch(`${url}/pulls/acme/widgets/7`)).status, 401);

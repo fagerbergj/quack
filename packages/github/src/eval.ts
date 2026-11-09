@@ -21,6 +21,8 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
     const path = (req.url ?? '').replace(/^\/apps\/github/, '');
     // A replay re-runs a review made while the PR was open; a pin recorded after it merged must not read as closed.
     if (req.method === 'GET' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}`) return send(200, { ...pr, state: 'open' });
+    // submit_review reads the live head before posting; the pinned head never moves.
+    if (req.method === 'GET' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}/head`) return send(200, { headSha: pr.headSha, body: pr.body });
     if (req.method === 'POST' && path === '/reviews') {
       const r = JSON.parse(raw);
       // Only a review of the pinned PR at its pinned head counts as captured; anything else would score a delivery that could not happen.
