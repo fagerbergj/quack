@@ -200,23 +200,25 @@ function Title({ sessionKey, name, status, tone, spend, archived }: Facts) {
 
 type Manage = { archived: boolean; changed: () => void };
 
-type Entry = { label: string; run?: () => void; href?: string; danger?: boolean };
+type Entry = { label: string; run?: () => void; href?: string; external?: boolean; danger?: boolean };
+type Link = { url: string; label: string };
 
 function MenuEntry({ e, close }: { e: Entry; close: () => void }) {
   const cls = `flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[13px] no-underline hover:bg-soft lg:min-h-8 ${e.danger ? 'text-danger' : 'text-ink'}`;
   return e.href
-    ? <a role="menuitem" tabIndex={-1} href={e.href} download onClick={() => close()} className={cls}>{e.label}</a>
+    ? <a role="menuitem" tabIndex={-1} href={e.href} {...(e.external ? { target: '_blank', rel: 'noopener noreferrer' } : { download: true })} onClick={() => close()} className={cls}>{e.label}</a>
     : <button type="button" role="menuitem" tabIndex={-1} onClick={() => { close(); e.run?.(); }} className={cls}>{e.label}</button>;
 }
 
 type MenuActions = { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void };
 
 // Grouped from harmless to destructive: stop the run, everyday actions, reversible archive, then delete last.
-function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort: () => void, onOpen: (a: SealedArtifact) => void, manage?: MenuActions): Entry[][] {
+function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort: () => void, onOpen: (a: SealedArtifact) => void, manage?: MenuActions, link?: Link): Entry[][] {
   return [
     running ? [{ label: 'Stop', run: onAbort }] : [],
     [
       ...(latest ? [{ label: `Open ${artifactName(latest).toLowerCase()}`, run: () => onOpen(latest) }] : []),
+      ...(link ? [{ label: link.label, href: link.url, external: true }] : []),
       ...(manage ? [{ label: 'Rename', run: manage.rename }, { label: 'Export', href: manage.exportHref }] : []),
     ],
     manage ? [manage.archived ? { label: 'Unarchive', run: manage.archive } : { label: 'Archive', run: manage.archive }] : [],
@@ -224,16 +226,16 @@ function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort:
   ].filter((g) => g.length);
 }
 
-// Stopping the run, opening the latest output and housekeeping live behind one quiet menu; it is absent when none applies.
-function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions }) {
+// Stopping the run, opening the latest output or the source page, and housekeeping live behind one quiet menu; absent when none applies.
+function More({ running, onAbort, latest, onOpen, manage, link }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions; link?: Link }) {
   const menu = useMenu();
-  if (!running && !latest && !manage) return null;
+  if (!running && !latest && !manage && !link) return null;
   return (
     <div ref={menu.root} onKeyDown={menu.keys} className="relative">
       <button ref={menu.button} type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu.open} onClick={menu.toggle} title="More actions" className={iconBtn}><MoreIcon /></button>
       {menu.open && (
         <div role="menu" aria-label="More actions" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
-          {groupsOf(running, latest, onAbort, onOpen, manage).map((g, i) => (
+          {groupsOf(running, latest, onAbort, onOpen, manage, link).map((g, i) => (
             <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={menu.close} />)}</div>
           ))}
         </div>
@@ -242,9 +244,9 @@ function More({ running, onAbort, latest, onOpen, manage }: { running: boolean; 
   );
 }
 
-type HeaderProps = Facts & { back: { href: string; label: string }; link?: { url: string; label: string }; onDetails?: () => void; children: ReactNode };
+type HeaderProps = Facts & { back: { href: string; label: string }; onDetails?: () => void; children: ReactNode };
 
-function Header({ back, link, onDetails, children, ...facts }: HeaderProps) {
+function Header({ back, onDetails, children, ...facts }: HeaderProps) {
   return (
     <div className="flex min-h-[calc(3.5rem+env(safe-area-inset-top,0px))] items-center gap-0.5 border-b border-line bg-canvas/70 px-1 pt-[env(safe-area-inset-top,0px)] lg:gap-1 lg:px-3">
       <a href={back.href} aria-label={back.label} title={back.label} className={`${iconBtn} lg:hidden`}>
@@ -259,11 +261,6 @@ function Header({ back, link, onDetails, children, ...facts }: HeaderProps) {
         <button type="button" aria-label="Details" title="Details" onClick={onDetails} className={iconBtn}>
           <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16v14H4zM15 5v14" /></svg>
         </button>
-      )}
-      {link && (
-        <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
-          <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
-        </a>
       )}
       {children}
     </div>
@@ -385,8 +382,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const live = useStudio(sessionKey, approvals, send, pending.decide, setError, view.running);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} link={externalLink(sessionKey)} onDetails={details.show}>
-        <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} onDetails={details.show}>
+        <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}

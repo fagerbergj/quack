@@ -1,4 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from './App.tsx';
 import { FakeSocket, routes, sess, snapshot, stubViewport, useHarness } from './test-harness.ts';
@@ -49,11 +50,14 @@ test.each([
   expect(line2).toHaveTextContent(/^Idle/);
 });
 
-test('header actions are labelled icon buttons, and text actions live in the overflow menu', async () => {
+test('the bar holds only back, Details and the menu, all labelled icon buttons; the source link is a menu item', async () => {
   const { bar } = await header(REVIEW);
-  for (const name of ['Sessions', 'Details', 'View on GitHub', 'More actions']) {
-    const el = within(bar).getByRole(name === 'Sessions' || name === 'View on GitHub' ? 'link' : 'button', { name });
-    expect(el).toHaveAttribute('title', name);
+  const actions = [within(bar).getByRole('link', { name: 'Sessions' }), ...within(bar).getAllByRole('button')];
+  expect(actions.map((el) => el.getAttribute('aria-label'))).toEqual(['Sessions', 'Details', 'More actions']);
+  for (const el of actions) {
+    expect(el).toHaveAttribute('title', el.getAttribute('aria-label'));
     expect(el).not.toHaveTextContent(/\S/);
   }
+  await userEvent.click(within(bar).getByRole('button', { name: 'More actions' }));
+  expect(within(bar).getByRole('menuitem', { name: 'Open on GitHub' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/pull/2243');
 });
