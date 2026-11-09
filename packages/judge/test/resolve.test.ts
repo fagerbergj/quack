@@ -46,6 +46,15 @@ test('a classifier that throws is not memoized: a rerun of the call asks it agai
   assert.deepEqual([api.calls(), third['c.says_why']!.resolver], [3, 'clef']);
 });
 
+test('a classifier refused with a 503 is asked again after the backoff and its answer stands', async () => {
+  const outcomes = [{ stopReason: 'error', answers: {}, errorMessage: 'Typesafe system one (503): busy' }, confident];
+  const api = callApi(() => Promise.resolve(outcomes.shift()));
+  const slept: number[] = [];
+  const retry = { sleep: async (ms: number) => void slept.push(ms), random: () => 0, log: () => {} };
+  const [a] = await answerItems(api as never, { ref, memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1), retry }, [{ unit, checks }], BACKGROUND_CONTEXT);
+  assert.deepEqual([api.calls(), slept, a.answer!.resolver], [2, [2000], 'clef']);
+});
+
 test('an over-cap unit is memoized: a rerun escalates without asking the classifier', async () => {
   const api = callApi(() => Promise.resolve(confident));
   const tiny = { ...ref, maxInputTokens: 1 };

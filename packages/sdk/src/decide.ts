@@ -1,6 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { contentText, type Message } from '@earendil-works/pi-ai';
 import { configure, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { retryModelCall, type RetrySeams } from './model-retry.ts';
 import { observeGeneration } from './signals.ts';
 
 export type DecisionPoint = {
@@ -112,13 +113,14 @@ export const sessionModel: Resolver = {
 };
 
 /** A named model asked with only the question and evidence, such as a dedicated decision model (GATE-4). */
-export function modelResolver(provider: string, modelId: string): Resolver {
+export function modelResolver(provider: string, modelId: string, seams?: RetrySeams): Resolver {
   return {
     id: `${provider}/${modelId}`,
     async resolve(point, api, ctx) {
       const model = api.models.getModel(provider, modelId);
       if (!model) return undefined;
-      const reply = await observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages: [{ role: 'user', content: prompt(point), timestamp: api.now() }] }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal }));
+      const request = { provider: model.provider, signal: ctx.abortSignal, messages: [{ role: 'user' as const, content: prompt(point), timestamp: api.now() }] };
+      const reply = await retryModelCall(`${provider}/${modelId}`, (fetch) => observeGeneration(request, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal, fetch })), ctx.abortSignal, seams);
       if (reply.stopReason === 'error') console.error(`decide: ${provider}/${modelId} answered with an error: ${reply.errorMessage}`);
       return parseDecision(contentText(reply.content), point);
     },
