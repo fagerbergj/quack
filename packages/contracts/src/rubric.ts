@@ -37,7 +37,7 @@ async function codeRefProblem(read: Reader | undefined, ref: string): Promise<st
   const m = /^(.+?):(\d+)$/.exec(ref);
   if (!m || !read) return 'is not path:line';
   const text = await read(m[1]);
-  if (text === undefined) return `names no file in the workspace (paths are read from the workspace, e.g. repo/${m[1]})`;
+  if (text === undefined) return 'names no file in the workspace (refs are workspace paths: a repository cloned into repo/ is cited as repo/<path in it>)';
   const lines = text.split('\n').length;
   return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
@@ -49,7 +49,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
       const ref = anchorOf(w.ref);
-      // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
+      // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
       const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(read, w.ref);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
@@ -60,8 +60,8 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
 type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
-/** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, and its workspace. */
-type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined };
+/** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, the person's messages, and its workspace. */
+type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; request: string[]; read: Reader | undefined };
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The choices that decide a definition: their pointer is at or under it, or their decision names it; what the person or code asked for shows there.
@@ -110,8 +110,12 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
     kind: spec.kind,
     choices: JSON.stringify(choices.map((c) => ({ ...c, cites: cites(c) }))),
     guide: JSON.stringify(Object.fromEntries(guideRules(kind.skill))),
+    request: w.request.join('\n\n---\n\n'),
   };
 }
+
+// The person's messages ride along with every definition request, so they are capped to keep a packed request inside Clef's window.
+const REQUEST_CHARS = 6000;
 
 // A pitfall asks about the departure itself and its claim holds on "no": a question worded as the claim
 // cost Clef its confidence (61% of choices and 74% of definitions answered at 0.8, against 97% and 98% asked this way).
@@ -124,17 +128,34 @@ export const contractDeclaration: Declaration = {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     spec: { split: { name: 'whole', from: 'spec' }, piece: 'spec' },
     choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
-    definition: { split: { name: 'contract.definitions', from: ['spec', 'kind'] }, piece: 'definition', context: { intent: { name: 'json', from: 'spec', pointer: '/intent' } } },
+    definition: { split: { name: 'contract.definitions', from: ['spec', 'kind'] }, piece: 'definition', context: { intent: { name: 'json', from: 'spec', pointer: '/intent' }, request: { name: 'whole', from: 'request', maxChars: REQUEST_CHARS } } },
   },
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   checks: {
     meets_intent: { scope: 'spec', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' } },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: departure('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
-    adds_unasked: { scope: 'definition', aggregate: { name: 'share', pass: ['no'] }, question: departure('Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.') },
+    adds_unasked: { scope: 'definition', aggregate: { name: 'share', pass: ['no'] }, question: departure("Does this definition add an operation, field or guarantee that neither the intent nor the person's request asked for, or that one of the intent's non-goals excludes? A definition the request names, that serves what they ask for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.") },
   },
 };
 
-const answeredIn = (items: Record<string, Question>, by = Infinity) => new Set(Object.values(items).filter((q) => q.answer && q.answer.at <= by).map((q) => q.question));
+// A question's record is keyed "<task>:<ask_question id>", so an answer can be cited by its text or its id.
+const answeredIn = (items: Record<string, Question>, by = Infinity) =>
+  new Set(Object.entries(items).filter(([, q]) => q.answer && q.answer.at <= by).flatMap(([key, q]) => [q.question, key.slice(key.indexOf(':') + 1)]));
+
+type Entry = { kind: string; model?: Array<{ content?: unknown }> };
+const textOf = (c: unknown) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (b as { text?: string }).text ?? '').join('') : '');
+
+/** The person's messages so far, oldest first: the request and every later ask, such as an addition. */
+async function personMessages(api: ToolExecutionApi, ctx: Context): Promise<string[]> {
+  const out: string[] = [];
+  let cursor: unknown;
+  do {
+    const page = await api.commit((tx) => tx.scanEntries({ conversationId: api.conversationId, order: 'ascending' }, 200, cursor as never), ctx);
+    for (const e of page.items as unknown as Entry[]) if (e.kind === 'pi.user') out.push(textOf(e.model?.[0]?.content).trim());
+    cursor = page.next;
+  } while (cursor);
+  return out;
+}
 
 /** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec with its guide. */
 export function specInputs() {
@@ -147,12 +168,14 @@ export function specInputs() {
       kinds: (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {},
       approvals: (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {},
       answered: answeredIn((await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {}),
+      request: await personMessages(api, ctx),
       read,
     });
   };
 }
 
-/** The same inputs from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet. */
+/** The same inputs from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet.
+ * The person's messages are the recording's as given; eval's asJudged cuts those sent after the seal. */
 export async function recordedSpecInputs(session: RecordedSession, content: string): Promise<Inputs> {
   const sealed = session.artifacts[CONTRACT_KIND]?.findLast((v) => v.content === content);
   if (!sealed) throw new Error('the spec is not a version this session sealed, so what stood when it was judged is unknown');
@@ -160,7 +183,7 @@ export async function recordedSpecInputs(session: RecordedSession, content: stri
   const kinds = Object.fromEntries(Object.entries(session.artifacts).map(([k, vs]) => [k, { versions: vs.filter((v) => v.sealedAt <= sealed.sealedAt) }]));
   const approvals = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
   const questions = (session.docs['quack.questions']?.items ?? {}) as unknown as Record<string, Question>;
-  return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile });
+  return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), request: session.inputs ?? [], read: session.readFile });
 }
 
 const list = (items: string[]) => items.slice(0, 6).join('; ');
@@ -177,7 +200,7 @@ function versionMatches(_a: string, ev: Evidence): CodeResult {
 
 function linksResolve(_a: string, ev: Evidence): CodeResult {
   const { unresolved } = state(ev);
-  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite a question id from ask_question, a guide heading, or an existing path:line.` : undefined };
+  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
 }
 
 function breakingNamed(_a: string, ev: Evidence): CodeResult {
@@ -191,7 +214,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 3,
+  version: 4,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [

@@ -12,6 +12,8 @@ type Usage = { input: number; output: number; cacheRead: number };
 /** What one recorded session did, read from its log without resuming it. */
 export type SessionRecord = {
   inputs: string[];
+  /** When each input was placed, on the harness clock that seals artifacts. */
+  inputsAt?: Array<number | undefined>;
   /** The last submission's outcome: its answer, or why it went unanswered. */
   outcome: { status: 'done'; answer: string } | { status: 'unanswered'; reason: string } | { status: 'pending' };
   turns: number;
@@ -47,8 +49,11 @@ type Submission = { status: string; answer?: unknown; reason?: string };
 
 async function readTranscript(storage: Storage, record: SessionRecord, last: Submission | undefined) {
   for await (const e of pages((c) => storage.scanEntries({ conversationId: ROOT, order: 'ascending' }, 200, c as never, ctx))) {
-    const m = e.model?.[0] as { role?: string; content?: unknown; usage?: Usage } | undefined;
-    if (e.kind === 'pi.user') record.inputs.push(text(m?.content));
+    const m = e.model?.[0] as { role?: string; content?: unknown; usage?: Usage; timestamp?: number } | undefined;
+    if (e.kind === 'pi.user') {
+      record.inputs.push(text(m?.content));
+      record.inputsAt!.push(m?.timestamp);
+    }
     if (e.kind !== 'pi.assistant') continue;
     if (last?.status === 'done' && e.id === last.answer) record.outcome = { status: 'done', answer: text(m?.content) };
     record.turns++;
@@ -82,12 +87,19 @@ function runAt(runs: Run[], sealedAt: number): Run | undefined {
   return runs.filter((r) => r.startedAt !== undefined && r.startedAt <= sealedAt).at(-1);
 }
 
-/** The session as its judge saw one version of a kind (the last when none is named): later versions cut, and the results of the run that sealed it. */
+/** The session as its judge saw one version of a kind (the last when none is named): later versions and messages cut, and the results of the run that sealed it. */
 export function asJudged(record: SessionRecord, kind: string, version?: number): SessionRecord {
   const versions = record.artifacts[kind] ?? [];
   const sealed = version ? versions.find((v) => v.version === version) : versions.at(-1);
   if (!sealed) return record;
-  return { ...record, artifacts: { ...record.artifacts, [kind]: versions.filter((v) => v.version <= sealed.version) }, results: runAt(record.runs, sealed.sealedAt)?.results };
+  const sent = (i: number) => record.inputsAt?.[i] ?? 0;
+  return {
+    ...record,
+    inputs: record.inputs.filter((_, i) => sent(i) <= sealed.sealedAt),
+    inputsAt: record.inputsAt?.filter((_, i) => sent(i) <= sealed.sealedAt),
+    artifacts: { ...record.artifacts, [kind]: versions.filter((v) => v.version <= sealed.version) },
+    results: runAt(record.runs, sealed.sealedAt)?.results,
+  };
 }
 
 /** Reads a workspace file lazily, so the directory must outlive the record; a path that resolves outside the workspace reads as absent. */
@@ -102,7 +114,7 @@ const workspaceReader = (dir: string) => async (path: string): Promise<string | 
   }
 };
 
-const empty = (): SessionRecord => ({ inputs: [], outcome: { status: 'pending' }, turns: 0, usage: { input: 0, output: 0, cacheRead: 0 }, artifacts: {}, docs: {}, runs: [] });
+const empty = (): SessionRecord => ({ inputs: [], inputsAt: [], outcome: { status: 'pending' }, turns: 0, usage: { input: 0, output: 0, cacheRead: 0 }, artifacts: {}, docs: {}, runs: [] });
 
 export async function readSession(dir: string): Promise<SessionRecord> {
   // A session whose runtime never started has no log; opening one would create an empty database instead.

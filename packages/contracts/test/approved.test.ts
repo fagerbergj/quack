@@ -32,7 +32,7 @@ test('the approved spec is the artifact the person approved, not the first draft
 
 function fakeApi(specs: SealedArtifact[], approved = history.approved) {
   const docs = new Map<unknown, unknown>([[Artifacts, { kinds: { 'contract.spec': { versions: specs }, 'contract.approved': { versions: approved } } }], [Approvals, { items: history.approvals }]]);
-  return { conversationId: 'c', env: undefined, snapshot: async (def: unknown) => docs.get(def) ?? { items: {} } } as never;
+  return { conversationId: 'c', env: undefined, commit: async (f: (tx: unknown) => unknown) => f({ scanEntries: async () => ({ items: [] }) }), snapshot: async (def: unknown) => docs.get(def) ?? { items: {} } } as never;
 }
 const breaksOf = async (api: never, judged: SealedArtifact) => (JSON.parse((await specInputs()(api, judged, ctx)).facts) as { breaking: unknown[] }).breaking;
 

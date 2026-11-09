@@ -8,7 +8,9 @@ import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, faux
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, classifierTokens, type Evidence, type Unit } from '@quack/judge';
+import type { RecordedSession } from '@quack/sdk';
 import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
+import { scheduleSpecV1 } from './fixtures.ts';
 
 // Approved contracts as they were sealed: two whole specs, and two documents whose specs are not kept here.
 const fixture = (name: string) => readFileSync(new URL(`fixtures-specs/${name}`, import.meta.url), 'utf8');
@@ -19,12 +21,12 @@ const env = JSON.parse(fixture('env-v4.schema.json')) as Record<string, Record<s
 // A bare document is judged with the store port's intent, a real one of the usual size.
 const wrap = (kind: ContractSpec['kind'], document: unknown): ContractSpec => ({ ...storePort, kind, document, choices: [] });
 
-const inputsOf = (spec: ContractSpec) => {
+const inputsOf = (spec: ContractSpec, session: Partial<RecordedSession> = {}) => {
   const content = JSON.stringify(spec);
-  const sealed = { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 1, verdict: null };
-  return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined }, content);
+  const sealed = { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 10, verdict: null };
+  return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined, ...session }, content);
 };
-const evidenceOf = async (spec: ContractSpec): Promise<Evidence> => (await buildEvidence(contractDeclaration, await inputsOf(spec))).evidence;
+const evidenceOf = async (spec: ContractSpec, session?: Partial<RecordedSession>): Promise<Evidence> => (await buildEvidence(contractDeclaration, await inputsOf(spec, session))).evidence;
 const checksOf = (scope: string) => Object.entries(contractDeclaration.checks).filter(([, d]) => d.scope === scope).map(([id, d]) => ({ id: `matches_intent.${id}`, question: d.question }));
 const ids = (units: Unit[]) => units.map((u) => u.id);
 const noSpace = (s: string) => s.replace(/\s+/g, '');
@@ -65,7 +67,8 @@ test('typescript: one definition per declaration with its TSDoc, and together wi
 test('every choice and definition unit of the approved contracts fits the decision model', async () => {
   const counts: Record<string, number> = {};
   for (const [name, spec] of [['lifecycle', lifecycle], ['store-port', storePort], ['sdk', wrap('typescript', sdk)], ['env', wrap('json-schema', env)]] as const) {
-    const ev: Evidence = await evidenceOf(spec);
+    // A request at its cap, so a long one still fits.
+    const ev: Evidence = await evidenceOf(spec, { inputs: ['Design the contract. '.repeat(400)] });
     for (const scope of ['choice', 'definition']) {
       const over = ev[scope].filter((u) => classifierTokens(u, checksOf(scope)) >= 8192);
       assert.deepEqual(ids(over), [], `${name} ${scope}`);
@@ -77,16 +80,17 @@ test('every choice and definition unit of the approved contracts fits the decisi
   });
 });
 
-test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the intent', async () => {
-  const ev = await evidenceOf(lifecycle);
+test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the intent and the request', async () => {
+  const ev = await evidenceOf(lifecycle, { inputs: ['Design the lifecycle channel.', 'Also add a resume cursor.'] });
   const rules = guideRules(kinds.rest.skill);
   const errors = ev.choice.find((u) => u.id === 'choice errors')!;
   assert.deepEqual(errors.state, { choice: { ...lifecycle.choices.find((c) => c.id === 'errors'), cites: ['errors'] } });
   assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
   assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
   assert.ok(ev.choice.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors.shared)), 'one guide for every choice, so they pack together');
-  assert.deepEqual(ev.definition[0].shared, { intent: lifecycle.intent });
-  assert.deepEqual(Object.keys(ev.definition[0].state), ['definition'], 'the intent is sent once per request, not per definition');
+  // adds_unasked weighs a definition against what the person asked for in their own words, additions included, not only the distilled intent.
+  assert.deepEqual(ev.definition[0].shared, { intent: lifecycle.intent, request: 'Design the lifecycle channel.\n\n---\n\nAlso add a resume cursor.' });
+  assert.deepEqual(Object.keys(ev.definition[0].state), ['definition'], 'the intent and request are sent once per request, not per definition');
   type Def = { text: unknown; decided: Array<{ choice: string }>; usedBy: string[] };
   const def = (e: Evidence, id: string) => e.definition.find((u) => u.id === `definition ${id}`)!.state.definition as unknown as Def;
   // A definition carries the choices that decide it: by pointer, or by naming it in the decision.
@@ -100,6 +104,28 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   const usedBy = (id: string) => def(ev, id).usedBy;
   assert.ok(usedBy('/components/schemas/Problem').includes('POST /sessions/{key}/events'));
   assert.ok(money.usedBy.includes('/SessionCatalogStore'));
+});
+
+test('an answer is cited by the question as asked or by its ask_question id, once answered before the seal', async () => {
+  const asked = 'Keep the existing unversioned route, or add /v1?';
+  const answered = (at: number) => ({ question: asked, options: [], evidence: null, askedAt: 1, answer: { choice: 'Keep it', by: 'jf', at }, closed: false });
+  const unresolved = async (ref: string, at: number) => {
+    const docs = { 'quack.questions': { items: { '7:versioning': answered(at) } } } as never;
+    const { facts } = await inputsOf(scheduleSpecV1({ versioning: ref, time: 'request' }), { docs });
+    return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => / answer ref /.test(u));
+  };
+  assert.deepEqual(await unresolved(asked, 5), []);
+  assert.deepEqual(await unresolved('versioning', 5), []);
+  assert.deepEqual(await unresolved('versioning', 11), ['versioning: answer ref "versioning" does not resolve'], 'answered after the seal');
+  assert.deepEqual(await unresolved('7', 5), ['versioning: answer ref "7" does not resolve'], 'the task part of the key is not an id');
+});
+
+test('a code ref missing from the workspace says where refs are read, without repeating the clone directory', async () => {
+  const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
+  spec.choices[1].why[1].ref = 'repo/v1/packages/sleeper/src/service.ts:85';
+  const { facts } = await inputsOf(spec);
+  const [note] = (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.includes('repo/v1/packages/sleeper'));
+  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace (refs are workspace paths: a repository cloned into repo/ is cited as repo/<path in it>)');
 });
 
 // A stand-in for Clef on its wire format: a confident yes to every bool and no to every choice, so the intent is met and no pitfall is present.

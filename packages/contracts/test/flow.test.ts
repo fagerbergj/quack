@@ -9,7 +9,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-work
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { readSession } from '@quack/eval';
+import { asJudged, readSession } from '@quack/eval';
 import type { Inputs } from '@quack/judge';
 import { contractsSessionExtensions, manifest, specInputs, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, settingsSpec, SLEEPER_PAGE } from './fixtures.ts';
@@ -30,7 +30,7 @@ const jf = { kind: 'person', name: 'jf' } as const;
 async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof specInputs>) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });
   const queue = [...script];
-  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /never asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
+  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /nor the person's request asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -151,7 +151,7 @@ test('a spec citing a question nobody answered, or code that is not there, is se
   const notes = verdict.checks.flatMap((k) => k.notes).join(' ');
   assert.match(notes, /answer ref "nope:1" does not resolve/);
   // A missing file says the ref is read from the workspace, so an agent that cloned elsewhere knows where to put it.
-  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace \(paths are read from the workspace, e.g. repo\/packages\/sleeper\/src\/missing.ts\)/);
+  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace \(refs are workspace paths: a repository cloned into repo\/ is cited as repo\/<path in it>\)/);
   assert.match(seen, /cannot be put to the person for approval/);
   assert.deepEqual(await pendingApprovals(s.root, ctx), []);
   await s.close();
@@ -194,7 +194,8 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   await s.close();
   const record = await readSession(dirname(s.workspace));
   const adapter = manifest.evalAdapters![0].judge!;
-  assert.deepEqual(await Promise.all(all.map((v) => adapter.inputs!(record, v.content))), live);
+  assert.deepEqual(await Promise.all(all.map((v) => adapter.inputs!(asJudged(record, 'contract.spec', v.version), v.content))), live);
+  assert.deepEqual(live.map((got) => got.request.split('\n\n---\n\n').length), [1, 2, 2], 'the change request is part of what version 2 is judged against');
   assert.deepEqual(live.map((got) => (JSON.parse(got.facts) as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
   // Had the answers come after version 1 was sealed, its answer refs could not have resolved when it was judged.
   const items = JSON.parse(JSON.stringify(record.docs['quack.questions'].items)) as Record<string, { answer: { at: number } }>;
