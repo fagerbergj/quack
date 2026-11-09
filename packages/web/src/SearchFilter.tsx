@@ -1,5 +1,5 @@
 import { escapeTerm } from '@quack/sdk/query';
-import { useEffect, useId, useRef, type KeyboardEvent, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { useMenu } from './useMenu.ts';
 
 /** One filter a list page declares: '' is its default, labelled `any`. */
@@ -10,6 +10,9 @@ export type FilterValues = Record<string, string>;
 export function searchTerms(text: string, alt?: (escaped: string) => string): string[] {
   return text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).map((w) => (alt ? `(${escapeTerm(w)}* OR ${alt(escapeTerm(w))})` : `${escapeTerm(w)}*`));
 }
+
+/** How long typing pauses before the search becomes q; each q is a server request. */
+export const SEARCH_DEBOUNCE_MS = 250;
 
 const HEIGHT = 'h-10 lg:h-[34px]';
 const iconBtn = `relative grid ${HEIGHT} w-10 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink lg:w-[34px]`;
@@ -38,6 +41,14 @@ type Props = { label: string; text: string; onText: (text: string) => void; fiel
 // The one search-and-filter row for list pages: a search the row's width, a funnel opening the page's fields, and a chip per set filter.
 export function SearchFilter({ label, text, onText, fields, values, onValues }: Props) {
   const menu = useMenu();
+  const [draft, setDraft] = useState(text);
+  // Typing waits for a pause; clearing the box applies at once.
+  useEffect(() => {
+    if (draft === text) return;
+    if (!draft.trim()) return onText(draft);
+    const timer = setTimeout(() => onText(draft), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [draft]);
   const search = useRef<HTMLInputElement>(null);
   const panel = useId();
   useSlash(search);
@@ -50,7 +61,7 @@ export function SearchFilter({ label, text, onText, fields, values, onValues }: 
         <label className={`flex ${HEIGHT} min-w-0 flex-1 items-center gap-2 rounded-full bg-soft px-3 text-sm text-muted focus-within:bg-surface focus-within:shadow-ring lg:text-[13px]`}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="flex-none"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
           <span className="sr-only">{label}</span>
-          <input ref={search} type="search" value={text} onChange={(e) => onText(e.target.value)} placeholder={label} className="min-w-0 flex-1 border-0 bg-transparent text-ink outline-none" />
+          <input ref={search} type="search" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={label} className="min-w-0 flex-1 border-0 bg-transparent text-ink outline-none" />
         </label>
         <button ref={menu.button} type="button" aria-label={active.length ? `Filter, ${active.length} set` : 'Filter'} title="Filter" aria-haspopup="dialog" aria-expanded={menu.open} aria-controls={panel} onClick={menu.toggle} className={`${iconBtn} ${active.length ? 'text-link' : ''}`}>
           <Funnel />

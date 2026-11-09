@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
@@ -14,6 +14,18 @@ useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: 
 // A list read with q, as the route the fake fetch answers.
 const listed = (path: string, q: string, token?: string) => `GET /${path}?${new URLSearchParams({ pageSize: '1000', q, ...(token && { pageToken: token }) })}`;
 const ACTIVE = 'NOT state:archived';
+const queries = (path: string) => fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === `/${path}`).map((u) => u.searchParams.get('q'));
+
+// Types one character per change, faster than the debounce, then lets the pause elapse on a fake clock.
+function typeQuickly(box: HTMLElement, text: string) {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    for (let i = 1; i <= text.length; i++) fireEvent.change(box, { target: { value: text.slice(0, i) } });
+    act(() => void vi.advanceTimersByTime(250));
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 async function openSession() {
   location.hash = '#/s/ui%3Au1';
@@ -145,7 +157,7 @@ test('search and the filters narrow the list on the server, by q', async () => {
   routes[listed('sessions', `${ACTIVE} AND key:github\\:*`)] = { sessions: [flake] };
   render(<App />);
   await screen.findByRole('link', { name: /Fix the flake/ });
-  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'sandbox');
+  typeQuickly(screen.getByRole('searchbox', { name: 'Search sessions' }), 'sandbox');
   await waitFor(() => expect(screen.queryByRole('link', { name: /Fix the flake/ })).toBeNull());
   expect(screen.getByRole('link', { name: /Compare sandboxes/ })).toBeInTheDocument();
   await userEvent.clear(screen.getByRole('searchbox', { name: 'Search sessions' }));
@@ -154,6 +166,25 @@ test('search and the filters narrow the list on the server, by q', async () => {
   await waitFor(() => expect(screen.queryByRole('link', { name: /Compare sandboxes/ })).toBeNull());
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Remove Started by: GitHub' })).toBeInTheDocument();
+});
+
+test('quick typing sends one search request, after the pause, and clearing applies at once', async () => {
+  render(<App />);
+  await waitFor(() => expect(queries('sessions')).toContain(ACTIVE));
+  const box = screen.getByRole('searchbox', { name: 'Search sessions' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    for (const v of ['f', 'fl', 'fla', 'flak', 'flake']) fireEvent.change(box, { target: { value: v } });
+    act(() => void vi.advanceTimersByTime(249));
+    expect(queries('sessions').filter((q) => q?.includes('*'))).toEqual([]);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(queries('sessions').filter((q) => q?.includes('*'))).toEqual([`${ACTIVE} AND flake*`]);
+    const before = queries('sessions').length;
+    fireEvent.change(box, { target: { value: '' } });
+    expect(queries('sessions').slice(before)).toEqual([ACTIVE]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('selecting a session opens it in the main pane and marks its row', async () => {
