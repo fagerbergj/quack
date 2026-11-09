@@ -877,6 +877,22 @@ test('a broken output sink neither throws nor loses the tail', async () => {
   assert.deepEqual(seen, ['one', 'two']);
 });
 
+test('session output reaches the shared sink line by line under its key, and an ended session leaves no listener on the sink', async () => {
+  const dst = new PassThrough();
+  const out: string[] = [];
+  dst.on('data', (b) => out.push(String(b)));
+  const before = [dst.listenerCount('error'), dst.listenerCount('close')];
+  const src = new PassThrough();
+  forwardOutput(src, dst, () => {}, '[k1] ');
+  const accent = Buffer.from('é');
+  src.write('one\ntwo ');
+  src.write(accent.subarray(0, 1));
+  src.end(Buffer.concat([accent.subarray(1), Buffer.from('\nlast')]));
+  await new Promise((r) => src.once('close', r));
+  assert.equal(out.join(''), '[k1] one\n[k1] two é\n[k1] last\n');
+  assert.deepEqual([dst.listenerCount('error'), dst.listenerCount('close')], before);
+});
+
 test('the session hears the proxy\'s person or the tailnet as a principal beside its bearer, and an unproven identity is refused', async () => {
   const seen: string[] = [];
   const session = createHttpServer((req, res) => { seen.push(`${req.headers.authorization} ${decodeURIComponent(String(req.headers['x-quack-principal']))} ${req.headers['x-authentik-username']}`); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); }).listen(0);

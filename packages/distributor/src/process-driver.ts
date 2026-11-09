@@ -4,6 +4,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { childPort, createdAt, firstInput, lastActivity, recordedTitle, shellEnv, TITLE_MAX } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
@@ -102,18 +103,36 @@ export async function digest(dir: string): Promise<string> {
 const SNAPSHOT = 'agent-def';
 
 const OUTPUT_TAIL = 4096;
+const LINE_MAX = 64 * 1024;
 
 // A broken sink (closed terminal, dead pipe) must never take the distributor down, so its errors are dropped.
-export function forwardOutput(src: Readable, dst: Writable, tap: (b: Buffer) => void) {
+// Every session shares the sink, so each line carries `prefix` (the session key) to be attributable.
+export function forwardOutput(src: Readable, dst: Writable, tap: (b: Buffer) => void, prefix = '') {
   // A dead sink never drains, so the child's pipe is drained into the void rather than left to fill and block it.
-  dst.on('error', () => {}).on('close', () => src.resume());
-  src.on('data', (b: Buffer) => {
-    tap(b);
-    if (dst.writable && !dst.write(b)) {
+  const ignore = () => {};
+  const drainVoid = () => src.resume();
+  dst.on('error', ignore).on('close', drainVoid);
+  src.once('close', () => dst.off('error', ignore).off('close', drainVoid));
+  const write = (text: string) => {
+    if (dst.writable && !dst.write(text)) {
       src.pause();
       dst.once('drain', () => src.resume());
     }
+  };
+  const decoder = new StringDecoder('utf8');
+  let partial = '';
+  src.on('data', (b: Buffer) => {
+    tap(b);
+    const lines = (partial + decoder.write(b)).split('\n');
+    partial = lines.pop()!;
+    // A line that never ends is cut, so a child cannot grow the buffer without bound.
+    if (partial.length > LINE_MAX) {
+      lines.push(partial);
+      partial = '';
+    }
+    if (lines.length) write(lines.map((l) => `${prefix}${l}\n`).join(''));
   });
+  src.once('end', () => void (partial && write(`${prefix}${partial}\n`)));
 }
 
 type Report = { javascriptStack?: { stack?: string[] }; libuv?: Array<{ type: string; is_active: boolean }> };
@@ -440,11 +459,11 @@ function processLauncher(opts: LauncherOptions): Launch {
     // Recorded so a later distributor finds and stops it if this one dies first.
     if (proc.pid !== undefined) await recordProcess(dir, proc.pid).catch(() => {});
     proc.once('exit', () => void forgetProcess(dir).catch(() => {}));
-    // Output still reaches this process's streams; the tail only rides along in a startup failure.
+    // Output reaches this process's streams, line by line under the session's key; the tail only rides along in a startup failure.
     let tail = '';
     const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));
-    forwardOutput(proc.stdout!, process.stdout, keep);
-    forwardOutput(proc.stderr!, process.stderr, keep);
+    forwardOutput(proc.stdout!, process.stdout, keep, `[${key}] `);
+    forwardOutput(proc.stderr!, process.stderr, keep, `[${key}] `);
     try {
       // The session binds its own port and reports it, so the parent never probes a port another process may own.
       const url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
