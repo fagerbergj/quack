@@ -13,7 +13,8 @@ const PANES = [
 
 // No github or sleeper service runs in the rig, so their page reads are answered here.
 async function fakeServices(page: Page): Promise<void> {
-  await page.route('**/apps/github/pulls**', (r) => r.fulfill({ json: { pulls: { 'fagerbergj/quack#2243': { state: 'open', at: '2026-11-08T12:00:00Z' } } } }));
+  await page.route('**/apps/github/repos/fagerbergj/quack/pulls/2243', (r) => r.fulfill({ json: { number: 2243, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: 'https://github.com/fagerbergj/quack/pull/2243', title: 'QA' } }));
+  await page.route('**/apps/github/events', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: '' }));
   await page.route('**/apps/sleeper**', (r) => r.fulfill({ json: {} }));
 }
 
@@ -21,11 +22,11 @@ const phone = (label: string) => label.startsWith('400');
 
 // The PR chip on the header's 18px facts line must still take a tap 12px above and below its centre: a 24px target.
 async function chipTarget(page: Page): Promise<void> {
-  const chip = page.locator('main [title^="Pull request"]').first();
+  const chip = page.getByRole('main').locator('a[aria-label^="Pull request"]').first();
   await visible(chip);
   const box = (await chip.boundingBox())!;
   const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  const hits = await page.evaluate(({ x, y }) => [y - 12, y + 12].map((py) => Boolean(document.elementFromPoint(x, py)?.closest('[title^="Pull request"]'))), at);
+  const hits = await page.evaluate(({ x, y }) => [y - 12, y + 12].map((py) => Boolean(document.elementFromPoint(x, py)?.closest('a[aria-label^="Pull request"]'))), at);
   if (hits.includes(false)) throw new Error(`the PR chip's hit area is under 24px (box ${box.height}px, hits ${hits.join(',')})`);
 }
 
