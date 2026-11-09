@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, type ReactNode } from 'react';
 import { CORE, HOME, PAGES, useBar, type Item } from './bottomBar.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { shortCommit, useVersion } from './useVersion.ts';
@@ -32,14 +32,18 @@ const BODY = 'M38 22c9.4 0 16 6.6 16 15.2 0 4.3-1.6 7.9-4.3 10.8 5.6-.3 11.4-1.5
 const BILL = 'M23.6 33.2c-4.7-.5-9.6.3-12.8 2.2-1.6 1-1.5 3.1.2 3.9 3.6 1.7 8.4 2 12.8 1.3z';
 const WING = 'M44 60c6 4.6 15.2 5 22.6.2';
 
-// The duck without its tile, in currentColor like the stroked icons; the eye and wing are cut out in the canvas colour.
+// The duck without its tile, in currentColor like the stroked icons; the mask cuts the eye and wing through to whatever is behind.
 function DuckGlyph() {
+  const id = useId();
   return (
-    <svg width="16" height="16" viewBox="9.5 13 72 72" fill="currentColor" aria-hidden="true" className="flex-none">
-      <path d={BODY} />
-      <path d={BILL} />
-      <circle cx="36.5" cy="32.5" r="2.7" style={{ fill: 'var(--color-canvas)' }} />
-      <path d={WING} fill="none" style={{ stroke: 'var(--color-canvas)' }} strokeWidth="3.6" strokeLinecap="round" />
+    <svg width="16" height="16" viewBox="9.5 13 72 72" aria-hidden="true" className="flex-none">
+      <mask id={id}>
+        <path d={BODY} fill="#fff" />
+        <path d={BILL} fill="#fff" />
+        <circle cx="36.5" cy="32.5" r="2.7" fill="#000" />
+        <path d={WING} fill="none" stroke="#000" strokeWidth="3.6" strokeLinecap="round" />
+      </mask>
+      <rect x="9.5" y="13" width="72" height="72" fill="currentColor" mask={`url(#${id})`} />
     </svg>
   );
 }
