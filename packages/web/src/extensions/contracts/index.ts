@@ -17,7 +17,7 @@ const view = (a: SealedArtifact, full: boolean) => {
 };
 
 export const contracts: Extension = {
-  artifact: (a) => (a.kind === KIND ? { name: 'Spec', titled: true } : NAMES[a.kind] ? { name: NAMES[a.kind]! } : undefined),
+  artifact: (a) => (a.kind === KIND ? { name: 'Spec' } : NAMES[a.kind] ? { name: NAMES[a.kind]! } : undefined),
   card: (a) => view(a, false),
   full: (a) => view(a, true),
   versionOf: (a) => (a.kind === KIND ? parseSpec(a.content)?.version : undefined),

@@ -23,14 +23,14 @@ function lineOf(a: SealedArtifact, named: ReturnType<typeof namedBy>): string {
   return sentence(`${name} ready`.trim());
 }
 
-/** Each version's place in the ledger: its revision round (failed versions just before it, in a row), and whether it is the newest of its kind. */
-export function ledger(items: SealedArtifact[]): Array<{ a: SealedArtifact; round: number; latest: boolean }> {
+/** Each version's place in the ledger: its revision round (failed versions just before it, in a row). */
+export function ledger(items: SealedArtifact[]): Array<{ a: SealedArtifact; round: number }> {
   const sorted = items.toSorted((x, y) => x.sealedAt - y.sealedAt || x.version - y.version);
   return sorted.map((a) => {
     const same = sorted.filter((b) => b.kind === a.kind);
     const before = same.slice(0, same.indexOf(a)).reverse();
     const round = before.findIndex((b) => b.verdict?.passed !== false);
-    return { a, round: round < 0 ? before.length : round, latest: same.at(-1) === a };
+    return { a, round: round < 0 ? before.length : round };
   });
 }
 
@@ -39,23 +39,21 @@ export const ledgerId = (a: SealedArtifact) => `v-${a.kind}-${a.version}-${a.sea
 
 const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
 
-// One version in the transcript: its line (the newest of a kind as the owning extension's card) and its check result.
-export function LedgerItem({ a, round, latest, running, meta, onOpen }: { a: SealedArtifact; round: number; latest: boolean; running: boolean; meta: readonly Record<string, unknown>[]; onOpen: (a: SealedArtifact) => void }) {
+// One version in the transcript: its line and, when it failed, its check result; the session's pane draws the version itself.
+export function LedgerItem({ a, round, running, onOpen }: { a: SealedArtifact; round: number; running: boolean; onOpen: (a: SealedArtifact) => void }) {
   const named = namedBy(a, running);
   const hasCard = Boolean(artifactCard(a));
-  const card = latest && !named?.previous ? artifactCard(a, { running, meta }) : undefined;
   const label = [a.version > 1 ? `Version ${a.version}` : '', round > 0 ? `revision ${round}` : ''].filter(Boolean).join(' · ');
   return (
     <div data-ledger id={ledgerId(a)} className="flex flex-col gap-1 text-[13px] text-muted">
       <div className="flex items-center gap-2">
-        {!named?.previous && !(card && named?.titled && a.verdict?.passed) && <StatusIcon verdict={a.verdict} />}
+        {!named?.previous && <StatusIcon verdict={a.verdict} />}
         <span className="min-w-0 truncate">{lineOf(a, named)}</span>
         {label && <span className="flex-none text-[12px]">{label}</span>}
         <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
         {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
       </div>
-      {card}
       {a.verdict && !a.verdict.passed && <CheckResult verdict={a.verdict} open />}
-  </div>
+    </div>
   );
 }

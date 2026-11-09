@@ -89,7 +89,7 @@ test('several routes list under their tag and switch the detail', async () => {
 test('only a readable contract.spec draws as a card', () => {
   expect(contracts.card!(sealed('not json'))).toBeUndefined();
   expect(contracts.card!(sealed(raw(1), { kind: 'github.review' }))).toBeUndefined();
-  expect(contracts.artifact!(sealed(raw(1)), false)).toEqual({ name: 'Spec', titled: true });
+  expect(contracts.artifact!(sealed(raw(1)), false)).toEqual({ name: 'Spec' });
 });
 
 test('the schema walk follows $ref and the YAML export is plain', () => {
@@ -108,16 +108,17 @@ test('an answer shows the question as asked and the user\'s answer', async () =>
 
 test('the card links to its own page for its session; the page has no such link and offers versions', async () => {
   render(<SessionKeyContext value="home:main">{contracts.card!(sealed(raw(1)))}</SessionKeyContext>);
-  expect(screen.getByRole('link', { name: 'Open full view' })).toHaveAttribute('href', '#/s/home%3Amain/spec?v=1');
+  expect(screen.getByRole('link', { name: 'Open full view' })).toHaveAttribute('href', '#/s/home%3Amain/a/contract.spec?v=1');
   const list = [sealed(raw(1)), sealed(raw(2), { version: 2 })];
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
-  render(<ArtifactPage sessionKey="home:main" version={1} />);
+  location.hash = '#/artifacts';
+  render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={1} rows={undefined} />);
   expect(await screen.findByText('1 route · version 1')).toBeInTheDocument();
   expect(screen.getAllByRole('link', { name: 'Open full view' })).toHaveLength(1);
-  expect(screen.getByRole('link', { name: '‹ Back to the session' })).toHaveAttribute('href', '#/s/home%3Amain');
-  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '2');
-  expect(screen.getByText('1 route · version 2')).toBeInTheDocument();
-  expect(location.hash).toBe('#/s/home%3Amain/spec?v=2');
+  expect(screen.getByRole('link', { name: 'Open its session' })).toHaveAttribute('href', '#/s/home%3Amain');
+  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 1' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Version 2' }));
+  expect(location.hash).toBe('#/s/home%3Amain/a/contract.spec?v=2');
   vi.unstubAllGlobals();
 });
 
@@ -130,10 +131,11 @@ test('a rejected attempt shares its spec version: the picker and page follow con
   const released = [sealed(raw(2), { version: 2, verdict: { ...ok, passed: false, limitReached: true } }), sealed(draft, { version: 3, verdict: { ...ok, passed: false } })];
   expect(delivered(released).map((a) => a.version)).toEqual([2]);
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
-  render(<ArtifactPage sessionKey="home:main" version={2} />);
+  render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={2} rows={undefined} />);
   expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
   expect(screen.queryByText('Rejected draft')).toBeNull();
-  expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
+  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 2' }));
+  expect(screen.getAllByRole('menuitem').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
   vi.unstubAllGlobals();
 });
 

@@ -104,7 +104,7 @@ function scripted(versions: ContractSpec[]) {
   return faux;
 }
 
-type Session = Awaited<ReturnType<typeof openSession>>;
+export type Session = Awaited<ReturnType<typeof openSession>>;
 
 // The id of the first open item of a session doc, once one appears.
 async function nextOpen<T extends JsonObject>(s: Session, doc: ConversationDocToken<T>, pick: (v: T | undefined) => string | undefined): Promise<string> {
@@ -120,17 +120,18 @@ async function nextOpen<T extends JsonObject>(s: Session, doc: ConversationDocTo
 const nextApproval = (s: Session) => nextOpen(s, Approvals, (v) => Object.entries(v?.items ?? {}).find(([, a]) => !a.verdict)?.[0]);
 const nextQuestion = (s: Session) => nextOpen(s, Questions, (v) => pendingQuestions(v)[0]?.id);
 
-// A contracts session dir with the agent's bundle, opened on a scripted model.
-async function openSeed(dataDir: string, key: string, title: string, faux: ReturnType<typeof fauxProvider>): Promise<Session> {
+/** A session dir with an agent's bundle (contracts unless named), opened on a scripted model. */
+export async function openSeed(dataDir: string, key: string, title: string, faux: ReturnType<typeof fauxProvider>, agent = 'contracts'): Promise<Session> {
   const dir = join(dataDir, sessionDirName(key));
   await mkdir(dir, { recursive: true });
   const now = String(Date.now());
-  await Promise.all([['session-key', key], ['agent', 'contracts'], ['title', title], ['created', now], ['activity', now]].map(([f, v]) => writeFile(join(dir, f), v)));
-  await cp(join(ROOT, 'agents/contracts'), join(dir, 'agent-def'), { recursive: true });
+  await Promise.all([['session-key', key], ['agent', agent], ['title', title], ['created', now], ['activity', now]].filter(([, v]) => v).map(([f, v]) => writeFile(join(dir, f), v!)));
+  await cp(join(ROOT, 'agents', agent), join(dir, 'agent-def'), { recursive: true });
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:9/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({})] } });
+  const extensions = agent === 'contracts' ? [CodingTools, ...contractsSessionExtensions({})] : [CodingTools];
+  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
 }
 
 /** A contract session as the distributor keeps one: version 1 approved, version 2 sealed, passed and waiting for approval. */

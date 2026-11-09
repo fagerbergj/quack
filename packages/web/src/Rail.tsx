@@ -162,9 +162,9 @@ export function RailSheet({ onClose, children }: { onClose: () => void; children
   );
 }
 
-/** Whether the rail has room (from 1440px); below that, Details opens it as a sheet. */
-export function useDetails() {
-  const wide = useMedia(WIDE);
+/** Whether the rail has room (from 1440px, when nothing else takes the `column` beside the chat); otherwise Details opens it as a sheet. */
+export function useDetails(column = true) {
+  const wide = useMedia(WIDE) && column;
   const [open, setOpen] = useState(false);
   return { wide, open: open && !wide, show: wide ? undefined : () => setOpen(true), close: () => setOpen(false) };
 }

@@ -42,7 +42,7 @@ export const github: Extension = {
     },
     words: () => ({ run: 'Reviewing', done: 'Reviewed', none: 'Not reviewed yet' }),
   },
-  artifact: (a, running) => (a.kind === KIND ? { name: 'Review', titled: true, posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length), postedTo: postedTo(a) } : undefined),
+  artifact: (a, running) => (a.kind === KIND ? { name: 'Review', posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length), postedTo: postedTo(a) } : undefined),
   card: (a, now) => (a.kind === KIND ? reviewCard(a, outdated(a, now)) : undefined),
   steps: { checkout_pr: () => 'Checking out the latest commit', submit_review: () => 'Waiting for the double-check' },
   // The card's extras are keyed by head sha; a review started by a comment has no head in its text and takes the newest.

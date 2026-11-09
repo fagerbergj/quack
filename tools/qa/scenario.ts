@@ -39,11 +39,13 @@ export type Scenario = { name: string; stack: StackOpts; run(ctx: Ctx): Promise<
 export const visible = (locator: Locator) => locator.waitFor({ state: 'visible', timeout: 10_000 });
 
 export const VIEWPORTS = [{ width: 1280, height: 800 }, { width: 400, height: 800 }];
+/** VIEWPORTS plus a 1920 px desktop, for layouts that change with the room beside the chat. */
+export const WITH_WIDE = [...VIEWPORTS, { width: 1920, height: 1080 }];
 export const SCHEMES = ['light', 'dark'] as const;
 
 /** Runs `fn` in a fresh page for each viewport and colour scheme, so every check covers desktop, phone, light and dark. */
-export async function eachView(ctx: Ctx, name: string, fn: (page: Page, label: string) => Promise<void>): Promise<void> {
-  for (const viewport of VIEWPORTS) {
+export async function eachView(ctx: Ctx, name: string, fn: (page: Page, label: string) => Promise<void>, viewports = VIEWPORTS): Promise<void> {
+  for (const viewport of viewports) {
     for (const colorScheme of SCHEMES) {
       const label = `${viewport.width}-${colorScheme}`;
       await ctx.step(`${name} @${label}`, async () => {

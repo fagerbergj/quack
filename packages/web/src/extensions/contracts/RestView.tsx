@@ -1,5 +1,5 @@
 import { useContext, useState, type ReactNode } from 'react';
-import { SessionKeyContext } from '../../extension.ts';
+import { artifactHref, SessionKeyContext } from '../../extension.ts';
 import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
@@ -180,8 +180,10 @@ export function download(body: string, type: string, filename: string) {
 // Links to the spec's own page, where the layout has room; from a session page the hash names the session.
 export function FullViewLink({ version }: { version: number }) {
   const ctx = useContext(SessionKeyContext);
-  const key = ctx === undefined ? /^#\/s\/([^/?]+)/.exec(location.hash)?.[1] : encodeURIComponent(ctx);
-  return key ? <a href={`#/s/${key}/spec?v=${version}`} aria-label="Open full view" title="Open full view" className={round}>{svg('M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7')}</a> : null;
+  // Only a session route that decoded draws this view, so its key decodes again here.
+  const m = /^#\/s\/([^/?]+)/.exec(location.hash)?.[1];
+  const key = ctx ?? (m && decodeURIComponent(m));
+  return key ? <a href={artifactHref(key, 'contract.spec', version)} aria-label="Open full view" title="Open full view" className={round}>{svg('M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7')}</a> : null;
 }
 
 export const decisionCount = (spec: ContractSpec) => `${spec.choices.length} ${spec.choices.length === 1 ? 'decision' : 'decisions'} · ${spec.choices.filter((c) => c.why.some((w) => w.source === 'answer')).length} answered by you`;
