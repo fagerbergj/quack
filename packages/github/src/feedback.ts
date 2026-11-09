@@ -48,7 +48,7 @@ export function ownThreads(comments: any[], login: string, maxThreads = MAX_OWN_
   const threads = mine.slice(0, maxThreads).map((c) => {
     const replies = comments.filter((r) => r.in_reply_to_id === c.id).sort(byAt);
     return {
-      id: c.id, path: c.path, line: c.line ?? null, commit: String(c.original_commit_id ?? c.commit_id), at: c.created_at, outdated: c.line == null, body: c.body ?? '',
+      id: c.id, path: c.path, line: c.line ?? c.original_line ?? null, commit: String(c.original_commit_id ?? c.commit_id), at: c.created_at, outdated: c.line == null, body: c.body ?? '',
       replies: replies.slice(0, maxReplies).reverse().map((r) => ({ author: r.user?.login ?? 'unknown', at: r.created_at, body: r.body ?? '' })),
       repliesCut: Math.max(0, replies.length - maxReplies),
     };
