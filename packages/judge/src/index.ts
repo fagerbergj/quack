@@ -84,10 +84,16 @@ const triOf = (p: Plan, u: Unit): Tri => p.answers.get(u.id)?.met ?? undefined;
 // A share is the result itself, so it is decided only once every item is; a boolean fold decides as soon as no item can change it.
 const decided = (p: Plan) => !!p.aggregate && (fractional(p.aggregate) ? p.units.every((u) => triOf(p, u) !== undefined) : fold(p.aggregate, p.units.map((u) => triOf(p, u))) !== undefined);
 
-// A legacy check notes a "no" on a gate or a positive check and a "yes" on a pitfall, unprefixed on a whole-artifact unit.
+// Every failing item gets a note, even from a resolver that gives no reason (Clef never does), so the reader sees which failed.
+const noteOf = (u: Unit, a: Answer) => {
+  const why = a.note || `flagged by ${a.resolver} (no reason given)`;
+  return u.whole ? why : `${u.id}: ${why}`;
+};
+
+// A legacy check notes a "no" on a gate or a positive check and a "yes" on a pitfall.
 function legacyFinal(p: Plan, r: CheckResult) {
   const answers = p.units.map((u) => p.answers.get(u.id));
-  r.notes = p.units.flatMap((u, i) => (answers[i]?.note && answers[i]!.met === p.pitfall ? [u.whole ? answers[i]!.note! : `${u.id}: ${answers[i]!.note}`] : []));
+  r.notes = p.units.flatMap((u, i) => (answers[i] && answers[i]!.met === p.pitfall ? [noteOf(u, answers[i]!)] : []));
   const undecided = answers.filter((a) => !a || a.met === null).length;
   // Met units are counted, not summed as fractions: 23 sums of 1/23 fall short of 1 and would read as a miss.
   r.met = undecided ? null : answers.filter((a) => a?.met).length / p.units.length;
@@ -104,8 +110,7 @@ function finalize(p: Plan): CheckResult {
     return r;
   }
   const tris = p.units.map((u) => triOf(p, u));
-  const why = (u: Unit) => p.answers.get(u.id)!.note ?? `${p.answers.get(u.id)!.resolver} answered no`;
-  r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [`${u.id}: ${why(u)}`] : []));
+  r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [noteOf(u, p.answers.get(u.id)!)] : []));
   const open = p.units.filter((_, i) => tris[i] === undefined).map((u) => u.id);
   const value = fold(p.aggregate, tris);
   if (value === undefined || (fractional(p.aggregate) && open.length)) return Object.assign(r, { met: null, undecided: open.length });
