@@ -110,12 +110,34 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
     kind: spec.kind,
     choices: JSON.stringify(choices.map((c) => ({ ...c, cites: cites(c) }))),
     guide: JSON.stringify(Object.fromEntries(guideRules(kind.skill))),
-    request: w.request.join('\n\n---\n\n'),
+    request: requestText([...w.request, ...rejections(w.approvals, sealed.sealedAt)]),
   };
 }
 
 // The person's messages ride along with every definition request, so they are capped to keep a packed request inside Clef's window.
 const REQUEST_CHARS = 6000;
+const SEP = '\n\n---\n\n';
+
+/** The brief and the newest asks that fit the cap: additions arrive late, so the middle is what gets dropped. */
+function requestText([brief, ...later]: string[]): string {
+  if (brief === undefined) return '';
+  const kept: string[] = [];
+  // Room is left for the omission marker; an over-long brief is cut by the selector's maxChars.
+  let size = brief.length + 50;
+  for (let i = later.length - 1; i >= 0 && size + SEP.length + later[i].length <= REQUEST_CHARS; i--) {
+    kept.unshift(later[i]);
+    size += SEP.length + later[i].length;
+  }
+  const omitted = later.length - kept.length;
+  return [brief, ...(omitted ? [`[… ${omitted} earlier messages omitted]`] : []), ...kept].join(SEP);
+}
+
+// A rejected proposal's reason is the person asking for a change, so it reads as one of their messages.
+const rejections = (approvals: Record<string, Approval>, by: number) =>
+  Object.values(approvals)
+    .filter((a) => a.tool === 'propose_contract' && a.verdict?.decision === 'reject' && a.verdict.reason && a.verdict.at <= by)
+    .sort((a, b) => a.verdict!.at - b.verdict!.at)
+    .map((a) => `Rejected version ${(a.args as { version?: number }).version}: ${a.verdict!.reason}`);
 
 // A pitfall asks about the departure itself and its claim holds on "no": a question worded as the claim
 // cost Clef its confidence (61% of choices and 74% of definitions answered at 0.8, against 97% and 98% asked this way).

@@ -106,6 +106,20 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   assert.ok(money.usedBy.includes('/SessionCatalogStore'));
 });
 
+test('a long session keeps the brief and its newest asks under the cap, dropping the middle, and a rejection reason counts as an ask', async () => {
+  const brief = 'Design the extension SDK surface as a typescript contract.';
+  const middle = Array.from({ length: 6 }, (_, i) => `Revision ${i}: ${'reword the docs. '.repeat(80)}`);
+  const late = 'Also contract `serveApp` from sdk/src/http.ts.';
+  const rejected = { tool: 'propose_contract', args: { version: 2 }, requestedAt: 3, verdict: { decision: 'reject', reason: 'Name the dispatch types too.', by: 'jf', at: 4 }, executing: false, done: true };
+  const afterSeal = { ...rejected, verdict: { ...rejected.verdict, reason: 'Sent after the seal.', at: 11 } };
+  const { request } = await inputsOf(lifecycle, { inputs: [brief, ...middle, late], docs: { 'quack.approvals': { items: { a: rejected, b: afterSeal } } } as never });
+  const parts = request.split('\n\n---\n\n');
+  assert.ok(request.length <= 6000, `${request.length} chars`);
+  assert.equal(parts[0], brief);
+  assert.match(parts[1], /^\[… \d+ earlier messages omitted\]$/);
+  assert.deepEqual(parts.slice(-2), [late, 'Rejected version 2: Name the dispatch types too.']);
+});
+
 test('an answer is cited by the question as asked or by its ask_question id, once answered before the seal', async () => {
   const asked = 'Keep the existing unversioned route, or add /v1?';
   const answered = (at: number) => ({ question: asked, options: [], evidence: null, askedAt: 1, answer: { choice: 'Keep it', by: 'jf', at }, closed: false });
