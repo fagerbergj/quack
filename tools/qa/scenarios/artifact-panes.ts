@@ -62,7 +62,7 @@ const scenario: Scenario = {
       if (phone(label) && (await page.getByRole('tab', { name: 'Contract 1' }).getAttribute('aria-selected')) !== 'true') throw new Error('the Contract tab is not open');
       await ctx.shot(page, `contract-question-${label}`);
     });
-    await ctx.step('the divider resizes the chat from the keyboard and the width survives a reload', async () => {
+    await ctx.step('the divider resizes the chat from the keyboard and by drag, and the width survives a reload', async () => {
       const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
       try {
         const page = await context.newPage();
@@ -76,6 +76,13 @@ const scenario: Scenario = {
         await visible(bar);
         if ((await bar.getAttribute('aria-valuenow')) !== width) throw new Error('the width was not remembered');
         await ctx.shot(page, 'divider-wider-1280');
+        const box = (await bar.boundingBox())!;
+        await page.mouse.move(box.x + box.width / 2, box.y + 200);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 - 100, box.y + 200, { steps: 5 });
+        await page.mouse.up();
+        if ((await bar.getAttribute('aria-valuenow')) !== '436') throw new Error(`width after dragging 100px left: ${await bar.getAttribute('aria-valuenow')}`);
+        await ctx.shot(page, 'divider-dragged-1280');
       } finally {
         await context.close();
       }
