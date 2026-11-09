@@ -47,6 +47,7 @@ let queue: Array<{ id: string; text: string }>;
 let streaming = false;
 let defaultSize = 100;
 let verdictless = false;
+let sockets = 0;
 
 // One page of `rows` for the request's pageSize and pageToken, as every v9 list answers.
 function page(field: string, rows: unknown[], q: URLSearchParams) {
@@ -96,6 +97,7 @@ before(async () => {
   });
   const wss = new WebSocketServer({ server });
   wss.on('connection', (ws) => {
+    sockets += 1;
     const entry = (role: string, text: string) => ({ kind: 'entry', entry: { model: [{ role, content: [{ type: 'text', text }] }] } });
     if (streaming) {
       ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go')], live: { run: {} } }));
@@ -118,7 +120,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 after(() => server.close());
-beforeEach(() => { calls = []; frames = []; queue = [{ id: 'f1', text: 'later' }]; });
+beforeEach(() => { calls = []; frames = []; sockets = 0; queue = [{ id: 'f1', text: 'later' }]; });
 afterEach(() => assert.deepEqual(calls.filter((c) => c.path.startsWith('/index')), [], 'the index routes are retired'));
 
 async function cli(args: string[], env: Record<string, string> = {}) {
@@ -171,7 +173,7 @@ describe('quack', () => {
   });
 
   it('--order-by takes an AIP-132 direction, quoted or not, and sends the field alone', async () => {
-    for (const args of [['--order-by', 'createdAt', 'desc'], ['--order-by', 'createdAt desc'], ['--order-by', 'createdAt', 'DESC'], ['--order-by', 'createdAt']]) {
+    for (const args of [['--order-by', 'createdAt', 'desc'], ['--order-by', 'createdAt desc'], ['--order-by', 'createdAt', 'DESC'], ['--order-by', 'createdAt'], ['--order-by=createdAt', 'desc'], ['--order-by=createdAt desc']]) {
       calls = [];
       assert.equal((await cli(['sessions', ...args])).code, 0);
       assert.deepEqual(calls[0]!.query, { q: '-state:archived', orderBy: 'createdAt' });
@@ -248,7 +250,9 @@ describe('quack', () => {
 
   it('show --verdict prints each newest version\'s verdict from the socket ledger, and --json carries them', async () => {
     assert.doesNotMatch((await cli(['show', 'ui:a'])).stdout, /Verdicts/);
+    assert.equal(sockets, 0, 'a plain show opens no socket, so it starts no stopped session');
     const r = await cli(['show', '--verdict', 'ui:a']);
+    assert.equal(sockets, 1);
     assert.equal(r.code, 0);
     const block = r.stdout.slice(r.stdout.indexOf('Verdicts'), r.stdout.indexOf('\n\nAsks'));
     assert.deepEqual(block.split('\n'), [
@@ -374,6 +378,9 @@ describe('quack', () => {
     const missing = await cli(['app', 'nope', '/x']);
     assert.deepEqual([missing.code, missing.stderr], [2, 'quack: no app nope']);
     assert.equal((await cli(['app', 'contracts'])).code, 1);
+    calls = [];
+    await cli(['app', 'contracts', '/contracts'], { QUACK_ADMIN_TOKEN: 'tok' });
+    assert.deepEqual(calls.map((c) => [c.path, c.auth]), [['/apps/contracts/contracts', undefined]], 'the app gateway 401s any bearer but a launch credential');
   });
 
   it('-p waits for the run and prints only the answer, failing non-zero when it does not finish', async () => {

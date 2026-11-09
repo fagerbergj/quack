@@ -315,8 +315,10 @@ function print(result: Result, json: boolean | undefined, out: Out) {
 
 // `--order-by createdAt desc` unquoted would leave desc as a q term, so the direction joins its field.
 function joinDirection(argv: string[]): string[] {
-  const i = argv.indexOf('--order-by');
-  return i >= 0 && /^(asc|desc)$/i.test(argv[i + 2] ?? '') ? [...argv.slice(0, i + 1), `${argv[i + 1]} ${argv[i + 2]}`, ...argv.slice(i + 3)] : argv;
+  const i = argv.findIndex((a) => a === '--order-by' || a.startsWith('--order-by='));
+  // The field is the next argument, or this one in the --order-by=F spelling.
+  const field = argv[i] === '--order-by' ? i + 1 : i;
+  return i >= 0 && /^(asc|desc)$/i.test(argv[field + 1] ?? '') ? [...argv.slice(0, field), `${argv[field]} ${argv[field + 1]}`, ...argv.slice(field + 2)] : argv;
 }
 
 /** Exit codes: 0 ok, 1 API or usage error, 2 not found. */
