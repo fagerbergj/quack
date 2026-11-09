@@ -1,5 +1,5 @@
 import { createContext, type ComponentType, type ReactNode } from 'react';
-import type { Approval, SealedArtifact } from './api.ts';
+import type { Approval, Question, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
 /** The session an artifact is shown from, for links that open it on its own page. */
@@ -24,9 +24,9 @@ export type SessionKind = {
   words: (r: Row) => Words | undefined;
 };
 
-/** What a studio pane is given: the session's live artifacts and pending approvals, whether a run works, `decided` to drop an approval it settled,
- * and whether the person can see the pane now (a phone on the chat tab cannot). */
-export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void; visible: boolean };
+/** What a studio pane is given: the session's live artifacts, pending approvals and questions, its opening message, what the run is doing now,
+ * `decided` to drop an approval it settled, and whether the person can see the pane now (a phone on the chat tab cannot). */
+export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void; visible: boolean; questions: Question[]; brief?: string; activity: string };
 
 /** What an extension's web module hands the shell; every field is optional. */
 export type Extension = {

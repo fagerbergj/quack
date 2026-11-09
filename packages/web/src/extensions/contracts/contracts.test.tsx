@@ -173,7 +173,7 @@ test('the ledger card is compact: routes and a decisions summary, no detail or d
   expect(screen.getByRole('region', { name: 'What it does' })).toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull();
   expect(screen.queryByText('Responses')).toBeNull();
-  expect(screen.getByRole('button', { name: 'OpenAPI file' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Download OpenAPI file' })).toBeInTheDocument();
 });
 
 test('the full view keeps the operation detail, with no decisions list beside it', () => {
@@ -218,7 +218,7 @@ test('a json-schema card lists only the top-level fields', () => {
   expect(list.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['leagueIdstringREQUIRED', 'modestring', 'notifyobject']);
   expect(screen.queryByText('notifyTime')).toBeNull();
   expect(screen.queryByRole('region', { name: 'Decisions' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'JSON Schema file' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Download JSON Schema file' })).toBeInTheDocument();
 });
 
 test('the json-schema full view shows each field with type, required, enum and example, and its info buttons open their choices', async () => {
@@ -249,7 +249,7 @@ test('a typescript contract shows its source until its declarations load, its de
   const card = await screen.findByRole('article', { name: 'Manifest' });
   expect(within(card).getByRole('button', why)).toBeInTheDocument();
   expect(within(screen.getByRole('heading', { name: /SDK surface/ })).queryByRole('button', why)).toBeNull();
-  expect(screen.getByRole('button', { name: 'contract.d.ts' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Download contract.d.ts' })).toBeInTheDocument();
 });
 
 test('a $ref parameter shows its name, type, default and place, and a choice on the shared parameter sits on its row', async () => {

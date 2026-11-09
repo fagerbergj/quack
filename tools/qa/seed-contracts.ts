@@ -3,10 +3,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import type { ConversationDocToken, JsonObject } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { contractDeclaration, contractsSessionExtensions, type ContractSpec } from '@quack/contracts';
 import { sessionDirName } from '@quack/distributor';
-import { Approvals, resolveApproval } from '@quack/sdk';
+import { answerQuestion, Approvals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from '../../packages/contracts/test/fixtures.ts';
 
@@ -103,28 +104,38 @@ function scripted(versions: ContractSpec[]) {
   return faux;
 }
 
-async function nextApproval(s: Awaited<ReturnType<typeof openSession>>): Promise<string> {
-  await s.root.commit(async (tx) => { await tx.doc(Approvals, s.root.id); }, ctx);
-  const watch = (await s.harness.watchDoc(Approvals, s.root.id, ctx))!;
-  const open = () => Object.entries(watch.value?.items ?? {}).find(([, a]) => !a.verdict)?.[0];
+type Session = Awaited<ReturnType<typeof openSession>>;
+
+// The id of the first open item of a session doc, once one appears.
+async function nextOpen<T extends JsonObject>(s: Session, doc: ConversationDocToken<T>, pick: (v: T | undefined) => string | undefined): Promise<string> {
+  await s.root.commit(async (tx) => { await tx.doc(doc, s.root.id); }, ctx);
+  const watch = (await s.harness.watchDoc(doc, s.root.id, ctx))!;
+  const open = () => pick(watch.value);
   return new Promise<string>((resolve) => {
     if (open()) return resolve(open()!);
     watch.start(async () => { if (open()) resolve(open()!); });
   }).finally(() => watch.stop());
 }
 
-/** A contract session as the distributor keeps one: version 1 approved, version 2 sealed, passed and waiting for approval. */
-async function seedOne(dataDir: string, c: Contract) {
-  const dir = join(dataDir, sessionDirName(c.key));
+const nextApproval = (s: Session) => nextOpen(s, Approvals, (v) => Object.entries(v?.items ?? {}).find(([, a]) => !a.verdict)?.[0]);
+const nextQuestion = (s: Session) => nextOpen(s, Questions, (v) => pendingQuestions(v)[0]?.id);
+
+// A contracts session dir with the agent's bundle, opened on a scripted model.
+async function openSeed(dataDir: string, key: string, title: string, faux: ReturnType<typeof fauxProvider>): Promise<Session> {
+  const dir = join(dataDir, sessionDirName(key));
   await mkdir(dir, { recursive: true });
   const now = String(Date.now());
-  await Promise.all([['session-key', c.key], ['agent', 'contracts'], ['title', c.title], ['created', now], ['activity', now]].map(([f, v]) => writeFile(join(dir, f), v)));
+  await Promise.all([['session-key', key], ['agent', 'contracts'], ['title', title], ['created', now], ['activity', now]].map(([f, v]) => writeFile(join(dir, f), v)));
   await cp(join(ROOT, 'agents/contracts'), join(dir, 'agent-def'), { recursive: true });
-  const faux = scripted(c.versions);
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:9/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({})] } });
+  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({})] } });
+}
+
+/** A contract session as the distributor keeps one: version 1 approved, version 2 sealed, passed and waiting for approval. */
+async function seedOne(dataDir: string, c: Contract) {
+  const s = await openSeed(dataDir, c.key, c.title, scripted(c.versions));
   for (const f of c.files ?? []) {
     await mkdir(dirname(join(s.workspace, f)), { recursive: true });
     await cp(join(ROOT, f), join(s.workspace, f));
@@ -137,7 +148,23 @@ async function seedOne(dataDir: string, c: Contract) {
   await s.close();
 }
 
+const ask = (id: string, title: string, suggested: string, other: string) =>
+  toolCall('ask_question', { id, question: title, title, header: id, matters: `The ${id} choice shapes every route.`, suggested, suggestedTradeoff: 'The common choice.', alternatives: [{ answer: other, tradeoff: 'Less common.' }] });
+
+/** A contract with no version yet: the paging question answered, the auth question waiting on the person. */
+async function seedDraft(dataDir: string) {
+  const faux = fauxProvider({ models: [{ id: 'seed' }] });
+  faux.setResponses([() => ask('paging', 'Cursor or offset paging?', 'Cursor', 'Offset'), () => ask('auth', 'How do callers authenticate?', 'Bearer token', 'GitHub signature')]);
+  const s = await openSeed(dataDir, 'contracts:qa-draft', 'GitHub webhook contract', faux);
+  void s.submit('Define POST /hooks/github for the GitHub webhook receiver, so pull request events start a review.', 'seed-1', false);
+  await answerQuestion(s.root, await nextQuestion(s), 'Cursor', { kind: 'person', name: 'qa' }, ctx);
+  const auth = await nextQuestion(s);
+  if (!auth.endsWith(':auth')) throw new Error(`seed asked ${auth}`);
+  await s.close();
+}
+
 /** Writes the QA contract sessions into a distributor data dir before it starts. */
 export async function seedContracts(dataDir: string) {
   for (const c of CONTRACTS) await seedOne(dataDir, c);
+  await seedDraft(dataDir);
 }

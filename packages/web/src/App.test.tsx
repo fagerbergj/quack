@@ -2013,6 +2013,7 @@ test('a contract session reads its own title and its last run on its row, and th
   expect(row).toHaveTextContent('Draft ready');
   unmount();
   location.hash = '#/s/contracts%3Ac2';
+  routes['GET /sessions/contracts%3Ac2/asks'] = { asks: [] };
   render(<App />);
   expect(await screen.findByRole('heading', { name: /Roster API/ })).toBeInTheDocument();
 });

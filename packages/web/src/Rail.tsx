@@ -114,7 +114,7 @@ function SessionInfo({ agent, created, activity }: { agent?: string; created?: s
 }
 
 // The trigger text of a review is the first user message; the rail reads the pull request's branches from it.
-function openingOf(view: View): string | undefined {
+export function openingOf(view: View): string | undefined {
   for (const it of view.items) {
     if (it.kind !== 'entry') continue;
     const m = (it.entry.model ?? []).find((x) => x.role === 'user');
