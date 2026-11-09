@@ -66,8 +66,8 @@ export type SelectorDecl =
 /** A named set of items a check fans out over: how they are split, and the named context shown with each. */
 export type Scope = { split: SplitDecl; piece?: string; context?: Record<string, SelectorDecl> };
 
-/** The question asked of one item, shown with the scope's named context. */
-export type Question = { type: 'bool'; instructions: string } | { type: 'choice'; instructions: string; options: Record<string, string> };
+/** The question asked of one item, shown with the scope's named context; a bool question's `pass` names the answer that means the item holds (`['yes']` by default). */
+export type Question = { type: 'bool'; instructions: string; pass?: ('yes' | 'no')[] } | { type: 'choice'; instructions: string; options: Record<string, string> };
 
 /** The fan-in: how the per-item answers fold into the check's result. */
 export type AggregateDecl = {
@@ -163,14 +163,14 @@ function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitO
 
 export type BuiltEvidence = { evidence: Evidence; splits: Record<string, Splitting> };
 
-/** Builds every scope's units from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
-export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: ModelSplit): Promise<BuiltEvidence> {
+/** Builds the units of every scope (or those `only` keeps) from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
+export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: ModelSplit, only: (scope: Scope) => boolean = () => true): Promise<BuiltEvidence> {
   const evidence: Evidence = {};
   const splits: Record<string, Splitting> = {};
   // A related selector's candidates are the same for every item, so each chunker runs once per build.
   const cache = new Map<string, Chunk[]>();
   const splitOther = (o: SplitDecl) => cache.get(JSON.stringify(o)) ?? cache.set(JSON.stringify(o), runSplitter(inputs, o)).get(JSON.stringify(o))!;
-  for (const [name, scope] of Object.entries(decl.scopes)) {
+  for (const [name, scope] of Object.entries(decl.scopes).filter(([, s]) => only(s))) {
     try {
       const { chunks, ...how } = await split(inputs, scope.split, model, name);
       evidence[name] = chunks.map((c) => unitOf(inputs, name, scope, c, splitOther)).filter((b) => b !== undefined).map((b) => b.unit);

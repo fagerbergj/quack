@@ -114,8 +114,19 @@ test('a declaration error is loud: an input nobody provided, a splitter nobody r
   const mine = () => [];
   registerSplitter('test.mine', mine);
   registerSplitter('test.mine', mine);
-  assert.throws(() => registerSplitter('test.mine', () => []), /already registered/);
+  assert.throws(() => registerSplitter('test.mine', () => [{ id: 'x', text: 'x' }]), /already registered/);
   assert.throws(() => registerSplitter('whole', () => []), /library's own/);
+  // A replay arm loads the extension again from another tree: a new function object with the same source.
+  registerSplitter('test.mine', () => []);
+});
+
+test('a bool pitfall asked as the defect holds on "no": a confident yes flags the item, from either model', async () => {
+  const p: Record<string, number> = { 'c.broken#0': 0.9, 'c.broken#1': 0.1, 'c.broken#2': 0.5 };
+  const { api, escalated } = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
+  const decl: Declaration = { scopes: { rows: scope }, checks: { broken: { scope: 'rows', question: { type: 'bool', instructions: 'Is it broken?', pass: ['no'] }, aggregate: { name: 'share' } } } };
+  const v = await rejudge(api, opts(rubricOf('broken', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);
+  assert.deepEqual(escalated, ['Is it broken?']);
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows a: clef answered yes', 'rows c: fine']]);
 });
 
 // A tool call's api as the judge reads it: memos, a classifier and a judge model, with every request recorded.
@@ -190,7 +201,7 @@ test('a choice question holds on its pass options, from the decision model or th
   const decl: Declaration = { scopes: { rows: scope }, checks: { grade: { scope: 'rows', question, aggregate: { name: 'atLeast', k: 2, pass: ['good', 'fine'] } } } };
   const v = await rejudge(api, opts(rubricOf('grade', 3), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['Grade it.'], 'c is a coin toss between holding and not, so it escalates');
-  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows b: clef answered no']]);
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows b: clef answered bad']]);
 });
 
 test('coverageUnion by related counts what code found and asks no model; a declaration that misses a check is refused', async () => {
@@ -214,6 +225,27 @@ test('the llm splitter asks the judge model once per sealed version: a rejudge u
   await rejudge(api, o, sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['split'], 'one model split, then the memo');
   assert.deepEqual([first.checks[0].met, first.checks[0].units, first.checks[0].splitter], [true, 1, 'llm']);
+});
+
+test('checks on deterministic scopes are asked while an llm split still runs; the verdict keeps rubric order', async () => {
+  const split = JSON.stringify([{ item: 'the bus count', span: 'The fleet has 38 buses.' }]);
+  const { api, requests } = fakeApi(() => ({ type: 'bool', probability: 0.95 }), () => split);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const models = (api as unknown as { models: { completeSimple: (...a: unknown[]) => Promise<unknown> } }).models;
+  const complete = models.completeSimple;
+  models.completeSimple = async (...a) => (await gate, complete(...a));
+  const decl: Declaration = {
+    scopes: { claims: { split: { name: 'llm', from: 'report' } }, rows: scope },
+    checks: { true_claim: { scope: 'claims', question: { type: 'bool', instructions: 'Is it true?' }, aggregate: { name: 'all' } }, kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'all' } } },
+  };
+  const rubric: Rubric = { name: 'r', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id: 'true_claim', label: 'claim', weight: 2 }, { id: 'kept', label: 'kept', weight: 2 }] }] };
+  const judged = rejudge(api, opts(rubric, decl, { report }), sealed, 'm', BACKGROUND_CONTEXT);
+  for (let i = 0; i < 100 && !requests.length; i++) await Promise.resolve();
+  assert.equal(requests.length, 1, 'the rows were asked before the split came back');
+  release();
+  const v = await judged;
+  assert.deepEqual([requests.length, v.checks.map((k) => [k.id, k.met])], [2, [['true_claim', true], ['kept', true]]]);
 });
 
 test('a share pitfall asks every unsure item even after a flag, and costs its weight times the share flagged', async () => {

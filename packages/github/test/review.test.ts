@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseReview, reviewKind, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
+import { buildEvidence } from '@quack/judge';
+import { parseReview, reviewDeclaration, reviewKind, resolveCitedPath, reviewInputs, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
 import { claimedNames, dependencyDirs, misquotes, quotedCode } from '../src/review.ts';
 
@@ -37,6 +38,7 @@ test('validation reports every structure problem at once', () => {
   assert.deepEqual(problems, ['missing a "## Takeaway" section', 'the verdict must be one of approve, comment, request_changes', 'finding 1: label must be one of blocking, suggestion, nit, question']);
 });
 
+const facts = (f: object) => ({ facts: [{ id: 'facts', state: { facts: f } }] }) as never;
 const code = (criterion: string, id: string) => reviewerRubric.criteria.find((c) => c.id === criterion)!.checks.find((k) => k.id === id)!.code!;
 
 test('the verdict must match the findings labels', () => {
@@ -50,7 +52,7 @@ test('the verdict must match the findings labels', () => {
   assert.equal(verdict(clean, {}).met, 1, 'comment is allowed when verification could not finish');
   assert.equal(verdict(clean.replace('comment', 'approve'), {}).met, 1, 'and approve is still right beside it');
   const green = '## Takeaway\nx\n## Verdict\napprove\n## Findings\n';
-  const ci = (s: string) => ({ change: [{ id: 'change', state: { ci: s } }] });
+  const ci = (s: string) => facts({ ci: s, findings: [] });
   assert.equal(verdict(green, ci('go-test=success')).met, 1);
   assert.equal(verdict(green, ci('go-test=success, lint=failure')).met, 0, 'a failing check is never approved past');
   assert.equal(verdict(green.replace('approve', 'comment'), ci('lint=failure')).met, 1);
@@ -67,21 +69,41 @@ test('blocking findings must name an anchor, and findings must cite lines that e
   assert.equal(anchor(review, {}).met, 1);
   assert.match(anchor(review.replace('blocking (defect)', 'blocking'), {}).detail!, /finding-1/);
   const cites = code('claims_grounded', 'cites_existing_lines');
-  assert.equal(cites('', { finding: [{ id: 'finding-1', state: {}, cited: true }, { id: 'finding-2', state: {}, cited: false }] as never }).met, 0.5);
-  assert.equal(cites('', { finding: [] }).met, 1);
+  const two = cites('', facts({ ci: '', findings: [{ id: '1', cited: true, misquotes: [] }, { id: '2', cited: false, misquotes: [] }] }));
+  assert.deepEqual([two.met, two.detail], [0.5, 'no existing path:line cited in finding-2']);
+  assert.equal(cites('', facts({ ci: '', findings: [] })).met, 1);
 });
 
-test('approval_grounded judges an approve on the review alone, and has no unit on any other verdict', async () => {
-  const evidence = async (verdict: string) => reviewEvidence()({ snapshot: async () => undefined, conversationId: 'c' } as never, { content: `## Takeaway\nx\n## Verdict\n${verdict}\n## Findings\n` } as never, {} as never);
+test('approval_grounded judges an approve on the review alone, and has no item on any other verdict', async () => {
+  const evidence = async (verdict: string) => (await buildEvidence(reviewDeclaration, await reviewInputs()({ snapshot: async () => undefined, conversationId: 'c' } as never, { content: `## Takeaway\nx\n## Verdict\n${verdict}\n## Findings\n` } as never, {} as never))).evidence;
   const approve = await evidence('approve');
   assert.deepEqual(approve.approve, [{ id: 'approve', state: { review: '## Takeaway\nx\n## Verdict\napprove\n## Findings\n' } }]);
   for (const v of ['request_changes', 'comment']) assert.deepEqual((await evidence(v)).approve, []);
 });
 
-test('the rubric scopes match the evidence the reviewer builds', () => {
-  const scopes = new Set(reviewerRubric.criteria.flatMap((c) => c.checks.filter((k) => k.question).map((k) => k.scope ?? 'review')));
-  assert.deepEqual([...scopes].sort(), ['approve', 'blocking', 'change', 'finding', 'lower', 'review']);
-  assert.ok(reviewerRubric.criteria.flatMap((c) => c.checks).some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
+test('each finding is an item with its cited code, sorted by label, all sharing the CI result; the model splits the promises', async () => {
+  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: 'Adds a flag.', baseRef: 'main', headSha: 'abc', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [] };
+  const api = { conversationId: 'c', snapshot: async () => ({ pr }), env: { exec: async () => ({ ok: true, value: { exitCode: 0 } }), readTextFile: async () => ({ ok: true, value: 'const a = 1;\nconst b = 2;\n' }) } };
+  const inputs = await reviewInputs()(api as never, { content: review } as never, {} as never);
+  const asked: string[] = [];
+  const built = await buildEvidence(reviewDeclaration, inputs, async (text) => (asked.push(text), [{ item: 'adds a flag', span: 'Adds a flag.' }]));
+  assert.deepEqual(built.evidence.blocking.map((u) => u.id), ['blocking 1']);
+  assert.deepEqual(built.evidence.nonblocking.map((u) => u.id), ['nonblocking 2', 'nonblocking 3']);
+  assert.deepEqual(built.evidence.finding[0], { id: 'finding 1', state: { finding: { text: 'blocking (defect): internal/eval/replay.go:214 adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```', citedCode: '(the cited lines do not exist)' } }, shared: { ci: 'ci=success' } });
+  assert.deepEqual(built.evidence.promise.map((u) => u.state.promise), ['adds a flag']);
+  assert.match(asked[0], /^t\n\nAdds a flag\./);
+  assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
+});
+
+test('every model check is declared; a pitfall is asked as the defect and costs the share of items it flags', () => {
+  const checks = reviewerRubric.criteria.flatMap((c) => c.checks);
+  assert.deepEqual(checks.filter((k) => !k.code).map((k) => k.id).sort(), Object.keys(reviewDeclaration.checks).sort());
+  for (const k of checks.filter((x) => !x.code)) {
+    const d = reviewDeclaration.checks[k.id];
+    const pitfall = typeof k.weight === 'number' && k.weight < 0;
+    assert.deepEqual([d.question.type === 'bool' && d.question.pass, pitfall && d.aggregate.name], pitfall ? [['no'], 'share'] : [undefined, false], k.id);
+  }
+  assert.ok(checks.some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
   assert.equal(possible, 24);
 });
@@ -99,8 +121,8 @@ test('statement-like inline quotes are collected for checking; identifiers, shor
   const text = "`opponent()` finds none, so `addWeekForm` appends `teamWeek{Week: w, Points: 0, Result: \"-\"}`; see `className=\"${CHIP} bg-blue-100 ...\"`.\n```go\nx := teamWeek{Points: 1}\n```";
   assert.deepEqual(quotedCode(text), [['teamWeek{Week: w, Points: 0, Result: "-"}'], ['className="${CHIP} bg-blue-100']]);
   const gate = code('claims_grounded', 'quotes_exist');
-  assert.equal(gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }] } as never).met, 1);
-  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ["Points", "x"] }] } as never);
+  assert.equal(gate('', facts({ ci: '', findings: [{ id: '1', cited: true, misquotes: [] }] })).met, 1);
+  const failed = gate('', facts({ ci: '', findings: [{ id: '1', cited: true, misquotes: [] }, { id: '2', cited: true, misquotes: ['Points', 'x'] }] }));
   assert.equal(failed.met, 0.5);
   assert.match(failed.detail!, /finding-2 names identifiers found nowhere in the repository, the diff or its dependencies: `Points`, `x`/);
   assert.match(failed.detail!, /command output or logs go in a fenced block/);
@@ -154,13 +176,12 @@ test('dependency dirs sit beside every tracked package.json', async () => {
   assert.deepEqual(await dependencyDirs(api as never, 'repo', {} as never), ['repo/node_modules', 'repo/web/node_modules']);
 });
 
-test('a failing git diff fails the evidence build instead of scoring the review on no diff', async () => {
+test('a failing git diff fails the inputs instead of scoring the review on no diff', async () => {
   const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: '', baseRef: 'main', headSha: 'abc', checks: [], linkedIssues: [] };
   const api = (exitCode: number) => ({ conversationId: 'c', snapshot: async () => ({ pr }), env: { exec: async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o?.onOutput?.(exitCode ? 'fatal: bad revision origin/main...HEAD' : ''), { ok: true, value: { exitCode } }) } });
   const sealed = { content: '## Takeaway\nx\n## Verdict\napprove\n## Findings\n' } as never;
-  await assert.rejects(reviewEvidence()(api(128) as never, sealed, {} as never), /git diff in repo failed: fatal: bad revision/);
-  const ok = await reviewEvidence()(api(0) as never, sealed, {} as never);
-  assert.equal((ok.change[0].state as { diff: string }).diff, '(empty diff)', 'an empty diff that git produced is not an unavailable one');
+  await assert.rejects(reviewInputs()(api(128) as never, sealed, {} as never), /git diff in repo failed: fatal: bad revision/);
+  assert.equal((await reviewInputs()(api(0) as never, sealed, {} as never)).diff, '');
 });
 
 test('a cited path resolves against tracked files: checkout prefix stripped, then a unique tail (prod cases)', () => {

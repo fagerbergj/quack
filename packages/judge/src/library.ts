@@ -154,7 +154,9 @@ const registeredSelectors = new Map<string, (inputs: Inputs, chunk: Chunk, optio
 function register<T>(table: Map<string, T>, kind: string, name: string, run: T, builtIn: boolean) {
   if (builtIn) throw new Error(`"${name}" is the library's own ${kind}`);
   // Registrations are process-wide: a second, different strategy under one name would judge with whichever loaded last.
-  if (table.has(name) && table.get(name) !== run) throw new Error(`a different ${kind} is already registered as "${name}"`);
+  // A replay loads one extension twice (its arm at another ref), so the same source registering again is the same strategy.
+  const prior = table.get(name);
+  if (prior && prior !== run && String(prior) !== String(run)) throw new Error(`a different ${kind} is already registered as "${name}"`);
   table.set(name, run);
 }
 

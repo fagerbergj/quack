@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { obj } from '@earendil-works/pi-schema';
 import { defineTool } from '@earendil-works/pi-durable';
 import { driveTool } from '@quack/eval';
-import { reviewEvidence, reviewerRubric, reviewKind } from '@quack/github';
+import { reviewDeclaration, reviewerRubric, reviewInputs, reviewKind } from '@quack/github';
 import { feedback, rejudge, type Verdict } from '@quack/judge';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
@@ -17,7 +17,7 @@ const slash = judgeRef.indexOf('/');
 const judgeModel = { provider: judgeRef.slice(0, slash), modelId: judgeRef.slice(slash + 1) };
 const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(deploymentPath, 'utf8'))));
 const classifier = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-const opts = { kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(), maxRevisions: 2, classifier, judgeModel };
+const opts = { kind: reviewKind, rubric: reviewerRubric, declaration: reviewDeclaration, inputs: reviewInputs(), maxRevisions: 2, classifier, judgeModel };
 const run = Date.now();
 
 for (const dir of dirs) {

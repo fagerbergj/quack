@@ -29,3 +29,8 @@ test('an adapter scores a recording with its rubric code checks, and skips an ar
   assert.deepEqual(await adapterScores(adapters, record('ab')), { 'acme.note.code_score': 1, 'acme.note.code_gates_failed': 1 });
   assert.deepEqual(await adapterScores(adapters, record('skip')), {});
 });
+
+test('a declared adapter whose inputs throw declines the recording instead of failing the scores', async () => {
+  const declared: EvalAdapter = { kind: 'acme.note', judge: { rubric: note.judge!.rubric, declaration: { scopes: {}, checks: {} }, inputs: async () => { throw new Error('no checkout'); } } };
+  assert.deepEqual(await adapterScores([declared], record('long enough')), {});
+});

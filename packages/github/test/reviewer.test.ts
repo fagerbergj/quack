@@ -65,10 +65,14 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(responses(seen, advance));
+  // The judge model splits the PR description into its promises; this one finds none, so the worker's script is untouched.
+  const judgeFaux = fauxProvider({ provider: 'judge', models: [{ id: 'judge' }] });
+  judgeFaux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage('[]')));
   const models = buildModels(parseDeployment({ defaultModel: 'clef/clef', providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
+  models.setProvider(judgeFaux.provider);
   const m = faux.getModel();
-  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];
+  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'judge' } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
   return { done, seen, service, head, session, live };
@@ -87,7 +91,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@6\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@7\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
@@ -101,8 +105,8 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: URL7 }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
   assert.deepEqual([...resolvers].sort(), ['clef', 'code']);
-  assert.ok(clefUnits.includes('review+description+ci+linkedIssues+diff'), 'the change unit carries the diff and PR context');
-  assert.ok(clefUnits.includes('finding+citedCode'), 'each finding is judged with its cited code');
+  assert.ok(clefUnits.includes('context+items'), 'findings are packed with the CI result they share');
+  assert.ok(clefUnits.includes('review'), 'the takeaway is judged on the review whole');
   await session.close();
 });
 

@@ -5,8 +5,8 @@ import { artifactsExtension, attachLink, type SealedArtifact } from '@quack/sdk'
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { postable } from './inline.ts';
 import { replyTool } from './reply.ts';
-import { parseReview, reviewEvidence, reviewKind } from './review.ts';
-import { reviewerRubric } from './rubric.ts';
+import { parseReview, reviewInputs, reviewKind } from './review.ts';
+import { reviewDeclaration, reviewerRubric } from './rubric.ts';
 import { checkoutTaskTool, deliverTool, prBodyKind } from './task.ts';
 
 const EVENT: Record<string, string> = { approve: 'APPROVE', comment: 'COMMENT', request_changes: 'REQUEST_CHANGES' };
@@ -62,6 +62,6 @@ export function githubSessionExtensions(config: GithubSessionConfig): Extension[
   return [
     defineExtension({ name: 'github', tools: [checkoutTool(config), replyTool(config)] }),
     artifactsExtension([reviewKind]),
-    judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, refuse: refuseAfterSkip, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
+    judge({ kind: reviewKind, rubric: reviewerRubric, declaration: reviewDeclaration, inputs: reviewInputs(config.repoDir), maxRevisions: config.maxRevisions ?? 2, refuse: refuseAfterSkip, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
   ];
 }

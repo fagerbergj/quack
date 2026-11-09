@@ -25,7 +25,9 @@ export type Limit = ReturnType<typeof limiter>;
 const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
 const qid = (ask: Ask, i: number, packed: boolean) => (packed ? `${ask.id}#${i}` : ask.id);
-const passing = (ask: Ask) => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ['yes']);
+const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);
+/** The answers that fail an item ("yes" for a pitfall asked as the defect), for a note when the model gave no reason. */
+export const failing = (ask: Ask) => (ask.question.type === 'choice' ? Object.keys(ask.question.options) : ['yes', 'no']).filter((o) => !passing(ask).includes(o)).join(' or ');
 
 function asked(ask: Ask, instructions: string): ClassifierQuestion {
   return ask.question.type === 'choice' ? { type: 'choice', instructions, criteria: ask.question.options } : { type: 'bool', instructions, criteria: CRITERIA };
@@ -64,9 +66,9 @@ export function pack(items: Item[], cap: number | undefined): Item[][] {
   return out;
 }
 
-// A choice answer counts the probability of the options that hold; a bool answer is its own probability.
+// A choice answer counts the probability of the options that hold; a bool answer its probability of yes, or of no when no holds.
 function massOf(ask: Ask, a: { type: string; probability?: number; probabilities?: Record<string, number> }): number | undefined {
-  if (a.type === 'bool' && ask.question.type === 'bool') return a.probability;
+  if (a.type === 'bool' && ask.question.type === 'bool') return a.probability === undefined ? undefined : passing(ask).reduce((s, k) => s + (k === 'yes' ? a.probability! : 1 - a.probability!), 0);
   if (a.type === 'choice' && ask.question.type === 'choice') return passing(ask).reduce((s, k) => s + (a.probabilities?.[k] ?? 0), 0);
   return undefined;
 }
