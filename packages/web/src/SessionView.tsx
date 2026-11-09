@@ -179,12 +179,12 @@ const dot = "before:mr-1.5 before:content-['·']";
 
 type Facts = { sessionKey: string; name: SessionTitle; status: string; tone: Tone; spend?: Spend; archived?: boolean };
 
-// Line 1 identifies the session (a review's number and whole PR title, never its repo), cut by width alone; line 2 holds facts that may truncate.
+// Line 1 identifies the session (a review's whole PR title, its number read only by screen readers since the badge shows it), cut by width alone; line 2 holds facts that may truncate.
 function Title({ sessionKey, name, status, tone, spend, archived }: Facts) {
   return (
     <div className="flex min-w-0 flex-1 flex-col justify-center">
       <h1 className="m-0 truncate font-sans text-[15px] leading-5 font-semibold" title={name.full}>
-        {name.number && <span className="font-medium text-muted">{`${name.number} `}</span>}
+        {name.number && <><span className="sr-only">{name.number}</span>{' '}</>}
         {name.full}
       </h1>
       <p className="m-0 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] leading-[18px] whitespace-nowrap text-muted">

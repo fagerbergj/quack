@@ -78,27 +78,31 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
 });
 
-test('review rows carry their PR state from the mirror, and read plainly when the service is not connected', async () => {
-  const pr = (n: number, over: object) => ({ number: n, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: `https://github.com/a/one/pull/${n}`, title: 't', ...over });
+test('review rows carry one PR badge each from the mirror, neutral when the service is not connected', async () => {
+  const pr = (n: number, over: object) => ({ number: n, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: `https://github.com/A/One/pull/${n}`, title: 't', ...over });
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' }), sess('github:a/one#3', { title: 'fix: third' }), sess('gh:9', { title: 'Plain' })] };
   routes['GET /apps/github/repos/a/one/pulls/1'] = pr(1, {});
   routes['GET /apps/github/repos/a/one/pulls/2'] = pr(2, { state: 'closed', merged: true, merged_at: '2026-11-02T00:00:00Z', closed_at: '2026-11-02T00:00:00Z' });
   routes['GET /apps/github/repos/a/one/pulls/4'] = pr(4, { state: 'closed', closed_at: '2026-11-01T00:00:00Z' });
   const view = render(<App />);
-  const row = async (name: RegExp) => await screen.findByRole('link', { name });
+  // Before the read answers, a badge is neutral and links by the session key.
+  expect(await screen.findByRole('link', { name: 'Pull request #1 on GitHub' })).toHaveAttribute('href', 'https://github.com/a/one/pull/1');
   await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
   FakeEventSource.all[0].open();
-  await waitFor(async () => expect(await row(/#2 Second/)).toHaveTextContent('Merged'));
-  expect(await row(/#1 First/)).toHaveTextContent('Open');
-  expect(await row(/#3 Third/)).not.toHaveTextContent(/Open|Merged|Closed/);
-  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(await screen.findByRole('link', { name: 'Pull request #2, merged, on GitHub' })).toHaveTextContent(/^#2$/);
+  // Once the mirror answers, the badge links to GitHub's html_url.
+  expect(screen.getByRole('link', { name: 'Pull request #1, open, on GitHub' })).toHaveAttribute('href', 'https://github.com/A/One/pull/1');
+  expect(screen.getByRole('link', { name: 'Pull request #3 on GitHub' })).toHaveAttribute('href', 'https://github.com/a/one/pull/3');
+  expect(screen.getAllByRole('link', { name: /on GitHub$/ })).toHaveLength(3);
+  // The badge shows the number, so the title keeps it for screen readers only.
+  expect(within(screen.getByRole('link', { name: /#1 First/ })).getByText('#1')).toHaveClass('sr-only');
   view.unmount();
-  expect(FakeEventSource.all[0].readyState, 'the stream closes with the last chip').toBe(2);
+  expect(FakeEventSource.all[0].readyState, 'the stream closes with the last badge').toBe(2);
   routes['GET /sessions'] = { sessions: [sess('github:a/one#4', { title: 'fix: fourth' })] };
   render(<App />);
   await waitFor(() => expect(FakeEventSource.all).toHaveLength(2));
   FakeEventSource.all[1].open();
-  await waitFor(async () => expect(await row(/#4 Fourth/)).toHaveTextContent('Closed'));
+  expect(await screen.findByRole('link', { name: 'Pull request #4, closed, on GitHub' })).toBeInTheDocument();
 });
 
 test('review rows show their repo only when the list holds reviews from two repos', async () => {

@@ -38,8 +38,8 @@ node tools/qa/stack.ts down
 | `subagent` | A QA-only agent (written beside a copy of `agents/`, shipped bundles untouched) that selects `subagent` runs one call through a scripted fake model; `GET /messages?conversation=` serves the child, and the call row nests the child's messages, at 1280 and 400 px, light and dark |
 | `contract-studio` | A seeded contract beside its chat (tabs on a phone) with the changes since version 1 highlighted, the class diagram re-centring on a type, and approving the waiting version |
 | `search-filter` | The one search-and-filter row on Sessions and Artifacts: the funnel's panel (popover at 1280 px, sheet at 400 px), a filter set from it answered by the server, and its removable chip, light and dark |
-| `pr-chips` | Two github review sessions in the Sessions list, one merged and one with no known state (the rig answers the github service's lookup, since that service needs a GitHub App); each chip links to its pull request, takes focus, and opens a new tab without opening the session; the merged chip links from the session header too, at 1280 and 400 px, light and dark |
-| `pr-live` | A github review session in the Sessions list whose badge reads Open after a signed `reopened` webhook, then flips to Merged on a signed `closed` webhook through the app's `pull_request` stream, with no re-read, at 1280 and 400 px, light and dark |
+| `pr-chips` | Four github review sessions whose PR badges are open, merged and closed (from signed webhooks to the github app) and unknown (a repo the app is not installed on), in the Sessions list and each session's header; a badge links to its pull request, takes focus, and opens a new tab without opening the session, at 1280 and 400 px, light and dark |
+| `pr-live` | A github review session in the Sessions list whose badge is open after a signed `reopened` webhook, then flips to merged on a signed `closed` webhook through the app's `pull_request` stream, with no re-read, at 1280 and 400 px, light and dark |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed <dir>` with a copied session to check a real artifact card.
 
