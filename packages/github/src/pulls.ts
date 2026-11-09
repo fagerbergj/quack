@@ -73,6 +73,11 @@ export function pullStates(file?: string, now: () => number = Date.now) {
       write(pr.base?.repo?.full_name ?? `${owner}/${repo}`, pull);
       return pull;
     },
+    /** The stored copy and its age in seconds since GitHub last answered for it; undefined when none or from before the mirror. */
+    stored(owner: string, repo: string, number: number): { pull: Pull; age: number } | undefined {
+      const e = entries[keyOf(`${owner}/${repo}`, number)];
+      return e?.html_url ? { pull: pullOf(e), age: Math.floor((now() - e.checked) / 1000) } : undefined;
+    },
     subscribe(listener: (e: PullEvent) => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);

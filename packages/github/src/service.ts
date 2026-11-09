@@ -353,6 +353,16 @@ export async function invocationMeta(app: GithubApp, owner: string, repo: string
   }
 }
 
+const githubDown = (err: unknown) => err instanceof RateLimited || (err instanceof GithubError && err.status >= 500);
+
+// A GitHub outage answers with the stored copy, marked stale per RFC 9111 (Age, Warning 110), so a badge outlasts the blip.
+function sendStale(res: ServerResponse, kept: { pull: unknown; age: number }, what: string, err: unknown) {
+  console.warn(`github: serving ${what} from ${kept.age}s ago; GitHub failed: ${(err as Error).message}`);
+  res.setHeader('age', String(kept.age));
+  res.setHeader('warning', '110 - "Response is Stale"');
+  send(res, 200, kept.pull);
+}
+
 // GitHub's "Get a pull request", cut to the Pull subset and served from the store while fresh.
 async function mirrorPull(res: ServerResponse, app: GithubApp, states: States, [, owner, repo, n]: RegExpExecArray) {
   try {
@@ -360,6 +370,8 @@ async function mirrorPull(res: ServerResponse, app: GithubApp, states: States, [
     if (pull) send(res, 200, pull);
     else sendProblem(res, 404, `no pull request ${owner}/${repo}#${n}`);
   } catch (err) {
+    const kept = githubDown(err) ? states.stored(owner, repo, Number(n)) : undefined;
+    if (kept) return sendStale(res, kept, `${owner}/${repo}#${n}`, err);
     sendProblem(res, err instanceof NoInstallation ? 404 : err instanceof GithubError ? 502 : 500, (err as Error).message);
   }
 }
