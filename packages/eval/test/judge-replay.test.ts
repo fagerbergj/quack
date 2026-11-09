@@ -85,6 +85,14 @@ test('a watched check no rubric has is an error, and a check with no unit prints
   assert.match(table(rows, ['base']), /\| a \| other \| null \| 0\/0 \|/);
 });
 
+test('a case naming units judges only those units of the evidence the adapter built', async () => {
+  const two: EvalAdapter = { kind: 'acme.note', judge: { rubric: rubric('Is it helpful?'), evidence: async () => ({ note: [{ id: 'keep', state: {} }, { id: 'drop', state: {} }] }) } };
+  // One answer: a second unit would ask the judge again and find no response left.
+  const rows = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', checks: ['helpful'], content: 'a', units: ['keep'] }], arms: [{ label: 'base', adapters: [two] }], repeat: 1, concurrency: 1, models: judgeModels([false]), judgeModel });
+  assert.deepEqual(rows.rows.map((r) => [r.check, r.met]), [['helpful', 0]]);
+  assert.deepEqual(rows.rows[0].notes, ['keep: because']);
+});
+
 test('a check the judge model could not answer prints null, not a failed check', async () => {
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   faux.setResponses([fauxAssistantMessage('no json here')]);
