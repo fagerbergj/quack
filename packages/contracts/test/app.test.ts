@@ -222,16 +222,27 @@ test('a filter that matches nothing walks a bounded number of catalog pages, the
   assert.deepEqual([second.contracts, second.nextPageToken], [[], undefined], 'the remaining 7 sessions end the list');
 });
 
-test('GET /contracts/{key} answers 404 problem+json for an archived, unknown, non-contracts or badly encoded key', async () => {
+test('GET /contracts/{key} answers 404 problem+json for an unknown, non-contracts or badly encoded key', async () => {
   const { catalog, url } = await setup();
   await five(catalog);
-  for (const path of ['contracts%3Agone', 'contracts%3Amissing', 'review%3Ax', '%E0']) {
+  for (const path of ['contracts%3Amissing', 'review%3Ax', '%E0']) {
     const res = await fetch(`${url}/contracts/${path}`);
     assert.equal(res.status, 404, path);
     assert.equal(res.headers.get('content-type'), 'application/problem+json', path);
     assert.deepEqual(await res.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'no such contract', error: 'no such contract' }, path);
   }
   assert.equal((await fetch(`${url}/contracts/contracts%3Aa`)).status, 200);
+});
+
+test('an archived contract answers its detail with its versions, while the list leaves it out', async () => {
+  const { catalog, url } = await setup();
+  await five(catalog);
+  const res = await fetch(`${url}/contracts/contracts%3Agone`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    key: 'contracts:gone', title: 'Sleeper schedule endpoint', kind: 'rest', draft: 1, pendingApproval: false, versions: [{ artifact: 11, version: 1, status: 'draft' }],
+  });
+  assert.ok(!(await pages(url, '')).flat().includes('contracts:gone'));
 });
 
 test('both routes answer 503 problem+json while the catalog is unavailable', async () => {

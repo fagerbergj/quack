@@ -135,8 +135,7 @@ export function contractsApp(ctx: AppContext): App {
     const row = await ctx.fetch(`${ctx.distributorUrl}/sessions/${encodeURIComponent(key)}`);
     if (row.status === 404) return undefined;
     if (!row.ok) throw new Error(`/sessions/${key} answered ${row.status}`);
-    const { title, state } = (await row.json()) as { title?: string; state?: string };
-    if (state === 'archived') return undefined;
+    const { title } = (await row.json()) as { title?: string };
     const { artifacts, asks } = await records(key);
     return { ...contractOf(key, title, artifacts, asks), versions: versionsOf(artifacts, asks) };
   }
