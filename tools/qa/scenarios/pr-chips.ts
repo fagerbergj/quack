@@ -29,6 +29,14 @@ const scenario: Scenario = {
       await tab.close();
       if (!page.url().endsWith('#/sessions')) throw new Error(`the chip click also opened the session: ${page.url()}`);
     });
+    await eachView(ctx, 'session header', async (page, label) => {
+      await page.route('**/apps/github/pulls?*', (r) => r.fulfill({ json: { pulls: { 'fagerbergj/quack#2243': { state: 'merged', at: '2026-11-09T02:00:00Z' } } } }));
+      await page.goto(`${ctx.url}/#/s/${encodeURIComponent(MERGED)}`);
+      const chip = page.locator('main').getByRole('link', { name: 'Pull request #2243, merged, on GitHub' });
+      await visible(chip);
+      await chip.focus();
+      await ctx.shot(page, `pr-chips-header-${label}`);
+    });
   },
 };
 export default scenario;

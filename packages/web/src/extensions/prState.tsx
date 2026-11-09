@@ -43,7 +43,8 @@ export function PrChip({ sessionKey }: { sessionKey: string }) {
   const state = known?.text.toLowerCase();
   return (
     // relative lifts it over the row link's overlay; the after: box widens the tap target past the 18 px chip.
-    <a href={url} target="_blank" rel="noopener noreferrer" aria-label={state ? `Pull request ${n}, ${state}, on GitHub` : `${n} on GitHub`} title={state && `Pull request ${state} ${new Date(pr!.at).toLocaleDateString()}`} className={`relative flex flex-none items-center gap-0.5 rounded-full px-2 text-[11px] leading-[18px] font-medium whitespace-nowrap no-underline after:absolute after:-inset-x-1 after:-inset-y-1.5 hover:underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-link ${chip.cls}`}>
+    // The focus outline is drawn inside the pill, since the session header's line 2 clips overflow.
+    <a href={url} target="_blank" rel="noopener noreferrer" aria-label={state ? `Pull request ${n}, ${state}, on GitHub` : `${n} on GitHub`} title={state && `Pull request ${state} ${new Date(pr!.at).toLocaleDateString()}`} className={`relative flex flex-none items-center gap-0.5 rounded-full px-2 text-[11px] leading-[18px] font-medium whitespace-nowrap no-underline after:absolute after:-inset-x-1 after:-inset-y-1.5 hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-link ${chip.cls}`}>
       {chip.text}
       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M8 4h12v12M20 4L5 19" /></svg>
     </a>
