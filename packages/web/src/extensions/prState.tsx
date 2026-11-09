@@ -1,17 +1,65 @@
-import { createContext, useContext, type ReactNode } from 'react';
-import type { Row } from '../sessions.ts';
-import { useLoad, type Loaded } from '../useLoad.ts';
-import { lookupPulls, type Pulls } from './pulls.ts';
+import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { eventKey, pullKey, readPull, type Pull, type PullEvent } from './pulls.ts';
 
-const GITHUB_KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
-const PrStateContext = createContext<Loaded<Pulls>>({ data: {}, error: '' });
-const NONE: Pulls = {};
+type Shown = { pulls: { [key: string]: Pull }; error: string };
+type Live = Shown & { want: (key: string) => () => void };
+const PrStateContext = createContext<Live>({ pulls: {}, error: '', want: () => () => {} });
+// The app's Retry-After past its stream cap.
+const REOPEN_MS = 30_000;
 
-/** The github service's PR states for every listed review session, read once per set of keys; empty when the service is not connected. */
-export function PrStates({ rows, children }: { rows: Row[] | undefined; children: ReactNode }) {
-  const keys = (rows ?? []).filter((r) => r.state !== 'archived' &&GITHUB_KEY.test(r.key)).map((r) => r.key).sort().join(',');
-  const pulls = useLoad(async () => (keys ? ((await lookupPulls(keys.split(','))) ?? NONE) : NONE), [keys], NONE);
-  return <PrStateContext value={pulls}>{children}</PrStateContext>;
+// The PRs chips on screen want, and the one EventSource on the app's pull_request stream that keeps them current.
+function pullStream(set: Dispatch<SetStateAction<Shown>>) {
+  const wanted = new Map<string, number>();
+  const loaded = new Set<string>();
+  let es: EventSource | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const put = (key: string, pull: Pull) => (loaded.add(key), set((s) => ({ pulls: { ...s.pulls, [key]: pull }, error: '' })));
+  const read = (key: string) => void readPull(key).then((pull) => pull && put(key, pull), (e: unknown) => set((s) => ({ ...s, error: e instanceof Error ? e.message : String(e) })));
+  function open() {
+    retry = undefined;
+    es = new EventSource('apps/github/events');
+    // Read after subscribing, so a change between the two is not lost; an event and a read are both absolute states, so applying both is harmless.
+    es.onopen = () => wanted.forEach((_n, key) => read(key));
+    es.addEventListener('pull_request', (m) => {
+      const e = JSON.parse(m.data) as PullEvent;
+      put(eventKey(e), e.pull_request);
+    });
+    es.onerror = failed;
+  }
+  function failed() {
+    // Chips that waited for an open that has not come are read now; the rest keep their last state.
+    wanted.forEach((_n, key) => loaded.has(key) || read(key));
+    if (es?.readyState !== EventSource.CLOSED) return;
+    // A non-200 answer (a 503 past the cap) ends an EventSource for good instead of retrying, so the page reopens it itself.
+    es = undefined;
+    retry = setTimeout(open, REOPEN_MS);
+  }
+  function close() {
+    es?.close();
+    clearTimeout(retry);
+    es = retry = undefined;
+  }
+  function want(key: string) {
+    wanted.set(key, (wanted.get(key) ?? 0) + 1);
+    if (wanted.get(key) === 1 && !es && !retry) open();
+    else if (wanted.get(key) === 1 && es?.readyState !== EventSource.CONNECTING) read(key);
+    return () => {
+      const n = wanted.get(key)! - 1;
+      if (n) wanted.set(key, n);
+      else wanted.delete(key);
+      if (!wanted.size) close();
+    };
+  }
+  return { want, close };
+}
+
+/** Live states for the PR chips on screen: each is read from the github app's GitHub mirror and kept current by one shared stream of its pull_request events. */
+export function PrStates({ children }: { children: ReactNode }) {
+  const [shown, setShown] = useState<Shown>({ pulls: {}, error: '' });
+  const live = useRef<ReturnType<typeof pullStream>>(null);
+  live.current ??= pullStream(setShown);
+  useEffect(() => () => live.current?.close(), []);
+  return <PrStateContext value={{ ...shown, want: live.current.want }}>{children}</PrStateContext>;
 }
 
 /** Says so above the list when PR states could not be read, instead of leaving rows without a chip. */
@@ -20,33 +68,21 @@ export function PrStatesNotice() {
   return error ? <p role="alert" className="m-0 px-4 pt-3 text-[13px] text-danger">{`Pull request states are unavailable: ${error}`}</p> : null;
 }
 
+// Every chip has a border, so a live flip from Open does not shift the rows below by its width.
 const CHIP = {
   open: { text: 'Open', cls: 'border border-line-strong text-ink-2' },
-  merged: { text: 'Merged', cls: 'bg-merged-bg text-merged' },
-  closed: { text: 'Closed', cls: 'bg-soft text-muted' },
+  merged: { text: 'Merged', cls: 'border border-transparent bg-merged-bg text-merged' },
+  closed: { text: 'Closed', cls: 'border border-transparent bg-soft text-muted' },
 };
 
-/** The GitHub page of a github session's pull request; GitHub redirects /pull/<n> to /issues/<n> for a plain issue. */
-export function prUrl(sessionKey: string) {
-  const m = GITHUB_KEY.exec(sessionKey);
-  return m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : undefined;
-}
-
-/** A link to the pull request behind a github session, saying whether it is open, merged or closed; just its number when that is unknown. */
+/** Whether the pull request behind a github review session is open, merged or closed; nothing when unknown. */
 export function PrChip({ sessionKey }: { sessionKey: string }) {
-  const pr = useContext(PrStateContext).data[sessionKey.replace(/^github:/, '')];
-  const url = prUrl(sessionKey);
-  if (!url) return null;
-  const n = `#${sessionKey.split('#').at(-1)}`;
-  const known = pr && Object.hasOwn(CHIP, pr.state) ? CHIP[pr.state] : undefined;
-  const chip = known ?? { text: n, cls: 'border border-line text-muted' };
-  const state = known?.text.toLowerCase();
-  return (
-    // relative lifts it over the row link's overlay; the after: box widens the tap target past the 18 px chip.
-    // The focus outline is drawn inside the pill, since the session header's line 2 clips overflow.
-    <a href={url} target="_blank" rel="noopener noreferrer" aria-label={state ? `Pull request ${n}, ${state}, on GitHub` : `${n} on GitHub`} title={state && `Pull request ${state} ${new Date(pr!.at).toLocaleDateString()}`} className={`relative flex flex-none items-center gap-0.5 rounded-full px-2 text-[11px] leading-[18px] font-medium whitespace-nowrap no-underline after:absolute after:-inset-x-1 after:-inset-y-1.5 hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-link ${chip.cls}`}>
-      {chip.text}
-      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M8 4h12v12M20 4L5 19" /></svg>
-    </a>
-  );
+  const { pulls, want } = useContext(PrStateContext);
+  const key = pullKey(sessionKey);
+  useEffect(() => (key ? want(key) : undefined), [key, want]);
+  const pr = key ? pulls[key] : undefined;
+  if (!pr) return null;
+  const chip = CHIP[pr.merged ? 'merged' : pr.state];
+  const at = pr.merged_at ?? pr.closed_at;
+  return <span title={`Pull request ${chip.text.toLowerCase()}${at ? ` ${new Date(at).toLocaleDateString()}` : ''}`} className={`flex-none rounded-full px-2 text-[11px] leading-[18px] font-medium whitespace-nowrap ${chip.cls}`}>{chip.text}</span>;
 }

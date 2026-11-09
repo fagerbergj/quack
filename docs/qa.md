@@ -25,7 +25,7 @@ node tools/qa/stack.ts down
 
 - `--web`: a built `packages/web/dist`, or `current` to build this tree first.
 - `--seed`: a directory of session data dirs to copy in (`session.sqlite` and its wal/shm, `session-key`, `agent`, `agent-def`, `meta.json`, `title`, `created`, `touched`; the workspace is skipped), `demo` to create one session (`qa-review`) through a canned model, `contracts` to write two Contract Studio sessions (`contracts:qa-schedule`, REST, and `contracts:qa-sdk`, TypeScript), each with version 1 approved and version 2 passed and waiting for approval, or `none`.
-- `--apps`: mounts the named extensions in the distributor under `/apps/<name>` (they are listed under `extensions` in the deployment file). Schedules is seeded with two sample schedules.
+- `--apps`: mounts the named extensions in the distributor under `/apps/<name>` (they are listed under `extensions` in the deployment file). Schedules is seeded with two sample schedules. GitHub gets a throwaway app key and the webhook secret `QA_WEBHOOK_SECRET` from `stack.ts`, so webhooks QA signs reach it while its calls to GitHub are refused.
 - `--model`: `none` (default) points the deployment's providers at a refused port, but keeps the pinned model names so copied sessions load. `fake` is a canned OpenAI-compatible endpoint, implied by `--seed demo`. `local` uses `QA_MODEL_URL` (default `http://127.0.0.1:11436/v1`, llm-swap with `qwen3.8-27b`) for flows that need a real model; run such a scenario by hand against `up --model local` and click the suggested option on question cards.
 
 ## Starter scenarios
@@ -39,6 +39,7 @@ node tools/qa/stack.ts down
 | `contract-studio` | A seeded contract beside its chat (tabs on a phone) with the changes since version 1 highlighted, the class diagram re-centring on a type, and approving the waiting version |
 | `search-filter` | The one search-and-filter row on Sessions and Artifacts: the funnel's panel (popover at 1280 px, sheet at 400 px), a filter set from it answered by the server, and its removable chip, light and dark |
 | `pr-chips` | Two github review sessions in the Sessions list, one merged and one with no known state (the rig answers the github service's lookup, since that service needs a GitHub App); each chip links to its pull request, takes focus, and opens a new tab without opening the session; the merged chip links from the session header too, at 1280 and 400 px, light and dark |
+| `pr-live` | A github review session in the Sessions list whose badge reads Open after a signed `reopened` webhook, then flips to Merged on a signed `closed` webhook through the app's `pull_request` stream, with no re-read, at 1280 and 400 px, light and dark |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed <dir>` with a copied session to check a real artifact card.
 

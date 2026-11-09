@@ -1,76 +1,79 @@
 import { render, screen, within } from '@testing-library/react';
-import { expect, test } from 'vitest';
-import userEvent from '@testing-library/user-event';
+import { expect, test, vi } from 'vitest';
 import { App } from '../App.tsx';
-import { Fail, fetchMock, routes, sess, stubViewport, useHarness } from '../test-harness.ts';
+import { Fail, FakeEventSource, fetchMock, routes, sess, stubViewport, useHarness } from '../test-harness.ts';
 
 useHarness(() => ({ 'GET /agents': { agents: [] } }));
 
-const keys = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `github:a/one#${from + i}`);
-const lookup = (k: string[]) => `GET /apps/github/pulls?keys=${encodeURIComponent(k.join(','))}`;
-const merged = (k: string[]) => ({ pulls: Object.fromEntries(k.map((key) => [key.replace('github:', ''), { state: 'merged', at: '2026-11-02T00:00:00Z' }])) });
+const pull = (n: number, over: object = {}) => ({ number: n, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: `https://github.com/A/One/pull/${n}`, title: `fix: pr ${n}`, ...over });
+const merged = { state: 'closed', merged: true, merged_at: '2026-11-02T00:00:00Z', closed_at: '2026-11-02T00:00:00Z' };
+const mirror = (n: number) => `GET /apps/github/repos/a/one/pulls/${n}`;
+const reads = () => fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('apps/github/repos/'));
+const row = (n: number) => screen.getByRole('link', { name: new RegExp(`#${n} Pr ${n}`) });
 
-function list(all: string[]) {
-  routes['GET /sessions'] = { sessions: all.map((k) => sess(k, { title: `fix: pr ${k.split('#')[1]}` })) };
+const stream = () => vi.waitFor(() => FakeEventSource.all[0] ?? Promise.reject(new Error('no stream yet')));
+
+function list(keys: string[]) {
+  routes['GET /sessions'] = { sessions: keys.map((k) => sess(k, { title: `fix: pr ${k.split('#')[1]}` })) };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
 }
 
-test('past 100 review sessions the PR states are looked up in batches the service accepts, and every row gets its chip', async () => {
-  // The lookup sorts keys as strings, so the batches follow that order.
-  const all = keys(1, 151).sort();
-  routes[lookup(all.slice(0, 100))] = merged(all.slice(0, 100));
-  routes[lookup(all.slice(100))] = merged(all.slice(100));
-  list(all);
-  expect(await screen.findByRole('link', { name: /#150 Pr 150/ })).toBeInTheDocument();
-  await screen.findAllByText('Merged');
-  expect(screen.getAllByText('Merged')).toHaveLength(150);
-  expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(2);
+test('the PRs the list shows are read from the mirror once the stream opens, each by itself', async () => {
+  routes[mirror(1)] = pull(1);
+  routes[mirror(2)] = pull(2, merged);
+  list(['github:A/One#1', 'github:a/one#2']);
+  await screen.findByRole('link', { name: /#2 Pr 2/ });
+  expect(FakeEventSource.all.map((s) => s.url)).toEqual(['apps/github/events']);
+  expect(reads(), 'nothing is read before the stream is subscribed').toEqual([]);
+  FakeEventSource.all[0].open();
+  expect(await within(row(2)).findByText('Merged')).toBeInTheDocument();
+  expect(within(row(1)).getByText('Open')).toBeInTheDocument();
+  expect(reads().sort(), 'one read per PR, in GitHub\'s case-insensitive form').toEqual(['apps/github/repos/a/one/pulls/1', 'apps/github/repos/a/one/pulls/2']);
 });
 
-test('the PR chip is its own link to the pull request on GitHub, beside the row link rather than inside it', async () => {
-  routes[lookup(keys(1, 3))] = { pulls: { 'a/one#1': { state: 'merged', at: '2026-11-02T00:00:00Z' } } };
-  list(keys(1, 3));
-  const chip = await screen.findByRole('link', { name: 'Pull request #1, merged, on GitHub' });
-  expect(chip).toHaveAttribute('href', 'https://github.com/a/one/pull/1');
-  expect(chip).toHaveAttribute('target', '_blank');
-  expect(chip).toHaveAttribute('rel', 'noopener noreferrer');
-  expect(chip.closest('a[href^="#/s/"]')).toBeNull();
-  // A PR the service has no state for still links, by its number.
-  expect(screen.getByRole('link', { name: '#2 on GitHub' })).toHaveAttribute('href', 'https://github.com/a/one/pull/2');
-  expect(screen.getByRole('link', { name: /#1 Pr 1/ })).toHaveAttribute('href', '#/s/github%3Aa%2Fone%231');
+test('a pull_request event flips its badge at once, and a reopened stream re-reads without a flash', async () => {
+  routes[mirror(1)] = pull(1);
+  list(['github:a/one#1']);
+  const es = await stream();
+  es.open();
+  await within(await screen.findByRole('link', { name: /#1 Pr 1/ })).findByText('Open');
+  // GitHub's casing of the repository still finds the row's PR.
+  es.emit('pull_request', { action: 'closed', repository: { full_name: 'A/One' }, pull_request: pull(1, merged) });
+  expect(within(row(1)).getByText('Merged')).toBeInTheDocument();
+  routes[mirror(1)] = pull(1, merged);
+  es.open();
+  expect(within(row(1)).getByText('Merged'), 'the badge holds while the re-read is in flight').toBeInTheDocument();
+  await vi.waitFor(() => expect(reads()).toHaveLength(2));
+  expect(within(row(1)).getByText('Merged')).toBeInTheDocument();
 });
 
-test('an archived review row is not looked up but still links to its pull request by number', async () => {
-  const live = sess('github:a/one#1', { title: 'fix: live' });
-  const shelved = sess('github:a/one#2', { title: 'fix: shelved', state: 'archived' });
-  const listed = (q: string) => `GET /sessions?${new URLSearchParams({ pageSize: '1000', q })}`;
-  routes['GET /sessions'] = { sessions: [live, shelved] };
-  routes[listed('NOT state:archived')] = { sessions: [live] };
-  routes[listed('state:archived')] = { sessions: [shelved] };
-  routes[lookup(keys(1, 2))] = { pulls: { 'a/one#1': { state: 'open', at: '2026-11-02T00:00:00Z' } } };
-  stubViewport(false);
-  location.hash = '#/sessions';
-  render(<App />);
-  await screen.findByRole('link', { name: 'Pull request #1, open, on GitHub' });
-  expect(screen.queryByRole('link', { name: '#2 on GitHub' })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  await userEvent.selectOptions(screen.getByLabelText('Show'), 'Archived');
-  expect(await screen.findByRole('link', { name: '#2 on GitHub' })).toHaveAttribute('href', 'https://github.com/a/one/pull/2');
-  expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(1);
+test('a failed read says so above the list; a badge already shown keeps its state', async () => {
+  routes[mirror(1)] = pull(1, merged);
+  list(['github:a/one#1']);
+  const es = await stream();
+  es.open();
+  await within(await screen.findByRole('link', { name: /#1 Pr 1/ })).findByText('Merged');
+  routes[mirror(1)] = new Fail(502, { title: 'Bad Gateway', detail: 'GitHub is down' });
+  es.open();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Pull request states are unavailable: GitHub is down');
+  expect(within(row(1)).getByText('Merged')).toBeInTheDocument();
 });
 
-test('a failed lookup says so above the list instead of dropping the chips silently', async () => {
-  routes[lookup(keys(1, 3))] = new Fail(502, { title: 'Bad Gateway', detail: 'GitHub is down' });
-  list(keys(1, 3));
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('Pull request states are unavailable: GitHub is down');
-  expect(within(screen.getByRole('link', { name: /#1 Pr 1/ })).queryByText(/Open|Merged|Closed/)).toBeNull();
-});
-
-test('a lookup the service cut short is reported, not shown as complete', async () => {
-  routes[lookup(keys(1, 3))] = { ...merged(keys(1, 2)), truncated: true };
-  list(keys(1, 3));
-  expect(await screen.findByRole('alert')).toHaveTextContent('answered only part of the lookup');
+test('a stream the app refuses (a 503 past its cap) is reopened after 30 s; the PRs it held back are read meanwhile', async () => {
+  routes[mirror(1)] = pull(1);
+  list(['github:a/one#1']);
+  const es = await stream();
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    es.fail();
+    vi.advanceTimersByTime(29_999);
+    expect(FakeEventSource.all).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(FakeEventSource.all).toHaveLength(2);
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(await within(row(1)).findByText('Open')).toBeInTheDocument();
 });

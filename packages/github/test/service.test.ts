@@ -61,9 +61,11 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/7' && req.method === 'PATCH') return reply(200, { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' });
     if (url === '/repos/acme/widgets/pulls/404' && req.method === 'PATCH') return reply(404, { message: 'Not Found' });
     if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
-    if (url === '/repos/acme/widgets/pulls/9') return reply(200, { number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z' });
-    if (url === '/repos/acme/widgets/pulls/10') return reply(200, { number: 10, state: 'closed', merged: false, closed_at: '2026-11-02T00:00:00Z' });
-    if (url === '/repos/acme/widgets/pulls/11') return reply(200, { number: 11, state: 'open', updated_at: '2026-11-03T00:00:00Z' });
+    const mirrored = { html_url: `https://github.com/acme/widgets/pull/${url.split('/').at(-1)}`, title: 'Fix the cache', base: { repo: { full_name: 'acme/widgets' } } };
+    if (url === '/repos/acme/widgets/pulls/9') return reply(200, { ...mirrored, number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z', closed_at: '2026-11-01T00:00:00Z' });
+    if (url === '/repos/acme/widgets/pulls/10') return reply(200, { ...mirrored, number: 10, state: 'closed', merged: false, merged_at: null, closed_at: '2026-11-02T00:00:00Z' });
+    if (url === '/repos/acme/widgets/pulls/11') return reply(200, { ...mirrored, number: 11, state: 'open', merged: false, merged_at: null, closed_at: null, updated_at: '2026-11-03T00:00:00Z' });
+    if (url === '/repos/acme/widgets/pulls/19') return reply(500, { message: 'Server Error' });
     if (url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
     // Every page full: a commit whose check runs never end.
     if (url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
@@ -148,7 +150,7 @@ function deliver(event: string, payload: unknown, opts: { secret?: string; id?: 
   return fetch(`${opts.to ?? service}/webhook`, { method: 'POST', body, headers: { 'x-github-event': event, 'x-hub-signature-256': sig, 'x-github-delivery': opts.id ?? 'd-1' } }).then((r) => r.status);
 }
 
-const repository = { name: 'widgets', owner: { login: 'acme' } };
+const repository = { name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } };
 const pr = { number: 7, title: 'Fix the cache', body: 'Closes #3', head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } };
 
 test('verified webhooks start a review in the PR session, keyed by the delivery id', async () => {
@@ -654,33 +656,49 @@ test('a GitHub refusal keeps its status and a fault here is a 500, so neither is
   assert.equal((await postTo({ owner: 'acme', repo: 'widgets', number: 18, event: 'COMMENT', body: 'x' })).status, 422);
 });
 
-const pulls = (keys: string, token = 'svc-secret') =>
-  fetch(`${service}/pulls?keys=${encodeURIComponent(keys)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: (await r.json()) as any }));
+const mirror = (path: string) => fetch(`${service}/repos/${path}`).then(async (r) => ({ status: r.status, type: r.headers.get('content-type'), body: (await r.json()) as any }));
 const reads = (n: number) => calls.filter((c) => c.path === `/repos/acme/widgets/pulls/${n}`).length;
 
-test('closed and reopened webhooks record the PR state and start no run', async () => {
+// The first event off a stream, skipping keepalive comments.
+async function nextEvent(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  let text = '';
+  while (!/^event: .*\ndata: .*\n\n/m.test(text)) text += new TextDecoder().decode((await reader.read()).value);
+  const [, name, data] = /^event: (.*)\ndata: (.*)$/m.exec(text)!;
+  return { name, data: JSON.parse(data) };
+}
+
+test('closed and reopened webhooks write the mirrored PR, publish it as a pull_request event, and start no run', async () => {
   invocations.length = 0;
-  const closed = (n: number, merged: boolean) => ({ action: 'closed', pull_request: { ...pr, number: n, state: 'closed', merged, merged_at: merged ? '2026-11-03T10:00:00Z' : null, closed_at: '2026-11-03T10:00:00Z', labels: [{ name: 'quack:review' }] }, repository });
+  const stream = await fetch(`${service}/events`);
+  const reader = stream.body!.getReader();
+  const closed = (n: number, merged: boolean) => ({ action: 'closed', pull_request: { ...pr, number: n, state: 'closed', merged, merged_at: merged ? '2026-11-03T10:00:00Z' : null, closed_at: '2026-11-03T10:00:00Z', html_url: `https://github.com/acme/widgets/pull/${n}`, labels: [{ name: 'quack:review' }] }, repository });
   assert.equal(await deliver('pull_request', closed(20, true), { id: 'd-c1' }), 200);
+  assert.deepEqual(await nextEvent(reader), { name: 'pull_request', data: { action: 'closed', repository: { full_name: 'acme/widgets' }, pull_request: { number: 20, state: 'closed', merged: true, merged_at: '2026-11-03T10:00:00Z', closed_at: '2026-11-03T10:00:00Z', html_url: 'https://github.com/acme/widgets/pull/20', title: 'Fix the cache' } } });
+  await reader.cancel();
   assert.equal(await deliver('pull_request', closed(21, false), { id: 'd-c2' }), 200);
-  assert.equal(await deliver('pull_request', { action: 'reopened', pull_request: { ...pr, number: 22, state: 'open' }, repository }, { id: 'd-c3' }), 200);
+  const reopened = (n: number) => ({ action: 'reopened', pull_request: { ...pr, number: n, state: 'open', merged: false, html_url: `https://github.com/acme/widgets/pull/${n}` }, repository });
+  assert.equal(await deliver('pull_request', reopened(22), { id: 'd-c3' }), 200);
   assert.equal(invocations.length, 0);
-  const closedThenReopened = [closed(23, false), { action: 'reopened', pull_request: { ...pr, number: 23, state: 'open' }, repository }];
-  for (const [i, p] of closedThenReopened.entries()) await deliver('pull_request', p, { id: `d-r${i}` });
+  for (const [i, p] of [closed(23, false), reopened(23)].entries()) await deliver('pull_request', p, { id: `d-r${i}` });
   const before = calls.length;
-  const { body } = await pulls('github:acme/widgets#20,ACME/widgets#21,acme/widgets#22,acme/widgets#23');
-  assert.equal(calls.length, before, 'recorded states need no GitHub read');
-  const states = Object.fromEntries(Object.entries(body.pulls).map(([k, v]: any) => [k, v.state]));
-  assert.deepEqual(states, { 'acme/widgets#20': 'merged', 'ACME/widgets#21': 'closed', 'acme/widgets#22': 'open', 'acme/widgets#23': 'open' });
-  assert.equal(body.pulls['acme/widgets#20'].at, '2026-11-03T10:00:00Z');
+  const got = await Promise.all(['acme/widgets/pulls/20', 'ACME/Widgets/pulls/21', 'acme/widgets/pulls/22', 'acme/WIDGETS/pulls/23'].map(mirror));
+  assert.equal(calls.length, before, 'webhook writes need no GitHub read');
+  assert.deepEqual(got.map((g) => [g.body.state, g.body.merged]), [['closed', true], ['closed', false], ['open', false], ['open', false]]);
+  assert.equal(got[1].body.html_url, 'https://github.com/acme/widgets/pull/21', "GitHub's casing, not the request's");
 });
 
-test('an unseen PR is read from GitHub once; merged and closed stay cached', async () => {
-  const keys = 'github:acme/widgets#9,github:acme/widgets#10,github:acme/widgets#11';
-  const first = await pulls(keys);
-  assert.deepEqual(Object.fromEntries(Object.entries(first.body.pulls).map(([k, v]: any) => [k, v.state])), { 'acme/widgets#9': 'merged', 'acme/widgets#10': 'closed', 'acme/widgets#11': 'open' });
-  await pulls(keys);
+test('the mirror reads an unseen PR from GitHub once, in GitHub\'s field names; merged and closed stay cached', async () => {
+  const first = await Promise.all(['acme/widgets/pulls/9', 'acme/widgets/pulls/10', 'acme/widgets/pulls/11'].map(mirror));
+  assert.deepEqual(first[0], { status: 200, type: 'application/json', body: { number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z', closed_at: '2026-11-01T00:00:00Z', html_url: 'https://github.com/acme/widgets/pull/9', title: 'Fix the cache' } });
+  assert.deepEqual(first.map((f) => f.body.state), ['closed', 'closed', 'open']);
+  await Promise.all(['acme/widgets/pulls/9', 'Acme/widgets/pulls/10', 'acme/widgets/pulls/11'].map(mirror));
   assert.deepEqual([reads(9), reads(10), reads(11)], [1, 1, 1]);
+});
+
+test('the mirror answers problem+json: 404 for a repo without the app or an unknown PR, 502 when GitHub fails', async () => {
+  const [noApp, unknown, down] = await Promise.all(['acme/private/pulls/1', 'acme/widgets/pulls/404', 'acme/widgets/pulls/19'].map(mirror));
+  assert.deepEqual([noApp.status, noApp.type, unknown.status, unknown.type, down.status, down.type], [404, 'application/problem+json', 404, 'application/problem+json', 502, 'application/problem+json']);
+  assert.equal((await fetch(`${service}/pulls?keys=acme/widgets%2310`)).status, 404, 'the keyed lookup is gone');
 });
 
 test('an oversized body is a 413 problem', async () => {
@@ -688,6 +706,4 @@ test('an oversized body is a 413 problem', async () => {
   assert.deepEqual([r.status, r.headers.get('content-type')], [413, 'application/problem+json']);
 });
 
-test('a PR the app cannot read is left out', async () => {
-  assert.deepEqual((await pulls('github:acme/private#1,not-a-key')).body, { pulls: {} });
-});
+

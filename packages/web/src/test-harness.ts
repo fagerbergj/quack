@@ -72,10 +72,43 @@ export class FakeSocket {
   }
 }
 
+/** An EventSource a test drives: `open()` as the server's headers arrive, `emit` a named event, `fail` as a non-200 answer does. */
+export class FakeEventSource {
+  static all: FakeEventSource[] = [];
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  readyState = 0;
+  url: string;
+  onopen?: () => void;
+  onerror?: () => void;
+  private listeners: Record<string, Array<(e: { data: string }) => void>> = {};
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.all.push(this);
+  }
+  addEventListener(type: string, fn: (e: { data: string }) => void) {
+    (this.listeners[type] ??= []).push(fn);
+  }
+  close() {
+    this.readyState = 2;
+  }
+  open() {
+    act(() => ((this.readyState = 1), this.onopen?.()));
+  }
+  emit(type: string, data: object) {
+    act(() => this.listeners[type]?.forEach((fn) => fn({ data: JSON.stringify(data) })));
+  }
+  fail() {
+    act(() => ((this.readyState = 2), this.onerror?.()));
+  }
+}
+
 /** Stubs fetch, WebSocket and the viewport for each test, and fails a test that made a request it did not route. */
 export function useHarness(base: () => Routes) {
   beforeEach(() => {
     FakeSocket.all = [];
+    FakeEventSource.all = [];
     for (const k of Object.keys(routes)) delete routes[k];
     Object.assign(routes, base());
     for (const k of Object.keys(live)) delete live[k];
@@ -83,6 +116,7 @@ export function useHarness(base: () => Routes) {
     fetchMock.mockClear();
     forgetVersion();
     vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('EventSource', FakeEventSource);
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
     stubViewport(true);

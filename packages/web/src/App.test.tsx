@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
-import { ask, assistant, entry, failedRun, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
+import { ask, assistant, entry, failedRun, FakeEventSource, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
@@ -78,30 +78,27 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
 });
 
-test('review rows carry their PR state from one lookup, and read plainly when the service is not connected', async () => {
-  const keys = encodeURIComponent('github:a/one#1,github:a/one#2,github:a/one#3');
+test('review rows carry their PR state from the mirror, and read plainly when the service is not connected', async () => {
+  const pr = (n: number, over: object) => ({ number: n, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: `https://github.com/a/one/pull/${n}`, title: 't', ...over });
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' }), sess('github:a/one#3', { title: 'fix: third' }), sess('gh:9', { title: 'Plain' })] };
-  routes[`GET /apps/github/pulls?keys=${keys}`] = { pulls: { 'a/one#1': { state: 'open', at: '2026-11-01T00:00:00Z' }, 'a/one#2': { state: 'merged', at: '2026-11-02T00:00:00Z' } } };
+  routes['GET /apps/github/repos/a/one/pulls/1'] = pr(1, {});
+  routes['GET /apps/github/repos/a/one/pulls/2'] = pr(2, { state: 'closed', merged: true, merged_at: '2026-11-02T00:00:00Z', closed_at: '2026-11-02T00:00:00Z' });
+  routes['GET /apps/github/repos/a/one/pulls/4'] = pr(4, { state: 'closed', closed_at: '2026-11-01T00:00:00Z' });
   const view = render(<App />);
-  // The chip sits beside the row's link, so a row is the link's parent.
-  const row = async (name: RegExp) => (await screen.findByRole('link', { name })).parentElement!;
+  const row = async (name: RegExp) => await screen.findByRole('link', { name });
+  await waitFor(() => expect(FakeEventSource.all).toHaveLength(1));
+  FakeEventSource.all[0].open();
   await waitFor(async () => expect(await row(/#2 Second/)).toHaveTextContent('Merged'));
   expect(await row(/#1 First/)).toHaveTextContent('Open');
-  expect(within(await row(/#3 Third/)).getByRole('link', { name: '#3 on GitHub' })).not.toHaveTextContent(/Open|Merged|Closed/);
-  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed|on GitHub/);
-  expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith('apps/github/pulls'))).toHaveLength(1);
+  expect(await row(/#3 Third/)).not.toHaveTextContent(/Open|Merged|Closed/);
+  expect(await row(/Plain/)).not.toHaveTextContent(/Open|Merged|Closed/);
   view.unmount();
-  delete routes[`GET /apps/github/pulls?keys=${keys}`];
+  expect(FakeEventSource.all[0].readyState, 'the stream closes with the last chip').toBe(2);
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#4', { title: 'fix: fourth' })] };
   render(<App />);
-  expect(await screen.findByRole('link', { name: '#1 on GitHub' })).toBeInTheDocument();
-  expect(await row(/#1 First/)).not.toHaveTextContent(/Open|Merged|Closed/);
-});
-
-test('a closed PR reads Closed on its row', async () => {
-  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' })] };
-  routes[`GET /apps/github/pulls?keys=${encodeURIComponent('github:a/one#1')}`] = { pulls: { 'a/one#1': { state: 'closed', at: '2026-11-01T00:00:00Z' } } };
-  render(<App />);
-  expect(await screen.findByRole('link', { name: 'Pull request #1, closed, on GitHub' })).toHaveTextContent('Closed');
+  await waitFor(() => expect(FakeEventSource.all).toHaveLength(2));
+  FakeEventSource.all[1].open();
+  await waitFor(async () => expect(await row(/#4 Fourth/)).toHaveTextContent('Closed'));
 });
 
 test('review rows show their repo only when the list holds reviews from two repos', async () => {

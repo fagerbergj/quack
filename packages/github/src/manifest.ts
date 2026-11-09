@@ -2,6 +2,7 @@ import { appEndpoint, type ExtensionManifest } from '@quack/sdk';
 import { reviewPullRequest } from './action.ts';
 import { evalAdapter } from './eval.ts';
 import { mountGithub } from './mount.ts';
+import { MIRROR_PATH } from './pulls.ts';
 import { settingsProblems } from './settings.ts';
 import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 
@@ -11,8 +12,8 @@ export const manifest: ExtensionManifest = {
   optional: ['judge'],
   settings: settingsProblems,
   app: mountGithub,
-  // The pull-request badges the page reads, and the webhook GitHub signs (the app verifies the signature).
-  pages: [{ method: 'GET', path: '/pulls' }, { method: 'POST', path: '/webhook' }],
+  // The pull requests the page's badges read and their live events, and the webhook GitHub signs (the app verifies the signature).
+  pages: [{ method: 'GET', path: MIRROR_PATH }, { method: 'GET', path: '/events' }, { method: 'POST', path: '/webhook' }],
   env: ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'],
   evalAdapters: [evalAdapter],
   actions: [reviewPullRequest],
