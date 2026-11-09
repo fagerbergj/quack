@@ -10,6 +10,7 @@ import { SessionList } from './SessionList.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { ExtensionProviders } from './slots.tsx';
 import { useDesktop } from './useDesktop.ts';
+import { useUpdates } from './useUpdates.ts';
 import { useWorkspaceData, Workspace } from './Workspace.tsx';
 
 // shortcut: hash routing keeps the build static, so any file server can host it; move to a router with auth.
@@ -75,6 +76,7 @@ export function App() {
   const hash = trimSlash(raw);
   const full = parseFull(hash);
   const session = full ?? parseHash(hash);
+  useUpdates();
   // Inbox folded into Home; old links still land.
   useEffect(() => {
     if (hash === '#/inbox') location.replace('#/');
