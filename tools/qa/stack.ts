@@ -65,8 +65,6 @@ function githubEnv(tmp: string): Record<string, string> {
   return { QUACK_GH_APP_ID: '1', QUACK_GH_PRIVATE_KEY_FILE: key, QUACK_GH_WEBHOOK_SECRET: QA_WEBHOOK_SECRET };
 }
 
-const reachable = (url: string) => async () => (await fetch(url)).ok;
-
 function deployment(modelUrl: string) {
   const limits = { contextWindow: 262144, maxTokens: 16384 };
   return {
@@ -100,7 +98,7 @@ function copySeed(from: string, dataDir: string): void {
   for (const name of readdirSync(from)) cpSync(join(from, name), join(dataDir, name), { recursive: true, filter: (src) => !/[\\/]workspace$/.test(src) });
 }
 
-type Parts = { children: ChildProcess[]; servers: Server[]; tmp: string };
+export type Parts = { children: ChildProcess[]; servers: Server[]; tmp: string };
 
 function launch(parts: Parts, args: string[], env: Record<string, string>): ChildProcess {
   // A process group lets teardown also reach the session processes the distributor spawned.
@@ -130,7 +128,7 @@ function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   try { if (child.pid) process.kill(-child.pid, signal); } catch { /* already gone */ }
 }
 
-async function teardown(parts: Parts): Promise<void> {
+export async function teardown(parts: Parts): Promise<void> {
   const exits = parts.children.map((c) => new Promise<void>((ok) => (c.exitCode !== null || c.signalCode ? ok() : c.once('exit', () => ok()))));
   for (const c of parts.children.slice().reverse()) c.kill('SIGTERM');
   await Promise.race([Promise.all(exits), new Promise((r) => setTimeout(r, 8_000))]);
@@ -149,6 +147,22 @@ async function modelUrl(parts: Parts, opts: StackOpts): Promise<string> {
   return fake.url;
 }
 
+const ATTEMPTS = 3;
+
+/** Launches the distributor on a free port and waits until it serves; another process can take the port (or port+1, its session port) between freePort and listen, so a distributor that exits first is relaunched on a new one. */
+export async function startDistributor(parts: Parts, env: Record<string, string>, next = freePort): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    const port = await next();
+    const url = `http://127.0.0.1:${port}`;
+    const child = launch(parts, ['packages/distributor/src/main.ts'], { ...env, PORT: String(port) });
+    const exited = () => child.exitCode !== null || child.signalCode !== null;
+    // Bounded: whatever holds the port may never answer, and the child's exit must still be noticed.
+    await waitFor(async () => exited() || (await fetch(`${url}/version`, { signal: AbortSignal.timeout(1000) })).ok, 'the distributor');
+    if (!exited()) return url;
+    if (attempt === ATTEMPTS) throw new Error(`the distributor exited before serving, ${ATTEMPTS} times`);
+  }
+}
+
 /** Starts a distributor (and the apps it mounts) on free ports with a throwaway data dir; `stop` tears everything down. */
 export async function startStack(opts: StackOpts = {}): Promise<Stack> {
   const parts: Parts = { children: [], servers: [], tmp: mkdtempSync(join(tmpdir(), 'quack-qa-')) };
@@ -163,16 +177,13 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     if (opts.seed === 'contracts') await seedContracts(dataDir);
     else if (opts.seed && opts.seed !== 'none' && opts.seed !== 'demo') copySeed(resolve(opts.seed), dataDir);
     const config = join(parts.tmp, 'deployment.json');
-    const port = await freePort();
-    const url = `http://127.0.0.1:${port}`;
     if (opts.apps?.includes('schedules')) await seedSchedules(dataDir);
     const extensions = Object.fromEntries((opts.apps ?? []).map((name) => [name, {}]));
     writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts)), extensions }));
-    launch(parts, ['packages/distributor/src/main.ts'], {
-      PORT: String(port), QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
+    const url = await startDistributor(parts, {
+      QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', ...(opts.apps?.includes('github') && githubEnv(parts.tmp)),
     });
-    await waitFor(reachable(`${url}/version`), 'the distributor');
     if (opts.seed === 'demo') await seedDemo(url);
     return { url, dataDir, stop: async () => { process.off('exit', onExit); await stop(); } };
   } catch (err) {
