@@ -12,6 +12,8 @@ export type RunRecord = {
   n: number; startedAt: number; endedAt: number | null; failedSteps: Array<{ step: string; error: string }>; lastMessage: string | null; cancelled: string[];
   /** Each ended tool round, by the assistant entry that called its tools; absent in runs recorded before turn.ended. */
   turns?: Array<{ entry: string; at: number }>;
+  /** When a process came up with this run still open; the distributor recorded the previous one stopped. */
+  resumes?: number[];
 };
 export type Spend = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; at: number };
 
@@ -54,6 +56,7 @@ function runEvents(runs: RunRecord[], facts: SessionFacts, failures: Array<{ ste
   return runs.flatMap((r) => [
     ev(`run:${r.n}:started`, 'run.started', r.startedAt, { run: r.n }),
     ...(r.turns ?? []).map((t, i) => ev(`run:${r.n}:turn:${i + 1}:ended`, 'turn.ended', t.at, { run: r.n, index: i + 1 })),
+    ...(r.resumes ?? []).map((at, i) => ev(`state:run:${r.n}:resume:${i + 1}`, 'state.changed', at, { state: 'running' })),
     ...(r.endedAt === null ? [] : [
       // shortcut: an aborted run reads as failed or succeeded; report aborted once the harness exposes how a run ended.
       ev(`run:${r.n}:ended`, 'run.ended', r.endedAt, { run: r.n, outcome: r.failedSteps.length ? 'failed' : 'succeeded', failedSteps: r.failedSteps, ...(r.lastMessage && { lastMessage: r.lastMessage }) }),

@@ -178,6 +178,31 @@ test('a process that comes up without a run reports idle, after the distributor 
   assert.deepEqual((await h.stream())?.events.filter((e) => e.id.startsWith('state:boot:')).map((e) => e.id), ['state:boot:1', 'state:boot:2']);
 });
 
+test('a process that comes up mid-run reports running again, after the distributor recorded it stopped', async () => {
+  let release!: () => void;
+  let reached!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  const started = new Promise<void>((r) => (reached = r));
+  const wait = defineTool({ name: 'wait', description: 'waits', parameters: obj({}, { open: true }), replay: 'safe', execute: async () => (reached(), await held, { output: [{ type: 'text', text: 'ok' }] }) });
+  const h = await harness(KEY, { responses: [fauxAssistantMessage(fauxToolCall('wait', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Done.')], extensions: [defineExtension({ name: 'waits', tools: [wait] })] });
+  await h.session.submit('go', undefined, false);
+  await started;
+  await h.settle();
+  // The idle sweep stopped the process while its run waited (on a person, or a slow tool); a request started it again.
+  await h.catalog.stopped(KEY);
+  await h.sender.stop();
+  const again = await h.restart();
+  await again.flush();
+  assert.equal((await h.catalog.getSession(KEY))?.state, 'running');
+  release();
+  await h.session.root.waitForIdle(ctx);
+  for (let i = 0; i < 50; i++) { await again.flush(); await new Promise((r) => setImmediate(r)); }
+  await again.stop();
+  const row = await h.catalog.getSession(KEY);
+  assert.deepEqual([row?.state, row?.lastRun?.outcome], ['idle', 'succeeded']);
+  assert.deepEqual((await h.stream())?.events.filter((e) => e.type === 'state.changed').map((e) => e.id), ['state:boot:1', 'state:run:1:resume:1', 'state:run:1:idle']);
+});
+
 test('a session mid-run with two ended turns shows lastActivity at the second turn\'s end', async () => {
   let clock = Date.parse('2026-11-06T10:00:00Z');
   let release!: () => void;
