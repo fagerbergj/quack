@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord/context';
@@ -136,6 +137,47 @@ test('a question the packed reply leaves unanswered escalates on its own; a reru
     assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.note]), [['p0', true, 'in the diff'], ['p1', false, 'missing']]);
   }
   assert.equal(packedCalls, 1);
+});
+
+test('a batch over the judge model window splits into sub-batches that each fit; a question a reply leaves out escalates alone', async () => {
+  const shared = { intent: 'serve the page' };
+  const units = ['u0', 'u1', 'u2', 'u3'].map((id) => ({ id, shared, state: { text: id + 'x'.repeat(1000) } }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: Object.fromEntries(units.map((_, i) => [`c.says_why#${i}`, { type: 'bool', probability: 0.5 }])) }));
+  const prompts: string[] = [];
+  const window = 1400 - 400;
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id, contextWindow: 1400, maxTokens: 400 }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      const text = r.messages[0].content;
+      if (text.startsWith('Decision:')) return { stopReason: 'stop', content: [{ type: 'text', text: '{"choice": "no", "confidence": 0.9, "reason": "alone"}' }] };
+      prompts.push(text);
+      // The second sub-batch's reply leaves out its second question.
+      const reply = prompts.length === 1 ? '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "a"}, "q1": {"choice": "yes", "confidence": 0.9, "reason": "b"}}' : '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "c"}}';
+      return { stopReason: 'stop', content: [{ type: 'text', text: reply }] };
+    },
+  });
+  let [active, peak] = [0, 0];
+  const one = limiter(1);
+  const escalations: typeof one = (task) => one(async () => {
+    peak = Math.max(peak, ++active);
+    try {
+      return await task();
+    } finally {
+      active--;
+    }
+  });
+  const answered = await answerItems(api as never, { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations }, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+  assert.equal(prompts.length, 2, 'two sub-batches, each its own request');
+  for (const p of prompts) {
+    assert.ok(p.length / 3 <= window, 'each sub-batch fits the window');
+    assert.equal(p.split('serve the page').length, 2, 'the shared context is sent once per sub-batch');
+  }
+  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.note]), [['u0', true, 'a'], ['u1', true, 'b'], ['u2', true, 'c'], ['u3', false, 'alone']]);
+  const key = (ids: string[]) => `m:escalation:${createHash('sha256').update(ids.map((id) => `${id}:c.says_why`).join('\n')).digest('hex').slice(0, 16)}`;
+  assert.ok(api.memos.has(key(['u0', 'u1'])) && api.memos.has(key(['u2', 'u3'])), 'each sub-batch is memoized under its own questions');
+  assert.deepEqual([...api.memos.keys()].filter((k) => k.startsWith('decision:m:')), ['decision:m:u3:c.says_why'], 'only the left-out question is asked alone');
+  assert.equal(peak, 1, 'a left-out question waits for its own slot');
 });
 
 test('a limiter runs at most n tasks at once and starts the next as one ends', async () => {

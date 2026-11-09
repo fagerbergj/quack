@@ -25,7 +25,7 @@ type Common = {
   classifier?: ClassifierRef;
   /** Where uncertain items escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
-  /** The most escalations to the judge model in flight at once; 4 by default. Decision-model requests stay one at a time. */
+  /** The most judge-model requests in flight at once; 4 by default. A packed group's sub-batch is one request. Decision-model requests stay one at a time. */
   escalations?: number;
   toolName?: string;
   /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
