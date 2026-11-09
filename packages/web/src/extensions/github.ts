@@ -3,7 +3,7 @@ import { BLUE, cut, sentence, type Extension, type Nameable } from '../extension
 import type { SealedArtifact } from '../api.ts';
 import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
 import { PrSection } from './PrRail.tsx';
-import { PrChip, PrStates, PrStatesNotice } from './prState.tsx';
+import { PrChip, PrStates, PrStatesNotice, prUrl } from './prState.tsx';
 import { parseReview } from './review.ts';
 import { reviewCard } from './ReviewCard.tsx';
 
@@ -56,10 +56,9 @@ export const github: Extension = {
   provider: PrStates,
   notice: PrStatesNotice,
   rail: PrSection,
-  // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {
-    const m = KEY.exec(key);
-    return m ? { url: `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}`, label: 'Open on GitHub' } : undefined;
+    const url = prUrl(key);
+    return url ? { url, label: 'Open on GitHub' } : undefined;
   },
   scope: (key) => /^github:([^#]+)#/.exec(key)?.[1],
 };
