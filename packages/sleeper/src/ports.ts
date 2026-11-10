@@ -9,9 +9,6 @@ export type SleeperClient = {
   users(id: string): Promise<Json>;
   rosters(id: string): Promise<Json>;
   matchups(id: string, week: number): Promise<Json>;
-  transactions(id: string, round: number): Promise<Json>;
-  drafts(id: string): Promise<Json>;
-  draft(id: string): Promise<Json>;
   draftPicks(id: string): Promise<Json>;
   winnersBracket(id: string): Promise<Json>;
   seasonStats(season: string): Promise<Json>;

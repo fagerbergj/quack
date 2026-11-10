@@ -1,5 +1,6 @@
 import { NotFound, type Json, type SleeperClient } from '../client.ts';
-import { ownerTeam, ptsKey, round2, type LineupInput, type NewsItem } from '../lineup/facts.ts';
+import { CLOSE_GAP, ownerTeam, POSITIONS, ptsKey, round2, UNAVAILABLE, type LineupInput, type NewsItem } from '../lineup/facts.ts';
+import { TRENDING_LIMIT } from '../trends/facts.ts';
 import { newsFor, type Searchable } from '../lineup/news.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
 
@@ -43,18 +44,14 @@ export type WaiverFacts = {
 export type WaiverDeps = { client: SleeperClient; news?: (p: Searchable, at: number) => Promise<NewsItem[]> };
 
 const WAIVER_TYPES: WaiverType[] = ['rolling', 'reverse_standings', 'faab'];
-export const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
-export const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
 /** Skill positions want one bench cover beyond their starting slots. */
 export const COVER: Record<string, number> = { RB: 1, WR: 1, TE: 1 };
 export const TOP_PER_POS = 5;
 /** The ownership cut for a 12-team league. A smaller league leaves more owned players free, so its cut rises in proportion, never past 95. */
 export const WIDE_OWNED = 40;
 export const wideOwned = (teams: number) => Math.min(95, (WIDE_OWNED * 12) / Math.max(teams, 1));
-const TRENDING_LIMIT = 25;
 /** Weeks ahead a bye still counts as inside the lead time to cover it. */
 export const BYE_LEAD = 2;
-const CLOSE_GAP = 3;
 
 /** Each NFL team's bye: the schedule week it has no game. */
 export function byeWeeks(schedule: Json[]): Map<string, number> {

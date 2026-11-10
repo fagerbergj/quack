@@ -46,7 +46,6 @@ export const cardAdapters: EvalAdapter[] = [
   { ...waivers, services: { [WAIVERS_FACTS_KIND]: async () => ({ env: {}, captured: [], close: async () => {} }) } },
   ...waiversRest,
   ...adaptersFor('lineup', lineupRubric, lineupEvidence, LINEUP_NEWS),
-  ...adaptersFor('trade', tradeRubric, tradeEvidence, TRADE_NEWS),
   ...adaptersFor('trade-finder', tradeRubric, tradeEvidence, TRADE_NEWS),
   ...adaptersFor('trends', trendsRubric, trendsEvidence, TRENDS_NEWS),
   ...adaptersFor('history', historyRubric, historyEvidence),

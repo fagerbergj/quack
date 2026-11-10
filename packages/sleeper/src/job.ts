@@ -1,17 +1,17 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { Schema } from '@earendil-works/pi-schema';
-import type { ClassifierRef, JudgeOptions, Rubric } from '@quack/judge';
+import type { JudgeOptions, Rubric } from '@quack/judge';
 import type { Step, StepContext } from '@quack/workflows';
 import { cardsKind } from './lineup/card.ts';
 import type { LineupInput } from './lineup/facts.ts';
 import { newsGated, type NewsGate } from './rubric-kit.ts';
 
-type JudgeDeps = { news?: unknown; classifier?: ClassifierRef; now?: () => number };
+type JudgeDeps = { news?: unknown; now?: () => number };
 
 /** A job's card judge: its rubric gated on the news source by newsGated, and evidence from the facts its card was built on. */
 export function cardJudge<F>(deps: JudgeDeps, rubric: Rubric, gate: NewsGate | undefined, evidence: (f: F) => unknown) {
   const { rubric: gated, notes } = gate ? newsGated(rubric, gate, !!deps.news) : { rubric, notes: [] };
-  return (facts: F): { options: JudgeOptions; notes: string[] } => ({ options: { kind: cardsKind, rubric: gated, evidence: evidence(facts) as NonNullable<JudgeOptions['evidence']>, maxRevisions: 1, classifier: deps.classifier }, notes });
+  return (facts: F): { options: JudgeOptions; notes: string[] } => ({ options: { kind: cardsKind, rubric: gated, evidence: evidence(facts) as NonNullable<JudgeOptions['evidence']>, maxRevisions: 1 }, notes });
 }
 
 /** What a card job is: how it gathers facts, asks for a decision, builds the card and judges it. */

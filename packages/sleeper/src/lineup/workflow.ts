@@ -1,5 +1,4 @@
 import { arr, obj, str } from '@earendil-works/pi-schema';
-import { type ClassifierRef } from '@quack/judge';
 import { defineWorkflow } from '@quack/workflows';
 import { newsLink } from './news.ts';
 import type { SleeperClient } from '../client.ts';
@@ -14,7 +13,6 @@ export const LINEUP_WORKFLOW = 'sleeper.lineup';
 export type LineupDeps = {
   client: SleeperClient;
   news?: FactsDeps['news'];
-  classifier?: ClassifierRef;
   now?: () => number;
 };
 

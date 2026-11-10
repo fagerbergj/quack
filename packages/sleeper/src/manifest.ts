@@ -6,7 +6,7 @@ import { withChat } from './chat.ts';
 import { HISTORY_WORKFLOW, historyFromEnv } from './history/index.ts';
 import { LINEUP_WORKFLOW, lineupFromEnv } from './lineup/index.ts';
 import { DIGEST_WORKFLOW, digestFromEnv, RETRO_WORKFLOW, retroFromEnv } from './report/index.ts';
-import { FINDER_WORKFLOW, finderFromEnv, TRADE_WORKFLOW, tradeFromEnv } from './trades/index.ts';
+import { FINDER_WORKFLOW, finderFromEnv } from './trades/index.ts';
 import { TRENDS_WORKFLOW, trendsFromEnv } from './trends/index.ts';
 import { WAIVERS_WORKFLOW, waiversFromEnv } from './waivers/index.ts';
 import { cardAdapters } from './adapters.ts';
@@ -28,7 +28,6 @@ export const manifest: ExtensionManifest = {
     [LINEUP_WORKFLOW]: { build: () => withChat(lineupFromEnv()), env },
     [WAIVERS_WORKFLOW]: { build: () => withChat(waiversFromEnv()), env },
     [FINDER_WORKFLOW]: { build: () => withChat(finderFromEnv()), env },
-    [TRADE_WORKFLOW]: { build: () => withChat(tradeFromEnv()), env },
     [TRENDS_WORKFLOW]: { build: () => withChat(trendsFromEnv()), env },
     [HISTORY_WORKFLOW]: { build: () => withChat(historyFromEnv()), env },
     [DIGEST_WORKFLOW]: { build: () => withChat(digestFromEnv()), env },

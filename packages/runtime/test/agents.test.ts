@@ -41,13 +41,11 @@ test('the shipped sleeper-lineup definition loads its prompt and binds the lineu
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
-for (const [name, opening] of [['sleeper-trade', /^You are the trade analyst/], ['sleeper-trade-finder', /^You are the trade finder/]] as const) {
-  test(`the shipped ${name} definition loads its prompt and binds its workflow`, async () => {
-    const agent = await loadAgent(fileURLToPath(new URL(`../../../agents/${name}/agent.json`, import.meta.url)), deployment, catalog);
-    assert.match(agent.instructions!, opening);
-    assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
-  });
-}
+test('the shipped sleeper-trade-finder definition loads its prompt and binds its workflow', async () => {
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-trade-finder/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the trade finder/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});
 
 test('the shipped sleeper-history definition loads its prompt and binds the history workflow', async () => {
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-history/agent.json', import.meta.url)), deployment, catalog);

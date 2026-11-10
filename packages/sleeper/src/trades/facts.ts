@@ -1,7 +1,7 @@
 import type { Json, SleeperClient } from '../client.ts';
-import { ownerTeam, ptsKey, type LineupInput } from '../lineup/facts.ts';
+import { ownerTeam, POSITIONS, ptsKey, UNAVAILABLE, type LineupInput } from '../lineup/facts.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
-import { byeWeeks, COVER, POSITIONS, teamNeeds, UNAVAILABLE, wplayer, type Bye, type WPlayer } from '../waivers/facts.ts';
+import { byeWeeks, COVER, teamNeeds, wplayer, type Bye, type WPlayer } from '../waivers/facts.ts';
 
 export type TPlayer = WPlayer & { role: 'starter' | 'bench' | 'ir' };
 export type Stance = 'contender' | 'rebuilder';
@@ -18,10 +18,8 @@ export type Side = {
   surplus: string[];
   players: Record<string, TPlayer>;
 };
-/** From this team's side, whoever proposed it. */
-export type Offer = { partner: number; give: string[]; get: string[] };
 
-/** What the trade jobs computed in code and the model reasons over; the rubric's gates check the card against it. */
+/** What the trade finder computed in code and the model reasons over; the rubric's gates check the card against it. */
 export type TradeFacts = {
   league: string;
   week: number;
@@ -29,12 +27,10 @@ export type TradeFacts = {
   teams: number;
   playoffTeams: number;
   mine: Side;
-  /** Every other team for the finder; the one partner for an analysis. */
+  /** Every other team. */
   partners: Side[];
-  offer: Offer | null;
 };
 
-export type TradeInput = LineupInput & { partner: string; give: string[]; get: string[] };
 export type FinderInput = LineupInput;
 export type TradeDeps = { client: SleeperClient };
 export type { NewsSearch } from '../ports.ts';
@@ -84,20 +80,7 @@ function sideOf(r: Json, c: Ctx): Side {
   };
 }
 
-/** The partner by roster id, user id, display name or team name; anything else, or yourself, is an error. */
-function findPartner(sides: Side[], mineId: number, ref: string): Side {
-  const hit = sides.find((s) => [String(s.rosterId), s.owner, s.team].includes(ref));
-  if (!hit || hit.rosterId === mineId) throw new Error(`sleeper: no partner team "${ref}" in the league`);
-  return hit;
-}
-
-function checkOffer(mine: Side, partner: Side, give: string[], get: string[]): void {
-  if (!give.length || !get.length) throw new Error('sleeper: a trade needs players on both sides');
-  for (const id of give) if (!mine.players[id]) throw new Error(`sleeper: ${id} is not on your roster`);
-  for (const id of get) if (!partner.players[id]) throw new Error(`sleeper: ${id} is not on ${partner.team}`);
-}
-
-export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: FinderInput | TradeInput): Promise<TradeFacts> {
+export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: FinderInput): Promise<TradeFacts> {
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
@@ -109,12 +92,7 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   const ctx: Ctx = { users, slots, positions: POSITIONS.filter((p) => slots.some((s) => fits(s, p))), week: input.week, ranks: standings(rosters), playoffTeams, dump, wp: (id) => wplayer(id, dump, proj, key, byes) };
   const sides: Side[] = rosters.map((r: Json) => sideOf(r, ctx));
   const mine = sides.find((s) => s.rosterId === roster.roster_id)!;
-  const others = sides.filter((s) => s !== mine);
-  const facts = { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine };
-  if (!('partner' in input)) return { ...facts, partners: others, offer: null };
-  const partner = findPartner(sides, mine.rosterId, input.partner);
-  checkOffer(mine, partner, input.give, input.get);
-  return { ...facts, partners: [partner], offer: { partner: partner.rosterId, give: input.give, get: input.get } };
+  return { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine, partners: sides.filter((s) => s !== mine) };
 }
 
 /** The players a finder deal can name: your active tradeable players and every partner's surplus. */
@@ -122,6 +100,3 @@ export const dealable = (f: TradeFacts): TPlayer[] => [
   ...Object.values(f.mine.players).filter((p) => p.role !== 'ir' && TRADEABLE.includes(p.pos)),
   ...f.partners.flatMap((s) => s.surplus.map((id) => s.players[id])),
 ];
-
-/** Looks a player up on any team in the facts; ids are unique across rosters. */
-export const playerOf = (f: TradeFacts, id: string): TPlayer | undefined => [f.mine, ...f.partners].map((s) => s.players[id]).find(Boolean);

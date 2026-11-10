@@ -1,5 +1,5 @@
 import type { Json, SleeperClient } from '../client.ts';
-import type { LineupInput, NewsItem } from '../lineup/facts.ts';
+import { POSITIONS, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import { newsFor, type Searchable } from '../lineup/news.ts';
 
 /** A player as the trends job names him; `depth` is Sleeper's depth_chart_order. */
@@ -31,11 +31,10 @@ export type TrendsFactsDeps = {
   news?: (p: Searchable, at: number) => Promise<NewsItem[]>;
 };
 
-const TRENDING_LIMIT = 25;
+export const TRENDING_LIMIT = 25;
 export const TOP_TRENDING = 5;
 /** Searches per run: each costs an Exa call, and a day rarely moves more injuries than this. */
 export const MAX_SEARCHED = 10;
-const POSITIONS = new Set(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']);
 
 const named = (p: Json) => [p.first_name, p.last_name].filter(Boolean).join(' ');
 
@@ -53,7 +52,7 @@ export function diffSnapshots(prev: Json, cur: Json): Change[] {
 
 function trendingFree(trending: Json[], dump: Json, rostered: Set<string>): Trending[] {
   return trending
-    .filter((t) => !rostered.has(t.player_id) && dump[t.player_id]?.team && POSITIONS.has(dump[t.player_id].position))
+    .filter((t) => !rostered.has(t.player_id) && dump[t.player_id]?.team && POSITIONS.includes(dump[t.player_id].position))
     .slice(0, TOP_TRENDING)
     .map((t) => ({ playerId: t.player_id, adds: t.count }));
 }

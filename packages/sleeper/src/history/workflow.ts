@@ -1,11 +1,9 @@
-import type { JsonValue } from '@earendil-works/chord';
 import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
-import { type JudgeOptions } from '@quack/judge';
-import { defineWorkflow, type StepContext } from '@quack/workflows';
-import { cardsKind } from '../lineup/card.ts';
+import { defineWorkflow } from '@quack/workflows';
+import { cardSteps } from '../job.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildHistoryCard, type HistoryDecision } from './card.ts';
-import { buildHistoryFacts, type HistoryFacts, type HistoryInput, type SeasonFigures } from './facts.ts';
+import { buildHistoryFacts, type HistoryFacts, type SeasonFigures } from './facts.ts';
 import { historyEvidence, historyRubric } from './rubric.ts';
 
 export const HISTORY_WORKFLOW = 'sleeper.history';
@@ -38,20 +36,11 @@ function prompt(f: HistoryFacts): string {
 
 /** League history job: code assembles every figure; one model step writes the narrative; the judge checks the sealed card. */
 export function historyWorkflow(deps: HistoryDeps) {
-  const input = (c: StepContext) => JSON.parse(String(c.input)) as HistoryInput;
-  const judgeOptions = (f: HistoryFacts): JudgeOptions => ({ kind: cardsKind, rubric: historyRubric, evidence: historyEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: HISTORY_WORKFLOW,
-    steps: [
-      { name: 'facts', kind: 'code', run: async (c) => (await buildHistoryFacts(deps.client, input(c))) as unknown as JsonValue },
-      {
-        name: 'card',
-        kind: 'judged',
-        schema: decisionSchema,
-        prompt: (c) => prompt(c.prior.facts as unknown as HistoryFacts),
-        card: (c, d) => buildHistoryCard(c.prior.facts as unknown as HistoryFacts, d as unknown as HistoryDecision),
-        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as HistoryFacts) }),
-      },
-    ],
+    steps: cardSteps<HistoryFacts, HistoryDecision>(deps, {
+      facts: (_c, i) => buildHistoryFacts(deps.client, i),
+      schema: decisionSchema, prompt, card: buildHistoryCard, rubric: historyRubric, evidence: historyEvidence,
+    }),
   });
 }

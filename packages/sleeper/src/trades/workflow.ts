@@ -1,30 +1,21 @@
 import type { JsonValue } from '@earendil-works/chord';
-import { arr, int, lit, nul, obj, opt, str, union } from '@earendil-works/pi-schema';
+import { arr, int, obj, str } from '@earendil-works/pi-schema';
 import { defineWorkflow, type StepContext, type Step } from '@quack/workflows';
 import { newsFor, newsLink } from '../lineup/news.ts';
 import { liveLeague } from '../snapshot.ts';
 import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
-import { buildFinderCard, buildTradeCard, type FinderDecision, type TradeDecision } from './card.ts';
-import { buildTradeFacts, dealable, playerOf, type FinderInput, type Side, type TPlayer, type TradeFacts, type TradeInput } from './facts.ts';
+import { buildFinderCard, type FinderDecision } from './card.ts';
+import { buildTradeFacts, dealable, type FinderInput, type Side, type TPlayer, type TradeFacts } from './facts.ts';
 import { TRADE_NEWS, tradeEvidence, tradeRubric } from './rubric.ts';
 import { cardJudge } from '../job.ts';
 
-export const TRADE_WORKFLOW = 'sleeper.trade';
 export const FINDER_WORKFLOW = 'sleeper.trade-finder';
 
 /** The same wiring as the other jobs: the Sleeper API and an optional news source. */
 export type TradeJobDeps = LineupDeps;
 type News = Record<string, NewsItem[]>;
 
-const verdictSchema = union(['send', 'counter', 'decline'].map((v) => lit(v)));
-const tradeSchema = obj({
-  verdict: verdictSchema,
-  why: str({ maxLength: 350 }),
-  flips_if: str({ maxLength: 200 }),
-  counter: opt(union([nul(), obj({ give: arr(str(), { minItems: 1 }), get: arr(str(), { minItems: 1 }) }, { open: true })])),
-  summary: str({ maxLength: 300 }),
-}, { open: true });
 const finderSchema = obj({
   suggestions: arr(obj({ partner: int(), give: str(), get: str(), partner_need: str({ maxLength: 32 }), note: str({ maxLength: 350 }) }, { open: true }), { maxItems: 3 }),
   summary: str({ maxLength: 300 }),
@@ -49,56 +40,29 @@ function finderPrompt(f: TradeFacts, news: News): string {
   ].join('\n\n');
 }
 
-function tradePrompt(f: TradeFacts, news: News): string {
-  const p = f.partners[0];
-  const ids = (xs: string[], s: Side) => xs.map((id) => `  - ${line(s.players[id])}${links(news, id)}`).join('\n');
-  return [
-    header(f),
-    `Partner: [${p.rosterId}] ${standing(p, f.teams)}; surplus ${JSON.stringify(p.surplus)}`,
-    `The offer, from your side. You give:\n${ids(f.offer!.give, f.mine)}\nYou get:\n${ids(f.offer!.get, p)}`,
-    `Your roster (you need ${JSON.stringify(f.mine.needs)}):\n${roster(f.mine, news)}`,
-    `${p.team}'s roster:\n${roster(p, news)}`,
-    NEWS_RULE,
-    'Give the verdict. For a counter, list the player ids on each side of your counter-offer, still from your side.',
-  ].join('\n\n');
-}
-
-
 const prior = <T>(c: StepContext, step: string) => c.prior[step] as unknown as T;
 
-/** facts, news, then one judged step: the news is searched once, before the decision, for every player the decision may name. */
-function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Pick<Extract<Step, { kind: 'judged' }>, 'schema' | 'prompt'>; news: (f: TradeFacts) => TPlayer[]; card: (c: StepContext, d: unknown) => object | Promise<object> }): Step[] {
-  const input = (c: StepContext) => JSON.parse(String(c.input)) as I;
+const at = (deps: TradeJobDeps, c: StepContext) => (deps.now ? deps.now() : c.api.now());
+
+/** Trade finder: the partner table is code; news for every dealable player is searched once, before the model picks at most three deals. */
+export function finderWorkflow(deps: TradeJobDeps) {
   const facts: Step = {
     name: 'facts',
     kind: 'code',
     run: async (c) => {
-      const i = input(c);
+      const i = JSON.parse(String(c.input)) as FinderInput;
       return (await buildTradeFacts({ client: deps.client }, await liveLeague(deps.client, i.league), i)) as unknown as JsonValue;
     },
   };
-  const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(deps.news, o.news(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
+  const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(deps.news, dealable(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
   const judgeOf = cardJudge(deps, tradeRubric, TRADE_NEWS, tradeEvidence);
-  const card: Step = { name: 'card', kind: 'judged', ...o.decide, card: o.card, judge: (c) => judgeOf(prior(c, 'facts')) };
-  return [facts, news, card];
-}
-
-const at = (deps: TradeJobDeps, c: StepContext) => (deps.now ? deps.now() : c.api.now());
-
-const named = (f: TradeFacts, ids: string[]) => ids.flatMap((id) => playerOf(f, id) ?? []);
-
-/** Trade analysis and trade talk: facts for both rosters, news for each traded player, one verdict, a sealed card, then the judge. */
-export function tradeWorkflow(deps: TradeJobDeps) {
-  const decide = { schema: tradeSchema, prompt: (c: StepContext) => tradePrompt(prior(c, 'facts'), prior(c, 'news')) };
-  return defineWorkflow({
-    name: TRADE_WORKFLOW,
-    steps: steps<TradeInput>(deps, { decide, news: (f) => named(f, [...f.offer!.give, ...f.offer!.get]), card: (c, d) => buildTradeCard(prior(c, 'facts'), d as TradeDecision, prior(c, 'news')) }),
-  });
-}
-
-/** Trade finder: the partner table is code; news for every dealable player is searched before the model picks at most three deals. */
-export function finderWorkflow(deps: TradeJobDeps) {
-  const decide = { schema: finderSchema, prompt: (c: StepContext) => finderPrompt(prior(c, 'facts'), prior(c, 'news')) };
-  const card = (c: StepContext, d: unknown) => buildFinderCard(prior(c, 'facts'), d as FinderDecision, prior(c, 'news'));
-  return defineWorkflow({ name: FINDER_WORKFLOW, steps: steps<FinderInput>(deps, { decide, news: dealable, card }) });
+  const card: Step = {
+    name: 'card',
+    kind: 'judged',
+    schema: finderSchema,
+    prompt: (c) => finderPrompt(prior(c, 'facts'), prior(c, 'news')),
+    card: (c, d) => buildFinderCard(prior(c, 'facts'), d as unknown as FinderDecision, prior(c, 'news')),
+    judge: (c) => judgeOf(prior(c, 'facts')),
+  };
+  return defineWorkflow({ name: FINDER_WORKFLOW, steps: [facts, news, card] });
 }
