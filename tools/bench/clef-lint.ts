@@ -191,6 +191,15 @@ function brokenLinks(c: Case, chunks: Chunk[], files: Set<string>): Finding[] {
   }));
 }
 
+// A switched-off type or lint check, or a comment line that parses as a statement (commented-out code).
+const SUPPRESSED = /@ts-ignore|@ts-expect-error|\bas any\b|\bas unknown as\b|eslint-disable|^\s*\/\/\s*(const|let|await|return|if \(|for \(|import |export )|^\s*\/\/\s*[\w.]+\(.*\);\s*$/;
+
+function suppressed(chunks: Chunk[]): Finding[] {
+  return chunks.filter((k) => !k.lints.includes('docs')).flatMap((k) => [...String(k.state.lines).matchAll(/^\+(\d+)\| (.*)$/gm)]
+    .filter(([, , code]) => SUPPRESSED.test(code))
+    .map(([, line, code]) => ({ rule: 'suppressed-check', file: k.file, line: Number(line), note: code.trim().slice(0, 120) })));
+}
+
 function untested(c: Case): Finding[] {
   const pkg = (p: string) => /^((v1\/)?(packages\/[^/]+|tools))\//.exec(p)?.[1];
   const rows = git(['diff', '--numstat', c.base, c.head]).split('\n').filter(Boolean).map((l) => l.split('\t'));
@@ -210,7 +219,7 @@ export function plan(c: Case) {
   const files = new Set(git(['ls-tree', '-r', '--name-only', c.head]).split('\n'));
   const chunks = [...ranges].flatMap(([file, rs]) => (kindOf(file) ? chunksOf(file, git(['show', `${c.head}:${file}`]), rs) : []));
   const skipped = [...ranges].filter(([f]) => !kindOf(f)).map(([f, rs]) => [f, rs.reduce((s, [a, b]) => s + b - a + 1, 0)]);
-  return { chunks, skipped, deterministic: [...dangling(c), ...brokenLinks(c, chunks, files), ...untested(c)] };
+  return { chunks, skipped, deterministic: [...dangling(c), ...brokenLinks(c, chunks, files), ...suppressed(chunks), ...untested(c)] };
 }
 
 export const request = (k: Chunk, lint: Lint) => ({

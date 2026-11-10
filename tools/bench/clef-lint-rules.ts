@@ -26,7 +26,6 @@ export const RULES: Record<Lint, Rule[]> = {
     { id: 'swallowed-error', ask: 'Do these changed lines swallow a failure: an empty catch, a catch that returns a default with no signal, or a promise whose rejection is ignored?', cite: 'ER looking-for: Functionality: the code does what the author intended for users, including failures' },
     { id: 'edge-case', ask: 'Is there an input these changed lines plainly mishandle: an empty or missing value used unchecked, an off-by-one boundary, or a case the other branches cover but this one forgets?', cite: 'ER looking-for: Functionality: think about edge cases' },
     { id: 'race', ask: 'Could these changed lines race: shared state changed across an await without a guard, an unawaited promise whose result matters, or a check-then-act on state another task changes?', cite: 'ER looking-for: Functionality: concurrency, race conditions and deadlocks' },
-    { id: 'suppressed-check', ask: 'Do these changed lines switch off a check or leave dead code: @ts-ignore, @ts-expect-error, an "as any" or "as unknown as" cast, an eslint-disable, or a commented-out block of code?', cite: 'ER looking-for / standard: a change should not degrade code health' },
   ],
   docs: [
     { id: 'mixed-purpose', ask: 'Does this section mix audiences or purposes, such as reference that turns into a tutorial or design rationale, or operator steps mixed with contributor notes?', cite: 'SWE ch10: each document has one audience and one purpose' },
@@ -51,6 +50,7 @@ export const RULES: Record<Lint, Rule[]> = {
 export const DETERMINISTIC: Rule[] = [
   { id: 'dangling-ref', ask: 'A path the PR deletes or renames is still named somewhere in the tree at the head.', cite: 'docguide best practices: delete dead docs; links must keep working' },
   { id: 'broken-link', ask: 'A relative link in a changed doc section points at no file at the head.', cite: 'docguide best practices: keep docs fresh' },
+  { id: 'suppressed-check', ask: 'A changed line switches off a check (@ts-ignore, @ts-expect-error, as any, as unknown as, eslint-disable) or comments out code.', cite: 'ER looking-for / standard: a change should not degrade code health' },
   { id: 'logic-without-tests', ask: 'A package\'s src changed by more than 10 lines and none of its tests changed.', cite: 'ER small-cls: tests ship with the logic they cover' },
 ];
 
