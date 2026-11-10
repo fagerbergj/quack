@@ -62,7 +62,7 @@ test('a session switches agent when a run starts, keeps its log, and a restart r
 
   assert.equal((await invoke(key, { input: 'third', wait: true })).status, 200);
   assert.equal((await snapshot(key)).agent, 'implementer');
-  assert.equal((await driver.sessions())[0].agent, 'implementer');
+  assert.equal(await driver.agentOf(key), 'implementer');
 });
 
 test('a role switch on a session a page is watching stops its process and runs the new role', async () => {

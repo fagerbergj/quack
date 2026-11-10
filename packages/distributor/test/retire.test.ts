@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { openCatalog, type CatalogEvent } from '@quack/catalog';
+import { lastActivity } from '@quack/session';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 const servers: Array<() => void> = [];
 after(() => servers.forEach((close) => close()));
@@ -61,8 +62,7 @@ test('a session pinned before retention existed follows its agent current bundle
   await writeFile(join(pinned, 'agent.json'), JSON.stringify({ name: 'reviewer', version: 2 }));
   await writeFile(join(dataDir, sessionDirName('old'), 'session-key'), 'old');
   await writeFile(join(dataDir, sessionDirName('old'), 'agent'), 'reviewer');
-  const [session] = await processDriver({ command: [], dataDir, agentsDir }).sessions();
-  assert.deepEqual([session.version, session.retention], [2, { idleDays: 14 }]);
+  assert.deepEqual(await processDriver({ command: [], dataDir, agentsDir }).pinned('old'), { version: 2, retention: { idleDays: 14 } });
 });
 
 test('an invocation racing a delete waits for it and then starts a fresh session', async () => {
@@ -110,12 +110,13 @@ test('a touch moves the stored last activity forward and never back', async () =
   db.prepare('INSERT INTO entries VALUES (?)').run(JSON.stringify({ model: [{ timestamp: Date.parse('2026-11-01T12:00:00Z') }] }));
   db.close();
   const driver = processDriver({ command: [], dataDir, agentsDir: join(root, 'agents') });
+  const stored = async () => new Date(await lastActivity(dir)).toISOString();
   await driver.touch('job', Date.parse('2026-10-31T12:00:00Z'));
-  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-01T12:00:00.000Z');
+  assert.equal(await stored(), '2026-11-01T12:00:00.000Z');
   await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
-  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');
+  assert.equal(await stored(), '2026-11-02T12:00:00.000Z');
   await driver.touch('job', Date.parse('2026-11-01T18:00:00Z'));
-  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-02T12:00:00.000Z');  // Overlapping touches, newer first: the older one must not land over it.
+  assert.equal(await stored(), '2026-11-02T12:00:00.000Z');  // Overlapping touches, newer first: the older one must not land over it.
   await Promise.all([driver.touch('job', Date.parse('2026-11-04T12:00:00Z')), driver.touch('job', Date.parse('2026-11-03T12:00:00Z'))]);
-  assert.equal((await driver.sessions())[0].lastActivity, '2026-11-04T12:00:00.000Z');
+  assert.equal(await stored(), '2026-11-04T12:00:00.000Z');
 });

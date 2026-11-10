@@ -1,11 +1,10 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { childPort, createdAt, firstInput, lastActivity, readExport, recordedTitle, shellEnv, TITLE_MAX, type SessionExport } from '@quack/session';
+import { childPort, lastActivity, readExport, shellEnv, type SessionExport } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -13,7 +12,6 @@ import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus; model?: string; description?: string };
 export type AgentView = AgentDetail & { /** Every version the host holds a copy of, newest first: those it has loaded since the version store began, and those sessions pinned. */ versions: Array<{ version: number; status: AgentStatus }> };
-export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; archived?: boolean; running: boolean; createdAt: string; lastActivity: string };
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a switch while a run is active or an agent named on a non-submission request. */
 export class AgentError extends Error {
@@ -36,20 +34,14 @@ export type HostDriver = {
   agent(name: string, version?: number): Promise<AgentView | undefined>;
   /** Marks the agent's current definition promoted; refused (409) when `version` is not the current one. */
   promote(name: string, version: number): Promise<AgentStatus>;
-  /** Every session on disk, newest-created first. */
-  sessions(): Promise<SessionInfo[]>;
-  /** One session's row, read from its directory alone; undefined when it does not exist. */
-  session(key: string): Promise<SessionInfo | undefined>;
+  /** The agent version the session is pinned to and its retention (the pinned bundle's, else its agent's current one). */
+  pinned(key: string): Promise<{ version?: number; retention?: { idleDays: number } }>;
   /** The session's export read from its store on disk, starting nothing; rejects when the store cannot be read. */
   exported(key: string): Promise<SessionExport>;
   /** Stops the session's process; a start in flight is waited out and then stopped. */
   stop(key: string): Promise<void>;
   /** Stops any process the session has, starting ones included, then deletes its directory (log, workspace, snapshot); false when no such session exists. The caller has checked it has no work. */
   remove(key: string): Promise<boolean>;
-  /** Sets the session's title (the `title` file); undefined restores the default from its first message. False when no such session exists. */
-  setTitle(key: string, title: string | undefined): Promise<boolean>;
-  /** Hides the session from the default list while it stays readable. False when no such session exists. */
-  setArchived(key: string, archived: boolean): Promise<boolean>;
   /** Records when a stopped session next needs a process (its earliest sleep); undefined clears it. */
   setWake(key: string, at: number | undefined): Promise<void>;
   /** Records that the session was active at `at` (a run completed or is working); the stored value only moves forward. */
@@ -137,27 +129,6 @@ export function forwardOutput(src: Readable, dst: Writable, tap: (b: Buffer) => 
   src.once('end', () => void (partial && write(`${prefix}${partial}\n`)));
 }
 
-type Report = { javascriptStack?: { stack?: string[] }; libuv?: Array<{ type: string; is_active: boolean }> };
-
-// The report is written in place, so an unparseable file is one still being written.
-async function readReport(dir: string): Promise<Report | undefined> {
-  const file = (await readdir(dir).catch(() => [] as string[])).find((f) => f.endsWith('.json'));
-  return file ? (JSON.parse((await readText(join(dir, file))) ?? '') as Report) : undefined;
-}
-
-// What a child that never reported a port was doing: a diagnostic report (SIGUSR2) taken before the caller kills it.
-async function stuckReport(proc: ChildProcess, dir: string, waitMs: number): Promise<string> {
-  proc.kill('SIGUSR2');
-  let report: Report | undefined;
-  for (let i = 0; i < waitMs / 50 && !report; i++) {
-    report = await readReport(dir).catch(() => undefined);
-    if (!report) await new Promise((r) => setTimeout(r, 50));
-  }
-  if (!report) return `no diagnostic report within ${waitMs / 1000}s`;
-  const active = (report.libuv ?? []).filter((h) => h.is_active).map((h) => h.type).join(',');
-  return `stack: ${report.javascriptStack?.stack?.join(' <- ') ?? 'none'}; active handles: ${active || 'none'}`;
-}
-
 // Runs `fn` after every earlier call for `key` in `chains` has settled.
 function inTurn<T>(chains: Map<string, Promise<unknown>>, key: string, fn: () => Promise<T>): Promise<T> {
   const next = (chains.get(key) ?? Promise.resolve()).catch(() => {}).then(fn);
@@ -177,18 +148,6 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   // Binding, stopping and removing one session run in turn, so two first requests never copy its bundle at once
   // and a delete never races a start.
   const lifecycle = new Map<string, Promise<unknown>>();
-
-  // The first message never changes once written, so it is scanned once per session directory; a recorded title can appear later (an existing session's next webhook), so its file is checked on every listing.
-  const titles = new Map<string, string>();
-  function cachedTitle(dir: string): string | undefined {
-    const recorded = recordedTitle(dir)?.slice(0, TITLE_MAX);
-    if (recorded) return recorded;
-    const known = titles.get(dir);
-    if (known !== undefined) return known;
-    const found = firstInput(dir);
-    if (found !== undefined) titles.set(dir, found);
-    return found;
-  }
 
   const sessionDir = (key: string) => join(opts.dataDir, sessionDirName(key));
 
@@ -349,30 +308,11 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
 
   // Retention is storage policy, so a session pinned before it existed follows its agent's current bundle.
-  const retentions = async () => new Map((await registry()).map((a) => [a.name, a.retention]));
-
-  async function row(d: string, current: Map<string, unknown>) {
-    const key = await readText(join(opts.dataDir, d, 'session-key'));
-    if (key === undefined) return undefined;
-    const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
-    const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
-    const { version } = pinned ?? {};
-    const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
-    const title = cachedTitle(join(opts.dataDir, d));
-    return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), ...((await exists(join(opts.dataDir, d, 'archived'))) && { archived: true }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
-  }
-  const info = ({ at, created, ...s }: NonNullable<Awaited<ReturnType<typeof row>>>): SessionInfo => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() });
-
-  async function sessions(): Promise<SessionInfo[]> {
-    const [dirs, current] = await Promise.all([readdir(opts.dataDir).catch(() => []), retentions()]);
-    const all = await Promise.all(dirs.map((d) => row(d, current)));
-    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(info);
-  }
-
-  // One session's row from its own directory; a hash collision with another key reads as no such session.
-  async function session(key: string): Promise<SessionInfo | undefined> {
-    const found = await row(sessionDirName(key), await retentions());
-    return found?.key === key ? info(found) : undefined;
+  async function pinned(key: string) {
+    const def = await readJson(join(sessionDir(key), SNAPSHOT, 'agent.json')).catch(() => null);
+    const agent = await agentOf(key);
+    const idleDays = def?.retention?.idleDays ?? (await registry()).find((a) => a.name === agent)?.retention;
+    return { ...(typeof def?.version === 'number' && { version: def.version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }) };
   }
 
   // Touches of one session run in turn, so an older read can never be written over a newer one.
@@ -402,21 +342,6 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return true;
   });
 
-  // A title or flag is a file in the session's directory, like `wake`; setting one never starts a process.
-  async function setTitle(key: string, title: string | undefined) {
-    if (!(await exists(join(sessionDir(key), 'session-key')))) return false;
-    if (title) await writeFile(join(sessionDir(key), 'title'), title);
-    else await rm(join(sessionDir(key), 'title'), { force: true });
-    return true;
-  }
-
-  async function setArchived(key: string, archived: boolean) {
-    if (!(await exists(join(sessionDir(key), 'session-key')))) return false;
-    if (archived) await writeFile(join(sessionDir(key), 'archived'), '');
-    else await rm(join(sessionDir(key), 'archived'), { force: true });
-    return true;
-  }
-
   // A start in flight is waited out, then stopped, so a stop never leaves a process that comes up afterwards.
   async function stopNow(key: string) {
     await starting.get(key)?.catch(() => {});
@@ -428,7 +353,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, sessions, session, exported: (key) => readExport(sessionDir(key)), stop, remove, setTitle, setArchived, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
+  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), stop, remove, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */
@@ -436,7 +361,7 @@ export function processDriver(opts: LauncherOptions & { dataDir: string; agentsD
   return sessionHost(opts, processLauncher(opts));
 }
 
-type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a silent process gets to write its diagnostic report. */ reportWaitMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
 
 // Below the distributor's 20 s drain, so a drain still finishes after a kill.
 const STOP_TIMEOUT_MS = 10_000;
@@ -451,11 +376,9 @@ function processLauncher(opts: LauncherOptions): Launch {
     const [cmd, ...args] = opts.command;
     // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
     const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
-    const reportDir = await mkdtemp(join(tmpdir(), 'quack-report-'));
     const serverToken = await writeLaunchToken(dir);
     const token = opts.broker?.mint(key);
     const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(token && { QUACK_INDEX_TOKEN: token }), ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_HOST: '127.0.0.1', QUACK_SESSION_TOKEN_FILE: join(dir, LAUNCH_TOKEN_FILE), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
-    env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --report-on-signal --report-signal=SIGUSR2 --report-directory=${reportDir}`.trim();
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     if (token) proc.once('exit', () => opts.broker!.revoke(token));
     // Recorded so a later distributor finds and stops it if this one dies first.
@@ -485,16 +408,8 @@ function processLauncher(opts: LauncherOptions): Launch {
         },
       };
     } catch (err) {
-      const silent = (err as NodeJS.ErrnoException).code === 'E_NO_PORT';
-      const detail = silent ? await stuckReport(proc, reportDir, opts.reportWaitMs ?? 5_000) : '';
       proc.kill('SIGKILL');
-      if (silent) {
-        console.error(`session start failed for ${key}: ${detail}; output: ${tail.trim() || '(none)'}`);
-        throw new Error(`${(err as Error).message}; ${detail}`);
-      }
-      throw err;
-    } finally {
-      void rm(reportDir, { recursive: true, force: true }).catch(() => {});
+      throw new Error(`${(err as Error).message}; output: ${tail.trim() || '(none)'}`);
     }
   };
 }

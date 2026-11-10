@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { openCatalog } from '@quack/catalog';
 import { Artifacts } from '@quack/sdk';
 import { createSessionServer, openSession } from '@quack/session';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
@@ -13,7 +14,12 @@ import { createDistributor, processDriver, sessionDirName, type HostDriver } fro
 const dataDir = await mkdtemp(join(tmpdir(), 'quack-export-'));
 after(() => rm(dataDir, { recursive: true, force: true }));
 
+// The catalog the session channels would have filled.
+const catalog = openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-export-catalog-')) });
+after(() => catalog.close());
+
 async function sessionDir(key: string) {
+  await catalog.publish(key, [{ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'quack', createdAt: 0 } }]);
   const dir = join(dataDir, sessionDirName(key));
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'session-key'), key);
@@ -25,7 +31,7 @@ async function sessionDir(key: string) {
 async function distributor(live: Set<string>, url = 'http://127.0.0.1:1') {
   const launches: string[] = [];
   const driver: HostDriver = { ...processDriver({ command: [], dataDir }), running: () => [...live], ensure: async (key) => (launches.push(key), url) };
-  const server = createDistributor(driver).listen(0);
+  const server = createDistributor(driver, { catalog }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const exported = (key: string) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/${encodeURIComponent(key)}/export`);
   return { launches, exported, close: () => new Promise((r) => server.close(r)) };
