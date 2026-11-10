@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, normalize } from 'node:path';
 import ts from 'typescript';
 import { changedRanges } from '../sloplint.ts';
-import { DOCS_WITH_CODE, instructions, RULES, type Lint, type Rule } from './clef-lint-rules.ts';
+import { instructions, RULES, type Lint, type Rule } from './clef-lint-rules.ts';
 
 type Range = [number, number];
 export type Unit = { start: number; end: number; enclosing: string[]; test?: boolean };
@@ -117,7 +117,13 @@ export function mdUnits(text: string): Unit[] {
 const numbered = (lines: string[], u: { start: number; end: number }, rs: Range[]) =>
   lines.slice(u.start - 1, u.end).map((l, i) => `${overlaps({ start: u.start + i, end: u.start + i }, rs) ? '+' : ' '}${u.start + i}| ${l}`).join('\n');
 
-const imports = (text: string) => text.split('\n').filter((l) => /^import\s/.test(l)).join('\n').slice(0, 1500);
+// Only the import lines whose names the chunk uses: the chunk alone answers each question, so other context is noise.
+const IMPORT = /^import\s[\s\S]*?from\s+['"][^'"]+['"];?/gm;
+function importsFor(text: string, body: string): string | undefined {
+  const names = (imp: string) => (imp.split(/\bfrom\b/)[0].match(/[A-Za-z_$][\w$]*/g) ?? []).filter((n) => !['import', 'type', 'as'].includes(n));
+  const used = (n: string) => new RegExp(`(^|[^\\w$])${n.replace(/\$/g, '\\$')}([^\\w$]|$)`).test(body);
+  return (text.match(IMPORT) ?? []).filter((imp) => names(imp).some(used)).join('\n') || undefined;
+}
 
 // A unit too big for one request goes in line windows; each window keeps the file context.
 function windows(u: Unit, lines: string[], rs: Range[], context: Record<string, unknown>): Array<{ start: number; end: number; body: string }> {
@@ -146,8 +152,11 @@ export function chunksOf(file: string, text: string, rs: Range[]): Chunk[] {
   const lines = text.split('\n');
   const units = kind === 'docs' ? mdUnits(text) : kind === 'spec' ? [{ start: 1, end: lines.length, enclosing: [] }] : tsUnits(file, text, kind === 'tests', rs);
   return units.filter((u) => overlaps(u, rs)).flatMap((u) => {
-    const context = { file, imports: kind === 'docs' ? undefined : imports(text), enclosing: u.enclosing.join(' > ') || undefined };
-    return windows(u, lines, rs, context).map((w) => ({ id: `${file}:${w.start}-${w.end}`, lints: lintsFor(kind, w.body), file, start: w.start, end: w.end, state: { ...context, lines: w.body } }));
+    const context = { file, enclosing: u.enclosing.join(' > ') || undefined };
+    return windows(u, lines, rs, context).map((w) => {
+      const imports = kind === 'docs' || kind === 'spec' ? undefined : importsFor(text, w.body);
+      return { id: `${file}:${w.start}-${w.end}`, lints: lintsFor(kind, w.body), file, start: w.start, end: w.end, state: { ...context, imports, lines: w.body } };
+    });
   });
 }
 
@@ -200,19 +209,14 @@ export function plan(c: Case) {
   const ranges = changedRanges(git(['diff', '-U0', '--find-renames', '-l0', c.base, c.head]));
   const files = new Set(git(['ls-tree', '-r', '--name-only', c.head]).split('\n'));
   const chunks = [...ranges].flatMap(([file, rs]) => (kindOf(file) ? chunksOf(file, git(['show', `${c.head}:${file}`]), rs) : []));
-  const docsTouched = [...ranges.keys()].some((f) => kindOf(f) === 'docs');
-  if (!docsTouched && [...ranges.keys()].some((f) => kindOf(f) === 'code')) {
-    chunks.push({ id: 'pr:docs-with-code', lints: [], file: '(pull request)', start: 0, end: 0, state: { title: c.title, description: c.body.slice(0, 6000), changed: [...ranges.keys()].join('\n') } });
-  }
   const skipped = [...ranges].filter(([f]) => !kindOf(f)).map(([f, rs]) => [f, rs.reduce((s, [a, b]) => s + b - a + 1, 0)]);
   return { chunks, skipped, deterministic: [...dangling(c), ...brokenLinks(c, chunks, files), ...untested(c)] };
 }
 
-const ruleSet = (k: Chunk, lint: Lint | 'pr') => (lint === 'pr' ? [DOCS_WITH_CODE] : RULES[lint]);
-export const request = (k: Chunk, lint: Lint | 'pr') => ({
+export const request = (k: Chunk, lint: Lint) => ({
   model: 'clef',
   state: k.state,
-  questions: Object.fromEntries(ruleSet(k, lint).map((r: Rule) => [r.id, { type: 'noul', instructions: lint === 'pr' ? r.ask : instructions(r), criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }])),
+  questions: Object.fromEntries(RULES[lint].map((r: Rule) => [r.id, { type: 'noul', instructions: instructions(r), criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }])),
 });
 
 async function ask(body: unknown): Promise<{ answers: Record<string, number>; ms: number; usage?: unknown }> {
@@ -269,10 +273,10 @@ function report(lab: string, out: string) {
     all.push(...fl);
     const answers = Object.values(rec.answers as Record<string, Answer>);
     const by = (l: string) => fl.filter((f) => f.lint === l).length;
-    return `| ${r.case} | ${rec.chunks.length} | ${answers.length} | ${Math.round(answers.reduce((s, a) => s + a.ms, 0) / 1000)} | ${by('code')} | ${by('tests')} | ${by('docs')} | ${by('contracts')} | ${by('pr')} | ${rec.deterministic.length} | ${unsure} | ${fl.filter((f) => f.cited).length} |`;
+    return `| ${r.case} | ${rec.chunks.length} | ${answers.length} | ${Math.round(answers.reduce((s, a) => s + a.ms, 0) / 1000)} | ${by('code')} | ${by('tests')} | ${by('docs')} | ${by('contracts')} | ${rec.deterministic.length} | ${unsure} | ${fl.filter((f) => f.cited).length} |`;
   });
   writeFileSync(join(out, '..', 'flags.json'), JSON.stringify(all, null, 1));
-  console.log(['| case | chunks | Clef calls | Clef s | code | tests | docs | contracts | docs-with-code | deterministic | would escalate | in a cited chunk |', '|---|---|---|---|---|---|---|---|---|---|---|---|', ...rows].join('\n'));
+  console.log(['| case | chunks | Clef calls | Clef s | code | tests | docs | contracts | deterministic | would escalate | in a cited chunk |', '|---|---|---|---|---|---|---|---|---|---|---|', ...rows].join('\n'));
   const rules = new Map<string, number>();
   for (const f of all) rules.set(`${f.lint}/${f.rule}`, (rules.get(`${f.lint}/${f.rule}`) ?? 0) + 1);
   console.log([...rules].sort((a, b) => b[1] - a[1]).map(([r, n]) => `${r} ${n}`).join('\n'));
@@ -284,7 +288,7 @@ async function main([mode, lab, out]: string[]) {
   mkdirSync(out, { recursive: true });
   for (const c of loadCases(lab)) {
     const p = plan(c);
-    const calls = p.chunks.flatMap((k) => (k.lints.length ? k.lints : ['pr' as const]).map((lint) => ({ k, lint })));
+    const calls = p.chunks.flatMap((k) => k.lints.map((lint) => ({ k, lint })));
     const bytes = calls.map(({ k, lint }) => JSON.stringify(request(k, lint)).length);
     console.log(`${c.case} chunks=${p.chunks.length} calls=${calls.length} maxTokens~${Math.round(Math.max(0, ...bytes) / 3)} sumTokens~${Math.round(bytes.reduce((a, b) => a + b, 0) / 3)} deterministic=${p.deterministic.length} skipped=${p.skipped.length}`);
     const file = join(out, `${c.case}.json`);
