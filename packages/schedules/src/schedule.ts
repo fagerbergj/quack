@@ -9,11 +9,9 @@ export type Schedule = {
   /** IANA zone the cron is read in, so wall-clock schedules follow DST. Default UTC. */
   tz?: string;
   times?: string[];
-  /** `{time}` becomes the occurrence's ISO time, so each occurrence can have its own session. */
   sessionKey: string;
   input: string;
-  /** Usefulness window: an occurrence stays useful for staleMs, and never past the deadline. Default: until the next occurrence, or ONE_SHOT_GRACE_MS past the last of `times`. */
-  staleMs?: number;
+  /** An occurrence stays useful until the deadline. Default: until the next occurrence, or ONE_SHOT_GRACE_MS past the last of `times`. */
   deadline?: string;
 };
 
@@ -26,7 +24,6 @@ const isoTime = (t: unknown) => typeof t === 'string' && !Number.isNaN(Date.pars
 function validateWindow(s: Schedule) {
   if (s.times && (!Array.isArray(s.times) || !s.times.every(isoTime))) throw new Error('times must be ISO times');
   if (s.deadline !== undefined && !isoTime(s.deadline)) throw new Error('deadline must be an ISO time');
-  if (s.staleMs !== undefined && !(s.staleMs > 0)) throw new Error('staleMs must be positive');
 }
 
 /** Rejects a definition the timer could not honor; returns it unchanged. */
@@ -63,7 +60,6 @@ export function between(s: Schedule, after: Date, upTo: Date): Date[] {
 
 /** When the occurrence stops being worth running (ms since epoch). */
 export function expiry(s: Schedule, occurrence: Date): number {
-  const limits = [s.deadline && Date.parse(s.deadline), s.staleMs && +occurrence + s.staleMs].filter((n): n is number => typeof n === 'number');
-  if (limits.length) return Math.min(...limits);
+  if (s.deadline) return Date.parse(s.deadline);
   return Number(nextAfter(s, occurrence) ?? +occurrence + ONE_SHOT_GRACE_MS);
 }

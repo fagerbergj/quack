@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { serveApp } from '@quack/sdk';
@@ -30,8 +29,8 @@ const fakeFetch = (async (url: string, init: { body: string }) => {
   return { ok };
 }) as unknown as typeof fetch;
 
-async function start(dbPath: string, agentsDir?: string, tickMs?: number) {
-  const svc = createSchedulesService({ distributorUrl: 'http://d', dbPath, agentsDir, now: () => {
+async function start(dbPath: string, tickMs?: number) {
+  const svc = createSchedulesService({ distributorUrl: 'http://d', dbPath, now: () => {
       if (failClockOnce) {
         failClockOnce = false;
         throw new Error('database is busy');
@@ -47,7 +46,7 @@ async function start(dbPath: string, agentsDir?: string, tickMs?: number) {
   return { svc, api, base };
 }
 
-const daily = { id: 'daily', agent: 'a', cron: '0 9 * * *', sessionKey: 'daily-{time}', input: 'go' };
+const daily = { id: 'daily', agent: 'a', cron: '0 9 * * *', sessionKey: 'daily', input: 'go' };
 const dbFile = async () => join(await mkdtemp(join(tmpdir(), 'sched-')), 's.db');
 
 test('fires at the occurrence with a deterministic request id, once', async () => {
@@ -60,7 +59,7 @@ test('fires at the occurrence with a deterministic request id, once', async () =
   await svc.tick();
   await svc.tick();
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, `http://d/sessions/${encodeURIComponent('daily-2026-01-01T09:00:00.000Z')}/invocations?agent=a`);
+  assert.equal(calls[0].url, 'http://d/sessions/daily/invocations?agent=a');
   assert.deepEqual(calls[0].body, { input: 'go', requestId: 'schedule:daily:2026-01-01T09:00:00.000Z' });
   const [listed] = (await api('GET', '/')).json.schedules;
   assert.equal(listed.lastRun, '2026-01-01T09:00:00.000Z');
@@ -84,7 +83,7 @@ test('a failed submission is retried, not recorded', async () => {
 test('after downtime only the newest useful miss fires and the rest are recorded missed', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T08:00:00Z');
-  await api('POST', '/', { ...daily, staleMs: 6 * 3600_000 });
+  await api('POST', '/', daily);
   clock = new Date('2026-01-04T10:00:00Z');
   await svc.tick();
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:daily:2026-01-04T09:00:00.000Z']);
@@ -95,7 +94,7 @@ test('after downtime only the newest useful miss fires and the rest are recorded
 test('a newest miss past its window is recorded missed, not fired', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T08:00:00Z');
-  await api('POST', '/', { ...daily, staleMs: 3600_000 });
+  await api('POST', '/', { ...daily, deadline: '2026-01-02T10:00:00Z' });
   clock = new Date('2026-01-02T12:00:00Z');
   await svc.tick();
   assert.equal(calls.length, 0);
@@ -152,24 +151,6 @@ test('schedules and their history survive a restart', async () => {
   assert.equal((await second.api('GET', '/')).json.schedules[0].lastRun, '2026-01-01T09:00:00.000Z');
 });
 
-test('agent definitions register schedules bound to their agent, and removal unregisters them', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
-  await mkdir(join(dir, 'sleeper'));
-  const def = (schedules: unknown[]) => writeFile(join(dir, 'sleeper', 'agent.json'), JSON.stringify({ name: 'sleeper', version: 1, schedules }));
-  await def([{ id: 'weekly', cron: '0 9 * * 1', sessionKey: 'weekly', input: 'run' }, { id: 'bad', sessionKey: 'k', input: 'x' }]);
-  const { svc, api } = await start(':memory:', dir);
-  clock = new Date('2026-01-05T08:00:00Z');
-  await svc.tick();
-  clock = new Date('2026-01-05T09:00:00Z');
-  await svc.tick();
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'http://d/sessions/weekly/invocations?agent=sleeper');
-  assert.equal((await api('DELETE', '/sleeper%2Fweekly')).status, 404);
-  await def([]);
-  await svc.tick();
-  assert.deepEqual((await api('GET', '/')).json.schedules, []);
-});
-
 test('a cron in America/New_York keeps its wall-clock time across the DST change', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-03-07T12:00:00Z');
@@ -220,7 +201,7 @@ test('a one-shot registered after its time but inside its window fires; a record
 });
 
 test('a tick that throws is logged and the loop keeps running', async () => {
-  const { svc, api } = await start(':memory:', undefined, 1);
+  const { svc, api } = await start(':memory:', 1);
   clock = new Date('2026-01-01T08:00:00Z');
   await api('POST', '/', daily);
   clock = new Date('2026-01-01T09:00:00Z');
@@ -231,35 +212,11 @@ test('a tick that throws is logged and the loop keeps running', async () => {
   assert.equal(calls.length, 1);
 });
 
-test('an unreadable agents dir or agent.json keeps stored schedules and their history', { skip: process.getuid?.() === 0 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
-  await mkdir(join(dir, 'sleeper'));
-  const file = join(dir, 'sleeper', 'agent.json');
-  await writeFile(file, JSON.stringify({ name: 'sleeper', version: 1, schedules: [{ id: 'weekly', cron: '0 9 * * 1', sessionKey: 'weekly', input: 'run' }] }));
-  const { svc, api } = await start(':memory:', dir);
-  clock = new Date('2026-01-05T08:00:00Z');
-  await svc.tick();
-  for (const [target, mode] of [[dir, 0o755], [file, 0o644]] as const) {
-    await chmod(target, 0o000);
-    clock = new Date(+clock + 7 * 86400_000 + 3600_000);
-    await svc.tick();
-    await chmod(target, mode);
-    assert.equal((await api('GET', '/')).json.schedules.length, 1);
-    await svc.tick();
-  }
-  assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:sleeper/weekly:2026-01-12T09:00:00.000Z', 'schedule:sleeper/weekly:2026-01-19T09:00:00.000Z']);
-});
-
-test('an api schedule can be deleted, and an agent-declared id cannot be overwritten', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
-  await mkdir(join(dir, 'sleeper'));
-  await writeFile(join(dir, 'sleeper', 'agent.json'), JSON.stringify({ name: 'sleeper', version: 1, schedules: [{ id: 'weekly', cron: '0 9 * * 1', sessionKey: 'weekly', input: 'run' }] }));
-  const { svc, api } = await start(':memory:', dir);
-  await svc.tick();
-  assert.equal((await api('POST', '/', { ...daily, id: 'sleeper/weekly' })).status, 409);
+test('an api schedule can be deleted', async () => {
+  const { api } = await start(':memory:');
   await api('POST', '/', daily);
   assert.equal((await api('DELETE', '/daily')).status, 200);
-  assert.deepEqual((await api('GET', '/')).json.schedules.map((s: any) => s.id), ['sleeper/weekly']);
+  assert.deepEqual((await api('GET', '/')).json.schedules, []);
 });
 
 test('the API rejects bad definitions and an oversized body', async () => {
@@ -345,20 +302,3 @@ test('a registration without an agent is a 400 naming the field', async () => {
   assert.deepEqual((await api('GET', '/')).json.schedules, []);
 });
 
-test('a stored schedule without an agent loads, never fires, and can still be deleted', async (t) => {
-  t.mock.method(console, 'error', () => {});
-  const db = await dbFile();
-  const old = new DatabaseSync(db);
-  old.exec(`CREATE TABLE schedules (id TEXT PRIMARY KEY, source TEXT NOT NULL, def TEXT NOT NULL, created TEXT NOT NULL)`);
-  const { agent, ...legacy } = { ...daily, id: 'sleeper/snapshot/L1' };
-  old.prepare(`INSERT INTO schedules VALUES (?, 'api', ?, ?)`).run(legacy.id, JSON.stringify(legacy), '2026-01-01T00:00:00.000Z');
-  old.close();
-  clock = new Date('2026-01-01T09:00:00Z');
-  const { svc, api } = await start(db);
-  await svc.tick();
-  await svc.tick();
-  assert.equal(calls.length, 0);
-  assert.equal((await api('GET', '/')).json.schedules.length, 1);
-  assert.equal((await api('DELETE', `/${encodeURIComponent(legacy.id)}`)).status, 200);
-  assert.deepEqual((await api('GET', '/')).json.schedules, []);
-});

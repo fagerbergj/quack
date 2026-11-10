@@ -2,9 +2,9 @@ import type { Context } from '@earendil-works/chord/context';
 import { contentText, validateToolArguments, type Message } from '@earendil-works/pi-ai';
 import type { Schema } from '@earendil-works/pi-schema';
 import type { JsonValue } from '@earendil-works/chord';
-import type { JsonObject, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { feedback, rejudge, undecidedMessage, type JudgeOptions } from '@quack/judge';
-import { attachVerdict, decide, gated, observeGeneration, person as sdkPerson, seal, sealedVersion, type DecisionPoint, type Resolver } from '@quack/sdk';
+import { attachVerdict, decide, observeGeneration, person as sdkPerson, seal, sealedVersion, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
@@ -33,9 +33,7 @@ export type Step =
   /** A model answer built into a sealed card and judged; a failing verdict goes back to the model for up to `maxRevisions` new versions, and the last version is kept with its verdict whatever it says. */
   | { name: string; kind: 'judged'; prompt(c: StepContext): string; schema: Schema; model?: { provider: string; modelId: string }; card(c: StepContext, decision: JsonValue): object | Promise<object>; judge(c: StepContext): { options: JudgeOptions; notes?: string[] } }
   /** Resolvers run in order; a person answers through the session's questions when they all escalate. */
-  | { name: string; kind: 'decision'; point(c: StepContext): Omit<DecisionPoint, 'name'>; resolvers?: Resolver[] }
-  /** The tool waits for an approval before it runs; args may read earlier results. */
-  | { name: string; kind: 'gated'; tool: ToolRegistration; args(c: StepContext): JsonObject };
+  | { name: string; kind: 'decision'; point(c: StepContext): Omit<DecisionPoint, 'name'>; resolvers?: Resolver[] };
 
 /** The api with some members replaced; methods stay bound to the original. */
 export function view<A extends object>(api: A, over: Record<string, unknown>): A {
@@ -151,19 +149,9 @@ async function decisionStep(step: Extract<Step, { kind: 'decision' }>, c: StepCo
   return { result: { ...decision }, cost: 0 };
 }
 
-async function gatedStep(step: Extract<Step, { kind: 'gated' }>, c: StepContext): Promise<StepOutcome> {
-  // Approvals are keyed by task id; a workflow has one task and many steps, so each step gets its own key.
-  const api = view(c.api, { taskId: `${String(c.api.taskId)}:${step.name}` });
-  const out = await gated(step.tool).execute(step.args(c) as never, api, c.ctx);
-  const text = (out.output ?? []).map((p) => (p.type === 'text' ? p.text : '')).join('');
-  if (out.isError) throw new Error(`step ${step.name}: ${text}`);
-  return { result: out.structuredOutput ?? text, cost: out.usage?.cost?.total ?? 0 };
-}
-
 export async function execute(step: Step, c: StepContext): Promise<StepOutcome> {
   if (step.kind === 'code') return { result: (await step.run(c)) as JsonValue, cost: 0 };
   if (step.kind === 'model') return modelStep(step, c);
   if (step.kind === 'judged') return judgedStep(step, c);
-  if (step.kind === 'decision') return decisionStep(step, c);
-  return gatedStep(step, c);
+  return decisionStep(step, c);
 }

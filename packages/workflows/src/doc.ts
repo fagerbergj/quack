@@ -4,7 +4,7 @@ import { defineDoc } from '@earendil-works/pi-durable';
 // Documents are strict JSON, so absent values are null rather than optional fields.
 export type StepRecord = {
   name: string;
-  kind: 'code' | 'model' | 'judged' | 'decision' | 'gated';
+  kind: 'code' | 'model' | 'judged' | 'decision';
   status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'aborted';
   startedAt: number | null;
   durationMs: number | null;

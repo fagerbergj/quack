@@ -12,7 +12,6 @@ export const manifest: ExtensionManifest = {
     distributorUrl,
     fetch,
     dbPath,
-    agentsDir: env.QUACK_AGENTS_DIR,
     distributorToken: env.QUACK_ADMIN_TOKEN,
     retentionSweep: checkedSettings<SchedulesSettings>('schedules', settings, settingsProblems)?.retentionSweep === true,
   }),
