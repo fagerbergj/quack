@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
-import { agentModel, decide, modelResolver, observeGeneration, retryModelCall, type RetrySeams } from '@quack/sdk';
+import { agentModel, decide, inputTooLarge, modelResolver, observeGeneration, retryModelCall, type RetrySeams } from '@quack/sdk';
 import type { ModelSplit, Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
@@ -86,6 +86,8 @@ async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[]
   const ask = (fetch: typeof globalThis.fetch) => api.models.classify(model, request(items), { signal: ctx.abortSignal, fetch, maxRetries: 0 });
   const result = await s.clef(() => retryModelCall(`${ref.provider}/${ref.modelId}`, ask, ctx.abortSignal, s.retry).catch(() => undefined));
   ctx.abortSignal?.throwIfAborted();
+  // The estimate can undercount a request the model then refuses as too large: that is over the cap, not an outage.
+  if (result && inputTooLarge(result)) return null;
   if (result?.stopReason !== 'stop') return undefined;
   const asks = new Map(questionsOf(items).map((q, n): [string, (typeof q)] => [`q${n}`, q]));
   return Object.fromEntries(Object.entries(result.answers).flatMap(([key, a]) => {
