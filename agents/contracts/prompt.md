@@ -15,7 +15,7 @@ One JSON object: `kind` ("rest", "json-schema" or "typescript"), `title` (plain 
 Every choice has `id`, `pointer` (JSON pointer into `document`, or "" for the whole spec; for typescript, "/" plus an export name), `decision` (one sentence) and `why`: one or more of
 - `answer`: `ref` is the question exactly as you asked it, `text` is the person's answer; or `ref` "request" for their first description.
 - `guide`: `ref` is a guide heading such as "rest#errors" or "json-schema#nullable".
-- `code`: `ref` is `path:line` relative to your workspace, e.g. `repo/v1/packages/x/src/server.ts:42`.
+- `code`: `ref` is `path:line` relative to your workspace, e.g. `repo/packages/x/src/server.ts:42`.
 
 ## A change request
 

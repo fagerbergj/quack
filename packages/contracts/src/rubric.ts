@@ -37,7 +37,7 @@ async function codeRefProblem(read: Reader | undefined, ref: string): Promise<st
   const m = /^(.+?):(\d+)$/.exec(ref);
   if (!m || !read) return 'is not path:line';
   const text = await read(m[1]);
-  if (text === undefined) return `names no file in the workspace (paths are read from the workspace, e.g. repo/${m[1]})`;
+  if (text === undefined) return 'names no file in the workspace (refs are workspace paths: a repository cloned into repo/ is cited as repo/<path in it>)';
   const lines = text.split('\n').length;
   return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
@@ -49,7 +49,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
       const ref = anchorOf(w.ref);
-      // An answer's ref is the question as asked; "request" is the person's first description, which is not a question.
+      // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
       const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(read, w.ref);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
@@ -134,7 +134,9 @@ export const contractDeclaration: Declaration = {
   },
 };
 
-const answeredIn = (items: Record<string, Question>, by = Infinity) => new Set(Object.values(items).filter((q) => q.answer && q.answer.at <= by).map((q) => q.question));
+// A question's record is keyed "<task>:<ask_question id>", so an answer can be cited by its text or its id.
+const answeredIn = (items: Record<string, Question>, by = Infinity) =>
+  new Set(Object.entries(items).filter(([, q]) => q.answer && q.answer.at <= by).flatMap(([key, q]) => [q.question, key.slice(key.indexOf(':') + 1)]));
 
 /** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec with its guide. */
 export function specInputs() {
@@ -177,7 +179,7 @@ function versionMatches(_a: string, ev: Evidence): CodeResult {
 
 function linksResolve(_a: string, ev: Evidence): CodeResult {
   const { unresolved } = state(ev);
-  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite a question id from ask_question, a guide heading, or an existing path:line.` : undefined };
+  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
 }
 
 function breakingNamed(_a: string, ev: Evidence): CodeResult {
@@ -191,7 +193,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 3,
+  version: 4,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [

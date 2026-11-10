@@ -38,6 +38,15 @@ test('check names each mechanical problem with its path', async () => {
   ]);
 });
 
+test('an if/then/else branch only constrains its parent object, so the object rules skip it', async () => {
+  const conditional = mutated((s) => {
+    s.if = { properties: { mode: { const: 'auto' } }, required: ['mode'] };
+    s.then = { required: ['leagueId'], properties: { leagueId: { minLength: 1 } } };
+    s.else = { properties: { leagueId: { type: 'object', properties: { x: {} } } } };
+  });
+  assert.deepEqual(await lintJsonSchema(conditional), []);
+});
+
 test('check reports an invalid or non-compiling schema', async () => {
   assert.deepEqual(await codes(mutated((s) => { s.properties.leagueId.type = 'strng'; })), ['schema-invalid']);
   assert.deepEqual(await codes(mutated((s) => { s.properties.leagueId.$ref = '#/$defs/missing'; })), ['schema-invalid']);
