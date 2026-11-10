@@ -41,7 +41,7 @@ export type SeasonFigures = {
   draft: DraftFigure[] | null;
 };
 export type HistoryFacts = { league: string; week: number; team: string; definitions: typeof DEFINITIONS; seasons: SeasonFigures[] };
-export type HistoryInput = LineupInput & { seasons?: number };
+export type HistoryInput = LineupInput;
 
 export function verdictOf(draftedAs: number, finished: number): Verdict {
   if (!draftedAs || !finished) return 'unknown';
@@ -156,7 +156,7 @@ async function seasonOf(client: SleeperClient, league: Json, owner: string, dump
 
 /** Walks the league's season chain, newest first, and builds every figure the card reports. */
 export async function buildHistoryFacts(client: SleeperClient, input: HistoryInput): Promise<HistoryFacts> {
-  const [state, leagues, dump] = await Promise.all([client.state(), chain(client, input.league, Math.min(input.seasons ?? MAX_SEASONS, MAX_SEASONS)), client.players()]);
+  const [state, leagues, dump] = await Promise.all([client.state(), chain(client, input.league, MAX_SEASONS), client.players()]);
   const seasons = (await Promise.all(leagues.map((l) => seasonOf(client, l, input.owner, dump, state.week)))).filter((s): s is SeasonFigures => s !== null);
   if (!seasons.length) throw new Error(`sleeper: no team for ${input.owner} in any season of league ${input.league}`);
   const users = await client.users(input.league);

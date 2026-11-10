@@ -246,15 +246,15 @@ test('the schedules service lists one daily run after the snapshot, replaced by 
 test('the trends job starts on demand under the week session key, and a snapshot is read by date', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) }));
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const started = await call('/leagues/L1/jobs/trends', 'POST');
+    const started = await call('/trends', 'POST');
     assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:9:trends', status: 202 }]);
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Atrends/invocations?agent=sleeper-trends');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
-    assert.equal((await call('/leagues/L1/jobs/trends')).status, 405);
+    assert.equal((await call('/trends')).status, 405);
     await call('/leagues/L1/snapshots', 'POST');
     assert.equal((await (await call('/leagues/L1/snapshots/2026-11-06')).json() as { date: string }).date, '2026-11-06');
     assert.equal((await call('/leagues/L1/snapshots/2026-11-05')).status, 404);
@@ -300,7 +300,6 @@ test('the page routes answer the configured league and start its lineup job', as
     assert.deepEqual(await (await call('/schedule')).json(), { week: 9, runs: [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }] });
     const waivers = await call('/waivers?week=8', 'POST');
     assert.deepEqual([waivers.status, ((await waivers.json()) as { sessionKey: string }).sessionKey], [202, 'sleeper:L1:8:waivers']);
-    assert.equal((await call('/history?seasons=x', 'POST')).status, 400);
     assert.equal((await call('/lineup?week=x', 'POST')).status, 400);
     assert.equal((await call('/lineup')).status, 405);
   } finally {

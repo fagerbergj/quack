@@ -34,7 +34,8 @@ export type LineupInput = { league: string; week: number; owner: string };
 export type FactsDeps = { client: SleeperClient; news?: (p: Searchable, at: number) => Promise<NewsItem[]> };
 
 // Out, IR, Doubtful and suspended players are not lineup candidates; Questionable ones are, and the model weighs them.
-const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
+export const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
+export const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 /** A bench player this close to a starter's projection makes the slot a close call. */
 export const CLOSE_GAP = 3;
 

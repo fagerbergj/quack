@@ -1,9 +1,8 @@
 import type { Json, SleeperClient } from '../client.ts';
 import { newsFor } from '../lineup/news.ts';
-import { ownerTeam, round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
+import { ownerTeam, round2, UNAVAILABLE, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import { playerName, record, remainingWeeks, standings, teamNames, teamOf, weekPhase, type Standing } from './week.ts';
 
-const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
 /** Finished weeks a preview averages over. */
 const RECENT_WEEKS = 3;
 const TOP = 2;

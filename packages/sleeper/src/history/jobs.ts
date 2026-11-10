@@ -8,11 +8,3 @@ export const historyKey = (league: string, week: number) => `sleeper:${league}:$
 
 /** On-demand start: each call is its own submission under the week's session key. */
 export const startHistory = (config: StartConfig, input: HistoryInput) => startJob(config, HISTORY_AGENT, historyKey(input.league, input.week), input);
-
-/** `?seasons=3` caps how many seasons back are reviewed; absent means every reachable one. */
-export function historyParams(params: URLSearchParams): { seasons?: number } | string {
-  const raw = params.get('seasons');
-  if (raw === null) return {};
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 1 ? { seasons: n } : 'bad seasons';
-}

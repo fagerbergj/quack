@@ -283,20 +283,20 @@ test('the lineup job starts on demand under the week session key, each click its
   const calls: Array<{ url: string; body: { input: string; requestId: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
   let tick = 0;
-  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: client(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT + tick++) }));
-  const bare = serveApp(createSleeperService({ dbPath: ':memory:', client: client() }));
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: client(), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', fetch: fake, now: () => new Date(AT + tick++) }));
+  const bare = serveApp(createSleeperService({ dbPath: ':memory:', client: client(), league: 'L1' }));
   await Promise.all([service, bare].map((x) => new Promise<void>((r) => x.listen(0, r))));
   const post = (x: typeof service, path: string) => fetch(`http://127.0.0.1:${(x.address() as AddressInfo).port}${path}`, { method: 'POST', headers: { authorization: 'Bearer t' } });
   try {
-    const first = await post(service, '/leagues/L1/jobs/lineup');
+    const first = await post(service, '/lineup');
     assert.equal(first.status, 202);
     assert.deepEqual(await first.json(), { sessionKey: 'sleeper:L1:9:lineup', status: 202 });
-    await post(service, '/leagues/L1/jobs/lineup?week=9');
+    await post(service, '/lineup?week=9');
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Alineup/invocations?agent=sleeper-lineup');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
     assert.notEqual(calls[0].body.requestId, calls[1].body.requestId);
-    assert.equal((await post(service, '/leagues/L1/jobs/lineup?week=x')).status, 400);
-    assert.equal((await post(bare, '/leagues/L1/jobs/lineup')).status, 501);
+    assert.equal((await post(service, '/lineup?week=x')).status, 400);
+    assert.equal((await post(bare, '/lineup')).status, 501);
   } finally {
     service.stop();
     bare.stop();

@@ -303,19 +303,15 @@ test('the job decides from the live rosters, not a snapshot taken earlier in the
   assert.deepEqual(facts.widely, ['302']);
 });
 
-// A real league's settings: Wednesday 03:00 Eastern in its processed transactions, which is 00:00 Pacific; daily_waivers_hour is ignored.
-const REAL = { waiver_day_of_week: 2, daily_waivers: 0, daily_waivers_hour: 20 };
+// A real league's settings: Wednesday 03:00 Eastern in its processed transactions, which is 00:00 Pacific.
+const REAL = { waiver_day_of_week: 2, daily_waivers: 0 };
 
-test('the next processing time is Wednesday 03:00 ET (00:00 PT) for the real league settings, across DST, and daily mode uses its hour and days', () => {
+test('the next processing time is Wednesday 03:00 ET (00:00 PT) for the real league settings, across DST; a daily league has none', () => {
   // Wednesday 3am EST, after the November change.
   assert.equal(new Date(nextProcessing(AT, REAL)!).toISOString(), '2026-11-11T08:00:00.000Z');
   // The same wall time on a Wednesday still in EDT.
   assert.equal(new Date(nextProcessing(Date.parse('2026-10-27T12:00:00Z'), REAL)!).toISOString(), '2026-10-28T07:00:00.000Z');
-  // Daily mode: 20:00 Pacific on Monday, Wednesday and Friday only (Monday-first mask); Friday evening PST is Saturday 04:00Z.
-  const daily = { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: '1010100' };
-  assert.equal(new Date(nextProcessing(AT, daily)!).toISOString(), '2026-11-07T04:00:00.000Z');
-  assert.equal(new Date(nextProcessing(Date.parse('2026-11-07T04:00:00Z'), daily)!).toISOString(), '2026-11-10T04:00:00.000Z');
-  assert.equal(nextProcessing(AT, { daily_waivers: 1, daily_waivers_days: '0000000' }), null);
+  assert.equal(nextProcessing(AT, { ...REAL, daily_waivers: 1 }), null);
   // At the processing instant itself the next one is a week out.
   assert.equal(new Date(nextProcessing(Date.parse('2026-11-11T08:00:00Z'), REAL)!).toISOString(), '2026-11-18T08:00:00.000Z');
 });
@@ -324,9 +320,7 @@ test('the run starts 12 hours before processing and is due an hour ahead of it; 
   const run = waiversRun(AT, REAL)!;
   assert.deepEqual([new Date(run.at).toISOString(), new Date(run.deadline).toISOString()], ['2026-11-10T20:00:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, {}), null);
-  // The real league's daily mask is an int of unknown encoding: no run rather than a guessed one.
-  assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 }), null);
-  assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1111111 }), null);
+  assert.equal(waiversRun(AT, { daily_waivers: 1 }), null, 'daily waivers are not understood: no run rather than a guessed one');
   // Registered late, the time stays fixed: the schedules service fires a past time once, inside its deadline.
   const late = waiversRun(Date.parse('2026-11-11T02:00:00Z'), REAL)!;
   assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-10T20:00:00.000Z', '2026-11-11T07:00:00.000Z']);
@@ -349,7 +343,7 @@ test('the schedules service lists the waivers run with its session key and deadl
     assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
     const noDay = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0 } } };
     assert.deepEqual(await registerWaiversSchedules({ url }, clientOf(noDay), 'L1', 'mallard', now), []);
-    const unknown = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0, daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 } } };
+    const unknown = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0, daily_waivers: 1 } } };
     const logged: unknown[] = [];
     const orig = console.error;
     console.error = (m: unknown) => void logged.push(m);
@@ -358,7 +352,7 @@ test('the schedules service lists the waivers run with its session key and deadl
     } finally {
       console.error = orig;
     }
-    assert.match(String(logged[0]), /league L1.*1152/);
+    assert.match(String(logged[0]), /league L1 has daily waivers/);
   } finally {
     schedulesServer.close();
     schedules.stop();
@@ -369,19 +363,19 @@ test('the waivers job starts on demand under the week session key, beside the li
   const calls: Array<{ url: string; body: { input: string; requestId: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
   let tick = 0;
-  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(base), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT + tick++) }));
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(base), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', fetch: fake, now: () => new Date(AT + tick++) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const first = await post('/leagues/L1/jobs/waivers');
+    const first = await post('/waivers');
     assert.equal(first.status, 202);
     assert.deepEqual(await first.json(), { sessionKey: 'sleeper:L1:9:waivers', status: 202 });
-    await post('/leagues/L1/jobs/waivers?week=9');
+    await post('/waivers?week=9');
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Awaivers/invocations?agent=sleeper-waivers');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
     assert.notEqual(calls[0].body.requestId, calls[1].body.requestId);
-    assert.equal((await post('/leagues/L1/jobs/waivers?week=x')).status, 400);
-    assert.equal((await post('/leagues/L1/jobs/waivers', 'GET')).status, 405);
+    assert.equal((await post('/waivers?week=x')).status, 400);
+    assert.equal((await post('/waivers', 'GET')).status, 405);
   } finally {
     service.stop();
   }

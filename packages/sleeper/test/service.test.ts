@@ -34,7 +34,7 @@ test('a snapshot is taken and stored', async () => {
   const clock = { at: new Date('2026-11-01T15:00:00Z') };
   const { service, call } = await setup(clock);
   try {
-    assert.equal((await call('GET', '/leagues/L1/snapshots/latest')).status, 404);
+    assert.deepEqual(await (await call('GET', '/leagues/L1/snapshots')).json(), { snapshots: [] });
     const taken = await (await call('POST', '/leagues/L1/snapshots')).json();
     assert.equal(taken.date, '2026-11-01');
     assert.equal(taken.data.league.name, 'Pond League');
@@ -42,8 +42,7 @@ test('a snapshot is taken and stored', async () => {
     // Only rostered players are kept, as slivers.
     assert.deepEqual(Object.keys(taken.data.players).sort(), ['4034', '6794']);
     assert.equal(taken.data.players['4034'].injury, 'Questionable');
-    const latest = await (await call('GET', '/leagues/L1/snapshots/latest')).json();
-    assert.deepEqual(latest, taken);
+    assert.deepEqual(await (await call('GET', '/leagues/L1/snapshots/2026-11-01')).json(), taken);
   } finally {
     service.stop();
   }
@@ -100,9 +99,6 @@ test('the client issues only GETs and honours the players cache', async () => {
   await client.users('L1');
   await client.rosters('L1');
   await client.matchups('L1', 9);
-  await client.transactions('L1', 9);
-  await client.drafts('L1');
-  await client.draft('D1');
   await client.draftPicks('D1');
   await client.players();
   await client.players();

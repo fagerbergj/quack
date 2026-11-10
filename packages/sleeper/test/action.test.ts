@@ -10,18 +10,15 @@ test('run_job posts to the app\'s on-demand endpoint with the launch credential 
     seen.push({ url, method: init.method, auth: (init.headers as Record<string, string>).authorization });
     return new Response(JSON.stringify({ sessionKey: 'sleeper:L 1:9:waivers', status: 202 }), { status: 202 });
   }) as unknown as typeof fetch;
-  const started = await runJob.start({ job: 'waivers', league: 'L 1', week: 9 }, { distributorUrl: 'http://d', fetch: fetchStub, env });
-  assert.deepEqual(started, { session: 'sleeper:L 1:9:waivers', title: 'Sleeper waivers, league L 1, week 9' });
-  assert.deepEqual(seen, [{ url: 'http://d/apps/sleeper/leagues/L%201/jobs/waivers?week=9', method: 'POST', auth: 'Bearer secret' }]);
-  await runJob.start({ job: 'lineup', league: 'L1' }, { distributorUrl: 'http://d', fetch: fetchStub, env });
-  assert.equal(seen[1].url, 'http://d/apps/sleeper/leagues/L1/jobs/lineup');
-  const unnamed = await runJob.start({ job: 'waivers', week: 9 }, { distributorUrl: 'http://d', fetch: fetchStub, env });
-  assert.equal(seen[2].url, 'http://d/apps/sleeper/waivers?week=9', 'no league runs in the configured one');
-  assert.equal(unnamed.title, 'Sleeper waivers, week 9');
+  const started = await runJob.start({ job: 'waivers', week: 9 }, { distributorUrl: 'http://d', fetch: fetchStub, env });
+  assert.deepEqual(started, { session: 'sleeper:L 1:9:waivers', title: 'Sleeper waivers, week 9' });
+  assert.deepEqual(seen, [{ url: 'http://d/apps/sleeper/waivers?week=9', method: 'POST', auth: 'Bearer secret' }]);
+  await runJob.start({ job: 'lineup' }, { distributorUrl: 'http://d', fetch: fetchStub, env });
+  assert.equal(seen[1].url, 'http://d/apps/sleeper/lineup', 'no week runs the current one');
 });
 
 test('run_job surfaces the service\'s refusal and a missing configuration', async () => {
   const refusing = (async () => new Response(JSON.stringify({ error: 'on-demand jobs are not configured' }), { status: 501 })) as unknown as typeof fetch;
-  await assert.rejects(runJob.start({ job: 'digest', league: 'L1' }, { distributorUrl: 'http://d', fetch: refusing, env }), /not configured/);
-  await assert.rejects(runJob.start({ job: 'digest', league: 'L1' }, { distributorUrl: 'http://d', fetch: refusing, env: {} }), /QUACK_INDEX_URL and QUACK_INDEX_TOKEN are required/);
+  await assert.rejects(runJob.start({ job: 'digest' }, { distributorUrl: 'http://d', fetch: refusing, env }), /not configured/);
+  await assert.rejects(runJob.start({ job: 'digest' }, { distributorUrl: 'http://d', fetch: refusing, env: {} }), /QUACK_INDEX_URL and QUACK_INDEX_TOKEN are required/);
 });

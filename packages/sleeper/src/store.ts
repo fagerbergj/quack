@@ -2,14 +2,11 @@ import { DatabaseSync } from 'node:sqlite';
 
 export type SnapshotRow = { league: string; date: string; takenAt: string; data: unknown };
 
-/** League store on the service's volume: snapshots are kept indefinitely. Suggestions, outcomes and prediction scores are schema only for now. */
+/** League store on the service's volume: snapshots are kept indefinitely. */
 export function openStore(path: string) {
   const db = new DatabaseSync(path);
   db.exec(`
     CREATE TABLE IF NOT EXISTS snapshots (league TEXT NOT NULL, date TEXT NOT NULL, taken_at TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (league, date));
-    CREATE TABLE IF NOT EXISTS suggestions (id TEXT PRIMARY KEY, league TEXT NOT NULL, kind TEXT NOT NULL, created TEXT NOT NULL, body TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS outcomes (suggestion TEXT NOT NULL REFERENCES suggestions(id), recorded TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (suggestion, recorded));
-    CREATE TABLE IF NOT EXISTS prediction_scores (id TEXT PRIMARY KEY, league TEXT NOT NULL, week INTEGER NOT NULL, scored TEXT NOT NULL, body TEXT NOT NULL);
   `);
   const insert = db.prepare('INSERT OR IGNORE INTO snapshots (league, date, taken_at, data) VALUES (?, ?, ?, ?)');
   type Raw = { league: string; date: string; taken_at: string; data: string };
@@ -22,10 +19,6 @@ export function openStore(path: string) {
     },
     snapshot(league: string, date: string): SnapshotRow | undefined {
       const r = db.prepare('SELECT * FROM snapshots WHERE league = ? AND date = ?').get(league, date) as Raw | undefined;
-      return r && row(r);
-    },
-    latest(league: string): SnapshotRow | undefined {
-      const r = db.prepare('SELECT * FROM snapshots WHERE league = ? ORDER BY date DESC LIMIT 1').get(league) as Raw | undefined;
       return r && row(r);
     },
     /** Dates only, newest first; a snapshot is fetched by date. */

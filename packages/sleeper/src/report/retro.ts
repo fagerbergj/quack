@@ -1,10 +1,9 @@
 import type { Json } from '../client.ts';
-import { ownerTeam, ptsKey, round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
+import { ownerTeam, POSITIONS, ptsKey, round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import { bestLineup, fits, lineupSlots, numberSlots } from '../lineup/slots.ts';
 import { nextProcessing } from '../waivers/jobs.ts';
 import { kickoffs, playerName, teamNames, teamOf, weekPhase } from './week.ts';
 
-const FANTASY = new Set(['QB', 'RB', 'WR', 'TE', 'K', 'DEF']);
 const MAX_WAIVER_MISSES = 3;
 const DAY = 86_400_000;
 
@@ -36,7 +35,7 @@ function lastProcessing(settings: Json, by: number): number | null {
 function freeAgentHits(starters: Slot[], stats: Json, rostered: Set<string>, dump: Json, key: string): Array<Scored & { team: string | null; over: Slot }> {
   const hits = Object.entries<Json>(stats).flatMap(([id, s]) => {
     const pos = dump[id]?.position;
-    if (rostered.has(id) || !FANTASY.has(pos)) return [];
+    if (rostered.has(id) || !POSITIONS.includes(pos)) return [];
     const weakest = starters.filter((o) => o.id && fits(o.slot, pos)).sort((a, b) => a.pts - b.pts)[0];
     const pts = s?.[key] ?? 0;
     return weakest && pts > weakest.pts ? [{ id, name: playerName(dump, id), pos, pts, team: teamOf(dump, id), over: weakest }] : [];

@@ -11,34 +11,24 @@ const LEAD_MS = 12 * 60 * 60_000;
 /** Reruns within a week continue one session. */
 export const waiversKey = (league: string, week: number) => `sleeper:${league}:${week}:waivers`;
 
-export type WaiverSettings = { waiver_day_of_week?: number; daily_waivers?: number; daily_waivers_hour?: number; daily_waivers_days?: number | string };
+export type WaiverSettings = { waiver_day_of_week?: number; daily_waivers?: number };
 
 const PT = 'America/Los_Angeles';
 /** Sleeper counts weekdays from Monday = 0. */
 const mondayIndex = (weekday: string) => (WEEKDAYS.indexOf(weekday) + 6) % 7;
 
-const validMask = (v: unknown) => typeof v === 'string' && /^[01]{7}$/.test(v);
-
-// Weekly waivers run at 00:00 Pacific on `waiver_day_of_week` (verified on a real league). Daily mode needs `daily_waivers_days`
-// as a 7-char 0/1 string, Monday first; the real league sends an int of unknown encoding, so anything else fails closed.
-function processingSlots(s: WaiverSettings): { days: number[]; hour: number } | null {
-  if (s.daily_waivers === 1) {
-    if (!validMask(s.daily_waivers_days)) return null;
-    const days = (s.daily_waivers_days as string).split('').flatMap((c, i) => (c === '1' ? [i] : []));
-    return days.length ? { days, hour: s.daily_waivers_hour ?? 0 } : null;
-  }
-  return typeof s.waiver_day_of_week === 'number' ? { days: [s.waiver_day_of_week], hour: 0 } : null;
-}
+// Weekly waivers run at 00:00 Pacific on `waiver_day_of_week` (verified on a real league). Daily waivers send their days in
+// an encoding nobody has decoded, so a daily league gets no run rather than a guessed one.
+const processingDay = (s: WaiverSettings) => (s.daily_waivers !== 1 && typeof s.waiver_day_of_week === 'number' ? s.waiver_day_of_week : null);
 
 /** The next processing instant strictly after `now`; null when the league sets none. */
 export function nextProcessing(now: number, settings: WaiverSettings): number | null {
-  const slots = processingSlots(settings);
-  if (!slots) return null;
+  const day = processingDay(settings);
+  if (day === null) return null;
   const today = Date.parse(`${etDate(now, PT)}T12:00:00Z`);
   for (let i = 0; i < 9; i++) {
-    const date = etDate(today + i * 86_400_000, PT);
-    const at = etWall(date, slots.hour, PT);
-    if (at > now && slots.days.includes(mondayIndex(etParts(at, PT).weekday))) return at;
+    const at = etWall(etDate(today + i * 86_400_000, PT), 0, PT);
+    if (at > now && mondayIndex(etParts(at, PT).weekday) === day) return at;
   }
   return null;
 }
@@ -57,7 +47,7 @@ export async function registerWaiversSchedules(config: ScheduleConfig, client: S
   if (state.season_type !== 'regular') return [];
   const settings = (await client.league(league)).settings;
   const run = waiversRun(now(), settings);
-  if (settings?.daily_waivers === 1 && !validMask(settings.daily_waivers_days)) console.error(`sleeper: league ${league} has daily waivers with daily_waivers_days ${JSON.stringify(settings.daily_waivers_days)}, which is not understood; no waivers run is scheduled`);
+  if (settings?.daily_waivers === 1) console.error(`sleeper: league ${league} has daily waivers, which are not understood; no waivers run is scheduled`);
   if (!run) return [];
   // One pending run per league: re-registering replaces its time and input, even after the processing day or the NFL week changes.
   const input: LineupInput = { league, week: state.week, owner };

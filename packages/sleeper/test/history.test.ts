@@ -59,11 +59,10 @@ test('reach and steal use one rule: position-rank gap of five between drafted-as
   assert.match(f.definitions.reach_steal, /5 or more ranks below the draft rank is a reach/);
 });
 
-test('a season the owner did not play is skipped, a league with none fails, and the seasons cap limits the chain', async () => {
+test('a season the owner did not play is skipped, and a league with none fails', async () => {
   const gone = { ...fixtures, '/v1/league/H1/rosters': fixtures['/v1/league/H1/rosters'].filter((r: any) => r.roster_id !== 1) };
   assert.deepEqual((await factsOf(INPUT, gone)).seasons.map((s) => s.season), ['2026']);
   await assert.rejects(factsOf({ ...INPUT, owner: 'nobody' }), /no team for nobody/);
-  assert.deepEqual((await factsOf({ ...INPUT, seasons: 1 })).seasons.map((s) => s.season), ['2026']);
 });
 
 test('the card is the figures plus the model notes by season; a note for a season that was not reviewed fails the card step', async () => {
@@ -132,22 +131,19 @@ test('the workflow seals a history card whose figures are the tools and the judg
   assert.ok(judged.some((q) => /schedule luck/.test(q)));
 });
 
-test('the history job starts on demand under the week key with an optional seasons cap, and is never scheduled', async () => {
+test('the history job starts on demand under the week key, and is never scheduled', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(0) }));
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', league: 'H2', fetch: fake, now: () => new Date(0) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const first = await post('/leagues/H2/jobs/history');
+    const first = await post('/history');
     assert.deepEqual([first.status, await first.json()], [202, { sessionKey: 'sleeper:H2:3:history', status: 202 }]);
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AH2%3A3%3Ahistory/invocations?agent=sleeper-history');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
-    await post('/leagues/H2/jobs/history?seasons=2');
-    assert.deepEqual(JSON.parse(calls[1].body.input), { ...INPUT, seasons: 2 });
-    assert.equal((await post('/leagues/H2/jobs/history?seasons=0')).status, 400);
-    assert.equal((await post('/leagues/H2/jobs/history', 'GET')).status, 405);
-    assert.equal(calls.length, 2);
+    assert.equal((await post('/history', 'GET')).status, 405);
+    assert.equal(calls.length, 1);
     assert.equal(historyKey('H2', 3), 'sleeper:H2:3:history');
   } finally {
     service.stop();

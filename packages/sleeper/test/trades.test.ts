@@ -14,10 +14,10 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildFinderCard, liveLeague, buildTradeCard, buildTradeFacts, createSleeperClient, createSleeperService, finderKey, finderRun, finderWorkflow, registerFinderSchedules, tradeEvidence, tradeKey, tradeRubric, tradeWorkflow,
-  type FinderCard, type TradeCard, type TradeFacts,
+  buildFinderCard, liveLeague, buildTradeFacts, createSleeperClient, createSleeperService, finderKey, finderRun, finderWorkflow, registerFinderSchedules, tradeEvidence, tradeRubric,
+  type FinderCard,
 } from '../src/index.ts';
-import type { FinderDecision, TradeDecision } from '../src/trades/card.ts';
+import type { FinderDecision } from '../src/trades/card.ts';
 import { dealable } from '../src/trades/facts.ts';
 import { newsFor } from '../src/lineup/news.ts';
 import { refusedRun } from './refused.ts';
@@ -26,8 +26,6 @@ type Fixtures = Record<string, any>;
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/trades.json', import.meta.url), 'utf8')) as Fixtures;
 const AT = Date.parse('2026-11-06T15:00:00Z');
 const FINDER = { league: 'L1', week: 9, owner: 'mallard' };
-// Give Bo Bench (WR, surplus) to Pintail Pride for Tom Tail (TE, surplus): each fills the other's need.
-const OFFER = { ...FINDER, partner: '3', give: ['110'], get: ['411'] };
 
 const clientOf = (fx: Fixtures = fixtures) => createSleeperClient({
   fetch: (async (input: string) => {
@@ -44,30 +42,18 @@ const finderDecision: FinderDecision = {
   suggestions: [{ partner: 3, give: '110', get: '411', partner_need: 'needs WR', note: 'Pintail Pride is 2-6 and short at WR; Tom Tail is their third tight end.' }],
   summary: 'Offer Bo Bench to Pintail Pride for Tom Tail.',
 };
-const tradeDecision: TradeDecision = { verdict: 'send', why: 'Pintail Pride is thin at WR and has a spare TE; you need TE depth.', flips_if: 'Tom Tail is ruled Out for the season.', summary: 'Send it: it fills a need on both sides.' };
 
-test('no trade check is a code gate: the schema and the card builder already fix the verdict, sides and figures', () => {
+test('no trade check is a code gate: the card builder already fixes the sides and figures', () => {
   assert.deepEqual(tradeRubric.criteria.flatMap((k) => k.checks).filter((k) => k.weight === 'gate' || k.code).map((k) => k.id), []);
 });
 
 test('the partner table holds record, standing, stance, needs and surplus from the recorded week', async () => {
   const f = await factsOf();
-  assert.deepEqual([f.teams, f.playoffTeams, f.offer], [3, 2, null]);
+  assert.deepEqual([f.teams, f.playoffTeams], [3, 2]);
   assert.deepEqual([f.mine.rank, f.mine.stance, f.mine.surplus, f.mine.needs], [2, 'contender', ['110'], { TE: 1 }]);
   assert.deepEqual(f.partners.map((p) => [p.rosterId, p.record, p.rank, p.stance, p.surplus]), [[2, '6-2', 1, 'contender', ['400']], [3, '2-6', 3, 'rebuilder', ['411']]]);
   assert.deepEqual(f.partners[1].needs, { RB: 3, WR: 2, K: 1, DEF: 1 });
   assert.equal(f.partners[0].players['400'].role, 'bench');
-});
-
-test('an analysis resolves the partner by roster id, owner or team name, and rejects players off the rosters', async () => {
-  const f = await factsOf(OFFER);
-  assert.deepEqual([f.partners.map((p) => p.rosterId), f.offer], [[3], { partner: 3, give: ['110'], get: ['411'] }]);
-  for (const partner of ['pintail', 'Pintail Pride']) assert.equal((await factsOf({ ...OFFER, partner })).partners[0].rosterId, 3);
-  await assert.rejects(factsOf({ ...OFFER, partner: '1' }), /no partner team/);
-  await assert.rejects(factsOf({ ...OFFER, partner: 'nobody' }), /no partner team/);
-  await assert.rejects(factsOf({ ...OFFER, give: ['200'] }), /200 is not on your roster/);
-  await assert.rejects(factsOf({ ...OFFER, get: ['110'] }), /110 is not on Pintail Pride/);
-  await assert.rejects(factsOf({ ...OFFER, give: [] }), /both sides/);
 });
 
 test('the finder card carries the tools figures and the swing, with news attached by code for both players', async () => {
@@ -90,39 +76,26 @@ test('a bad finder decision fails the card step instead of reaching the judge', 
   assert.throws(() => build([{ ...s, give: '200' }]), /200, who is not on your team/);
 });
 
-test('the trade card carries both sides figures, a counter, and news for every traded player', async () => {
-  const f = await factsOf(OFFER);
-  const send = buildTradeCard(f, tradeDecision, { '110': [item], '411': [item] });
-  assert.deepEqual([send.partner.stance, send.offers[0].verdict, send.offers[0].delta, send.offers[0].counter, send.offers[0].news.map((n) => n.player)], ['rebuilder', 'send', { you: -0.3, partner: 0.3 }, null, ['Bo Bench', 'Tom Tail']]);
-  const counter = buildTradeCard(f, { ...tradeDecision, verdict: 'counter', counter: { give: ['110'], get: ['410'] } }, {}).offers[0];
-  assert.deepEqual([counter.counter!.get.map((p) => p.name), counter.counter!.delta], [['Tess Tight'], { you: 4.1, partner: -4.1 }]);
-  assert.throws(() => buildTradeCard(f, { ...tradeDecision, verdict: 'counter' }, {}), /without a counter-offer/);
-  assert.throws(() => buildTradeCard(f, { ...tradeDecision, verdict: 'counter', counter: { give: ['110'], get: ['200'] } }, {}), /200, who is not on Pintail Pride/);
-  assert.equal(buildTradeCard(f, { ...tradeDecision, counter: { give: ['110'], get: ['410'] } }, {}).offers[0].counter, null, 'a counter on a non-counter verdict is dropped');
-});
-
-test('a row\'s judge evidence carries news, designations of both sides and the partner table; a multi-for-one is its own unit', async () => {
-  const f = await factsOf({ ...OFFER, give: ['110', '106'], get: ['411', '410'] });
-  const c = buildTradeCard(f, tradeDecision, { '110': [item] });
+test('a row\'s judge evidence carries news, designations of both sides and the partner table', async () => {
+  const f = await factsOf();
+  const c = buildFinderCard(f, finderDecision, { '110': [item] });
   const ev = await tradeEvidence(f)(null, { content: JSON.stringify(c) });
   const row = ev.row[0].state as unknown as { news: unknown[]; designations: Record<string, string>; league_teams: number; partner: { stance: string; surplus: string[] } };
-  assert.deepEqual([row.news.length, Object.keys(row.designations), row.league_teams, row.partner.stance, row.partner.surplus], [1, ['Bo Bench', 'Walt Wade', 'Tom Tail', 'Tess Tight'], 3, 'rebuilder', ['411']]);
-  assert.deepEqual(ev.consolidation.map((u) => u.id), ['offer1']);
+  assert.deepEqual([row.news.length, Object.keys(row.designations), row.league_teams, row.partner.stance, row.partner.surplus], [1, ['Bo Bench', 'Tom Tail'], 3, 'rebuilder', ['411']]);
   assert.deepEqual(ev.suggested, ev.card, 'a card with suggestions is asked for its deciding line item');
-  assert.deepEqual((await tradeEvidence(f)(null, { content: JSON.stringify({ ...c, offers: [] }) })).suggested, [], 'a card with no deals has no call to decide');
-  assert.equal((await tradeEvidence(await factsOf(OFFER))(null, { content: JSON.stringify(buildTradeCard(await factsOf(OFFER), tradeDecision, {})) })).consolidation.length, 0);
+  assert.deepEqual((await tradeEvidence(f)(null, { content: JSON.stringify({ ...c, suggestions: [] }) })).suggested, [], 'a card with no deals has no call to decide');
 });
 
 test('news is searched once per player and skipped when there is no source', async () => {
-  const f = await factsOf(OFFER);
+  const f = await factsOf();
   const searched: string[] = [];
-  const players = [f.mine.players['110'], f.partners[0].players['411'], f.mine.players['110']];
+  const players = [f.mine.players['110'], f.partners[1].players['411'], f.mine.players['110']];
   assert.deepEqual(Object.keys(await newsFor(async (p) => (searched.push(p.name), [item]), players, AT)), ['110', '411']);
   assert.deepEqual(searched, ['Bo Bench', 'Tom Tail']);
   assert.deepEqual(await newsFor(undefined, players, AT), {});
 });
 
-async function run<D>(workflow: ReturnType<typeof tradeWorkflow>, input: object, decision: D) {
+async function run<D>(workflow: ReturnType<typeof finderWorkflow>, input: object, decision: D) {
   const judged: string[] = [];
   const asked: string[] = [];
   const responses: FauxResponseStep[] = [
@@ -139,7 +112,7 @@ async function run<D>(workflow: ReturnType<typeof tradeWorkflow>, input: object,
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-trades-'));
   const m = faux.getModel();
-  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the trade analyst.', extensions: [workflowExtension([workflow])] } });
+  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the trade finder.', extensions: [workflowExtension([workflow])] } });
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(input));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
@@ -153,19 +126,8 @@ async function run<D>(workflow: ReturnType<typeof tradeWorkflow>, input: object,
 }
 const deps = (news?: (p: { name: string }) => Promise<unknown[]>) => ({ client: clientOf(), now: () => AT, news: news as never });
 
-test('the trade workflow seals a card whose news the code searched for each traded player, and the judge passes it', async () => {
-  const searched: string[] = [];
-  const { sealed, verdict, judged, record } = await run(tradeWorkflow(deps(async (p) => (searched.push(p.name), [item]))), OFFER, tradeDecision);
-  assert.deepEqual(await replayed(record, sealed), await tradeEvidence(await factsOf(OFFER))(null, sealed), 'the recording rebuilds the evidence the judge read');
-  const c = JSON.parse(sealed.content) as TradeCard;
-  assert.deepEqual([c.kind, c.partner.team, c.offers[0].verdict, c.offers[0].news.length, searched], ['trade', 'Pintail Pride', 'send', 2, ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@4', [], true, []]);
-  assert.ok(verdict.checks.some((k) => k.id === 'news_per_traded_player'));
-  assert.ok(judged.some((q) => /one line item that decides/.test(q)));
-});
-
-test('without a news source the trade verdict says so and does not score news', async () => {
-  const { verdict, record, sealed } = await run(tradeWorkflow(deps()), OFFER, tradeDecision);
+test('without a news source the finder verdict says so and does not score news', async () => {
+  const { verdict, record, sealed } = await run(finderWorkflow(deps()), FINDER, finderDecision);
   await replayed(record, sealed);
   assert.deepEqual([verdict.passed, verdict.notes], [true, ['news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'news_per_traded_player'));
@@ -181,7 +143,8 @@ test('the finder searches news once for every player a deal may name, gives it t
   assert.ok(searched.includes('Bo Bench') && searched.includes('Tom Tail'));
   assert.match(asked[0], /\[Tom Tail report\]\(https:\/\/www\.nfl\.com/, 'the decision prompt carries the news');
   assert.deepEqual([c.kind, c.suggestions.map((s) => s.get.name), c.suggestions[0].news.map((n) => n.player)], ['trade-finder', ['Tom Tail'], ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.trade@4', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@5', [], true, []]);
+  assert.ok(verdict.checks.some((k) => k.id === 'news_per_traded_player'));
 });
 
 test('the weekly finder run starts two hours after waivers process and stays useful a week; a league without a processing day has none', () => {
@@ -191,7 +154,6 @@ test('the weekly finder run starts two hours after waivers process and stays use
   assert.equal(finderRun(AT, {}), null);
   assert.equal(finderRun(AT, undefined), null);
   assert.equal(finderKey('L1', 9), 'sleeper:L1:9:trade-finder');
-  assert.equal(tradeKey('L1', 9, { partner: '3', give: ['b', 'a'], get: ['c'] }), 'sleeper:L1:9:trade:3:a+b:c');
 });
 
 test('the schedules service lists the finder run once however often it registers, under the week session key', async () => {
@@ -217,25 +179,20 @@ test('the schedules service lists the finder run once however often it registers
   }
 });
 
-test('the trade jobs start on demand: the finder under the week key, a trade under its own key, and a bad trade is a 400', async () => {
+test('the finder starts on demand under the week key', async () => {
   const calls: Array<{ url: string; body: { input: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', fetch: fake, now: () => new Date(AT) }));
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client: clientOf(), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', fetch: fake, now: () => new Date(AT) }));
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const finder = await post('/leagues/L1/jobs/trade-finder');
+    const finder = await post('/trade-finder');
     assert.deepEqual([finder.status, await finder.json()], [202, { sessionKey: 'sleeper:L1:9:trade-finder', status: 202 }]);
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Atrade-finder/invocations?agent=sleeper-trade-finder');
     assert.deepEqual(JSON.parse(calls[0].body.input), FINDER);
-    const trade = await post('/leagues/L1/jobs/trade?partner=3&give=110&get=411,410');
-    assert.deepEqual([trade.status, (await trade.json()).sessionKey], [202, 'sleeper:L1:9:trade:3:110:410+411']);
-    assert.equal(calls[1].url, 'http://d/sessions/sleeper%3AL1%3A9%3Atrade%3A3%3A110%3A410%2B411/invocations?agent=sleeper-trade');
-    assert.deepEqual(JSON.parse(calls[1].body.input), { ...FINDER, partner: '3', give: ['110'], get: ['411', '410'] });
-    assert.equal((await post('/leagues/L1/jobs/trade?partner=3&give=110')).status, 400);
-    assert.equal((await post('/leagues/L1/jobs/trade-finder?week=x')).status, 400);
-    assert.equal((await post('/leagues/L1/jobs/trade', 'GET')).status, 405);
-    assert.equal(calls.length, 2);
+    assert.equal((await post('/trade-finder?week=x')).status, 400);
+    assert.equal((await post('/trade-finder', 'GET')).status, 405);
+    assert.equal(calls.length, 1);
   } finally {
     service.stop();
   }
