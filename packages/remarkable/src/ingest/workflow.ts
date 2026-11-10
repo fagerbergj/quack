@@ -6,7 +6,7 @@ import { defineDoc } from '@earendil-works/pi-durable';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { classifierChoice, parseTopic } from './classify.ts';
 import { renderNotebook, renderPages } from './render.ts';
-import { TYPES, transcriptKind, type Transcript } from './transcript.ts';
+import { transcriptKind, type Transcript } from './transcript.ts';
 
 export const INGEST_WORKFLOW = 'remarkable.ingest';
 export const NONE = 'none of these';
@@ -35,16 +35,8 @@ type Doc = { id: string; name: string; version: string };
 
 // The bar the judge applies to Clef; below it the chain falls through to the session model, then a person.
 const MIN_CONFIDENCE = 0.8;
-// Clef's input cap is 8192 tokens; the opening pages carry what a type or topic needs.
+// Clef's input cap is 8192 tokens; the opening pages carry what a topic needs.
 const EXCERPT_CHARS = 6000;
-const TYPE_HINT: Record<string, string> = {
-  meeting: 'notes taken during a meeting or call',
-  idea: 'an idea, plan or brainstorm',
-  'todo-list': 'a list of tasks to do',
-  journal: 'a personal journal or diary entry',
-  sketch: 'mostly drawings or diagrams',
-  'reading-notes': 'notes on a book, article or talk',
-};
 
 const pageFile = (n: number) => `page-${n}.jpg`;
 const step = <T extends JsonValue>(c: StepContext, name: string) => c.prior[name] as T;
@@ -173,7 +165,6 @@ export function ingestWorkflow(deps: IngestDeps) {
         },
       },
       { name: 'transcribe', kind: 'code', run: (c) => transcribe(c, deps) },
-      { name: 'type', kind: 'decision', resolvers: resolvers((o) => TYPE_HINT[o] ?? o), point: (c) => ({ question: 'What kind of handwritten document is this?', options: [...TYPES], minConfidence: MIN_CONFIDENCE, evidence: text(c).slice(0, EXCERPT_CHARS) }) },
       { name: 'topics', kind: 'code', run: async () => deps.service.topics() },
       {
         name: 'topic',
@@ -190,7 +181,6 @@ export function ingestWorkflow(deps: IngestDeps) {
           const transcript: Transcript = {
             kind: 'remarkable.transcript',
             document: doc(c),
-            type: step<Decision>(c, 'type').choice,
             topic,
             pages: step<string[]>(c, 'transcribe').map((t, i) => ({ page: i + 1, text: t })),
           };

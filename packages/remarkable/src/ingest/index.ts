@@ -3,7 +3,7 @@ import type { ClassifierRef, ModelRef } from '@quack/judge';
 import { ingestWorkflow, INGEST_WORKFLOW, UNREACHABLE, type IngestService } from './workflow.ts';
 
 export { ingestWorkflow, INGEST_WORKFLOW, NONE, type IngestDeps, type IngestService } from './workflow.ts';
-export { problems, transcriptKind, TYPES, type Transcript } from './transcript.ts';
+export { problems, transcriptKind, type Transcript } from './transcript.ts';
 export { classifierChoice, parseTopic } from './classify.ts';
 export { PAGE_WIDTH, renderNotebook, renderPages } from './render.ts';
 
