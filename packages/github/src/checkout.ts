@@ -5,7 +5,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, type SealedArtifact } from '@quack/sdk';
-import type { ReviewFeedback } from './feedback.ts';
+import { renderOwnThreads, type ReviewFeedback } from './feedback.ts';
 
 export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?: string; /** Where repositories are cloned from; tests use a local directory. */ gitBaseUrl?: string };
 
@@ -67,8 +67,8 @@ export async function fetchRecord(config: SessionConfig, owner: string, repo: st
 }
 
 const alreadyPosted = (doc: { posted?: number[]; reviewed?: Record<string, string> } | undefined, sha: string) => !!doc?.posted?.some((v) => doc.reviewed?.[String(v)] === sha);
-// What a review read besides the code: a new description or CI result is worth another look at the same head.
-const seen = (pr: PullRequestRecord | null | undefined) => JSON.stringify(pr && [pr.headSha, pr.body, pr.checks]);
+// What a review read besides the code: a new description, CI result or reply to its comments is worth another look at the same head.
+const seen = (pr: PullRequestRecord | null | undefined) => JSON.stringify(pr && [pr.headSha, pr.body, pr.checks, renderOwnThreads(pr.feedback)]);
 const skipReason = (pr: PullRequestRecord, prior: (Parameters<typeof alreadyPosted>[0] & { pr?: PullRequestRecord | null }) | undefined) =>
   pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) && seen(prior?.pr) === seen(pr) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
 const staleNote = (asked: string | undefined, live: string) => (asked && asked !== live ? `The request was for ${asked}, an older head; this reviews the live head ${live}.` : '');
@@ -168,7 +168,7 @@ export function checkoutTool(config: SessionConfig) {
   const dir = config.repoDir ?? 'repo';
   return defineTool({
     name: 'checkout_pr',
-    description: `Check out a pull request into ./${dir} at its head, with its base fetched, and return its description, CI checks, linked issues and the repo's conventions. Call it first.`,
+    description: `Check out a pull request into ./${dir} at its head, with its base fetched, and return its description, CI checks, linked issues, your earlier inline comments with their replies, and the repo's conventions. Call it first.`,
     parameters: obj({ repository: str({ description: 'owner/repo' }), number: int({ minimum: 1 }), head: opt(str({ description: 'the head sha the request named, if any' })) }, { open: true }),
     replay: 'safe',
     async execute(args, api, ctx) {
@@ -201,6 +201,7 @@ export function checkoutTool(config: SessionConfig) {
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
         ...prFacts(pr),
+        renderOwnThreads(pr.feedback),
         `Changed files:\n${stat}`,
         await conventions(api, dir, ctx),
       ].filter(Boolean).join('\n\n');

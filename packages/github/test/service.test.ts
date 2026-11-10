@@ -36,10 +36,17 @@ const reviews = [
   review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
 ];
 let graphqlErrors = false;
+let reviewCommentsDown = false;
 const posted15: any[] = [];
 const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
 const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 'Fixed already.')];
 const commentWaiters: Array<() => void> = [];
+// Newest first, as the service asks: page 1 is full of others' comments and the reply, page 2 holds the app's comment it answers.
+const reviewComments = [
+  { id: 900, in_reply_to_id: 800, user: { login: 'dev' }, path: 'app.ts', line: 4, original_commit_id: 'abc123', created_at: '2026-11-09T23:01:00Z', body: 'Checked on prod.' },
+  ...Array.from({ length: 99 }, (_, i) => ({ id: 500 + i, user: { login: 'maria' }, path: 'app.ts', line: 1, created_at: '2026-11-09T23:00:00Z', body: 'noise' })),
+  { id: 800, user: { login: 'quack-app[bot]' }, path: 'app.ts', line: 4, original_commit_id: 'old999', created_at: '2026-11-09T22:58:00Z', body: 'question: exposed?' },
+];
 function jwtValid(auth: string) {
   const [head, body, sig] = auth.replace(/^Bearer /, '').split('.');
   const ok = createVerify('RSA-SHA256').update(`${head}.${body}`).verify(publicKey, Buffer.from(sig, 'base64url'));
@@ -101,6 +108,9 @@ const github = await listen(
     if (url === '/repos/acme/widgets/pulls/14/reviews') return calls.at(-1)!.body.event === 'COMMENT' ? reply(200, { id: 10, html_url: 'https://github.com/acme/widgets/pull/14#review-10' }) : reply(422, { message: 'Can not approve your own pull request' });
     const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
     if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
+    const commentPage = /^\/repos\/acme\/widgets\/pulls\/7\/comments\?sort=created&direction=desc&per_page=100&page=(\d+)$/.exec(url);
+    if (commentPage && reviewCommentsDown) return reply(503, { message: 'unavailable' });
+    if (commentPage && auth === 'token ghs_test') return reply(200, reviewComments.slice((Number(commentPage[1]) - 1) * 100, Number(commentPage[1]) * 100));
     if (url === '/repos/acme/widgets/pulls/15' && req.method === 'GET') return reply(200, { number: 15, user: { login: 'dev' } });
     if (url === '/repos/acme/widgets/pulls/15/reviews' && req.method === 'POST') {
       const id = 100 + posted15.length;
@@ -483,6 +493,26 @@ test('a pull request record carries the open review feedback: latest human reque
   assert.equal(pr.feedback.commentsError, undefined);
   assert.equal(calls.findLast((c) => c.path === '/graphql')!.version, undefined, 'GraphQL gets no REST version header');
   assert.equal(calls.findLast((c) => c.path.includes('/reviews?'))!.version, '2022-11-28');
+});
+
+test("a pull request record carries the app's own inline comments with their replies, read across pages", async () => {
+  const pr = await (await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } })).json();
+  assert.deepEqual(pr.feedback.ownThreads, [{ id: 800, path: 'app.ts', line: 4, commit: 'old999', at: '2026-11-09T22:58:00Z', outdated: false, body: 'question: exposed?', replies: [{ author: 'dev', at: '2026-11-09T23:01:00Z', body: 'Checked on prod.' }], repliesCut: 0 }]);
+  assert.equal(pr.feedback.ownThreadsCut, 0);
+});
+
+test("a failed read of the app's own comments leaves the record readable, with the failure noted", async () => {
+  reviewCommentsDown = true;
+  try {
+    const res = await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } });
+    assert.equal(res.status, 200);
+    const pr = await res.json();
+    assert.equal(pr.headSha, 'abc123');
+    assert.equal(pr.feedback.ownThreads, undefined);
+    assert.match(pr.feedback.ownThreadsError, /comments\?sort=created.*: 503/);
+  } finally {
+    reviewCommentsDown = false;
+  }
 });
 
 test('GraphQL errors in a 200 answer are reported, not read as no threads', async () => {
