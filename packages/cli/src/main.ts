@@ -31,21 +31,7 @@ const ok = (data: unknown): Result => ({ data, text: 'ok' });
 const and = (...terms: Array<string | false | undefined>) => terms.filter(Boolean).join(' AND ') || undefined;
 const listed = (data: any, text: string): Result => ({ data, text, next: data.nextPageToken && `--page-token ${data.nextPageToken}` });
 
-type Orders = Record<string, 'asc' | 'desc'>;
-// The direction each list's orders run in; the Sessions API takes the field alone, as each order runs one way.
-const SESSION_ORDERS: Orders = { lastActivity: 'desc', createdAt: 'desc', oldestAskAt: 'asc' };
-
-/** An AIP-132 `field [asc|desc]` as the field the server takes; a direction the order does not run in is refused here. */
-function orderBy(value: string | undefined, orders: Orders): string | undefined {
-  const [field, dir, ...extra] = value?.trim().split(/\s+/) ?? [];
-  if (!field || (!dir && !extra.length)) return field || undefined;
-  if (extra.length || !Object.hasOwn(orders, field) || orders[field] !== dir!.toLowerCase()) {
-    throw usageError(`--order-by takes ${Object.entries(orders).map((e) => e.join(' ')).join(', ')}; the direction may be left off`);
-  }
-  return field;
-}
-
-const page = (o: Opts, orders: Orders, q?: string): Page => ({ q, orderBy: orderBy(o['order-by'], orders), pageSize: o['page-size'], pageToken: o['page-token'] });
+const page = (o: Opts, q?: string): Page => ({ q, orderBy: o['order-by'], pageSize: o['page-size'], pageToken: o['page-token'] });
 
 function table(rows: Array<Array<string | number | undefined>>, head: string[]): string {
   const all = [head, ...rows.map((r) => r.map((v) => String(v ?? '')))];
@@ -67,7 +53,7 @@ async function known(c: Client, key: string): Promise<any> {
 async function sessions(c: Client, pos: string[], o: Opts): Promise<Result> {
   if (o.state && !Object.hasOwn(STATES, o.state)) throw usageError(`--state must be one of ${Object.keys(STATES).join(', ')}`);
   const q = and(pos.length ? `(${pos.join(' ')})` : '-state:archived', o.state && STATES[o.state], o.agent && `agent:${escapeTerm(o.agent)}`);
-  const data = await c.sessions(page(o, SESSION_ORDERS, q));
+  const data = await c.sessions(page(o, q));
   const list: any[] = data.sessions;
   if (o.keys) return listed(data, list.map((s) => s.key).join('\n'));
   return listed(data, table(list.map((s) => [s.key, s.agent, s.state, s.pendingAsks, s.title, s.lastActivity]), ['KEY', 'AGENT', 'STATE', 'ASKS', 'TITLE', 'LAST ACTIVITY']));
@@ -184,7 +170,7 @@ async function withdraw(c: Client, [key, id]: string[]): Promise<Result> {
 }
 
 async function asks(c: Client, pos: string[], o: Opts): Promise<Result> {
-  const data = await c.asks(page(o, { createdAt: o.session ? 'desc' : 'asc' }, and('state:pending', pos.length > 0 && `(${pos.join(' ')})`)), o.session);
+  const data = await c.asks(page(o, and('state:pending', pos.length > 0 && `(${pos.join(' ')})`)), o.session);
   return listed(data, table(data.asks.map((a: any) => [a.session, ...askRow(a)]), ['SESSION', 'ID', 'TYPE', 'ASKED', 'WHAT']));
 }
 
@@ -200,7 +186,7 @@ const decide = (choice: 'approve' | 'reject'): Command => ({
 });
 
 async function artifacts(c: Client, [key]: string[], o: Opts): Promise<Result> {
-  const data = await c.artifacts(page(o, { sealedAt: 'desc' }), key);
+  const data = await c.artifacts(page(o), key);
   return listed(data, table(data.artifacts.map((a: any) => [a.session, a.kind, `v${a.version}`, a.sealedAt, a.summary]), ['SESSION', 'KIND', 'VERSION', 'SEALED', 'SUMMARY']));
 }
 
@@ -332,7 +318,7 @@ async function server(c: Client, [sub = '', ...pos]: string[], o: Opts, ctx: Ctx
 }
 
 const COMMANDS: Record<string, Command> = {
-  sessions: { usage: 'sessions [--state running|needs_you|failed|done] [--agent A] [--order-by "F [asc|desc]"] [--page-size N] [--page-token T] [--keys] [q]', run: sessions },
+  sessions: { usage: 'sessions [--state running|needs_you|failed|done] [--agent A] [--order-by F] [--page-size N] [--page-token T] [--keys] [q]', run: sessions },
   show: { usage: 'show [-f] [--verdict] [--messages N] <key>', run: show },
   new: { usage: 'new [--agent A] [--key K] [-p] <text>', run: newSession },
   send: { usage: 'send [-p] <key> <text>', run: (c, pos, o) => send(c, pos, o) },
@@ -403,19 +389,11 @@ function print(result: Result, json: boolean | undefined, out: Out) {
   if (result.next && !json) out.stderr(`next page: ${result.next}`);
 }
 
-// `--order-by createdAt desc` unquoted would leave desc as a q term, so the direction joins its field.
-function joinDirection(argv: string[]): string[] {
-  const i = argv.findIndex((a) => a === '--order-by' || a.startsWith('--order-by='));
-  // The field is the next argument, or this one in the --order-by=F spelling.
-  const field = argv[i] === '--order-by' ? i + 1 : i;
-  return i >= 0 && /^(asc|desc)$/i.test(argv[field + 1] ?? '') ? [...argv.slice(0, field), `${argv[field]} ${argv[field + 1]}`, ...argv.slice(field + 2)] : argv;
-}
-
 /** Exit codes: 0 ok, 1 API or usage error, 2 not found. */
 export async function run(argv: string[], env: Record<string, string | undefined>, out: Out): Promise<number> {
   if (argv[0] === 'eval') return evalPassthrough(argv.slice(1), env);
   try {
-    const { values, positionals } = parseArgs({ args: joinDirection(argv), allowPositionals: true, options: OPTIONS });
+    const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: OPTIONS });
     const [name, ...pos] = positionals;
     const command = name ? COMMANDS[name] : undefined;
     const t = await target(values, env);

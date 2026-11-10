@@ -3,8 +3,6 @@ import type { Action, ActionContext } from '@quack/sdk';
 import { distributor } from './client.ts';
 import { homeTools } from './tools.ts';
 
-export { distributor, type Distributor } from './client.ts';
-export { homeTools, readSession, sessionLink } from './tools.ts';
 export { manifest } from './manifest.ts';
 
 /** The home agent's tools over the distributor, with the actions the loaded extensions contribute. */

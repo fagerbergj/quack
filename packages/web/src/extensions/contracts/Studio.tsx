@@ -129,7 +129,7 @@ function Shown({ from, to, reason }: { from?: Version; to: Version; reason?: str
     <>
       {from && diff && <ChangeList changes={diff.changes} spec={to.spec} reason={reason} />}
       <DiffContext value={diff?.marks}>
-        <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[to.spec.kind], { key: to.a.version, spec: to.spec, full: true, verdict: to.a.verdict })}</ArtifactBoundary>
+        <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[to.spec.kind], { key: to.a.version, spec: to.spec, verdict: to.a.verdict })}</ArtifactBoundary>
       </DiffContext>
     </>
   );

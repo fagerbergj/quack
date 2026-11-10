@@ -7,7 +7,7 @@ import { ListNotices, SessionChips } from './slots.tsx';
 import { useLoad } from './useLoad.ts';
 import { loadRows } from './Workspace.tsx';
 
-const TONE: Record<Tone, string> = { plain: 'text-ink-2', muted: 'text-muted', warn: 'text-warning', ok: 'text-success', bad: 'text-danger' };
+const TONE: Record<Tone, string> = { muted: 'text-muted', warn: 'text-warning', bad: 'text-danger' };
 type Kind = 'needs' | 'running' | 'recent' | 'failed';
 
 function Tile({ l, kind }: { l: Look; kind: Kind }) {

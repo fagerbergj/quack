@@ -175,27 +175,6 @@ describe('quack', () => {
     assert.equal(JSON.parse((await cli(['sessions', '--json', '--page-size', '2'])).stdout).nextPageToken, '2');
   });
 
-  it('--order-by takes an AIP-132 direction, quoted or not, and sends the field alone', async () => {
-    for (const args of [['--order-by', 'createdAt', 'desc'], ['--order-by', 'createdAt desc'], ['--order-by', 'createdAt', 'DESC'], ['--order-by', 'createdAt'], ['--order-by=createdAt', 'desc'], ['--order-by=createdAt desc']]) {
-      calls = [];
-      assert.equal((await cli(['sessions', ...args])).code, 0);
-      assert.deepEqual(calls[0]!.query, { q: '-state:archived', orderBy: 'createdAt' });
-    }
-    calls = [];
-    await cli(['sessions', '--order-by', 'oldestAskAt', 'asc', 'agent:chat']);
-    assert.deepEqual(calls[0]!.query, { q: '(agent:chat)', orderBy: 'oldestAskAt' });
-    calls = [];
-    await cli(['artifacts', '--order-by', 'sealedAt desc']);
-    assert.equal(calls[0]!.query.orderBy, 'sealedAt');
-    calls = [];
-    const wrong = await cli(['sessions', '--order-by', 'createdAt', 'asc']);
-    assert.deepEqual([wrong.code, calls], [1, []]);
-    assert.match(wrong.stderr, /--order-by takes lastActivity desc, createdAt desc, oldestAskAt asc/);
-    assert.equal((await cli(['sessions', '--order-by', 'title desc'])).code, 1);
-    assert.equal((await cli(['asks', '--order-by', 'createdAt desc'])).code, 1, 'the cross-session asks run oldest first');
-    assert.equal((await cli(['asks', '--session', 'ui:b', '--order-by', 'createdAt desc'])).code, 0);
-  });
-
   it('sessions --keys prints one key per line', async () => {
     assert.equal((await cli(['sessions', '--keys'])).stdout, 'ui:a\nui:b\nui:c');
   });

@@ -1,5 +1,4 @@
 import { useContext, useState, type ReactNode } from 'react';
-import { artifactHref, SessionKeyContext } from '../../extension.ts';
 import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
@@ -177,21 +176,10 @@ export function download(body: string, type: string, filename: string) {
   URL.revokeObjectURL(a.href);
 }
 
-// Links to the spec's own page, where the layout has room; from a session page the hash names the session.
-export function FullViewLink({ version }: { version: number }) {
-  const ctx = useContext(SessionKeyContext);
-  // Only a session route that decoded draws this view, so its key decodes again here.
-  const m = /^#\/s\/([^/?]+)/.exec(location.hash)?.[1];
-  const key = ctx ?? (m && decodeURIComponent(m));
-  return key ? <a href={artifactHref(key, 'contract.spec', version)} aria-label="Open full view" title="Open full view" className={round}>{svg('M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7')}</a> : null;
-}
-
-export const decisionCount = (spec: ContractSpec) => `${spec.choices.length} ${spec.choices.length === 1 ? 'decision' : 'decisions'} · ${spec.choices.filter((c) => c.why.some((w) => w.source === 'answer')).length} answered by you`;
-
-export type ViewProps = { spec: ContractSpec; full?: boolean; verdict?: Verdict | null };
+export type ViewProps = { spec: ContractSpec; verdict?: Verdict | null };
 
 // A passed double-check is a tick beside the title; the decisions no element carries sit there too.
-export function Header({ spec, count, full, file, verdict, info = [] }: { spec: ContractSpec; count: string; full: boolean; file: { label: string; save: () => void }; verdict?: Verdict | null; info?: Choice[] }) {
+export function Header({ spec, count, file, verdict, info = [] }: { spec: ContractSpec; count: string; file: { label: string; save: () => void }; verdict?: Verdict | null; info?: Choice[] }) {
   return (
     <header className="flex flex-wrap items-center gap-3">
       <div className="flex min-w-0 flex-1 basis-48 flex-col">
@@ -203,7 +191,6 @@ export function Header({ spec, count, full, file, verdict, info = [] }: { spec: 
         </h2>
         <span className="text-xs text-muted">{count} · version {spec.version}</span>
       </div>
-      {!full && <FullViewLink version={spec.version} />}
       <button type="button" aria-label={`Download ${file.label}`} title={`Download ${file.label}`} onClick={file.save} className={round}>{svg('M12 4v11M7 10l5 5 5-5M5 20h14')}</button>
     </header>
   );
@@ -219,31 +206,16 @@ export function Purpose({ spec }: { spec: ContractSpec }) {
   );
 }
 
-// The ledger card: what the spec is and its routes; detail and decisions live on the full page.
-function CardView({ spec, ops, doc, verdict }: { spec: ContractSpec; ops: Operation[]; doc: Json; verdict?: Verdict | null }) {
-  return (
-    <div className="@container flex min-w-0 flex-col gap-4">
-      <Header spec={spec} count={routes(ops)} full={false} file={openapiFile(doc)} verdict={verdict} />
-      <Purpose spec={spec} />
-      <ul aria-label="Routes" className="m-0 flex list-none flex-col gap-1.5 p-0">
-        {ops.map((o) => <li key={o.ptr} className="flex items-center gap-2.5 text-[13px]"><Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span></li>)}
-      </ul>
-      <p className="m-0 text-[13px] text-muted">{decisionCount(spec)}</p>
-    </div>
-  );
-}
-
-export function RestView({ spec, full = false, verdict }: ViewProps) {
+export function RestView({ spec, verdict }: ViewProps) {
   const [sel, setSel] = useState(0);
   const doc = spec.document as Json;
   const ops = operations(doc);
-  if (!full) return <CardView spec={spec} ops={ops} doc={doc} verdict={verdict} />;
   const ctx: Ctx = { doc, at: (p) => choicesAt(spec.choices, p) };
   const o = ops[sel];
   const many = ops.length > 1;
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
-      <Header spec={spec} count={routes(ops)} full file={openapiFile(doc)} verdict={verdict} info={unplaced(spec.choices, restPointers(doc, ops))} />
+      <Header spec={spec} count={routes(ops)} file={openapiFile(doc)} verdict={verdict} info={unplaced(spec.choices, restPointers(doc, ops))} />
       <Changes spec={spec} />
       <Compatibility spec={spec} />
       <Purpose spec={spec} />

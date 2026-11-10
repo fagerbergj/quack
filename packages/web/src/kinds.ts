@@ -1,8 +1,8 @@
-import { BLUE, plain, type Nameable, type SessionKind, type Tone, type Words } from './extension.ts';
+import { BLUE, plain, type Nameable, type SessionKind, type Words } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { failedLine, type Row } from './sessions.ts';
 
-export type { Tone };
+export type Tone = 'muted' | 'warn' | 'bad';
 
 export type Look = { label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
 

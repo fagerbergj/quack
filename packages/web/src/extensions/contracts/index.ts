@@ -11,15 +11,14 @@ const ICON = 'M7.5 3.5C5.6 3.5 5 4.6 5 6.2V9.6c0 1.3-.8 2.4-2.2 2.4 1.4 0 2.2 1.
 
 const NAMES: Record<string, string> = { 'contract.approved': 'Approval', 'contract.changes': 'Changes requested' };
 
-const view = (a: SealedArtifact, full: boolean) => {
+const view = (a: SealedArtifact) => {
   const spec = a.kind === KIND ? parseSpec(a.content) : undefined;
-  return spec && createElement(VIEWS[spec.kind], { key: a.version, spec, full, verdict: a.verdict });
+  return spec && createElement(VIEWS[spec.kind], { key: a.version, spec, verdict: a.verdict });
 };
 
 export const contracts: Extension = {
   artifact: (a) => (a.kind === KIND ? { name: 'Spec' } : NAMES[a.kind] ? { name: NAMES[a.kind]! } : undefined),
-  card: (a) => view(a, false),
-  full: (a) => view(a, true),
+  card: view,
   versionOf: (a) => (a.kind === KIND ? parseSpec(a.content)?.version : undefined),
   // The contract is drawn beside its conversation, and approved there.
   studio: { match: (key) => key.startsWith('contracts:'), label: 'Contract', owns: (a) => a.tool === 'propose_contract', Pane: ContractStudio },
