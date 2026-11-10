@@ -35,7 +35,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks. Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 6,
+  version: 7,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [

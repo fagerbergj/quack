@@ -91,7 +91,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@6\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@7\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);

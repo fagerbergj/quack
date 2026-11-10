@@ -77,7 +77,7 @@ A list prints one page, of at most `--page-size` rows (the server's default 100,
 $ quack show --verdict 'github:fagerbergj/quack#2238'
 ...
 Verdicts
-github.review v1  passed  score 0.87  github.reviewer@6
+github.review v1  passed  score 0.87  github.reviewer@7
   constructive_actionable.says_why: finding-1: The finding explains the mechanism of the false positive ...
 ```
 
