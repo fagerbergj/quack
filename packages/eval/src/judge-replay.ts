@@ -11,8 +11,8 @@ import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { driveTool } from './driver.ts';
 import { asJudged, readSession } from './record.ts';
 
-/** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them. */
-export type Case = { case: string; kind: string; checks?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
+/** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them; `units` keeps only those evidence units. */
+export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
 /** An arm judges with its adapters' rubrics and evidence and, when it has one, a per-unit classifier before the judge model. */
 export type Arm = { label: string; adapters: EvalAdapter[]; classifier?: ClassifierRef };
 
@@ -64,8 +64,10 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
 async function judgedBy(a: EvalAdapter, c: Case, record: RecordedSession, content: string): Promise<Judged | undefined> {
   const j = a.judge!;
   if (j.declaration) return { declaration: j.declaration as Declaration, inputs: c.inputs ?? (await j.inputs!(record, content)) };
-  const evidence = c.evidence ?? (await j.evidence!(record, content));
-  return evidence ? { evidence: evidence as Evidence } : undefined;
+  const evidence = (c.evidence ?? (await j.evidence!(record, content))) as Evidence | undefined;
+  // One finding of a 50-finding report is a case of its own without judging the other 49 every repeat.
+  const units = c.units;
+  return evidence ? { evidence: units ? Object.fromEntries(Object.entries(evidence).map(([scope, us]) => [scope, us.filter((u) => units.includes(u.id))])) : evidence } : undefined;
 }
 
 /** The declaration cut to the watched rubric's checks, as the rubric is. */

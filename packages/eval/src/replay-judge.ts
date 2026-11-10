@@ -1,6 +1,6 @@
 // Judges recorded cases under one or more arms, N times, and prints the met table; an arm is label=ref[:classifier] (docs/README.md).
 // Usage: node packages/eval/src/replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--classifier <provider/model>] [--arm label=ref[:none|:provider/model]]... [--repeat N] [--concurrency N] [--escalations N]
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,7 +19,9 @@ async function adaptersAt(ref: string) {
     const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
     execFileSync('tar', ['-x', '-C', dir], { input: packagesTar(top, ref) });
     symlinkSync(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(dir, 'node_modules'));
-    const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => pathToFileURL(join(dir, 'packages', s.slice(7), 'src/index.ts')).href);
+    // A package the ref leaves as it is here stays this tree's module: a second copy would register its splitters twice.
+    const changed = (pkg: string) => spawnSync('git', ['diff', '--quiet', ref, '--', `packages/${pkg}`], { cwd: top }).status !== 0;
+    const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => (changed(s.slice(7)) ? pathToFileURL(join(dir, 'packages', s.slice(7), 'src/index.ts')).href : s));
     return adaptersOf(await loadManifests(specs));
   } finally {
     rmSync(dir, { recursive: true, force: true });

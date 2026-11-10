@@ -28,15 +28,42 @@ export function summarizeReport(text: string): string {
 
 export const reportKind: ArtifactKind = { kind: 'research.report', path: 'artifacts/report.md', validate: validateReport, summarize: summarizeReport };
 
-/** The bullets under "## Findings", each with its first line (what a mark points at) and any continuation lines. */
+const ITEM = /^(\s*)([-*]|\d+\.)\s/;
+type Item = { indent: number; lines: string[]; context: string[]; kids: number };
+type Parse = { items: Item[]; open: Item[]; para: string[]; intro: string[]; gap: boolean; fence: boolean };
+// A bullet ending in a colon (marks and emphasis aside) that has sub-bullets only introduces them: it is their context, not a finding.
+const leads = (i: Item) => i.kids > 0 && /:$/.test(i.lines.join(' ').replace(/\s*\[s\d+\]/g, '').replace(/[\s*_`]+$/, ''));
+
+function bullet(p: Parse, line: string, indent: number) {
+  p.open = p.open.filter((o) => o.indent < indent);
+  const parent = p.open.at(-1);
+  // A list's lead-in is the paragraph directly above it; a code block or table between them does not part them.
+  if (!parent && p.para.length) [p.intro, p.para] = [p.para, []];
+  if (parent) parent.kids++;
+  // Context is there to cite the bullet; an unmarked heading line ("Attleboro:") would only reframe the claim for the judge.
+  const marked = (lines: string[]) => (/\[s\d+\]/.test(lines.join(' ')) ? lines : []);
+  const item = { indent, lines: [line], context: parent ? [...parent.context, ...marked(parent.lines)] : marked(p.intro), kids: 0 };
+  p.items.push(item);
+  p.open.push(item);
+}
+
+function readLine(p: Parse, line: string) {
+  const m = ITEM.exec(line);
+  if (/^```/.test(line)) [p.fence, p.open] = [!p.fence, []];
+  else if (p.fence || /^\|/.test(line)) p.open = [];
+  else if (m) bullet(p, line, m[1].length);
+  else if (/^#/.test(line)) [p.open, p.para, p.intro] = [[], [], []];
+  else if (line.trim() && p.open.length && (!p.gap || /^\s{2}/.test(line))) p.open.at(-1)!.lines.push(line);
+  else if (line.trim()) [p.open, p.para] = [[], p.gap ? [line] : [...p.para, line]];
+  p.gap = !line.trim();
+}
+
+/** Every bullet under a "## Findings…" heading, with its first line (what a mark points at) and as text its own lines after its context:
+ *  the bullets it sits in and the paragraph above its list, whose marks cite it too. */
 export function findingItems(report: string): Array<{ first: string; text: string }> {
-  const body = /^## Findings\s*$([\s\S]*?)(?=^## |(?![\s\S]))/im.exec(report)?.[1] ?? '';
-  const items: string[][] = [];
-  for (const line of body.split('\n')) {
-    if (/^\s*([-*]|\d+\.)\s/.test(line)) items.push([line]);
-    else if (items.length && line.trim()) items.at(-1)!.push(line);
-  }
-  return items.map((l) => ({ first: l[0].trim(), text: l.join('\n') }));
+  const p: Parse = { items: [], open: [], para: [], intro: [], gap: false, fence: false };
+  for (const m of report.matchAll(/^## Findings\b.*$([\s\S]*?)(?=^## |(?![\s\S]))/gim)) for (const line of `${m[1]}\n#`.split('\n')) readLine(p, line);
+  return p.items.filter((i) => !leads(i)).map((i) => ({ first: i.lines[0].trim(), text: [...i.context, ...i.lines].join('\n') }));
 }
 
 /** Only the words, in order: punctuation, quote style, dashes, markdown emphasis and link targets differ between a page and a faithful quote of it. */
@@ -65,19 +92,50 @@ function opening(first: string | undefined): string {
 
 const STOP_CHARS = 4000;
 const PIECE = 600;
+// A pair of the claim's words in its order is a phrase: it weighs more than the two words apart.
+const PAIR = 2;
+// Words a kept piece already showed count a quarter, so the next pick covers what the claim says that nothing shown says yet.
+const SEEN = 0.25;
+// Value is per character spent, plus a floor so a bare label does not outrank the sentence that says the thing.
+const COST = 100;
+const POOL = 200;
 
-/** The parts of a source most like the claim (shared numbers and words), in page order, so the judge reads a window rather than 500k characters. */
+const terms = (s: string) => s.toLowerCase().match(/\d[\d.,]*\d|\d|\p{L}[\p{L}\p{N}'’]{2,}/gu) ?? [];
+const pairs = (ts: string[]) => ts.slice(1).map((t, i) => `${ts[i]} ${t}`);
+
+/** Each piece's claim words and phrases, weighted by how rare they are on the page, so a name or figure outweighs a word every paragraph uses. */
+function weigh(pieces: string[], claim: string) {
+  const ct = terms(claim);
+  const want = new Set([...ct, ...pairs(ct)]);
+  const hits = pieces.map((p) => { const ts = terms(p); return [...new Set([...ts, ...pairs(ts)])].filter((w) => want.has(w)); });
+  const df = new Map<string, number>();
+  for (const h of hits) for (const w of h) df.set(w, (df.get(w) ?? 0) + 1);
+  const weight = (w: string) => Math.log(1 + pieces.length / df.get(w)!) * (w.includes(' ') ? PAIR : 1);
+  return { hits, weight };
+}
+
+/** The pieces kept, in page order: contiguous ones joined by a newline, a gap marked with an ellipsis line. */
+const joinKept = (pieces: string[], kept: Set<number>) => [...kept].sort((a, b) => a - b).map((i, k, xs) => (k && xs[k - 1] !== i - 1 ? `…\n${pieces[i]}` : pieces[i])).join('\n');
+
+/** The passages of a source that say what the claim says, at most `max` characters of a 500k page: the piece richest in the claim's rare words and phrases,
+ *  with its neighbours, then the piece adding most that nothing kept shows yet, until the budget is spent. */
 export function excerpt(text: string, claim: string, max = STOP_CHARS): string {
   if (text.length <= max) return text;
-  const want = new Set(claim.toLowerCase().match(/\d[\d.,]*|[a-z]{4,}/g) ?? []);
   const pieces = text.split(/\n+/).flatMap((l) => l.match(new RegExp(`[\\s\\S]{1,${PIECE}}`, 'g')) ?? []);
-  const scored = pieces.map((t, i) => ({ t, i, n: new Set((t.toLowerCase().match(/\d[\d.,]*|[a-z]{4,}/g) ?? []).filter((w) => want.has(w))).size })).sort((a, b) => b.n - a.n || a.i - b.i);
-  const keep: typeof scored = [];
-  let size = 0;
-  for (const p of scored) if (p.n && size + p.t.length <= max) (keep.push(p), (size += p.t.length));
+  const { hits, weight } = weigh(pieces, claim);
+  const seen = new Set<string>();
+  const kept = new Set<number>();
+  const value = (i: number) => hits[i].reduce((n, w) => n + weight(w) * (seen.has(w) ? SEEN : 1), 0) / (pieces[i].length + COST);
+  const fits = (i: number) => i >= 0 && i < pieces.length && !kept.has(i) && joinKept(pieces, new Set([...kept, i])).length <= max;
+  // The budget holds a few dozen pieces, so only the best first scores compete; rescoring all of a 500k page per pick is quadratic.
+  const pool = pieces.map((_, i) => i).filter((i) => hits[i].length).sort((a, b) => value(b) - value(a) || a - b).slice(0, POOL);
+  while (pool.length) {
+    const [best] = pool.splice(pool.reduce((b, i, k) => (value(i) > value(pool[b]) ? k : b), 0), 1);
+    // With its neighbours: the heading or sentence beside a passage often names what it is about.
+    if (fits(best)) for (const i of [best, best - 1, best + 1]) if (fits(i)) (kept.add(i), hits[i].forEach((w) => seen.add(w)));
+  }
   // No shared wording: the page's opening is still better evidence than nothing.
-  const kept = keep.length ? keep.sort((a, b) => a.i - b.i).map((p) => p.t).join('\n…\n') : text.slice(0, max);
-  return kept;
+  return kept.size ? joinKept(pieces, kept) : text.slice(0, max);
 }
 
 type Entry = { kind: string; model?: Array<{ content?: unknown }> };
@@ -179,7 +237,7 @@ const FAIR = ' Judge only from the text shown; a fact you do not recognise is no
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 4,
+  version: 5,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [

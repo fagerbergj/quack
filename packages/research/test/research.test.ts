@@ -394,6 +394,61 @@ test('findings_cited: every finding bullet needs a [sN]; the bare one is named a
   assert.equal(gate('findings_cited', { finding: [] }).met, 0);
 });
 
+const cited = (report: string) => findingItems(report).map((f) => [f.first, /\[s\d+\]/.test(f.text)]);
+
+test('findingItems: every "## Findings" section counts, whatever follows the word', () => {
+  const r = '## Summary\nx\n## Findings — Taunton\n- Sorel, HIC 205379. [s9]\n## Findings — Raynham\n- Naylor, CSL 042837. [s15]\n## Shortlist\n- Sorel first.\n';
+  assert.deepEqual(cited(r), [['- Sorel, HIC 205379. [s9]', true], ['- Naylor, CSL 042837. [s15]', true]]);
+});
+
+test('findingItems: a mark on the paragraph above a list or on the bullet a sub-bullet sits in cites it; a bullet that only introduces sub-bullets is not a finding', () => {
+  const r = [
+    '## Findings',
+    'A-MAC scores each memory on factors: [s16]',
+    '',
+    '- Utility: an LLM rates future use.',
+    '- Novelty: one minus the top cosine.',
+    '',
+    'FadeMem decays memories: [s6]',
+    '```',
+    'v = v0 * exp(-l * t)',
+    '```',
+    '- Pruning below a floor.',
+    '',
+    'The same scalar drives two operations:',
+    '- Encoding depth: four tiers.',
+    '- Forgetting: high value resists. [s3]',
+    '',
+    'Later paragraph [s21].',
+    '- Covered by the paragraph above.',
+    '',
+    '### Packages',
+    '- **pi-durable (intent):**',
+    '  - replay is safe or unsafe [s6]',
+    '  - callers may be the model',
+    '- **Zalando** prefers problem+json. [s58]',
+    '  - Azure uses its own envelope.',
+    '- **Disagreement:** follow the house standard.',
+  ].join('\n');
+  assert.deepEqual(cited(r), [
+    ['- Utility: an LLM rates future use.', true],
+    ['- Novelty: one minus the top cosine.', true],
+    ['- Pruning below a floor.', true],
+    ['- Encoding depth: four tiers.', false],
+    ['- Forgetting: high value resists. [s3]', true],
+    ['- Covered by the paragraph above.', true],
+    ['- replay is safe or unsafe [s6]', true],
+    ['- callers may be the model', false],
+    ['- **Zalando** prefers problem+json. [s58]', true],
+    ['- Azure uses its own envelope.', true],
+    ['- **Disagreement:** follow the house standard.', false],
+  ]);
+  assert.deepEqual(cited('## Findings\n- One.\n\nA paragraph after the list. [s2]\n'), [['- One.', false]], 'a later paragraph is not the bullet\'s');
+  const texts = findingItems(r).map((f) => f.text);
+  assert.equal(texts[0], 'A-MAC scores each memory on factors: [s16]\n- Utility: an LLM rates future use.', 'a marked lead-in is the claim\'s context');
+  assert.equal(texts[3], '- Encoding depth: four tiers.', 'an unmarked lead-in is left out of the claim the judge reads');
+});
+
 test('quotes_exist: a quote the cited source lacks fails the gate with the quote as its mark', () => {
   assert.equal(gate('quotes_exist', { finding: [unit({ misquotes: [] })] }).met, 1);
   const bad = gate('quotes_exist', { finding: [unit({ id: 'finding-1', misquotes: [] }), unit({ id: 'finding-2', first: '- Geese are said to be flightless. [s1]', misquotes: ['Geese never fly'] })] });
@@ -500,4 +555,13 @@ test('excerpt keeps the pieces that share the claim\'s figures and words, in pag
   assert.ok(out.length <= 4000 && out.includes('approved a budget of 4.2 million'));
   assert.equal(excerpt('short page', 'anything'), 'short page');
   assert.equal(excerpt('zebra '.repeat(1000), 'quartz mining'), 'zebra '.repeat(1000).slice(0, 4000), 'no shared wording gives the opening');
+});
+
+test('excerpt keeps a short line with the claim\'s rare figures, and the label beside it, over long passages that share only its common words', () => {
+  const review = (i: number) => `Review ${i}: CC Woodcrafters built custom cabinets and built-ins for our kitchen; the custom cabinetry team designed every cabinet with care and the woodcrafters finished the built-ins on time. `.repeat(3);
+  const page = [...Array.from({ length: 20 }, (_, i) => review(i)), 'Built-Ins $5,900+', 'License Number', 'RI 22923, MA 138833', ...Array.from({ length: 20 }, (_, i) => review(i + 20))].join('\n');
+  const out = excerpt(page, '- **CC Woodcrafters** builds custom cabinets and built-ins (MA license #138833), built-ins from ~$5,900. [s7]');
+  assert.ok(out.length <= 4000);
+  assert.match(out, /License Number\nRI 22923, MA 138833/);
+  assert.match(out, /Built-Ins \$5,900\+/);
 });
