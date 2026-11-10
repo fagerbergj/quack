@@ -56,7 +56,7 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
     const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
     if (!judged) continue;
     const rubric = watch(a.judge!.rubric as Rubric, c.checks);
-    return { arm: arm.label, classifier: arm.classifier, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric) } };
+    return { arm: arm.label, classifier: arm.classifier, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
@@ -70,10 +70,14 @@ async function judgedBy(a: EvalAdapter, c: Case, record: RecordedSession, conten
   return evidence ? { evidence: units ? Object.fromEntries(Object.entries(evidence).map(([scope, us]) => [scope, us.filter((u) => units.includes(u.id))])) : evidence } : undefined;
 }
 
-/** The declaration cut to the watched rubric's checks, as the rubric is. */
-function declared(d: Declaration, rubric: Rubric): Declaration {
+/** The declaration cut to the watched rubric's checks, as the rubric is; `units` (an item's id, or its unit's "scope id") keeps only those items of their scopes. */
+function declared(d: Declaration, rubric: Rubric, units?: string[]): Declaration {
   const ids = new Set(rubric.criteria.flatMap((c) => c.checks.map((k) => k.id)));
-  return { ...d, checks: Object.fromEntries(Object.entries(d.checks).filter(([id]) => ids.has(id))) };
+  const checks = Object.fromEntries(Object.entries(d.checks).filter(([id]) => ids.has(id)));
+  if (!units) return { ...d, checks };
+  const watched = new Set(Object.values(checks).map((k) => k.scope));
+  const only = (scope: string) => units.map((u) => (u.startsWith(`${scope} `) ? u.slice(scope.length + 1) : u));
+  return { scopes: Object.fromEntries(Object.entries(d.scopes).map(([n, s]) => [n, watched.has(n) ? { ...s, split: { ...s.split, names: only(n) } } : s])), checks };
 }
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {

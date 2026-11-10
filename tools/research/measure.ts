@@ -2,7 +2,7 @@
 // Usage: node tools/research/measure.ts <base-url> <model-id> <metrics-url> [repeat] [rows.jsonl]
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { buildModels, parseDeployment } from '@quack/session';
-import { researchRubric } from '@quack/research';
+import { reportDeclaration, researchRubric } from '@quack/research';
 import { score } from '@quack/judge';
 import { replayJudge, type Row } from '@quack/eval';
 import { researchCases, type Labelled } from './cases.ts';
@@ -64,7 +64,7 @@ if (import.meta.main) {
   const deployment = parseDeployment({ defaultModel: `local/${modelId}`, providers: { local: { baseUrl, models: { [modelId]: { contextWindow: 262144, maxTokens: 16384 } } } } });
   const rows: Row[] = existsSync(out) ? readFileSync(out, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
   const done = new Set(rows.map((r) => `${r.rep}\t${r.case}`));
-  const adapters = [{ kind: 'research.report', judge: { rubric: researchRubric, evidence: async () => undefined } }];
+  const adapters = [{ kind: 'research.report', judge: { rubric: researchRubric, declaration: reportDeclaration, inputs: async () => { throw new Error('the labelled set gives its inputs inline'); } } }];
   // One case at a time, one repeat round after another, so the GPU gate applies before every case and drift spreads across cases.
   for (let rep = 1; rep <= repeat; rep++) {
     for (const c of cases) {

@@ -1,9 +1,9 @@
 // Labelled research reports for measuring rubric v2's model checks: good reports and reports seeded with one flaw.
 // The entities are invented so the judge's own knowledge cannot settle a case; each source text is a short page.
-import { evidenceOf } from '@quack/research';
+import { inputsOf } from '@quack/research';
 
 export type Target = 'supported_by_source' | 'contradicted_by_source' | 'answers_every_ask' | 'summary_follows_findings' | 'no_self_contradiction';
-export type Labelled = { case: string; kind: 'research.report'; content: string; evidence: ReturnType<typeof evidenceOf>; good: boolean; targets: Target[] };
+export type Labelled = { case: string; kind: 'research.report'; content: string; inputs: ReturnType<typeof inputsOf>; good: boolean; targets: Target[] };
 
 const REQUEST = {
   harbour: "What budget did Port Alder's council approve for harbour repairs in 2026, and when does the work start?",
@@ -17,6 +17,7 @@ const SOURCE = {
   harbour: 'Port Alder Council Minutes, 14 January 2026\n\nItem 6: Harbour repairs. The council voted 6 to 1 to approve a budget of $4.2 million for repairs to the east breakwater and the ferry pier. Engineering staff said the contractor, Tidewater Marine, will mobilise on 2 March 2026 and expects to finish by October 2026. The budget is drawn from the harbour reserve fund; no new borrowing is required. Councillor Okafor dissented, citing the cost of the pier deck replacement.\n\nItem 7: Library roof. The council received a report on the Elm Street library roof and deferred a decision to the February meeting.',
   harbour2025: 'Port Alder Council Minutes, 14 January 2025\n\nItem 6: Harbour repairs. The council voted 5 to 2 to approve a budget of $3.1 million for repairs to the east breakwater. Engineering staff said the contractor, Tidewater Marine, will mobilise on 3 March 2025 and expects to finish by September 2025. The budget is drawn from the harbour reserve fund.',
   buses: 'Kestrel Transit fleet report, March 2026\n\nKestrel Transit operates 38 battery-electric buses, up from 24 in 2025, out of a fleet of 112. All are the Vantor E12 model, rated at 190 km on a full charge in mixed city driving. Charging is at the Northside and Quay depots. The agency plans to add 12 more electric buses in 2027.',
+  suppliers: 'Kestrel Transit procurement note, 2026\n\nKestrel Transit buys its electric buses from Vantor. Kestrel Transit buys the depot chargers for its electric buses from Voltra.',
   library: 'Marlow Public Library: hours effective 5 January 2026\n\nMonday to Friday 9am to 8pm. Saturday 10am to 5pm. Sunday 1pm to 5pm. Closed on public holidays. Visitor parking: the Elm Street lot is free for the first three hours, then $2 per hour; the library validates tickets for borrowers.',
   library2025: 'Marlow Public Library: hours effective 6 January 2025\n\nMonday to Friday 9am to 8pm. Saturday 10am to 5pm. Sunday 1pm to 5pm. Closed on public holidays. Visitor parking: the Elm Street lot is free for the first three hours, then $2 per hour.',
   grant: 'Fernhill Small Farm Grant 2026 guidelines\n\nEligible applicants are farms of under 40 hectares in Fernhill County that earned less than $250,000 in gross sales in the prior year. Applicants must have operated for at least two years. The maximum award is $15,000 per farm; awards cover equipment and infrastructure only, not wages. Applications open 1 April 2026 and close 31 May 2026.',
@@ -39,6 +40,8 @@ const SPECS: Spec[] = [
   { name: 'good-buses', request: REQUEST.buses, source: SOURCE.buses, content: GOOD.buses },
   { name: 'good-library', request: REQUEST.library, source: SOURCE.library, content: GOOD.library },
   { name: 'good-grant', request: REQUEST.grant, source: SOURCE.grant, content: GOOD.grant },
+  // Two companies in two roles: no_self_contradiction must not call them a conflict.
+  { name: 'good-two-suppliers', request: 'Who supplies Kestrel Transit\'s electric buses and their chargers?', source: SOURCE.suppliers, content: report('Vantor builds Kestrel Transit\'s electric buses and Voltra supplies the chargers.', ['Kestrel Transit buys its electric buses from Vantor.', 'Kestrel Transit buys the depot chargers for its electric buses from Voltra.']) },
   { name: 'good-unsettled-cost', request: REQUEST.busCost, source: SOURCE.buses, content: report('Kestrel Transit runs 38 electric buses rated at 190 km; the sources give no per-bus cost.', ['Kestrel Transit operates 38 battery-electric buses, all Vantor E12 rated at 190 km on a full charge.'], 'The fleet report states no purchase price, so the cost per bus is unsettled.') },
 
   { name: 'unsupported-harbour', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['supported_by_source'], content: GOOD.harbour.replace('The money comes from the harbour reserve fund, with no new borrowing.', 'The repairs include dredging the main shipping channel to 9 metres.') },
@@ -60,13 +63,14 @@ const SPECS: Spec[] = [
   { name: 'summary-overreach-harbour', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['summary_follows_findings'], content: GOOD.harbour.replace(SUMMARY_LINE, "## Summary\nPort Alder's council approved $4.2 million for harbour repairs, work starts on 2 March 2026, and the repairs will halve ferry delays.") },
 
   { name: 'self-contradiction-buses', request: REQUEST.buses, source: SOURCE.buses, targets: ['no_self_contradiction'], content: GOOD.buses.replace('All are the Vantor E12', 'All 28 electric buses are the Vantor E12') },
+  { name: 'self-contradiction-harbour-name', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['no_self_contradiction'], content: GOOD.harbour.replace(SUMMARY_LINE, "## Summary\nPort Alder's council approved $4.2 million for harbour repairs in January 2026. The contractor, Harbour Works, mobilises on 2 March 2026.") },
   { name: 'self-contradiction-library', request: REQUEST.library, source: SOURCE.library, targets: ['no_self_contradiction'], content: GOOD.library.replace('Saturday 10am to 5pm and Sunday 1pm to 5pm.', 'Saturday 9am to 5pm and Sunday 1pm to 5pm.') },
 ];
 
-/** The cases with evidence built by the code the live judge uses; every cited source is `s1`. */
+/** The cases with inputs built by the code the live judge uses; every cited source is `s1`. */
 export function researchCases(): Labelled[] {
   return SPECS.map((s) => ({
     case: s.name, kind: 'research.report', content: s.content, good: s.name.startsWith('good-'), targets: s.targets ?? [],
-    evidence: evidenceOf(s.content, s.request, new Map([['s1', s.source]]), ['s1']),
+    inputs: inputsOf(s.content, s.request, new Map([['s1', s.source]]), ['s1']),
   }));
 }
