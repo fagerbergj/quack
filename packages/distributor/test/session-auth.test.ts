@@ -115,7 +115,7 @@ test('the home agent lists and reads other sessions; any other agent reaches onl
 });
 
 test('the public listener drops a peer it is told to refuse, such as a session container', async () => {
-  const driver = { running: () => [], wakes: async () => [], sessions: async () => [], credential: () => undefined } as unknown as HostDriver;
+  const driver = { running: () => [], wakes: async () => [], credential: () => undefined } as unknown as HostDriver;
   const base = await listening(createDistributor(driver, { refuse: (address) => address === '127.0.0.1' }));
   await assert.rejects(fetch(`${base}/sessions`));
 });

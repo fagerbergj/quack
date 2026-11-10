@@ -132,11 +132,3 @@ test('a version pinned before hashes were recorded is checked once against its s
   assert.equal(await driver.ensure('github:new', 'reviewer'), 'http://launch-1', 'the recorded hash is the snapshot it first ran');
 });
 
-test('one session reads from its own directory, the same row the listing shows', async () => {
-  const { driver } = await host(['reviewer']);
-  await driver.ensure('github:a#1', 'reviewer');
-  await driver.ensure('github:a#2', 'reviewer');
-  const [listed] = (await driver.sessions()).filter((s) => s.key === 'github:a#1');
-  assert.deepEqual(await driver.session('github:a#1'), listed);
-  assert.equal(await driver.session('github:none'), undefined);
-});

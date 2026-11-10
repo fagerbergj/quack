@@ -80,12 +80,13 @@ test('an unknown key is 404, a bad state 422, and a non-JSON body 415', async ()
 });
 
 test('export downloads one file with the session metadata and what the process returns, and 404s an unknown key', async () => {
-  const { url } = await start();
+  const { url, call } = await start();
+  await call('PATCH', '/sessions/idle', { title: 'Nightly review', state: 'archived' });
   const res = await fetch(url('/sessions/idle/export'));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('content-disposition'), 'attachment; filename="quack-idle.json"');
-  const body = (await res.json()) as { session: { key: string; running?: boolean } };
-  assert.equal(body.session.key, 'idle');
-  assert.equal('running' in body.session, false);
+  const body = (await res.json()) as { session: object };
+  // The metadata is the catalog's, so a rename or archive shows at once.
+  assert.deepEqual(body.session, { key: 'idle', agent: '', title: 'Nightly review', archived: true, createdAt: new Date(0).toISOString(), lastActivity: new Date(0).toISOString() });
   assert.equal((await fetch(url('/sessions/nope/export'))).status, 404);
 });
