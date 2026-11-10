@@ -1,10 +1,8 @@
 
-import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord/context';
 import { int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { Artifacts, type SealedArtifact } from '@quack/sdk';
 import { renderOwnThreads, type ReviewFeedback } from './feedback.ts';
 
 export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?: string; /** Where repositories are cloned from; tests use a local directory. */ gitBaseUrl?: string };
@@ -97,65 +95,6 @@ export async function conventions(api: ToolExecutionApi, dir: string, ctx: Conte
   return 'No AGENTS.md or CLAUDE.md in the repository root.';
 }
 
-type Approved = { version: number; sha: string; link?: string };
-
-// The newest review quack posted here, when it was an approval the judge passed (not one released at the revision limit).
-async function lastApproval(api: ToolExecutionApi, prior: Awaited<ReturnType<typeof priorDoc>>, ctx: Context): Promise<Approved | undefined> {
-  const kinds = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds;
-  const last = (kinds?.['github.review']?.versions ?? []).filter((v: SealedArtifact) => v.links?.length).at(-1);
-  const sha = last && prior?.reviewed?.[String(last.version)];
-  return last && sha && last.outcome === 'approve' && (last.verdict?.passed === true || last.carriedFrom) ? { version: last.version, sha, link: last.links![0].url } : undefined;
-}
-const priorDoc = (api: ToolExecutionApi, ctx: Context) => api.snapshot(PullRequestDoc, api.conversationId, ctx);
-
-// Hashes the PR's change against its merge base with the base's current tip; `git patch-id --stable` ignores line numbers and whitespace-free context shifts a rebase causes.
-async function patchId(api: ToolExecutionApi, dir: string, base: string, sha: string, config: SessionConfig, remote: string, ctx: Context): Promise<string> {
-  const script = 'git -C "$1" diff "$2...$3" | git patch-id --stable';
-  const id = (await run(api, 'patch-id', ['sh', '-c', script, 'sh', dir, `origin/${base}`, sha], config, remote, ctx)).trim().split(/\s+/)[0];
-  if (!id) throw new Error(`empty diff for ${sha}`);
-  return id;
-}
-
-const carriedBody = (a: Approved) => `Same change as the approved review of ${a.link ? `[${a.sha.slice(0, 8)}](${a.link})` : a.sha.slice(0, 8)} (rebase only); approval carried forward`;
-
-// A push that only rebases an approved PR keeps its approval: the new head posts APPROVE and is recorded as a posted version, with no review turn. Any doubt returns undefined and the full review runs.
-async function carryApproval(api: ToolExecutionApi, dir: string, pr: PullRequestRecord, config: SessionConfig, remote: string, ctx: Context): Promise<string | undefined> {
-  try {
-    const approved = await lastApproval(api, await priorDoc(api, ctx), ctx);
-    if (!approved || approved.sha === pr.headSha) return undefined;
-    await git(api, ['-C', dir, 'fetch', '--filter=blob:none', 'origin', approved.sha], config, remote, ctx);
-    const [was, now] = await Promise.all([approved.sha, pr.headSha].map((sha) => patchId(api, dir, pr.baseRef, sha, config, remote, ctx)));
-    if (was !== now) return undefined;
-    // Like postCleared, refuse to approve a head that moved while the patch-ids ran.
-    if ((await liveHead(config, pr.owner, pr.repo, pr.number)).headSha !== pr.headSha) return undefined;
-    const body = carriedBody(approved);
-    // The delivery id lets a rerun after a crash find this approval instead of posting it twice.
-    const post = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: 'APPROVE', body, deliveryId: `${api.conversationId}/carry/${pr.headSha}` };
-    const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify(post), headers: { authorization: `Bearer ${config.serviceToken}` } });
-    if (!res.ok) return undefined;
-    const url = ((await res.json()) as { url?: string }).url;
-    await recordCarried(api, pr, body, url, approved, ctx);
-    return `${body}. It is posted${url ? `: ${url}` : ''}. The review is done; do not review this head again.`;
-  } catch {
-    return undefined;
-  }
-}
-
-async function recordCarried(api: ToolExecutionApi, pr: PullRequestRecord, body: string, url: string | undefined, from: Approved, ctx: Context) {
-  const content = `## Takeaway\n${body}\n\n## Verdict\napprove\n\n## Findings\n`;
-  await api.commit(async (tx) => {
-    const kind = (await tx.doc(Artifacts, api.conversationId)).kinds;
-    kind['github.review'] ??= { versions: [] };
-    const versions = kind['github.review'].versions;
-    const version = versions.length + 1;
-    versions.push({ kind: 'github.review', version, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, basis: pr.headSha, carriedFrom: { sha: from.sha, ...(from.link ? { url: from.link } : {}) }, outcome: 'approve', summary: 'Approve · carried forward', ...(url ? { links: [{ label: 'Posted', url }] } : {}) });
-    const d = await tx.doc(PullRequestDoc, api.conversationId);
-    d.reviewed = { ...d.reviewed, [String(version)]: pr.headSha };
-    d.posted = [...(d.posted ?? []), version];
-    d.postedThisCheckout = version;
-  }, ctx);
-}
-
 /** What both roles read of a pull request besides the code: description, CI result and linked issues. */
 export const prFacts = (pr: PullRequestRecord) => [
   `Description:\n${pr.body || '(none)'}`,
@@ -194,8 +133,6 @@ export function checkoutTool(config: SessionConfig) {
         d.pr = JSON.parse(JSON.stringify(pr));
         delete d.postedThisCheckout;
       }, ctx);
-      const carried = await carryApproval(api, dir, pr, config, remote, ctx);
-      if (carried) return { output: [{ type: 'text', text: [stale, carried].filter(Boolean).join('\n\n') }] };
       const stat = await git(api, ['-C', dir, 'diff', '--stat', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,

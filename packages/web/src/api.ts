@@ -23,7 +23,7 @@ export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' 
 export type Verdict = { passed: boolean; /** The judge released it unpassed after its revision limit. */ limitReached?: boolean; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
 /** A sealed version as the session socket sends it; `verdict` is null while the judge works and absent when read over REST, which carries none. */
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict?: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string; carriedFrom?: { sha: string; url?: string } };
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict?: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string };
 
 export async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {

@@ -143,14 +143,6 @@ test('no marker once the run ends, or for a draft that never recorded its head',
   expect(screen.queryByText(/About an earlier commit/)).toBeNull();
 });
 
-test('a carried approval says it is the same change as the earlier review, with no Double-checked', () => {
-  const from = { sha: 'abcdef1234567890', url: 'https://github.com/o/r/pull/1#pullrequestreview-5' };
-  render(<>{reviewCard(sealed(md('review-approve'), { verdict: null, carriedFrom: from }))}</>);
-  const card = screen.getByRole('region', { name: 'Review' });
-  expect(within(card).getByRole('link', { name: 'Same change as the approved review of abcdef12' })).toHaveAttribute('href', from.url);
-  expect(card).not.toHaveTextContent('Double-checked');
-});
-
 test('a one-sentence finding has nothing to open, so it is a plain row with no chevron', () => {
   render(<>{reviewCard(sealed(['## Takeaway', 'Fine.', '', '## Verdict', 'approve', '', '## Findings', '- nit: app/x.ts:1 — a single-sentence note.'].join('\n')))}</>);
   const card = screen.getByRole('region', { name: 'Review' });
