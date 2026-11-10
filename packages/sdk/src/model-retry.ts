@@ -28,6 +28,9 @@ const statusOf = (message = '') => /(?<![a-z0-9])[45]\d\d(?![a-z0-9])/i.exec(mes
 
 type Reply = { stopReason: string; errorMessage?: string };
 
+// An input over the model's context fails the same way every time, whatever status the host gives it (llama.cpp: 500).
+export const inputTooLarge = (reply: Reply) => reply.stopReason === 'error' && /too large|exceeds? the (?:available )?context|context (?:length|size|window)/i.test(reply.errorMessage ?? '');
+
 /** Retries a model call's transient failures (429, 5xx, connection, timeout) on MODEL_RETRY; a 4xx or any model answer returns at once. */
 // `call` must hand the provider the `fetch` it gets, or Retry-After is never seen; an abort during the backoff rejects.
 export async function retryModelCall<T extends Reply>(model: string, call: (send: typeof fetch) => Promise<T>, signal?: AbortSignal, seams: RetrySeams = {}): Promise<T> {
@@ -41,7 +44,7 @@ export async function retryModelCall<T extends Reply>(model: string, call: (send
   for (let attempt = 1; ; attempt++) {
     retryAfter = null;
     const reply = await call(watched);
-    if (attempt > MODEL_RETRY.maxRetries || !isRetryableAssistantError(reply as unknown as AssistantMessage)) return reply;
+    if (attempt > MODEL_RETRY.maxRetries || inputTooLarge(reply) || !isRetryableAssistantError(reply as unknown as AssistantMessage)) return reply;
     const ms = delayMs(attempt, retryAfter, random);
     log(`model retry: session=${process.env.QUACK_SESSION_KEY ?? '-'} model=${model} status=${statusOf(reply.errorMessage)} attempt=${attempt}/${MODEL_RETRY.maxRetries} in ${ms}ms`);
     await sleep(ms, signal);
