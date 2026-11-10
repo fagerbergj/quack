@@ -92,6 +92,13 @@ test('map-reduce pairs passages whose digests conflict', async () => {
   assert.deepEqual(evidence.pairs.map((u) => [u.id, u.state.piece]), [['pairs item-1|item-2', { first: 'The fleet has 38 electric buses in service.', second: 'The fleet has 42 electric buses in service.' }]]);
 });
 
+test('map-reduce compares a quantity by its figure, whatever its unit word', async () => {
+  const text = '- Each bus is rated at 190 km per charge.\n- Each bus is rated at 190 per charge.\n- Eligible farms are under 40 acres.\n- Eligible farms are under 60 acres.\n';
+  const decl: Declaration = { scopes: { pairs: { split: { name: 'digestPairs', from: 'x', of: { name: 'listItems', from: 'x' }, extract: 'numbers', compare: 'sameTermsOtherValue' } } }, checks: {} };
+  const { evidence } = await buildEvidence(decl, { x: text });
+  assert.deepEqual(evidence.pairs.map((u) => u.id), ['pairs item-3|item-4']);
+});
+
 test('an off-shape input falls back to the llm splitter, whose made-up spans are dropped and whose sweep judges what it missed', async () => {
   const calls: string[] = [];
   const model: ModelSplit = async (text, _o, role) => {

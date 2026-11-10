@@ -155,7 +155,7 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
   return out.length ? ['', 'disagreements (case check: met per repeat by arm, then the notes each arm gave):', ...out] : [];
 }
 
-/** The #1956 table: per case and check, met per repeat and classifier/escalation counts for each arm; then judge seconds per arm, the disagreements and the declined cases. */
+/** The replay table: per case and check, met per repeat and classifier/escalation counts for each arm; then judge seconds per arm, the disagreements and the declined cases. */
 export function table({ rows, declined }: Replayed, arms: string[]): string {
   const keys = [...new Set(rows.map(keyOf))].sort();
   const cell = (arm: string, key: string) => {
