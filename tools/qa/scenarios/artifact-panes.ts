@@ -8,7 +8,7 @@ const PANES = [
   { name: 'review', key: 'github:fagerbergj/quack#2243', pane: 'Review', shows: 'ready to merge' },
   { name: 'research', key: 'research:qa-langfuse', pane: 'Report', shows: 'Short answer' },
   { name: 'contract', key: 'contracts:qa-schedule', pane: 'Contract', shows: 'Version 2 passed its checks.' },
-  { name: 'sleeper', key: `sleeper:${LEAGUE}:8:lineup`, pane: 'Lineup picks', shows: 'Joe Burrow' },
+  { name: 'sleeper', key: `sleeper:${LEAGUE}:8:lineup`, pane: 'Week 8 lineup', shows: 'Joe Burrow' },
 ];
 
 // No github or sleeper service runs in the rig, so their page reads are answered here.

@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
+import { sentence } from '../../extension.ts';
 import { Markdown } from '../../Markdown.tsx';
 import { Blurb, NewsList } from './parts.tsx';
 import type { Result } from './week.ts';
@@ -6,34 +7,12 @@ import type { Result } from './week.ts';
 type P = { name: string; pos: string; team: string | null; inj?: string | null };
 type Card = Record<string, any>;
 
-const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const who = (p: P) => `${p.name} · ${p.pos}${p.team ? ` · ${p.team}` : ''}`;
 const pts = (n: number) => String(Math.round(n * 100) / 100);
 const record = (s: { wins: number; losses: number; ties: number }) => `${s.wins}-${s.losses}${s.ties ? `-${s.ties}` : ''}`;
 // Trend text carries Sleeper player ids ("4881 Lamar Jackson: ..."), which mean nothing to a reader.
 const unid = (t: string) => t.replace(/\b(?!(?:19|20)\d{2}(?!\d))\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Z])/g, '').replace(/\b\d{4,5}(?:\/\d{4,5})+:?\s*/g, '');
 const KINDS: Record<string, string> = { injury: 'Injuries', waiver: 'Rising on waivers', note: 'Notes' };
-
-/** The title a result goes by, in the page and in the Run a job sheet. */
-export function titleOf(r: Result, past?: boolean): string {
-  const c = r.card;
-  if (past && r.job === 'digest') return c.past === false ? `Week ${c.week} preview` : `Week ${c.week} recap`;
-  if (past && r.job === 'retro') return `Week ${c.week} retro`;
-  switch (r.job) {
-    case 'lineup': return 'Start / sit';
-    case 'waivers': return 'Waivers';
-    case 'trade-finder': case 'trade': return 'Trades';
-    case 'trends': return 'Trends';
-    case 'digest': return c.past === false ? `Preview · week ${c.week}` : `Recap · week ${c.week}`;
-    case 'retro': return `Retro · week ${c.week}`;
-    case 'history': return 'League history';
-    default: return r.job;
-  }
-}
-
-const WHAT: Record<string, string> = { digest: 'League recap', retro: 'Your lineup calls, looked back on', lineup: 'Your starters and bench', waivers: 'Claims for the week', 'trade-finder': 'Deals worth asking about', trade: 'Your offer, checked', trends: 'What is moving in the league', history: 'Your seasons so far' };
-/** What a result is, for the line under its title in a past week. */
-export const whatIs = (r: Result) => (r.job === 'digest' && r.card.past === false ? 'Preview of the week' : WHAT[r.job] ?? '');
 
 /** One calm line under the title, and the lines a short card lists. */
 export function brief(r: Result): { sub: string; lines: string[] } {
@@ -216,11 +195,49 @@ function History({ c }: { c: Card }) {
   return <><Sum text={c.summary} /><List>{c.seasons.map((s: any) => <Season key={s.season} s={s} />)}</List></>;
 }
 
-const FULL: Record<string, (p: { c: Card }) => ReactNode> = { waivers: Waivers, 'trade-finder': Trades, trade: Trades, trends: Trends, digest: Recap, retro: Retro, history: History };
+/** One Sleeper job: its `label` wherever the job itself is named, the `title` of a week's result (Week 9 recap), the line under that title in
+ * a past week, its running line, its colour on the week strip, and its opened view (the lineup has its own). */
+type Job = { label: string; title?: (week: number) => string; what: string; run: string; tone: string; View?: ComponentType<{ c: Card }> };
+
+export const JOBS: Record<string, Job> = {
+  lineup: { label: 'Lineup', what: 'Your starters and bench', run: 'Checking your lineup', tone: 'bg-link' },
+  waivers: { label: 'Waivers', what: 'Claims for the week', run: 'Looking at waivers', tone: 'bg-warning', View: Waivers },
+  'trade-finder': { label: 'Trade finder', what: 'Deals worth asking about', run: 'Looking for trades', tone: 'bg-success', View: Trades },
+  trade: { label: 'Trade', what: 'Your offer, checked', run: 'Looking for trades', tone: 'bg-muted', View: Trades },
+  trends: { label: 'Trends', what: 'What is moving in the league', run: 'Reading trends', tone: 'bg-muted', View: Trends },
+  digest: { label: 'Recap', what: 'League recap', run: 'Writing the recap', tone: 'bg-muted', View: Recap },
+  retro: { label: 'Retro', what: 'Your lineup calls, looked back on', run: 'Writing the retro', tone: 'bg-muted', View: Retro },
+  history: { label: 'League history', title: () => 'League history', what: 'Your seasons so far', run: 'Reading league history', tone: 'bg-info', View: History },
+};
+export const ORDER = Object.keys(JOBS);
+// A trade check needs a partner, so the sheet does not offer it; the lineup heads the current week on its own.
+export const RUNNABLE = ORDER.filter((j) => j !== 'trade');
+export const CURRENT = RUNNABLE.filter((j) => j !== 'lineup');
+
+const KEY = /^sleeper:([^:]+):(\d+):([a-z-]+)(?::|$)/;
+/** A Sleeper session key, sleeper:<league>:<week>:<job>[:...] (a trade carries its offer after the job); undefined for any other key or job. */
+export function parseKey(key: string): { league: string; week: number; job: string } | undefined {
+  const m = KEY.exec(key);
+  return m && Object.hasOwn(JOBS, m[3]!) ? { league: m[1]!, week: Number(m[2]), job: m[3]! } : undefined;
+}
+
+// A recap sealed before its week is played is a preview.
+const preview = (job: string, card?: Card) => job === 'digest' && card?.past === false;
+
+/** The name a job's result goes by everywhere: its session, its sealed card and the page. */
+export function jobTitle(job: string, week: number, card?: Card): string {
+  const j = JOBS[job];
+  if (!j) return job;
+  return j.title?.(week) ?? `Week ${week} ${(preview(job, card) ? 'Preview' : j.label).toLowerCase()}`;
+}
+export const titleOf = (r: Result) => jobTitle(r.job, r.week, r.card);
+
+/** What a result is, for the line under its title in a past week. */
+export const whatIs = (r: Result) => (preview(r.job, r.card) ? 'Preview of the week' : JOBS[r.job]?.what ?? '');
 
 /** The opened view of a result; the lineup has its own. */
 export function Full({ r }: { r: Result }) {
-  const Body = FULL[r.job];
+  const Body = JOBS[r.job]?.View;
   return Body ? <Body c={r.card} /> : <Markdown text={r.card.summary ?? ''} />;
 }
 

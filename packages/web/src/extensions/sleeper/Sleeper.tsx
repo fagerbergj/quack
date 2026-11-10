@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { SealedArtifact } from '../../api.ts';
+import { sentence } from '../../extension.ts';
 import type { Row } from '../../sessions.ts';
-import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
+import { CURRENT, Full, JOBS, ORDER, RUNNABLE, Short, brief, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { sessionsOf, useResults, wanted, weekResult, type Result, type Sess } from './week.ts';
@@ -83,10 +84,8 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
 
 
 const DAY = 864e5;
-const NAME: Record<string, string> = { digest: 'Recap', retro: 'retro', waivers: 'Waivers process', 'trade-finder': 'Trade finder', lineup: 'lineup' };
 // One color per job so a run keeps its color week to week; tokens that read in both themes.
-const TONE: Record<string, string> = { lineup: 'bg-link', waivers: 'bg-warning', 'trade-finder': 'bg-success', digest: 'bg-muted', retro: 'bg-muted', history: 'bg-info' };
-const toneOf = (job: string) => TONE[job] ?? 'bg-muted';
+const toneOf = (job: string) => JOBS[job]?.tone ?? 'bg-muted';
 
 // The duck art faces left; mirrored so it faces forward in time.
 function Duck() {
@@ -106,7 +105,7 @@ function pins(runs: Run[], now: number) {
   const week = runs.filter((r) => r.job !== 'trends' && Date.parse(r.at) > now && Date.parse(r.at) < now + 7 * DAY);
   return [...new Set(week.map((r) => r.at))].map((at) => {
     const jobs = week.filter((r) => r.at === at).map((r) => r.job);
-    return { at: Date.parse(at), tone: toneOf(jobs[0]!), label: jobs.map((j) => NAME[j] ?? j).join(' and ').replace(/^./, (c) => c.toUpperCase()) };
+    return { at: Date.parse(at), tone: toneOf(jobs[0]!), label: sentence(jobs.map((j) => (JOBS[j]?.label ?? j).toLowerCase()).join(' and ')) };
   });
 }
 
@@ -165,7 +164,7 @@ const btn = 'inline-flex min-h-11 cursor-pointer items-center justify-center rou
 
 function ResultCard({ r, compact }: { r: Result; compact?: boolean }) {
   const [open, setOpen] = useState(false);
-  const title = titleOf(r, compact);
+  const title = titleOf(r);
   if (open && r.job === 'lineup' && Array.isArray(r.card.starters)) {
     return <div className="flex flex-col gap-1"><LineupCard card={r.card as Card} artifact={r.artifact} sessionKey={r.key} /><button type="button" onClick={() => setOpen(false)} className={`${btn} self-end`} aria-label={`Close ${title}`}>Close</button></div>;
   }
@@ -200,9 +199,8 @@ function Outcome({ week, results }: { week: number; results: Result[] }) {
   );
 }
 
-const CURRENT = ['waivers', 'trade-finder', 'trends', 'digest', 'retro', 'history'];
-const PAST = ['digest', 'retro', 'lineup', 'waivers', 'trade-finder', 'trade', 'trends', 'history'];
-const JOBS: Array<[string, string]> = [['lineup', 'Lineup'], ['waivers', 'Waivers'], ['trade-finder', 'Trade finder'], ['trends', 'Trends'], ['digest', 'Recap'], ['retro', 'Retro'], ['history', 'League history']];
+// A past week leads with how it went.
+const PAST = ['digest', 'retro', ...ORDER.filter((j) => j !== 'digest' && j !== 'retro')];
 
 /** A job's session while it starts ('') or runs (its key); undefined when it can be run. */
 type LiveKey = (job: string) => string | undefined;
@@ -242,7 +240,8 @@ function JobSheet({ found, runs, live, status, onRun, onClose }: SheetProps) {
         </div>
         {status && <p role="status" className="m-0 mb-1 px-4 text-[13px] text-danger">{status}</p>}
         <ul className="m-0 flex min-h-0 list-none flex-col overflow-y-auto overscroll-contain px-1 pt-1 pb-[calc(0.75rem+var(--safe-b))]">
-          {JOBS.map(([job, name]) => {
+          {RUNNABLE.map((job) => {
+            const name = JOBS[job]!.label;
             const last = found.find((r) => r.job === job);
             const next = runs.find((r) => r.job === job);
             const line = [last ? `${titleOf(last)} · ${weekday(last.artifact.sealedAt)}` : 'Nothing yet', next && `next ${slot(Date.parse(next.at))}`].filter(Boolean).join(' · ');

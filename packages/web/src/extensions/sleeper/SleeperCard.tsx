@@ -1,19 +1,17 @@
 import { useContext } from 'react';
 import type { SealedArtifact } from '../../api.ts';
 import { SessionKeyContext } from '../../extension.ts';
-import { Full, titleOf } from './cards.tsx';
+import { Full, JOBS, titleOf } from './cards.tsx';
 import { TitleTick, Verdict } from './parts.tsx';
 import { LineupCard, type Card } from './Sleeper.tsx';
 import type { Result } from './week.ts';
-
-const KINDS = ['lineup', 'waivers', 'trade-finder', 'trade', 'trends', 'digest', 'retro', 'history'];
 
 /** The card a sealed sleeper.cards artifact holds, or undefined when it is not JSON of a known kind. */
 export function cardOf(a: SealedArtifact): Record<string, any> | undefined {
   if (a.kind !== 'sleeper.cards') return undefined;
   try {
     const c = JSON.parse(a.content) as Record<string, any> | null;
-    return c && KINDS.includes(c.kind) ? c : undefined;
+    return c && Object.hasOwn(JOBS, c.kind) ? c : undefined;
   } catch {
     return undefined;
   }
@@ -24,7 +22,7 @@ export function SleeperCard({ a, card }: { a: SealedArtifact; card: Record<strin
   const key = useContext(SessionKeyContext) ?? '';
   if (card.kind === 'lineup') return <LineupCard card={card as Card} artifact={a} sessionKey={key} />;
   const r: Result = { key, week: card.week, job: card.kind, running: false, artifact: a, card };
-  const title = titleOf(r, true);
+  const title = titleOf(r);
   return (
     <article aria-label={title} className="overflow-hidden rounded-[22px] border border-line bg-surface shadow-card">
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">

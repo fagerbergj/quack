@@ -29,9 +29,9 @@ test('the repo shows as a prefix only when the loaded reviews span more than one
   expect(text(many)).toBe('acme/tool #5 Add retries');
 });
 
-test('sleeper jobs read "Lineup · wk 8" and "Waivers · wk 8"', () => {
-  expect(sessionTitle(s('sleeper:1356407594683482112:8:lineup')).text).toBe('Lineup · wk 8');
-  expect(sessionTitle(s('sleeper:1356407594683482112:8:waivers')).text).toBe('Waivers · wk 8');
+test('sleeper jobs read "Week 8 lineup" and "Week 8 waivers"', () => {
+  expect(sessionTitle(s('sleeper:1356407594683482112:8:lineup')).text).toBe('Week 8 lineup');
+  expect(sessionTitle(s('sleeper:1356407594683482112:8:waivers')).text).toBe('Week 8 waivers');
 });
 
 test('research keeps the question up to its first ?, comma or period, else a word cut', () => {
