@@ -1,0 +1,435 @@
+{
+ "ms": 68577,
+ "results": [
+  {
+   "id": "K1",
+   "answers": {
+    "time": {
+     "p": 0.7536038526821274,
+     "verdict": "unsure"
+    },
+    "port": {
+     "p": 0.8857684239406622,
+     "verdict": "yes"
+    },
+    "shared": {
+     "p": 0.20316182392078597,
+     "verdict": "unsure"
+    },
+    "external": {
+     "p": 0.10873705801069888,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.4105122340781762,
+     "verdict": "unsure"
+    },
+    "order": {
+     "p": 0.025532792975731133,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.1587055306498126,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.056832199140980345,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.07660913779516389,
+     "verdict": "no"
+    }
+   },
+   "tokens": 4577,
+   "ms": 4284
+  },
+  {
+   "id": "K2",
+   "answers": {
+    "time": {
+     "p": 0.6953194342550465,
+     "verdict": "unsure"
+    },
+    "port": {
+     "p": 0.10214180725588241,
+     "verdict": "no"
+    },
+    "shared": {
+     "p": 0.1278892903746941,
+     "verdict": "no"
+    },
+    "external": {
+     "p": 0.05002925107930451,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.15923620782507975,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.1094785418215279,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.2196576109361775,
+     "verdict": "unsure"
+    },
+    "mocks": {
+     "p": 0.3175844874545011,
+     "verdict": "unsure"
+    },
+    "logic": {
+     "p": 0.1321869289932088,
+     "verdict": "no"
+    }
+   },
+   "tokens": 7823,
+   "ms": 6864
+  },
+  {
+   "id": "K3",
+   "answers": {
+    "time": {
+     "p": 0.033241768652405086,
+     "verdict": "no"
+    },
+    "port": {
+     "p": 0.3986592578583741,
+     "verdict": "unsure"
+    },
+    "shared": {
+     "p": 0.06975688873695253,
+     "verdict": "no"
+    },
+    "external": {
+     "p": 0.05897953118214075,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.11820555402697028,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.020708819354809685,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.08858967297674039,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.08230035499427481,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.04683462175910748,
+     "verdict": "no"
+    }
+   },
+   "tokens": 7816,
+   "ms": 6900
+  },
+  {
+   "id": "K4a",
+   "answers": {
+    "time": {
+     "p": 0.846758066071667,
+     "verdict": "yes"
+    },
+    "port": {
+     "p": 0.2888442276471109,
+     "verdict": "unsure"
+    },
+    "shared": {
+     "p": 0.0923891423193192,
+     "verdict": "no"
+    },
+    "external": {
+     "p": 0.07259878171663549,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.43267413759151524,
+     "verdict": "unsure"
+    },
+    "order": {
+     "p": 0.022169937669285666,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.198470918426417,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.05036935823998324,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.050719929972338,
+     "verdict": "no"
+    }
+   },
+   "tokens": 7816,
+   "ms": 7304
+  },
+  {
+   "id": "K4b",
+   "answers": {
+    "time": {
+     "p": 0.7943246705907004,
+     "verdict": "unsure"
+    },
+    "port": {
+     "p": 0.3801323462287137,
+     "verdict": "unsure"
+    },
+    "shared": {
+     "p": 0.7031053404751593,
+     "verdict": "unsure"
+    },
+    "external": {
+     "p": 0.0722738812201258,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.5807217340501699,
+     "verdict": "unsure"
+    },
+    "order": {
+     "p": 0.020808239872202983,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.24769191253032513,
+     "verdict": "unsure"
+    },
+    "mocks": {
+     "p": 0.07961130703951008,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.0631800120490654,
+     "verdict": "no"
+    }
+   },
+   "tokens": 7816,
+   "ms": 7269
+  },
+  {
+   "id": "K5",
+   "answers": {
+    "time": {
+     "p": 0.1145628763101943,
+     "verdict": "no"
+    },
+    "port": {
+     "p": 0.5092778656670124,
+     "verdict": "unsure"
+    },
+    "shared": {
+     "p": 0.5036107940598661,
+     "verdict": "unsure"
+    },
+    "external": {
+     "p": 0.0561771679484066,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.18127909431611042,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.13907257869260095,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.18503661170902644,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.03950595324667609,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.057604266290534056,
+     "verdict": "no"
+    }
+   },
+   "tokens": 8070,
+   "ms": 8298
+  },
+  {
+   "id": "K6a",
+   "answers": {
+    "time": {
+     "p": 0.02368175814266444,
+     "verdict": "no"
+    },
+    "port": {
+     "p": 0.2761930167396822,
+     "verdict": "unsure"
+    },
+    "shared": {
+     "p": 0.10214884803175556,
+     "verdict": "no"
+    },
+    "external": {
+     "p": 0.06936759022370673,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.06439894511634096,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.014387913364291243,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.11076313223954559,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.062477621134723924,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.02179890224400395,
+     "verdict": "no"
+    }
+   },
+   "tokens": 8089,
+   "ms": 8093
+  },
+  {
+   "id": "K6b",
+   "answers": {
+    "time": {
+     "p": 0.050487396055134505,
+     "verdict": "no"
+    },
+    "port": {
+     "p": 0.29700538360015805,
+     "verdict": "unsure"
+    },
+    "shared": {
+     "p": 0.15209578496853104,
+     "verdict": "no"
+    },
+    "external": {
+     "p": 0.08064401639470768,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.09108440890576458,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.021736056539118184,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.14099171854258719,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.09280706615819416,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.03028575831331242,
+     "verdict": "no"
+    }
+   },
+   "tokens": 8089,
+   "ms": 8088
+  },
+  {
+   "id": "K7",
+   "answers": {
+    "time": {
+     "p": 0.030405216063293522,
+     "verdict": "no"
+    },
+    "port": {
+     "p": 0.029252538685666508,
+     "verdict": "no"
+    },
+    "shared": {
+     "p": 0.21300284719415968,
+     "verdict": "unsure"
+    },
+    "external": {
+     "p": 0.02941098644955198,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.08733727198880406,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.04508915916363176,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.22024530926892322,
+     "verdict": "unsure"
+    },
+    "mocks": {
+     "p": 0.0334815545165083,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.04910863963052828,
+     "verdict": "no"
+    }
+   },
+   "tokens": 7828,
+   "ms": 6894
+  },
+  {
+   "id": "K8",
+   "answers": {
+    "time": {
+     "p": 0.7713463832541838,
+     "verdict": "unsure"
+    },
+    "port": {
+     "p": 0.8898148673680799,
+     "verdict": "yes"
+    },
+    "shared": {
+     "p": 0.1696201718116743,
+     "verdict": "no"
+    },
+    "external": {
+     "p": 0.11072579984679572,
+     "verdict": "no"
+    },
+    "wait": {
+     "p": 0.08564562822032792,
+     "verdict": "no"
+    },
+    "order": {
+     "p": 0.025377655827638547,
+     "verdict": "no"
+    },
+    "broken": {
+     "p": 0.15130927340891046,
+     "verdict": "no"
+    },
+    "mocks": {
+     "p": 0.039405484045557014,
+     "verdict": "no"
+    },
+    "logic": {
+     "p": 0.05681201045241112,
+     "verdict": "no"
+    }
+   },
+   "tokens": 4798,
+   "ms": 4582
+  }
+ ]
+}
