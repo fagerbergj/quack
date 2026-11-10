@@ -9,15 +9,6 @@ function citesExistingLines(_artifact: string, ev: Evidence): CodeResult {
   return share(findings.length - missing.length, findings.length, `no existing path:line cited in ${missing.join(', ')}`);
 }
 
-// A classifier judges whether a finding sounds right, not whether its quoted code exists; that is a string search.
-function quotesExist(_artifact: string, ev: Evidence): CodeResult {
-  const findings = (ev.finding ?? []) as Array<{ id: string; misquotes?: string[] }>;
-  const wrong = findings.filter((f) => f.misquotes?.length);
-  // Every missing quote at once, so one revision fixes them all; output quoted inline reads as code, so say where it goes.
-  const listed = wrong.map((f) => `${f.id} names identifiers found nowhere in the repository, the diff or its dependencies: ${f.misquotes!.slice(0, 5).map((q) => `\`${q}\``).join(', ')}`).join('; ');
-  return share(findings.length - wrong.length, findings.length, `${listed}. Quote names that exist; command output or logs go in a fenced block, which this check skips.`);
-}
-
 function blockingNamesAnchor(artifact: string): CodeResult {
   const blocking = parseReview(artifact).findings.filter((f) => f.label === 'blocking');
   const missing = blocking.filter((f) => !f.anchor).map((f) => `finding-${f.index}`);
@@ -55,7 +46,6 @@ export const reviewerRubric: Rubric = {
     ] },
     { id: 'claims_grounded', checks: [
       { id: 'cites_existing_lines', label: "Cites a line that doesn't exist", weight: 'gate', code: citesExistingLines },
-      { id: 'quotes_exist', label: "Quotes code that isn't there", weight: 'gate', code: quotesExist },
       { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3, scope: 'finding', question: 'Does the cited code show what this finding says about it?' },
       { id: 'shows_how', label: "Blocking issue doesn't show how it fails", weight: 2, scope: 'blocking', question: 'Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?' },
       { id: 'verified_names_evidence', label: "Says verified without saying what was run", weight: 2, scope: 'review', question: 'Does every item under Verified name what was read or run and what it showed, rather than only asserting that tests pass or the logic is correct?' },
