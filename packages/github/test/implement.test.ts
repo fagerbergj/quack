@@ -18,14 +18,13 @@ const issueComment = (body: string, association = 'MEMBER', pull = false) => ({
   action: 'created', repository, comment: { body, author_association: association, user: { login: 'someone' } },
   issue: { number: 12, title: 'Add cache TTL', body: 'Entries never expire.', labels: [{ name: 'bug' }, { name: 'cache' }], ...(pull ? { pull_request: {} } : {}) },
 });
-const implement = (body: string, association?: string, pull?: boolean) => triggerFor('issue_comment', issueComment(body, association, pull), 'quack:review', 'quack-app');
+const implement = (body: string, association?: string, pull?: boolean) => triggerFor('issue_comment', issueComment(body, association, pull), 'quack:review');
 
 test('a trusted /implement on an issue starts the implementer with the issue facts and the instruction', () => {
   const t = implement('/implement keep it under 20 lines')!;
   assert.equal(t.role, 'implementer');
   assert.equal(t.sessionKey, 'github:acme/widgets#12');
   assert.equal(t.issue, true);
-  assert.equal(t.followUp, undefined);
   assert.match(t.input, /Implement issue acme\/widgets#12 \(\/implement by someone\)/);
   assert.match(t.input, /Title: Add cache TTL\nLabels: bug, cache\n\nEntries never expire\./);
   assert.match(t.input, /Instruction: keep it under 20 lines/);

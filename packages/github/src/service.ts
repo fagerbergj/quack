@@ -149,24 +149,18 @@ function recordState(states: States, event: string | undefined, p: Record<string
   return true;
 }
 
-async function queueFollowUp(res: ServerResponse, config: ServiceConfig, t: Trigger, session: { key: string; agent: string }, requestId: string) {
-  const queued = await submitToSession(config.distributorUrl, { ...session, input: t.input, requestId, whenBusy: 'followUp' }, config.fetch).catch(unreachable);
-  send(res, queued.ok ? 202 : 502, { session: t.sessionKey, status: queued.status });
-}
-
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States, queue: WorkQueue) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
   const event = req.headers['x-github-event'] as string | undefined;
   const hook = JSON.parse(body.toString('utf8'));
   if (recordState(states, event, hook)) return send(res, 200, { recorded: true });
-  const trigger = triggerFor(event, hook, config.label, await app.slug());
+  const trigger = triggerFor(event, hook, config.label);
   const agent = trigger?.role === 'implementer' ? config.implementerAgent : config.agent;
   if (!trigger || !agent) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run.
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const session = { key: trigger.sessionKey, agent };
-  if (trigger.followUp) return queueFollowUp(res, config, trigger, session, requestId);
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const queued: Queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta, role: trigger.role };
   const before = postedCount(state, queued);
@@ -223,25 +217,6 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
     return post(typeof r.fallbackBody === 'string' ? r.fallbackBody : r.body, []);
   });
   count();
-  send(res, 201, { id: json?.id, url: json?.html_url });
-}
-
-const QUOTE_CHARS = 300;
-
-// Answers a mention in its thread: a reply under a review comment, or a new comment quoting an issue comment. The session never holds the token.
-async function postReply(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
-  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
-  const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && Number.isInteger(r.commentId) && (r.kind === 'review' || r.kind === 'issue') && typeof r.body === 'string' && r.body.length > 0;
-  if (!ok) return send(res, 400, { error: 'need owner, repo, integer number and commentId, kind (review|issue) and a non-empty body' });
-  const slug = await app.slug();
-  const base = `/repos/${r.owner}/${r.repo}`;
-  if (r.kind === 'review') {
-    const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/pulls/${r.number}/comments/${r.commentId}/replies`, { body: stripMentions(r.body, slug) });
-    return send(res, 201, { id: json?.id, url: json?.html_url });
-  }
-  const original = (await app.asInstallation(r.owner, r.repo, 'GET', `${base}/issues/comments/${r.commentId}`)).json;
-  const quote = String(original?.body ?? '').slice(0, QUOTE_CHARS).split('\n').map((l) => `> ${l}`).join('\n');
-  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/issues/${r.number}/comments`, { body: stripMentions(`${quote}\n\n${r.body}`, slug) });
   send(res, 201, { id: json?.id, url: json?.html_url });
 }
 
@@ -402,7 +377,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       if (get) return await get();
       const mirror = req.method === 'GET' ? MIRROR_PATH.exec(path) : null;
       if (mirror) return await mirrorPull(res, app, states, mirror);
-      const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
+      const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
       if (post) return await post();
       if (!(await itemRoute(req, res, app, config, path))) send(res, 404, { error: 'not found' });
     } catch (err) {
