@@ -75,6 +75,9 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   return { done, seen, service, head, session, live };
 }
 
+// An open question calls for `comment`, so approving it fails the verdict gate; `n` makes each draft a new version.
+const asksButApproves = (n: number) => review.replace('- nit: app.ts:1 — a named constant would say why the value is 2.', `- question: app.ts:1 — why is the value 2 (draft ${n})?`);
+
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const recorder = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
@@ -88,7 +91,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@6\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@7\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
@@ -120,13 +123,12 @@ test('a post whose answer was lost after GitHub took it is resubmitted under the
 });
 
 test('a failing submit posts nothing; the corrected version is the one that goes out', async () => {
-  const misquoted = review.replace('a named constant would say why the value is 2.', 'it still calls `return computeTotals(a)`, which is gone.');
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
-    return [checkout(), step(write(misquoted)), step(call('submit_review', {})), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.'))];
+    return [checkout(), step(write(asksButApproves(1))), step(call('submit_review', {})), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 names identifiers found nowhere in the repository, the diff or its dependencies: `computeTotals`/);
+  assert.match(seen[2], /gate structured_verdict\.verdict_matches_labels[^"]*the findings call for comment, the verdict says approve/);
   assert.doesNotMatch(seen[2], /Posted as/);
   assert.equal(service.posted.length, 1);
   assert.equal(service.posted[0].body, inlined);
@@ -134,10 +136,9 @@ test('a failing submit posts nothing; the corrected version is the one that goes
 });
 
 test('a review released at the revision limit posts with its failures marked', async () => {
-  const bad = (n: number) => review.replace('a named constant would say why the value is 2.', `it still calls \`return computeTotals${n}(a)\`, which is gone.`);
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
-    return [checkout(), step(write(bad(1))), step(call('submit_review', {})), step(write(bad(2))), step(call('submit_review', {})), step(write(bad(3))), step(call('submit_review', {})), step(fauxAssistantMessage('Released.'))];
+    return [checkout(), step(write(asksButApproves(1))), step(call('submit_review', {})), step(write(asksButApproves(2))), step(call('submit_review', {})), step(write(asksButApproves(3))), step(call('submit_review', {})), step(fauxAssistantMessage('Released.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Released.');
   assert.doesNotMatch(seen[2], /Posted as/);
@@ -146,7 +147,7 @@ test('a review released at the revision limit posts with its failures marked', a
   assert.match(seen[6], /Posted as APPROVE: /);
   assert.equal(service.posted.length, 1);
   assert.match(service.posted[0].body, /\*\*Not fully checked:\*\* the revision limit was reached\. Checks that did not pass:\n- /);
-  assert.match(service.posted[0].comments[0].body, /computeTotals3/);
+  assert.match(service.posted[0].comments[0].body, /draft 3/);
   assert.ok(service.posted[0].body.startsWith('## Takeaway'));
   await session.close();
 });
@@ -269,10 +270,9 @@ test('a closed PR ends the run at the first submit: it is refused for good, not 
 
 test('submits that keep changing stop at the revision limit: the 4th judged version in a run is refused and ends it', async () => {
   const counter = { turns: 0 };
-  const bad = (i: number) => review.replace('a named constant would say why the value is 2.', `it still calls \`return computeTotals${i}(a)\`, which is gone.`);
   const steps = Array.from({ length: 40 }, (_, i) => (_c: unknown) => {
     counter.turns++;
-    return i === 0 ? checkout() : i % 2 === 1 ? write(bad(i)) : call('submit_review', {});
+    return i === 0 ? checkout() : i % 2 === 1 ? write(asksButApproves(i)) : call('submit_review', {});
   });
   const { done, service, session } = await reviewRun(() => steps);
   assert.equal(done.status, 'done');

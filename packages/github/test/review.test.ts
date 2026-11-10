@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseReview, reviewKind, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
-import { claimedNames, dependencyDirs, misquotes, quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
 Fix the double-counted cache tokens before merging.
@@ -93,65 +92,6 @@ test('an anchor without its space still parses, a cited root file counts, and an
   assert.deepEqual(prose.findings.map((f) => [f.path, f.line]), [[undefined, undefined], ['go.mod', 3], ['./x/y.go', 4]]);
   const problems = validateReview('## Takeaway\nx\n## Verdict\napprove\n## Findings\n- blocker src/b.ts:2 nope\n');
   assert.deepEqual(problems, ['not a finding line ("- label (anchor): path:line — text"): - blocker src/b.ts:2 nope']);
-});
-
-test('statement-like inline quotes are collected for checking; identifiers, short spans and fenced proposals are not', () => {
-  const text = "`opponent()` finds none, so `addWeekForm` appends `teamWeek{Week: w, Points: 0, Result: \"-\"}`; see `className=\"${CHIP} bg-blue-100 ...\"`.\n```go\nx := teamWeek{Points: 1}\n```";
-  assert.deepEqual(quotedCode(text), [['teamWeek{Week: w, Points: 0, Result: "-"}'], ['className="${CHIP} bg-blue-100']]);
-  const gate = code('claims_grounded', 'quotes_exist');
-  assert.equal(gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }] } as never).met, 1);
-  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ["Points", "x"] }] } as never);
-  assert.equal(failed.met, 0.5);
-  assert.match(failed.detail!, /finding-2 names identifiers found nowhere in the repository, the diff or its dependencies: `Points`, `x`/);
-  assert.match(failed.detail!, /command output or logs go in a fenced block/);
-  assert.deepEqual(quotedCode('it fails:\n```text\npanic: runtime error: x == nil {\n```'), [], 'quoted output in a fence is not checked');
-});
-
-test('a quote is invented only when a name it claims is in no repo file, diff or installed dependency (prod cases)', async () => {
-  const has = (corpus: string, argv: string[]) => new RegExp(`(?<![\\w$])${argv[argv.indexOf('-e') + 1]}(?![\\w$])`).test(corpus);
-  let calls = 0;
-  const check = async (repo: string, deps: string, text: string, known?: Map<string, boolean>) => {
-    const api = { env: { exec: async (argv: string[]) => (calls++, { ok: true, value: { exitCode: has(argv[0] === 'git' ? repo : deps, argv) ? 0 : 1 } }) } };
-    return misquotes(api as never, 'r', { index: 1, label: 'nit', text } as never, '', '', {} as never, known);
-  };
-  const spans = [
-    'outer.push({ type: "error", reason: "error", error: message }); outer.end(message)',
-    'stream.push({ type: "error", reason: output.stopReason, error: output }); stream.end()',
-  ];
-  const dep = 'outer.push({ type: "error", reason: "error", error: message }); outer.end(message); stream.push({ type: "error", reason: output.stopReason, error: output }); stream.end()';
-  for (const s of spans) {
-    assert.deepEqual(await check('', dep, `emits \`${s}\``), []);
-    assert.deepEqual(await check('', '', `emits \`${s}\``), claimedNames(s), 'in no source, so invented');
-  }
-  const asserted = "assert.equal(noticeFor({ status: 'done' }, true), undefined)";
-  assert.deepEqual(await check(asserted, '', 'so `noticeFor(outcome, true) === undefined` holds'), []);
-  assert.deepEqual(await check('observeGeneration({ messages: [1] })', '', 'pass `{ messages }` through'), []);
-  const otlp = 'resp.partialSuccess?.rejectedSpans';
-  assert.deepEqual(await check(otlp, '', 'read `ExportTraceServiceResponse.partialSuccess { errorCount, errorMessage }`'), ['errorCount', 'errorMessage']);
-  assert.deepEqual(await check('map.keys().next().value', '', 'use `const oldest = map.keys().next().value` then `if (oldest !== undefined)`'), [], 'a new local name is a proposal');
-  assert.deepEqual(claimedNames('const oldest = map.keys().next().value'), ['keys', 'next', 'value']);
-  const shared = new Map<string, boolean>();
-  calls = 0;
-  for (const t of ['calls `gone.fetchAll() === 1`', 'again `gone.fetchAll() === 1`']) assert.deepEqual(await check('', '', t, shared), ['fetchAll']);
-  assert.equal(calls, 2, 'two searches (repo, deps) for one name across two findings');
-});
-
-test('dependencies are searched where the reviewed repo installs them, each search bounded; one that times out does not convict', async () => {
-  const argvs: string[][] = [];
-  const opts: unknown[] = [];
-  const api = (dep: (argv: string[]) => unknown) => ({ env: { exec: async (argv: string[], o: unknown) => (argvs.push(argv), opts.push(o), argv[0] === 'git' ? { ok: true, value: { exitCode: 1 } } : dep(argv)) } });
-  const finding = { index: 1, label: 'nit', text: 'it calls `return computeTotals(a)`' } as never;
-  assert.deepEqual(await misquotes(api(() => ({ ok: false, error: { code: 'timeout' } })) as never, 'r', finding, '', '', {} as never, new Map(), ['r/node_modules', 'r/web/node_modules']), []);
-  assert.deepEqual(argvs.at(-1)!.slice(-2), ['r/node_modules', 'r/web/node_modules']);
-  assert.ok(opts.every((o) => (o as { timeout?: number }).timeout! > 0), 'every search has a timeout');
-  assert.deepEqual(await misquotes(api(() => ({ ok: true, value: { exitCode: 1 } })) as never, 'r', finding, '', '', {} as never, new Map(), []), ['computeTotals'], 'no dependencies: only the repo is searched');
-  assert.equal(argvs.at(-1)![0], 'git');
-  assert.ok(!argvs.flat().some((a) => a.includes('v1/node_modules')), 'no layout is hard-coded');
-});
-
-test('dependency dirs sit beside every tracked package.json', async () => {
-  const api = { env: { exec: async (_argv: string[], o: { onOutput: (t: string) => void }) => (o.onOutput('package.json\nweb/package.json\n'), { ok: true, value: { exitCode: 0 } }) } };
-  assert.deepEqual(await dependencyDirs(api as never, 'repo', {} as never), ['repo/node_modules', 'repo/web/node_modules']);
 });
 
 test('a failing git diff fails the evidence build instead of scoring the review on no diff', async () => {
