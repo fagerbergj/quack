@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import type { Row } from '../sessions.ts';
-import { eventKey, pullKey, readPull, type Pull, type PullEvent } from './pulls.ts';
+import { eventKey, prOf, pullKey, readPull, type Pull, type PullEvent } from './pulls.ts';
 
 type Shown = { pulls: { [key: string]: Pull }; error: string };
 type Live = Shown & { want: (key: string) => () => void; listed: ReadonlySet<string> };
@@ -70,12 +70,10 @@ export function PrStatesNotice() {
   return error ? <p role="alert" className="m-0 px-4 pt-3 text-[13px] text-danger">{`Pull request states are unavailable: ${error}`}</p> : null;
 }
 
-const KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
-
 /** The GitHub page of a github session's pull request, from its key, until the mirror answers with html_url. */
 export function prUrl(sessionKey: string) {
-  const m = KEY.exec(sessionKey);
-  return m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : undefined;
+  const pr = prOf(sessionKey);
+  return pr && `https://github.com/${pr.repo}/pull/${pr.number}`;
 }
 
 const RINGS = 'M6 3.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5M6 15.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5M6 8.5v7';

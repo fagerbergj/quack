@@ -1,4 +1,20 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, SVGProps } from 'react';
+
+/** The quack duck, facing left; `failed` crosses out its eye. Decorative unless given an aria-label. */
+export function Duck({ failed, ...svg }: SVGProps<SVGSVGElement> & { failed?: boolean }) {
+  return (
+    <svg viewBox="0 0 64 48" aria-hidden={svg['aria-label'] ? undefined : true} {...svg}>
+      <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".25" />
+      <circle cx="20" cy="18" r="10" fill="#1f7a63" />
+      <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
+      <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
+      {failed
+        ? <path d="M14 13 l6 4 M20 13 l-6 4" stroke="#0b0f0e" strokeWidth="1.8" strokeLinecap="round" />
+        : <><circle cx="17" cy="15" r="1.9" fill="#0f1513" /><circle cx="16.4" cy="14.4" r="0.6" fill="#fff" /></>}
+      <path d="M50 28 Q60 24 58 34" fill="#fdfcf7" />
+    </svg>
+  );
+}
 
 const reed = 'M8 58 Q6 30 9 6';
 const duckling = (
@@ -26,15 +42,7 @@ export function Pond({ children, still }: { children: ReactNode; still?: boolean
           <rect x="6.5" y="2" width="5" height="16" rx="2.5" fill="#7a4a32" />
         </svg>
         <div className="swimmer flex items-end gap-1">
-          <svg width="46" height="34" viewBox="0 0 64 48">
-            <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".25" />
-            <circle cx="20" cy="18" r="10" fill="#1f7a63" />
-            <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
-            <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
-            <circle cx="17" cy="15" r="1.9" fill="#0f1513" />
-            <circle cx="16.4" cy="14.4" r="0.6" fill="#fff" />
-            <path d="M50 28 Q60 24 58 34" fill="#fdfcf7" />
-          </svg>
+          <Duck width="46" height="34" />
           <span className="mb-1 flex gap-1">{duckling}{duckling}{duckling}</span>
         </div>
         <div className="waves back absolute inset-x-0 bottom-0" />

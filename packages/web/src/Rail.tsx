@@ -3,7 +3,8 @@ import { listAgents, type AgentSummary, type Approval, type Question, type Seale
 import { artifactName, ledger, ledgerId } from './Artifacts.tsx';
 import { versionOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
-import { compact, needId } from './sessions.ts';
+import { compact, needId, spendLabel } from './sessions.ts';
+import { SpendChip } from './SpendChip.tsx';
 import { Dialog } from './Dialog.tsx';
 import { useLoad } from './useLoad.ts';
 import type { View } from './view.ts';
@@ -73,14 +74,14 @@ function NeedsYou({ approvals, questions }: { approvals: Approval[]; questions: 
 }
 
 function Cost({ spend }: { spend?: Spend }) {
-  if (!spend || (spend.cost <= 0 && spend.tokens.input + spend.tokens.output === 0)) return null;
+  if (!spend || !spendLabel(spend)) return null;
   const { input, output, cacheRead } = spend.tokens;
   return (
     <section aria-labelledby="rail-cost">
       <h2 id="rail-cost" className={head}>Cost</h2>
       {spend.cost > 0 && (
         <p className="m-0 mb-3 flex items-baseline gap-2">
-          <span className="text-[28px] leading-none font-semibold tabular-nums">{spend.cost < 0.01 ? '<$0.01' : `$${spend.cost.toFixed(2)}`}</span>
+          <SpendChip spend={spend} className="text-[28px] leading-none font-semibold" />
           <span className="text-[12px] text-muted">at today's prices</span>
         </p>
       )}

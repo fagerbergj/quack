@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listArtifacts, type SealedArtifact, type Session } from '../../api.ts';
-
-// Session keys are sleeper:<league>:<week>:<job>[:...]; trade keys carry the offer after the job.
-const KEY = /^sleeper:([^:]+):(\d+):([a-z-]+)(?::|$)/;
+import { CURRENT, parseKey } from './cards.tsx';
 
 export type Sess = { key: string; week: number; job: string; running: boolean };
 // A sealed result: the artifact and its parsed card content (any shape the job sealed).
@@ -11,8 +9,8 @@ export type Result = Sess & { artifact: SealedArtifact; card: Record<string, any
 export function sessionsOf(league: string | undefined, rows: Array<Pick<Session, 'key' | 'state'>> | undefined): Sess[] {
   if (!league) return [];
   return (rows ?? []).flatMap((r) => {
-    const m = KEY.exec(r.key);
-    return m && m[1] === league ? [{ key: r.key, week: Number(m[2]), job: m[3]!, running: r.state === 'running' }] : [];
+    const k = parseKey(r.key);
+    return k?.league === league ? [{ key: r.key, week: k.week, job: k.job, running: r.state === 'running' }] : [];
   });
 }
 
@@ -23,7 +21,7 @@ export function wanted(all: Sess[], week: number, current: number): Sess[] {
   const history = newest(all, 'history');
   const own = all.filter((s) => s.week === week);
   if (week !== current) return history && !own.includes(history) ? [...own, history] : own;
-  const latest = ['waivers', 'trade-finder', 'trends', 'digest', 'retro', 'history'].flatMap((j) => newest(all, j) ?? []);
+  const latest = CURRENT.flatMap((j) => newest(all, j) ?? []);
   return [...own.filter((s) => s.job === 'lineup'), ...latest];
 }
 

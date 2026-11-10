@@ -5,12 +5,16 @@ export type Pull = { number: number; state: 'open' | 'closed'; merged: boolean; 
 /** GitHub's pull_request webhook event as the app's /events stream relays it: https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request */
 export type PullEvent = { action: string; repository: { full_name: string }; pull_request: Pull };
 
-const KEY = /^github:([^/]+\/[^#]+)#(\d+)$/;
+/** A github review session's pull request, from its key github:<owner>/<repo>#<n>; undefined for any other key. */
+export function prOf(sessionKey: string): { repo: string; owner: string; name: string; number: string } | undefined {
+  const m = /^github:(([^/]+)\/([^#]+))#(\d+)$/.exec(sessionKey);
+  return m ? { repo: m[1]!, owner: m[2]!, name: m[3]!, number: m[4]! } : undefined;
+}
 
 /** owner/repo#n, lowercased because GitHub matches owner and repo in any case; undefined for a key that is not a github PR. */
 export const pullKey = (sessionKey: string) => {
-  const m = KEY.exec(sessionKey);
-  return m ? `${m[1].toLowerCase()}#${m[2]}` : undefined;
+  const pr = prOf(sessionKey);
+  return pr && `${pr.repo.toLowerCase()}#${pr.number}`;
 };
 export const eventKey = (e: PullEvent) => `${e.repository.full_name.toLowerCase()}#${e.pull_request.number}`;
 

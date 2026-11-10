@@ -45,7 +45,7 @@ test('a review leads with its PR title; its PR badge (state and number), repo an
 test.each([
   ['research:r1', 'What changed in the Langfuse v4 public ingestion API? Cite sources.'],
   ['home:main', 'quack'],
-  ['sleeper:L1:8:lineup', 'Lineup · wk 8'],
+  ['sleeper:L1:8:lineup', 'Week 8 lineup'],
   ['contracts:c1', 'Sleeper schedule endpoint'],
 ])('%s is headed by its own title, with its state on line 2', async (key, title) => {
   const { line1, line2 } = await header(key);

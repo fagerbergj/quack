@@ -127,7 +127,7 @@ test('each kind of session shows its own title and how its last run ended', asyn
     sess('github:o/r#8', { title: 'Add retries', ...ran() }),
     sess('github:o/r#9', { title: 'Drop the flag' }),
     sess('ui:r1', { agent: 'researcher', title: 'What changed in v4?', ...ran() }),
-    ...['lineup', 'waivers', 'history', 'trends', 'trade-finder', 'trade:4:12+13:99', 'digest', 'retro'].map((job) => sess(`sleeper:123:8:${job}`, { agent: 'sleeper-x', ...ran() })),
+    ...['lineup', 'waivers', 'history', 'trends', 'trade-finder', 'digest', 'retro'].map((job) => sess(`sleeper:123:8:${job}`, { agent: 'sleeper-x', ...ran() })),
     sess('remarkable:doc1', { agent: 'remarkable-ingest', title: 'Campaign Notes', ...ran('aborted') }),
     sess('ui:x', { agent: 'coder' }),
     sess('github:o/r#10', { state: 'idle', title: 'Review pull request o/r#10 (label quack:review). Title: feat(v1): Sleeper waivers job', ...ran() }),
@@ -140,14 +140,10 @@ test('each kind of session shows its own title and how its last run ended', asyn
   expect((await row(/#8 Add retries/)).getByText('Reviewed')).toBeInTheDocument();
   expect((await row(/#9 Drop the flag/)).getByText('Not reviewed yet')).toBeInTheDocument();
   expect((await row(/What changed/)).getByText('Report ready')).toBeInTheDocument();
-  expect((await row(/Lineup · wk 8/)).getByText('Lineup picks ready')).toBeInTheDocument();
-  expect((await row(/Waivers · wk 8/)).getByText('Waiver claims ready')).toBeInTheDocument();
-  expect((await row(/^History/)).getByText('League history ready')).toBeInTheDocument();
-  expect((await row(/^Trends · wk 8/)).getByText('Trends ready')).toBeInTheDocument();
-  expect((await row(/^Trade finder · wk 8/)).getByText('Trade ideas ready')).toBeInTheDocument();
-  expect((await row(/^Trade · wk 8/)).getByText('Trade ideas ready')).toBeInTheDocument();
-  expect((await row(/^Recap · wk 8/)).getByText('Week 8 recap ready')).toBeInTheDocument();
-  expect((await row(/^Retro · wk 8/)).getByText('Week 8 retro ready')).toBeInTheDocument();
+  for (const job of ['lineup', 'waivers', 'trends', 'trade finder', 'recap', 'retro']) {
+    expect((await row(new RegExp(`^Week 8 ${job}`))).getByText(`Week 8 ${job} ready`)).toBeInTheDocument();
+  }
+  expect((await row(/^League history/)).getByText('League history ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText('Stopped')).toBeInTheDocument();
   const idle = await row(/#10 Sleeper waivers job/);
   expect(idle.getByText('Reviewed')).toBeInTheDocument();
@@ -1394,17 +1390,16 @@ test('the transcript line names each artifact in plain words and never shows the
   const pass = { passed: true, gatesFailed: [], score: 1, checks: [] };
   const fail = { passed: false, gatesFailed: [], score: 0.2, checks: [] };
   (live['ui%3Au1'] ??= {}).artifacts = [
-      art('sleeper.cards', 10, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: pass }),
-      art('sleeper.cards', 11, JSON.stringify({ kind: 'waivers' }), { verdict: pass }),
-      art('sleeper.cards', 12, JSON.stringify({ kind: 'trade-finder' }), { verdict: pass }),
-      art('sleeper.cards', 13, JSON.stringify({ kind: 'trade' }), { verdict: pass }),
-      art('sleeper.cards', 14, JSON.stringify({ kind: 'trends' }), { verdict: pass }),
+      art('sleeper.cards', 10, JSON.stringify({ kind: 'lineup', week: 8, starters: [] }), { verdict: pass }),
+      art('sleeper.cards', 11, JSON.stringify({ kind: 'waivers', week: 8 }), { verdict: pass }),
+      art('sleeper.cards', 12, JSON.stringify({ kind: 'trade-finder', week: 8 }), { verdict: pass }),
+      art('sleeper.cards', 14, JSON.stringify({ kind: 'trends', week: 8 }), { verdict: pass }),
       art('sleeper.cards', 15, JSON.stringify({ kind: 'digest', week: 7, past: true }), { verdict: pass }),
       art('sleeper.cards', 16, JSON.stringify({ kind: 'digest', week: 8, past: false }), { verdict: pass }),
       art('sleeper.cards', 17, JSON.stringify({ kind: 'retro', week: 6 }), { verdict: pass }),
-      art('sleeper.cards', 18, JSON.stringify({ kind: 'history' }), { verdict: pass }),
+      art('sleeper.cards', 18, JSON.stringify({ kind: 'history', week: 8 }), { verdict: pass }),
       art('sleeper.cards', 19, JSON.stringify({ kind: 'novel' }), { verdict: pass }),
-      art('sleeper.cards', 30, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: fail }),
+      art('sleeper.cards', 30, JSON.stringify({ kind: 'lineup', week: 9, starters: [] }), { verdict: fail }),
       art('github.review', 5, 'r', { verdict: pass }),
       art('github.review', 6, 'r', { verdict: pass, links: [{ label: 'GitHub', url: 'https://example.com/pull/1' }] }),
       art('remarkable.transcript', 7, 't'),
@@ -1417,9 +1412,9 @@ test('the transcript line names each artifact in plain words and never shows the
   await waitFor(() => expect(ledgerOf(section).length).toBeGreaterThan(0));
   const lines = ledgerOf(section).map((li) => li.textContent ?? '');
   const has = (x: string) => expect(lines.some((l) => l.includes(x)), x).toBe(true);
-  for (const x of ['Lineup picks ready', 'Waiver claims ready', 'Trade ideas ready', 'Trade check ready', 'Trends ready', 'Week 7 recap ready', 'Week 8 preview ready', 'Week 6 retro ready', 'League history ready']) has(x);
+  for (const x of ['Week 8 lineup ready', 'Week 8 waivers ready', 'Week 8 trade finder ready', 'Week 8 trends ready', 'Week 7 recap ready', 'Week 8 preview ready', 'Week 6 retro ready', 'League history ready']) has(x);
   expect(lines.some((l) => l.replace('✓', '').startsWith('Ready'))).toBe(true);
-   has("Lineup picks didn't pass its checks");
+   has("Week 9 lineup didn't pass its checks");
   has('Review ready'); has('Review posted'); has('Transcript ready'); has("Result didn't pass its checks"); has('Result ready');
   expect(lines.join(' ')).not.toMatch(/Cards|Thing|Other/);
   expect(within(section).getByRole('link', { name: /GitHub/ })).toBeInTheDocument();

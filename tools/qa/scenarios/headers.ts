@@ -8,7 +8,7 @@ const SESSIONS = [
   { name: 'review-other', key: 'github:acme/tool#5', title: 'feat: add retries', line1: '#5 Add retries' },
   { name: 'research', key: 'research:qa-langfuse', title: 'What changed in the Langfuse v4 public ingestion API? Cite sources.', line1: 'What changed in the Langfuse v4' },
   { name: 'chat', key: 'home:qa-chat', title: 'Plan the week', line1: 'quack' },
-  { name: 'sleeper', key: `sleeper:${LEAGUE}:8:lineup`, title: undefined, line1: 'Lineup · wk 8' },
+  { name: 'sleeper', key: `sleeper:${LEAGUE}:8:lineup`, title: undefined, line1: 'Week 8 lineup' },
 ];
 const SHOWN = ['review', 'research', 'chat', 'sleeper'];
 
