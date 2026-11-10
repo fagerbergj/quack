@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { Agent, createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { inProcessFetch, invocationRequest, safeEqual, serviceHttp, submitToSession } from '../src/index.ts';
@@ -23,6 +23,27 @@ test('serviceHttp checks the bearer, parses JSON and refuses an oversize body', 
     const big = await fetch(s.url, { method: 'POST', headers: { authorization: 'Bearer t' }, body: '{"a":"xxxxxxxx"}' });
     assert.deepEqual(await big.json(), { error: 'body too large' });
   } finally {
+    s.close();
+  }
+});
+
+test('an oversize body leaves the kept-alive connection usable for the next request', async () => {
+  const s = await serve({ token: 't', maxBody: 8 });
+  // One socket, so the second request must reuse the one that carried the oversize body.
+  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  const post = (body: string) => new Promise<{ status?: number; text: string; socket: unknown }>((resolve, reject) => {
+    const req = request(s.url, { method: 'POST', agent, headers: { authorization: 'Bearer t' } }, (res) => {
+      let text = '';
+      res.on('data', (c) => (text += c)).on('end', () => resolve({ status: res.statusCode, text, socket: req.socket }));
+    }).on('error', reject);
+    req.end(body);
+  });
+  try {
+    const big = await post(`"${'x'.repeat(4 << 20)}"`);
+    const next = await post('{"a":1}');
+    assert.deepEqual([big.status, next.status, next.text, next.socket === big.socket], [400, 200, '{"b":{"a":1}}', true]);
+  } finally {
+    agent.destroy();
     s.close();
   }
 });

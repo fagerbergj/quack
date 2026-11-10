@@ -4,13 +4,13 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, before, test } from 'node:test';
+import { afterEach, beforeEach, test } from 'node:test';
 import { escapeTerm } from '@quack/sdk';
 import { createCatalog, fileJournal, sessionsApi, sqliteCatalog, type Caller, type CatalogEvent, type SessionsApiDeps } from '../src/index.ts';
 
 const T0 = Date.parse('2026-11-01T00:00:00Z');
 const cleanups: Array<() => Promise<unknown>> = [];
-after(async () => { for (const c of cleanups.reverse()) await c(); });
+afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
 const deps = { refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true };
 let base = '';
@@ -18,7 +18,9 @@ let catalog: ReturnType<typeof createCatalog>;
 
 const ev = (seq: number, type: string, data: unknown, id = `${type}:${seq}`) => ({ seq, id, at: T0 + seq * 1000, type, data }) as CatalogEvent;
 
-before(async () => {
+// Each test gets its own catalog: several write to it (rename, resolve, delete).
+beforeEach(async () => {
+  Object.assign(deps, { refuse: undefined, answered: [], sessionSays: true });
   const dir = await mkdtemp(join(tmpdir(), 'quack-sessions-api-'));
   const store = sqliteCatalog(join(dir, 'c.sqlite'), { currency: 'USD' });
   let n = 0;

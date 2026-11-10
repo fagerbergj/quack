@@ -32,12 +32,15 @@ export function serviceHttp(opts: { token?: string; maxBody?: number } = {}) {
   async function readBody(req: IncomingMessage): Promise<Buffer> {
     let size = 0;
     const chunks: Buffer[] = [];
-    for await (const chunk of req) {
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
       size += chunk.length;
-      if (size > maxBody) throw new Error('body too large');
+      if (size > maxBody) break;
       chunks.push(chunk);
     }
-    return Buffer.concat(chunks);
+    if (size <= maxBody) return Buffer.concat(chunks);
+    // Drop the rest rather than destroy the request: a destroyed one strands its unread body on the kept-alive socket.
+    req.resume();
+    throw new Error('body too large');
   }
   const json = async (req: IncomingMessage): Promise<unknown> => JSON.parse((await readBody(req)).toString('utf8'));
   const authorized = (req: IncomingMessage, token = opts.token ?? '') => safeEqual(req.headers.authorization ?? '', `Bearer ${token}`);
