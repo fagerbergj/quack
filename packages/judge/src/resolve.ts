@@ -31,12 +31,17 @@ function asked(ask: Ask, instructions: string): ClassifierQuestion {
   return ask.question.type === 'choice' ? { type: 'choice', instructions, criteria: ask.question.options } : { type: 'bool', instructions, criteria: CRITERIA };
 }
 
+/** Each question of a request with the id the judge reads its answer by, in the order the request numbers them. */
+const questionsOf = (items: Item[]) => items.flatMap((it, i) => it.checks.map((c) => ({ id: qid(c, i, !!items[0].unit.shared), i, it, c })));
+
+// Clef reads a question's id as text, so a check id would be asked too ("no_self_contradiction" turned its question around):
+// the request numbers its questions instead.
 function request(items: Item[]) {
   const shared = items[0].unit.shared;
-  const questions: Record<string, ClassifierQuestion> = Object.fromEntries(items.flatMap((it, i) => it.checks.map((c) => [
-    qid(c, i, !!shared),
+  const questions: Record<string, ClassifierQuestion> = Object.fromEntries(questionsOf(items).map(({ i, it, c }, n) => [
+    `q${n}`,
     asked(c, shared ? `About items[${i}] (${it.unit.id}): ${c.question.instructions}` : c.question.instructions),
-  ])));
+  ]));
   const state: JsonObject = shared ? { context: shared, items: items.map((it) => ({ id: it.unit.id, ...it.unit.state })) } : items[0].unit.state;
   return { state, questions };
 }
@@ -82,11 +87,11 @@ async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[]
   const result = await s.clef(() => retryModelCall(`${ref.provider}/${ref.modelId}`, ask, ctx.abortSignal, s.retry).catch(() => undefined));
   ctx.abortSignal?.throwIfAborted();
   if (result?.stopReason !== 'stop') return undefined;
-  const asks = new Map(items.flatMap((it, i) => it.checks.map((c) => [qid(c, i, !!items[0].unit.shared), c] as const)));
-  return Object.fromEntries(Object.entries(result.answers).flatMap(([id, a]) => {
-    const ask = asks.get(id);
-    const p = ask && massOf(ask, a as never);
-    return p === undefined ? [] : [[id, p]];
+  const asks = new Map(questionsOf(items).map((q, n): [string, (typeof q)] => [`q${n}`, q]));
+  return Object.fromEntries(Object.entries(result.answers).flatMap(([key, a]) => {
+    const q = asks.get(key);
+    const p = q && massOf(q.c, a as never);
+    return q && p !== undefined ? [[q.id, p]] : [];
   }));
 }
 

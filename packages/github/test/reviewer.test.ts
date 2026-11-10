@@ -24,7 +24,8 @@ Posted inline on the diff:
 ## Verified
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
-const PITFALLS = /toolchain_as_defect|contradicted|no_reason_given|preference_only|blocks_without_consequence|wrong_output_below_blocking/;
+// Pitfalls by their question, as Clef reads it; the request numbers its questions, so a check id never reaches Clef.
+const PITFALLS = /toolchain or network failure|contradict this finding|only assert that something is wrong|rest only on preference|fail to name something that goes wrong|though not labelled blocking/;
 const clefUnits: string[] = [];
 async function fakeClef() {
   return `${await listen(
@@ -33,7 +34,7 @@ async function fakeClef() {
       for await (const c of req) raw += c;
       const { state, questions } = JSON.parse(raw);
       clefUnits.push(Object.keys(state).join('+'));
-      const answers = Object.fromEntries(Object.keys(questions).map((q) => [q, { type: 'noul', noul: PITFALLS.test(q) ? 0.04 : 0.96 }]));
+      const answers = Object.fromEntries(Object.entries(questions as Record<string, { instructions: string }>).map(([q, { instructions }]) => [q, { type: 'noul', noul: PITFALLS.test(instructions) ? 0.04 : 0.96 }]));
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 300, output_tokens: 0 } }));
     }),
   )}/v1`;

@@ -118,7 +118,7 @@ test('a declaration error is loud: an input nobody provided, a splitter nobody r
   assert.throws(() => registerSplitter('whole', () => []), /library's own/);
 });
 
-// A tool call's api as the judge reads it: memos, a classifier and a judge model, with every request recorded.
+// A tool call's api as the judge reads it: memos, a classifier answering by question number and a judge model, with every request recorded.
 function fakeApi(clef: (q: string) => unknown, judge: (name: string) => string) {
   const memos = new Map<string, unknown>();
   const requests: Array<{ state: unknown; questions: Record<string, unknown> }> = [];
@@ -158,7 +158,7 @@ const scope = { split: { name: 'jsonItems', from: 'rows' }, piece: 'row', contex
 
 test('a pitfall decided by one failing item skips the escalation the other unsure item would have needed, and lists it', async () => {
   // Clef: a fails the claim outright, b is unsure, c holds.
-  const p: Record<string, number> = { 'c.kept#0': 0.05, 'c.kept#1': 0.5, 'c.kept#2': 0.95 };
+  const p: Record<string, number> = { q0: 0.05, q1: 0.5, q2: 0.95 };
   const { api, requests, escalated } = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
   const decl: Declaration = { scopes: { rows: scope }, checks: { kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'all' } } } };
   const v = await rejudge(api, opts(rubricOf('kept', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);
@@ -172,7 +172,7 @@ test('a pitfall decided by one failing item skips the escalation the other unsur
 });
 
 test('while the fold can go either way the unsure item escalates; when nobody can answer, the check is undecided, not failed', async () => {
-  const p: Record<string, number> = { 'c.kept#0': 0.95, 'c.kept#1': 0.5, 'c.kept#2': 0.95 };
+  const p: Record<string, number> = { q0: 0.95, q1: 0.5, q2: 0.95 };
   const decl: Declaration = { scopes: { rows: scope }, checks: { kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'all' } } } };
   const answered = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
   const v = await rejudge(answered.api, opts(rubricOf('kept', 2), decl), sealed, 'm', BACKGROUND_CONTEXT);
@@ -184,7 +184,7 @@ test('while the fold can go either way the unsure item escalates; when nobody ca
 });
 
 test('a choice question holds on its pass options, from the decision model or the judge model', async () => {
-  const probabilities: Record<string, Record<string, number>> = { 'c.grade#0': { good: 0.6, fine: 0.3, bad: 0.1 }, 'c.grade#1': { good: 0.1, fine: 0.1, bad: 0.8 }, 'c.grade#2': { good: 0.5, fine: 0, bad: 0.5 } };
+  const probabilities: Record<string, Record<string, number>> = { q0: { good: 0.6, fine: 0.3, bad: 0.1 }, q1: { good: 0.1, fine: 0.1, bad: 0.8 }, q2: { good: 0.5, fine: 0, bad: 0.5 } };
   const { api, escalated } = fakeApi((q) => ({ type: 'choice', choice: 'good', confidence: 1, probabilities: probabilities[q] }), () => JSON.stringify({ choice: 'fine', confidence: 0.9, reason: 'ok' }));
   const question = { type: 'choice' as const, instructions: 'Grade it.', options: { good: 'it is good', fine: 'it will do', bad: 'it is not' } };
   const decl: Declaration = { scopes: { rows: scope }, checks: { grade: { scope: 'rows', question, aggregate: { name: 'atLeast', k: 2, pass: ['good', 'fine'] } } } };
@@ -218,7 +218,7 @@ test('the llm splitter asks the judge model once per sealed version: a rejudge u
 
 test('a share pitfall asks every unsure item even after a flag, and costs its weight times the share flagged', async () => {
   // Clef: a is flagged outright, b is unsure, c holds; the judge model clears b.
-  const p: Record<string, number> = { 'c.kept#0': 0.05, 'c.kept#1': 0.5, 'c.kept#2': 0.95 };
+  const p: Record<string, number> = { q0: 0.05, q1: 0.5, q2: 0.95 };
   const decl: Declaration = { scopes: { rows: scope }, checks: { kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'share' } } } };
   const { api, escalated } = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
   const v = await rejudge(api, opts({ ...rubricOf('kept', -3), criteria: [{ id: 'c', checks: [{ id: 'kept', label: 'kept', weight: -3 }, { id: 'good', label: 'good', weight: 4, code: () => ({ met: 1 }) }] }] }, decl), sealed, 'm', BACKGROUND_CONTEXT);
