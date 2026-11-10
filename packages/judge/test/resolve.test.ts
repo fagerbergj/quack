@@ -67,6 +67,14 @@ test('a classifier refused with a 503 is asked again after the backoff and its a
   assert.deepEqual([api.calls(), slept, a.answer!.resolver], [2, [2000], 'clef']);
 });
 
+test('a request the classifier refuses as too large is over the cap: not retried, memoized, escalated', async () => {
+  const over = { stopReason: 'error', answers: {}, errorMessage: 'System One API error (500): input (8288 tokens) is too large to process' };
+  const api = callApi(() => Promise.resolve(over));
+  const retry = { sleep: async () => assert.fail('an input too large is not retried'), random: () => 0, log: () => {} };
+  const [a] = await answerItems(api as never, { ref, memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1), retry }, [{ unit, checks }], BACKGROUND_CONTEXT);
+  assert.deepEqual([api.calls(), api.memos.get(memoKey), a.answer!.resolver], [1, null, 'agent-model']);
+});
+
 test('an over-cap unit is memoized: a rerun escalates without asking the classifier', async () => {
   const api = callApi(() => Promise.resolve(confident));
   const tiny = { ...ref, maxInputTokens: 1 };

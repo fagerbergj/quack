@@ -49,6 +49,13 @@ test('a 400 is not retried', async () => {
   assert.deepEqual([r.sent.length, r.logs], [1, []]);
 });
 
+test('an input the model says is too large is not retried, though the host answers 500', async () => {
+  const over = { error: { code: 500, message: 'input (8288 tokens) is too large to process. increase the physical batch size (current batch size: 8192)', type: 'server_error' } };
+  const r = rig([refused(500, {}, over), answer]);
+  assert.equal(await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT), undefined);
+  assert.deepEqual([r.sent.length, r.logs], [1, []]);
+});
+
 test('exhausted retries leave the decision undecided', async () => {
   const r = rig(Array.from({ length: MODEL_RETRY.maxRetries + 2 }, () => refused(503)));
   assert.equal(await decide(r.api, point, [r.resolver], BACKGROUND_CONTEXT), undefined);
