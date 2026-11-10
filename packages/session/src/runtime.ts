@@ -14,6 +14,7 @@ import { CANNOT_SEE_IMAGES } from './images.ts';
 import { LifecycleStream, recordTurn } from './lifecycle.ts';
 import { resumeModelFault, watchModelFaults } from './model-fault.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
+import { transcriptOf } from './export.ts';
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -56,7 +57,6 @@ export { MODEL_RETRY };
 export type Caller = Principal | 'service' | 'run-ceiling';
 
 const REPORTED = new Set(['task_interrupted', 'task_faulted', 'extension_error', 'host_error']);
-const EXPORTED = new Set(['pi.user', 'pi.assistant', 'pi.tool-result']);
 
 /** The log line for a harness report worth an operator's attention (an interrupted task otherwise ends without a trace); null for the rest. */
 export function reportLine({ error, ...info }: Report): string | null {
@@ -234,17 +234,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       const found = await root.commit((tx) => tx.conversation(conversation as never), ctx);
       return Boolean(found?.owner && !found.parent);
     },
-    // The messages the transcript view shows, tool calls and results included; the system prompt and other log entries stay out.
-    async transcript(): Promise<Array<{ kind: string; model: unknown }>> {
-      const found: Array<{ kind: string; model: unknown }> = [];
-      let cursor: unknown;
-      do {
-        const page = await root.commit((tx) => tx.scanEntries({ conversationId: root.id, order: 'ascending' }, 200, cursor as never), ctx);
-        for (const e of page.items) if (EXPORTED.has(e.kind) && e.model?.length) found.push({ kind: e.kind, model: e.model });
-        cursor = page.next as never;
-      } while (cursor);
-      return found;
-    },
+    transcript: () => transcriptOf(root),
     // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
     async queued() {
       return (await this.queuedItems()).map(({ id, text }) => ({ id, text }));

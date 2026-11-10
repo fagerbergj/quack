@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { answerQuestion, type AnswerInput, Artifacts, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp } from '@quack/sdk';
+import { answerQuestion, type AnswerInput, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp } from '@quack/sdk';
+import { sealedOf, sessionExport } from './export.ts';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
@@ -101,17 +102,9 @@ async function messages(session: Session, req: IncomingMessage): Promise<[number
   return [200, { messages: await session.messages(Math.min(50, Number(params.get('limit')) || 10), conversation) }];
 }
 
-// Every sealed version of every kind, with its checker's verdict, oldest first within a kind.
-async function artifacts(session: Session): Promise<[number, unknown]> {
-  const doc = await session.harness.snapshot(Artifacts, session.root.id, ctx);
-  return [200, { artifacts: Object.values(doc?.kinds ?? {}).flatMap((k) => k.versions) }];
-}
-
-// The whole session as the distributor's export route needs it; it adds the session's metadata.
-async function exported(session: Session): Promise<[number, unknown]> {
-  const [, { artifacts: sealed }] = await artifacts(session) as [number, { artifacts: unknown[] }];
-  return [200, { transcript: await session.transcript(), artifacts: sealed }];
-}
+const artifacts = async (session: Session): Promise<[number, unknown]> => [200, { artifacts: await sealedOf(session.harness, session.root) }];
+// The distributor adds the session's metadata; it builds the same body itself while no process runs.
+const exported = async (session: Session): Promise<[number, unknown]> => [200, await sessionExport(session.harness, session.root)];
 
 // With no principal named, the caller is a service on the distributor's session listener.
 async function abort(session: Session, _req: IncomingMessage, _match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {
