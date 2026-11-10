@@ -37,7 +37,7 @@ export async function json<T>(res: Response): Promise<T> {
 const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
 /** Every row of a list matching `q` (Lucene, its terms built with escapeTerm): pages are followed to the end, so none is dropped. */
-async function listAll<T>(path: string, field: string, q?: string): Promise<T[]> {
+export async function listAll<T>(path: string, field: string, q?: string): Promise<T[]> {
   const rows: T[] = [];
   for (let token = ''; ;) {
     const query = new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) });
@@ -64,6 +64,9 @@ export const listArtifacts = async (key: string): Promise<SealedArtifact[]> =>
 export const listAllArtifacts = (q?: string) => listAll<Artifact>('artifacts', 'artifacts', q);
 /** Sealed versions as the session socket sends them, with the judge's verdicts. */
 export const sealedFrom = (artifacts: SealedArtifact[]) => artifacts.map(named);
+/** A subagent conversation's first 50 messages, as the session records them. */
+export const conversationMessages = async (key: string, conversation: string) =>
+  (await json<{ messages: Array<{ role: 'user' | 'assistant'; text: string }> }>(await fetch(`${base(key)}/messages?conversation=${encodeURIComponent(conversation)}&limit=50`))).messages;
 // Records a session's caller attached to its invocations (a PR's files and checks); empty when there are none.
 export const getMeta = async (key: string) => (await json<{ meta: Array<Record<string, unknown>> }>(await fetch(`${base(key)}/meta`))).meta;
 const housekeep = async (path: string, method: string, body: object) =>
@@ -86,8 +89,8 @@ export type Ask = {
   resolution?: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string };
   toolCall?: { tool: string; args: unknown }; prompt?: Prompt;
 };
-/** Asks across sessions, oldest first; `state:pending` is everything waiting on a person. */
-export const listAsks = (q: string) => listAll<Ask>('asks', 'asks', q);
+/** Asks across sessions, oldest first, or one session's; `state:pending` is everything waiting on a person. */
+export const listAsks = (q: string, key?: string) => listAll<Ask>(key ? `${base(key)}/asks` : 'asks', 'asks', q);
 export const approvalOf = (a: Ask): Approval => ({ id: a.id, tool: a.toolCall?.tool ?? '', args: a.toolCall?.args, requestedAt: Date.parse(a.createdAt) });
 export const questionOf = (a: Ask): Question => ({ question: '', options: [], ...a.prompt, evidence: a.prompt?.evidence ?? null, id: a.id, askedAt: Date.parse(a.createdAt) });
 

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { escapeTerm } from '@quack/sdk/query';
-import { listArtifacts, listSessions, type SealedArtifact, type Session } from '../../api.ts';
+import { listArtifacts, type SealedArtifact, type Session } from '../../api.ts';
 
 // Session keys are sleeper:<league>:<week>:<job>[:...]; trade keys carry the offer after the job.
 const KEY = /^sleeper:([^:]+):(\d+):([a-z-]+)(?::|$)/;
@@ -15,19 +14,6 @@ export function sessionsOf(league: string | undefined, rows: Array<Pick<Session,
     const m = KEY.exec(r.key);
     return m && m[1] === league ? [{ key: r.key, week: Number(m[2]), job: m[3]!, running: r.state === 'running' }] : [];
   });
-}
-
-/** The league's sessions, asked of the server by key prefix; asked again when `refresh` changes (the workspace's tick). */
-export function useLeagueSessions(league: string | undefined, refresh: unknown) {
-  const [sessions, setSessions] = useState<Sess[]>([]);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    if (!league) return;
-    let live = true;
-    listSessions(`key:${escapeTerm(`sleeper:${league}:`)}*`).then((rows) => live && (setSessions(sessionsOf(league, rows)), setError('')), (e: Error) => live && setError(e.message));
-    return () => void (live = false);
-  }, [league, refresh]);
-  return { sessions, error };
 }
 
 const newest = (all: Sess[], job: string) => all.filter((s) => s.job === job).sort((a, b) => b.week - a.week)[0];

@@ -1,21 +1,13 @@
-import { useContext, useEffect, useState } from 'react';
-import { json } from './api.ts';
+import { useContext, useState } from 'react';
+import { conversationMessages } from './api.ts';
 import { SessionKeyContext } from './extension.ts';
 import { Markdown } from './Markdown.tsx';
-
-type Message = { role: 'user' | 'assistant'; text: string };
+import { useLoad } from './useLoad.ts';
 
 const idOf = (details: unknown) => (details as { conversationId?: unknown } | null | undefined)?.conversationId;
 
 function Child({ sessionKey, id }: { sessionKey: string; id: string }) {
-  const [messages, setMessages] = useState<Message[]>();
-  const [error, setError] = useState<string>();
-  useEffect(() => {
-    fetch(`sessions/${encodeURIComponent(sessionKey)}/messages?conversation=${encodeURIComponent(id)}&limit=50`)
-      .then((r) => json<{ messages: Message[] }>(r))
-      .then((body) => setMessages(body.messages))
-      .catch((err: Error) => setError(err.message));
-  }, [sessionKey, id]);
+  const { data: messages, error } = useLoad(() => conversationMessages(sessionKey, id), [sessionKey, id], undefined);
   if (error) return <p className="m-0 text-[13px] text-danger">{`Could not load the subagent: ${error}`}</p>;
   if (!messages) return <p className="m-0 text-[13px] text-muted">Loading…</p>;
   return (

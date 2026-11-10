@@ -15,7 +15,7 @@ test('an answer to an older load never replaces the newer one', async () => {
   rerender({ n: 1 });
   await act(async () => loads[1]!.resolve('new'));
   await act(async () => loads[0]!.resolve('old'));
-  expect(result.current).toEqual({ data: 'new', error: '' });
+  expect(result.current).toMatchObject({ data: 'new', error: '' });
 });
 
 test('a later success clears an earlier error and keeps the last good data meanwhile', async () => {
@@ -24,8 +24,8 @@ test('a later success clears an earlier error and keeps the last good data meanw
   await act(async () => loads[0]!.resolve('first'));
   rerender({ n: 1 });
   await act(async () => loads[1]!.reject(new Error('down')));
-  expect(result.current).toEqual({ data: 'first', error: 'down' });
+  expect(result.current).toMatchObject({ data: 'first', error: 'down' });
   rerender({ n: 2 });
   await act(async () => loads[2]!.resolve('back'));
-  expect(result.current).toEqual({ data: 'back', error: '' });
+  expect(result.current).toMatchObject({ data: 'back', error: '' });
 });

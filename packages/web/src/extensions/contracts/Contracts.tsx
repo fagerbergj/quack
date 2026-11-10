@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { startContract } from '../../api.ts';
 import { Modal, useAction } from '../../Housekeeping.tsx';
 import type { Row } from '../../sessions.ts';
+import { useLoad } from '../../useLoad.ts';
 import { contractRecords, contractRows, type ContractRecord, type Tone } from './status.ts';
 
 const TONE: Record<Tone, string> = { warn: 'bg-warning-bg text-warning', plain: 'bg-soft text-ink-2', ok: 'bg-success-bg text-success', bad: 'bg-danger/10 text-danger' };
+
+const NO_RECORDS: ReadonlyMap<string, ContractRecord> = new Map();
 
 function NewContract({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
@@ -21,10 +24,9 @@ function NewContract({ onClose }: { onClose: () => void }) {
 
 export function Contracts({ rows }: { rows: Row[] | undefined }) {
   const [adding, setAdding] = useState(false);
-  const [records, setRecords] = useState<ReadonlyMap<string, ContractRecord>>(new Map());
   // Read again when a contract session starts, ends or changes state, which is when a version can move.
   const shape = (rows ?? []).filter((r) => r.key.startsWith('contracts:')).map((r) => `${r.key}:${r.state}:${r.pendingAsks}`).join(',');
-  useEffect(() => { void contractRecords().then(setRecords); }, [shape]);
+  const { data: records } = useLoad(contractRecords, [shape], NO_RECORDS);
   const list = contractRows(rows ?? [], records);
   return (
     <div className="mx-auto w-full max-w-[960px] px-4 pt-4 pb-10 sm:px-6 lg:pt-8">

@@ -34,7 +34,7 @@ test("each contract shows its kind, version and approval status from the contrac
   // Two pages: the page reads every record, following nextPageToken.
   const pages: Record<string, object> = {
     'apps/contracts/contracts?pageSize=1000': { contracts: records.slice(0, 2), nextPageToken: 'a b' },
-    'apps/contracts/contracts?pageSize=1000&pageToken=a%20b': { contracts: records.slice(2) },
+    'apps/contracts/contracts?pageSize=1000&pageToken=a+b': { contracts: records.slice(2) },
   };
   const fetchMock = vi.fn(async (url: string) => (pages[url] ? Response.json(pages[url]) : new Response('{}', { status: 404 })));
   vi.stubGlobal('fetch', fetchMock);

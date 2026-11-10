@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { getAgent, listAgents, promoteAgent, type AgentDetail, type AgentRubric, type AgentSummary } from './api.ts';
 import { Modal, useAction } from './Housekeeping.tsx';
 import { lineDiff, type Line } from './lineDiff.ts';
 import { Markdown } from './Markdown.tsx';
+import { useLoad } from './useLoad.ts';
 
 const card = 'rounded-[18px] border border-line bg-surface p-3.5 shadow-card';
 const label = 'm-0 mb-2 px-1 text-xs font-semibold tracking-wider text-muted uppercase';
@@ -13,20 +14,8 @@ function Status({ status }: { status: 'draft' | 'promoted' }) {
   return <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{status === 'promoted' ? 'Promoted' : 'Draft'}</span>;
 }
 
-function useLoad<T>(load: () => Promise<T>, deps: unknown[]): { value?: T; error?: string; reload: () => void } {
-  const [state, setState] = useState<{ value?: T; error?: string }>({});
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    let live = true;
-    load().then((value) => live && setState({ value }), (e: Error) => live && setState({ error: e.message }));
-    return () => { live = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, tick]);
-  return { ...state, reload: () => setTick((t) => t + 1) };
-}
-
 export function AgentList() {
-  const { value, error } = useLoad(listAgents, []);
+  const { data: value, error } = useLoad(listAgents, [], undefined);
   return (
     <div className="mx-auto max-w-3xl px-3 py-4 lg:py-8">
       <h1 className="m-0 mb-3 hidden px-1 text-[19px] lg:block">Agents</h1>
@@ -101,7 +90,7 @@ function Diff({ lines }: { lines: Line[] }) {
 
 function Changes({ name, shown, others }: { name: string; shown: AgentDetail; others: number[] }) {
   const [against, setAgainst] = useState<number | undefined>(others.find((v) => v < shown.version) ?? others[0]);
-  const { value: base, error } = useLoad(() => (against === undefined ? Promise.resolve(undefined) : getAgent(name, against)), [name, against]);
+  const { data: base, error } = useLoad(() => (against === undefined ? Promise.resolve(undefined) : getAgent(name, against)), [name, against], undefined);
   const select = 'min-h-11 rounded-xl border border-line bg-surface px-3 text-[15px] text-ink';
   return (
     <section className={`${card} flex flex-col gap-3`}>
@@ -141,7 +130,7 @@ export function AgentsRoute({ hash }: { hash: string }) {
 export function AgentView({ name }: { name: string }) {
   const [version, setVersion] = useState<number>();
   const [confirming, setConfirming] = useState(false);
-  const { value: agent, error, reload } = useLoad(() => getAgent(name, version), [name, version]);
+  const { data: agent, error, reload } = useLoad<AgentDetail | undefined>(() => getAgent(name, version), [name, version], undefined);
   const current = agent && Math.max(...agent.versions.map((v) => v.version));
   const model = agent?.definition.model;
   const description = agent?.definition.description;
