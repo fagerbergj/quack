@@ -416,7 +416,7 @@ test('an artifact line renders the links stored with the version, with no stream
   expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
 });
 
-test('a Sleeper card in a session links back to that session, in the list and the Work drawer', async () => {
+test('a Sleeper card in a session links its Ask about this back to that session', async () => {
   const lineup = (await import('./extensions/sleeper/fixtures/8-lineup.json')).default as { content: string };
   (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }];
   const ws = await openSession();
@@ -806,6 +806,29 @@ test('on a phone a session with a version opens on its tab, named for it; a pend
   expect(screen.getByRole('tab', { name: 'Report' })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('on a phone each tab controls its column as a tab panel, and the arrow keys move between the tabs', async () => {
+  stubViewport(false);
+  (live['ui%3Au1'] ??= {}).artifacts = [REPORT];
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const report = await screen.findByRole('tab', { name: 'Report' });
+  const chat = screen.getByRole('tab', { name: 'Chat' });
+  const panel = (tab: HTMLElement) => document.getElementById(tab.getAttribute('aria-controls')!)!;
+  expect(panel(report)).toHaveAttribute('role', 'tabpanel');
+  expect(panel(report)).toHaveAccessibleName('Report');
+  expect(within(panel(report)).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
+  expect(within(panel(chat)).getByRole('log', { name: 'Transcript' })).toBeInTheDocument();
+  expect(panel(chat)).toHaveAttribute('aria-labelledby', chat.id);
+  expect([report.tabIndex, chat.tabIndex]).toEqual([0, -1]);
+  report.focus();
+  await userEvent.keyboard('{ArrowRight}');
+  expect(chat).toHaveFocus();
+  expect(chat).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{ArrowLeft}');
+  expect(report).toHaveFocus();
+  expect(report).toHaveAttribute('aria-selected', 'true');
+});
+
 test('Open on a ledger line shows that version on the pane tab on a phone', async () => {
   stubViewport(false);
   (live['ui%3Au1'] ??= {}).artifacts = [{ ...REPORT, version: 1, hash: 'h1', content: 'first take', sealedAt: 1 }, REPORT];
@@ -815,7 +838,7 @@ test('Open on a ledger line shows that version on the pane tab on a phone', asyn
   expect(await screen.findByRole('tab', { name: 'Chat 1' })).toHaveAttribute('aria-selected', 'true');
   await userEvent.click(screen.getByRole('button', { name: 'Open Report' }));
   expect(screen.getByRole('tab', { name: 'Report' })).toHaveAttribute('aria-selected', 'true');
-  expect(within(screen.getByRole('region', { name: 'Report' })).getByText('first take')).toBeInTheDocument();
+  expect(within(screen.getByRole('tabpanel', { name: 'Report' })).getByText('first take')).toBeInTheDocument();
 });
 test('a malformed socket frame is skipped and later frames still apply', async () => {
   const ws = await openSession();

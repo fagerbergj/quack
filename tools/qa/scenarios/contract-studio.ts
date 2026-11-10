@@ -1,4 +1,4 @@
-import { eachView, visible, type Scenario } from '../scenario.ts';
+import { eachView, paneOf, visible, type Scenario } from '../scenario.ts';
 
 const SCHEDULE = '#/s/contracts%3Aqa-schedule';
 const SDK = '#/s/contracts%3Aqa-sdk';
@@ -11,7 +11,7 @@ const scenario: Scenario = {
   async run(ctx) {
     await eachView(ctx, 'contract beside the chat, changes since v1 highlighted, approvable', async (page, label) => {
       await page.goto(`${ctx.url}/${SCHEDULE}`);
-      const pane = page.getByRole('region', { name: 'Contract' });
+      const pane = paneOf(page, 'Contract');
       await visible(pane.getByRole('region', { name: 'Approval' }).getByText('Version 2 passed its checks.'));
       if (!(await pane.getByRole('button', { name: 'Approve', exact: true }).isEnabled())) throw new Error('Approve is disabled');
       // A viewer who never looked is shown what changed since the approved version, each version labelled by its status.
@@ -34,7 +34,7 @@ const scenario: Scenario = {
     });
     await eachView(ctx, 'before the first version the Contract tab answers the waiting question, with the status, brief and decisions', async (page, label) => {
       await page.goto(`${ctx.url}/${DRAFT}`);
-      const pane = page.getByRole('region', { name: 'Contract' });
+      const pane = paneOf(page, 'Contract');
       await visible(pane.getByRole('region', { name: 'Question' }).getByText('How do callers authenticate?'));
       await visible(pane.getByRole('region', { name: 'Progress' }).getByText('Waiting on you'));
       await visible(pane.getByText('Cursor or offset paging?'));
@@ -54,7 +54,7 @@ const scenario: Scenario = {
       await page.goto(`${ctx.url}/${SDK}`);
       const diagram = page.getByRole('region', { name: 'Class diagram' });
       await visible(diagram.getByRole('heading', { name: /around ExtensionManifest/ }));
-      const pane = page.getByRole('region', { name: 'Contract' });
+      const pane = paneOf(page, 'Contract');
       await visible(pane.getByRole('heading', { name: /^\d+ changes? since the approved version$/ }));
       await visible(pane.locator('#decl-App').getByText('New').first());
       await pane.getByRole('region', { name: 'What changed' }).scrollIntoViewIfNeeded();
@@ -71,7 +71,7 @@ const scenario: Scenario = {
       try {
         const page = await context.newPage();
         await page.goto(`${ctx.url}/${SCHEDULE}`);
-        const bar = page.getByRole('region', { name: 'Contract' }).getByRole('region', { name: 'Approval' });
+        const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
         await bar.getByRole('button', { name: 'Approve' }).click();
         await visible(page.getByRole('button', { name: 'Compare to: Version 2, approved' }));
         await bar.waitFor({ state: 'detached' });

@@ -1,5 +1,5 @@
-import type { Page } from 'playwright';
-import { eachView, visible, WITH_WIDE, type Scenario } from '../scenario.ts';
+import type { Locator, Page } from 'playwright';
+import { eachView, paneOf, visible, WITH_WIDE, type Scenario } from '../scenario.ts';
 import { LEAGUE } from '../seed-artifacts.ts';
 
 const s = (key: string) => `#/s/${encodeURIComponent(key)}`;
@@ -30,6 +30,14 @@ async function chipTarget(page: Page): Promise<void> {
   if (hits.includes(false)) throw new Error(`the PR chip's hit area is under 24px (box ${box.height}px, hits ${hits.join(',')})`);
 }
 
+// A phone shows one tab at a time, and the shown one takes the whole width; `inset` is the column's own padding.
+async function fillsWidth(page: Page, what: Locator, name: string, inset = 0): Promise<void> {
+  const width = (await what.boundingBox())?.width ?? 0;
+  const want = page.viewportSize()!.width - inset;
+  if (Math.abs(width - want) > 2) throw new Error(`${name} is ${Math.round(width)}px wide on a ${want + inset}px phone, not ${want}px`);
+}
+const transcript = (page: Page) => page.getByRole('log', { name: 'Transcript' });
+
 const scenario: Scenario = {
   name: 'artifact-panes',
   stack: { seed: 'artifacts', apps: ['contracts'] },
@@ -38,12 +46,16 @@ const scenario: Scenario = {
       await eachView(ctx, `${p.name}: the newest version beside the chat, its own tab on a phone`, async (page, label) => {
         await fakeServices(page);
         await page.goto(`${ctx.url}/${s(p.key)}`);
-        const pane = page.getByRole('region', { name: p.pane, exact: true });
+        const pane = paneOf(page, p.pane);
         await visible(pane.getByText(p.shows).first());
         if (phone(label) && (await page.getByRole('tab', { name: new RegExp(`^${p.pane}`) }).getAttribute('aria-selected')) !== 'true') throw new Error(`the ${p.pane} tab is not open`);
         if (!phone(label)) await visible(page.getByRole('separator', { name: 'Resize the chat' }));
         if (p.name === 'review') await chipTarget(page);
         await ctx.shot(page, `${p.name}-${label}`);
+        if (!phone(label)) return;
+        await fillsWidth(page, pane, `the ${p.pane} pane`);
+        await page.getByRole('tab', { name: /^Chat/ }).click();
+        await fillsWidth(page, transcript(page), 'the chat', 32);
       }, WITH_WIDE);
     }
     await eachView(ctx, 'a pending question opens a report session on Chat, counted on its tab', async (page, label) => {
@@ -51,15 +63,16 @@ const scenario: Scenario = {
       await visible(page.getByRole('main').getByRole('region', { name: 'Question' }).getByText('Should self-hosting cost count').first());
       if (phone(label)) {
         if ((await page.getByRole('tab', { name: 'Chat 1' }).getAttribute('aria-selected')) !== 'true') throw new Error('the Chat tab is not open');
+        await fillsWidth(page, transcript(page), 'the chat', 32);
         await ctx.shot(page, `question-chat-${label}`);
         await page.getByRole('tab', { name: 'Report' }).click();
-        await visible(page.getByRole('region', { name: 'Report' }).getByText('Short answer'));
+        await visible(paneOf(page, 'Report').getByText('Short answer'));
       }
       await ctx.shot(page, `question-${label}`);
     });
     await eachView(ctx, 'a contract question opens on the Contract tab, where it is answered', async (page, label) => {
       await page.goto(`${ctx.url}/${s('contracts:qa-draft')}`);
-      await visible(page.getByRole('region', { name: 'Contract' }).getByRole('region', { name: 'Question' }).first());
+      await visible(paneOf(page, 'Contract').getByRole('region', { name: 'Question' }).first());
       if (phone(label) && (await page.getByRole('tab', { name: 'Contract 1' }).getAttribute('aria-selected')) !== 'true') throw new Error('the Contract tab is not open');
       await ctx.shot(page, `contract-question-${label}`);
     });

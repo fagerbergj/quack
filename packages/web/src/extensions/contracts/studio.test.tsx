@@ -28,6 +28,9 @@ const proposal = (artifact: number, version: number, breaks: object[] = []) => (
 const STATUS = `GET /apps/contracts/contracts/${KEY}`;
 const status = (...versions: Array<[number, string]>) => ({ key: 'contracts:s1', versions: versions.map(([artifact, st]) => ({ artifact, version: artifact, status: st })) });
 
+// Beside the chat the pane is a region; on a phone it is the tab panel its tab ("Contract", with a count) names.
+const contract = () => screen.queryByRole('region', { name: 'Contract' }) ?? screen.getByRole('tabpanel', { name: /^Contract/ });
+
 function open(artifacts: SealedArtifact[], approvals: object[] = []) {
   live[KEY] = { artifacts, approvals };
   location.hash = `#/s/${KEY}`;
@@ -35,7 +38,7 @@ function open(artifacts: SealedArtifact[], approvals: object[] = []) {
   const ws = FakeSocket.all[0]!;
   ws.open();
   ws.frame(snapshot());
-  return { ws, pane: screen.getByRole('region', { name: 'Contract' }) };
+  return { ws, pane: contract() };
 }
 const bar = () => screen.getByRole('region', { name: 'Approval' });
 const side = (name: 'from' | 'to') => screen.getByRole('button', { name: new RegExp(`^Compare ${name}: `) });
@@ -130,7 +133,7 @@ test('each sealed draft replaces the shown one live: checking, then failed, each
   expect(await screen.findByRole('heading', { name: /since the approved version$/ }), 'a viewer who never looked compares with the approved version').toBeInTheDocument();
   expect(side('from')).toHaveAccessibleName('Compare from: Version 1, approved');
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
-  expect(screen.getByRole('region', { name: 'Contract' })).toHaveTextContent('Runs from the start of the week');
+  expect(contract()).toHaveTextContent('Runs from the start of the week');
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, fail)] });
   expect(within(bar()).getByRole('status')).toHaveTextContent("didn't pass its checks (A choice's link doesn't resolve)");
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
@@ -210,7 +213,7 @@ test('on a phone the contract and the chat are tabs, and the contract tab counts
   expect(within(tabs).getByRole('tab', { name: 'Contract' })).toHaveAttribute('aria-selected', 'true');
   ws.frame({ type: 'standing', questions: [{ id: 'q', question: 'Cursor or offset?', options: ['Cursor'], evidence: null, askedAt: 1 }], failures: [], approvals: [] });
   expect(within(tabs).getByRole('tab', { name: 'Contract 1' })).toHaveAttribute('aria-selected', 'true');
-  expect(within(screen.getByRole('region', { name: 'Contract' })).getByRole('region', { name: 'Question' })).toHaveTextContent('Cursor or offset?');
+  expect(within(contract()).getByRole('region', { name: 'Question' })).toHaveTextContent('Cursor or offset?');
   await userEvent.click(within(tabs).getByRole('tab', { name: 'Chat' }));
   expect(within(tabs).getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
 });
@@ -229,7 +232,7 @@ test('before the first version the Contract tab opens on the waiting question, s
   ws.frame(snapshot({ entries: [entry('u', [{ role: 'user', content: 'Define GET /roster for the roster page', timestamp: 1 }])] }));
   ws.frame({ type: 'standing', questions: [{ id: 'q1', question: 'Which auth?', options: ['Token', 'None'], evidence: null, askedAt: 1 }], failures: [], approvals: [] });
   expect(within(screen.getByRole('tablist', { name: 'Show' })).getByRole('tab', { name: 'Contract 1' })).toHaveAttribute('aria-selected', 'true');
-  const pane = screen.getByRole('region', { name: 'Contract' });
+  const pane = contract();
   const question = within(pane).getByRole('region', { name: 'Question' });
   expect(screen.getAllByRole('region', { name: 'Question' }), 'the chat does not repeat it').toHaveLength(1);
   expect(within(within(pane).getByRole('region', { name: 'Progress' })).getByRole('status')).toHaveTextContent('Waiting on you');

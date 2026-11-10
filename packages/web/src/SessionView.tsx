@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
@@ -333,6 +333,9 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const [picked, setTab] = useState<Tab>();
   const [focus, setFocus] = useState<SealedArtifact>();
   const open = useCallback((a: SealedArtifact) => (setFocus(a), setTab('pane')), []);
+  const id = useId();
+  // Below lg the tabs show one column at a time, so each column is the tab panel its tab controls.
+  const tabbed = !useDesktop();
   const asks = asksOf(studio, approvals, questions);
   const shown = studio ? undefined : paneVersions(items, focus);
   const label = studio?.label ?? (shown && artifactName(shown.a));
@@ -344,20 +347,30 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
     await Promise.all(asks.owned.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
     return true;
   };
-  return { studio, label, tab, setTab, open, focus, setFocus, shown, asks, send: steer, busy: running && !asks.owned.length };
+  const panel = (t: Tab) => (label && tabbed ? { id: `${id}${t}`, role: 'tabpanel', 'aria-labelledby': `${id}${t}-tab` } : {});
+  return { studio, label, tab, setTab, open, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
 }
 type Live = ReturnType<typeof usePane>;
 
 const count = (n: number) => n > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] leading-4 font-semibold text-warning">{n}</span>;
 
 // Below lg a session with a pane is one tab at a time; each tab counts the asks answered on it.
-function PaneTabs({ live: { label, tab, setTab, asks } }: { live: Live }) {
+function PaneTabs({ live: { label, tab, setTab, asks, id } }: { live: Live }) {
   if (!label) return null;
   const cls = 'flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1.5 border-0 border-b-2 border-transparent bg-transparent text-[13.5px] text-muted aria-selected:border-ink aria-selected:font-semibold aria-selected:text-ink';
+  // Two tabs, so either arrow moves to the other one.
+  const arrows = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = tab === 'pane' ? 'chat' : 'pane';
+    setTab(next);
+    document.getElementById(`${id}${next}-tab`)?.focus();
+  };
+  const props = (t: Tab) => ({ id: `${id}${t}-tab`, type: 'button', role: 'tab', 'aria-selected': tab === t, 'aria-controls': `${id}${t}`, tabIndex: tab === t ? 0 : -1, onClick: () => setTab(t), className: cls }) as const;
   return (
-    <div role="tablist" aria-label="Show" className="flex border-b border-line lg:hidden">
-      <button type="button" role="tab" aria-selected={tab === 'pane'} onClick={() => setTab('pane')} className={cls}>{label}{asks.inPane > 0 && ' '}{count(asks.inPane)}</button>
-      <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')} className={cls}>Chat{asks.inChat > 0 && ' '}{count(asks.inChat)}</button>
+    <div role="tablist" aria-label="Show" onKeyDown={arrows} className="flex border-b border-line lg:hidden">
+      <button {...props('pane')}>{label}{asks.inPane > 0 && ' '}{count(asks.inPane)}</button>
+      <button {...props('chat')}>Chat{asks.inChat > 0 && ' '}{count(asks.inChat)}</button>
     </div>
   );
 }
@@ -371,7 +384,7 @@ function Side({ live, rail, meta, ...props }: SideProps) {
   if (!live.label) return rail;
   const Pane = live.studio?.Pane;
   return (
-    <section aria-label={live.label} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
+    <section aria-label={live.panel('pane').role ? undefined : live.label} {...live.panel('pane')} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
       {/* Questions come first in a studio pane, so the person answers them there instead of on the chat tab. */}
       {Pane && props.questions.length > 0 && <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 px-4 pt-4 sm:px-5"><SessionQuestions sessionKey={props.sessionKey} items={props.questions} /></div>}
       {Pane ? <Pane {...props} visible={visible} />
@@ -397,8 +410,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
-  // Below lg the chat shows only on its tab; from lg it is a resizable column beside the pane.
-  const chat = live.label ? `lg:w-(--chat-w) lg:max-w-[calc(100%-360px)] lg:min-w-[320px] lg:flex-none ${live.tab === 'chat' ? '' : 'max-lg:hidden'}` : 'flex-1';
+  // Below lg the chat fills the width on its tab and hides on the other; from lg it is a resizable column beside the pane.
+  const chat = live.label ? `lg:w-(--chat-w) lg:max-w-[calc(100%-360px)] lg:min-w-[320px] lg:flex-none ${live.tab === 'chat' ? '' : 'max-lg:hidden'}` : '';
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} onDetails={details.show}>
@@ -408,7 +421,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <PaneTabs live={live} />
       <div ref={split.row} style={split.style} className="flex min-h-0 flex-1">
-      <div className={`relative flex min-h-0 min-w-0 flex-col ${chat}`}>
+      <div {...live.panel('chat')} className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${chat}`}>
         <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}

@@ -17,6 +17,10 @@ export async function prWebhook(url: string, fullName: string, number: number, s
   if (!res.ok) throw new Error(`webhook ${state} ${fullName}#${number}: ${res.status} ${await res.text()}`);
 }
 
+/** A session's side pane: a region named `name` beside the chat, or below lg the tab panel its tab names (that name may carry a count). */
+export const paneOf = (page: Page, name: string): Locator =>
+  page.viewportSize()!.width < 1024 ? page.getByRole('tabpanel', { name: new RegExp(`^${name}`) }) : page.getByRole('region', { name, exact: true });
+
 /** Starts a quack session under a github review key through the stack's fake model, so the list and header have a review to show. */
 export async function seedReview(url: string, key: string) {
   const res = await fetch(`${url}/sessions/${encodeURIComponent(key)}/invocations?agent=quack`, { method: 'POST', body: JSON.stringify({ input: `Review PR ${key.split('#')[1]}`, wait: true }) });
