@@ -1,4 +1,3 @@
-import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 import type { WaitingStore } from './queue.ts';
@@ -63,17 +62,4 @@ export function postgresWaiting(pool: pg.Pool): WaitingStore {
       await pool.end();
     },
   };
-}
-
-/** Moves `/fix`es an older release kept in a JSON file into the store, once; the file is renamed so it is not read again. */
-export async function importWaitingFile(store: WaitingStore, file: string): Promise<void> {
-  if (!existsSync(file)) return;
-  let items: Record<string, unknown> = {};
-  try {
-    items = JSON.parse(readFileSync(file, 'utf8'));
-  } catch (err) {
-    console.warn(`github: ${file} is unreadable, so no queued /fix is imported from it: ${String(err)}`);
-  }
-  for (const [key, item] of Object.entries(items)) await store.put(key, JSON.stringify(item));
-  renameSync(file, `${file}.imported`);
 }

@@ -99,9 +99,8 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
   }
   const withState = (es: RmEntry[]): unknown[] => es.map((e) => (e.folder ? { ...e, children: withState(e.children ?? []) } : { ...e, ...stateOf(e) }));
 
-  // Failed documents retry on their own; `retry: true` instead refuses any whose last attempt did not fail.
   async function ingest(req: IncomingMessage): Promise<[number, unknown]> {
-    const body = (await readJson(req)) as { ids?: unknown; retry?: unknown } | null;
+    const body = (await readJson(req)) as { ids?: unknown } | null;
     const ids = body?.ids;
     if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => typeof i === 'string' && i.length > 0)) return [400, { error: 'ids must be a non-empty array of document ids' }];
     const wanted = [...new Set(ids as string[])];
@@ -112,10 +111,8 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
     const jobs = wanted.map((id) => {
       const d = listed.get(id)!;
       const last = store.last(d.id, d.version);
-      return { id: d.id, name: d.name, version: d.version, attempt: last?.status === 'failed' ? last.attempt + 1 : body?.retry === true ? -1 : (last?.attempt ?? 0) };
+      return { id: d.id, name: d.name, version: d.version, attempt: last?.status === 'failed' ? last.attempt + 1 : (last?.attempt ?? 0) };
     });
-    const refused = jobs.filter((j) => j.attempt < 0).map((j) => j.id);
-    if (refused.length) return [409, { error: 'only documents whose last attempt failed can be retried', ids: refused }];
     const batch = store.create(jobs.map((j) => ({ document: j.id, name: j.name, version: j.version, attempt: j.attempt })));
     queue.pump();
     return [202, { batch }];
@@ -131,14 +128,8 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
     const path = new URL(req.url ?? '', 'http://x').pathname;
     if (req.method === 'GET' && path === '/') return [200, { tree: withState(await config.client.tree()) }];
-    if (req.method === 'GET' && path === '/documents') return [200, { documents: await config.client.tree() }];
     if (req.method === 'POST' && path === '/ingest') return ingest(req);
     if (path === '/topics') return req.method === 'POST' ? addTopic(req) : [200, { topics: store.topics() }];
-    const m = req.method === 'GET' ? /^\/batches\/([^/]+)$/.exec(path) : null;
-    if (m) {
-      const batch = store.get(decodeURIComponent(m[1]));
-      return batch ? [200, batch] : [404, { error: 'no such batch' }];
-    }
     return [404, { error: 'not found' }];
   }
 

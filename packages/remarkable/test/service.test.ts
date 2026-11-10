@@ -117,21 +117,23 @@ const service = createRemarkableService({
 const base = await listen(serveApp(service));
 const call = (method: string, path: string, body?: unknown, auth = 'Bearer svc-secret') =>
   fetch(base + path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
-const batch = async (id: string) => (await call('GET', `/batches/${id}`)).json() as Promise<any>;
+// Each notebook as the page sees it, with its ingest state; a settled ingest shows here.
+const docs = async (url = base) => (((await (await fetch(`${url}/`)).json()) as any).tree as any[]).flatMap((e) => (e.folder ? e.children : [e]));
+const doc = async (id: string, url = base) => (await docs(url)).find((d) => d.id === id);
 
-test('picker data carries id, name, version and modified', async () => {
-  const { documents } = (await (await call('GET', '/documents')).json()) as any;
-  assert.deepEqual(documents[0], { id: 'n1', name: 'Notes', version: '3', modified: '2026-10-01T10:00:00Z', folder: false });
-  assert.equal(documents[1].children[0].name, 'Plan');
+test('picker data carries id, name, version, modified and state', async () => {
+  const { tree } = (await (await call('GET', '/')).json()) as any;
+  assert.deepEqual(tree[0], { id: 'n1', name: 'Notes', version: '3', modified: '2026-10-01T10:00:00Z', folder: false, state: 'new' });
+  assert.equal(tree[1].children[0].name, 'Plan');
 });
 
 test('ingest submits one request per document at remarkable:<id>, and an unchanged document reuses its request id', async () => {
   seen.length = 0;
-  const first = (await (await call('POST', '/ingest', { ids: ['n1', 'n2', 'n1'] })).json()) as any;
+  await call('POST', '/ingest', { ids: ['n1', 'n2', 'n1'] });
   await service.settled();
   assert.deepEqual(seen.map((s) => [s.key, s.agent, s.body.requestId, s.body.wait]), [['remarkable:n1', 'remarkable-ingest', '3', true], ['remarkable:n2', 'remarkable-ingest', '1', true]]);
   assert.ok(seen.every((s) => s.body.title && s.body.title === JSON.parse(s.body.input).name), 'the session title is the document name');
-  assert.equal((await batch(first.batch)).status, 'done');
+  assert.deepEqual((await docs()).map((d) => d.state), ['current', 'current']);
 
   seen.length = 0;
   await call('POST', '/ingest', { ids: ['n1'] });
@@ -151,39 +153,36 @@ test('ingest rejects empty, malformed and unknown selections', async () => {
   const unknown = await call('POST', '/ingest', { ids: ['n1', 'ghost'] });
   assert.equal(unknown.status, 404);
   assert.deepEqual(((await unknown.json()) as any).ids, ['ghost']);
-  assert.equal((await call('GET', '/batches/nope')).status, 404);
 });
 
-test('a batch is done only after every document session has answered', async () => {
+test('a document is current only after its session has answered', async () => {
   autoAnswer = undefined;
   gates.clear();
   seen.length = 0;
-  const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1', 'n2'] })).json()) as any;
+  await call('POST', '/ingest', { ids: ['n1', 'n2'] });
   // Wait for both submissions to reach the distributor, then answer one.
   await until(() => gates.size === 2);
   const first = new Promise<void>((r) => settledDocs.push(r));
   gates.get('remarkable:n1')!(200);
   await first;
-  const partial = await batch(id);
-  assert.equal(partial.status, 'pending');
-  assert.deepEqual(partial.items.map((i: any) => i.status), ['done', 'pending']);
+  assert.deepEqual((await docs()).map((d) => d.state), ['current', 'ingesting']);
 
   gates.get('remarkable:n2')!(200);
   await service.settled();
-  assert.equal((await batch(id)).status, 'done');
+  assert.equal((await doc('n2')).state, 'current');
 });
 
-test('a batch with a failed session settles as failed with the reason', async () => {
+test('a failed session settles the document failed with the reason', async () => {
   autoAnswer = 500;
-  const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1'] })).json()) as any;
+  await call('POST', '/ingest', { ids: ['n1'] });
   await service.settled();
-  const done = await batch(id);
-  assert.equal(done.status, 'failed');
-  assert.equal(done.items[0].error, 'distributor answered 500');
+  const done = await doc('n1');
+  assert.equal(done.state, 'failed');
+  assert.equal(done.error, 'distributor answered 500');
   autoAnswer = 200;
 });
 
-test('a restart resubmits pending items with the same request id and the batch completes', async () => {
+test('a restart resubmits pending items with the same request id and the document completes', async () => {
   const dir = mkdtempSync(`${tmpdir()}/rm-`);
   after(() => rmSync(dir, { recursive: true, force: true }));
   const requests: string[] = [];
@@ -209,7 +208,7 @@ test('a restart resubmits pending items with the same request id and the batch c
 
   const first = start();
   const firstUrl = await listen(serveApp(first));
-  const { batch: id } = (await (await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2'] }) })).json()) as any;
+  await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2'] }) });
   await arrivedAtLeast(1);
   await first.stop();
 
@@ -219,8 +218,7 @@ test('a restart resubmits pending items with the same request id and the batch c
   assert.deepEqual(requests, ['1', '1'], 'resubmitted with the stored request id');
   held[1](200);
   await second.settled();
-  const done = (await (await fetch(`${secondUrl}/batches/${id}`, { headers })).json()) as any;
-  assert.equal(done.status, 'done');
+  assert.equal((await doc('n2', secondUrl)).state, 'current');
   await second.stop();
 });
 
@@ -244,7 +242,7 @@ test('ingest runs at most `concurrency` documents at once, oldest first, and the
 
   const first = start();
   const firstUrl = await listen(serveApp(first));
-  const { batch: id } = (await (await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2', 'n1'] }) })).json()) as any;
+  await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2', 'n1'] }) });
   assert.deepEqual(keys, ['remarkable:n2'], 'the second document waits for the first');
   await first.stop();
 
@@ -257,17 +255,15 @@ test('ingest runs at most `concurrency` documents at once, oldest first, and the
   assert.equal(keys[2], 'remarkable:n1', 'the next queued document starts once the first is answered');
   held[2]();
   await second.settled();
-  assert.equal(((await (await fetch(`${secondUrl}/batches/${id}`, { headers })).json()) as any).status, 'done');
+  assert.deepEqual((await docs(secondUrl)).map((d) => d.state), ['current', 'current']);
   await second.stop();
 });
 
 test('a 200 whose result is unanswered settles the item failed with the reason', async () => {
   answerBody = { status: 'unanswered', reason: 'aborted by operator' };
-  const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1'] })).json()) as any;
+  await call('POST', '/ingest', { ids: ['n1'] });
   await service.settled();
-  const done = await batch(id);
-  assert.equal(done.status, 'failed');
-  assert.equal(done.items[0].error, 'session unanswered: aborted by operator');
+  assert.deepEqual(await doc('n1').then((d) => [d.state, d.error]), ['failed', 'session unanswered: aborted by operator']);
   answerBody = { status: 'done' };
 });
 
@@ -275,18 +271,18 @@ test('an unreachable distributor settles the item failed', async () => {
   const down = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://127.0.0.1:1', agent: 'remarkable-ingest', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
   const downBase = await listen(serveApp(down));
   const headers = { authorization: 'Bearer svc-secret' };
-  const { batch: id } = (await (await fetch(`${downBase}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) })).json()) as any;
+  await fetch(`${downBase}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) });
   await down.settled();
-  const got = (await (await fetch(`${downBase}/batches/${id}`, { headers })).json()) as any;
-  assert.equal(got.status, 'failed');
-  assert.match(got.items[0].error, /distributor unreachable/);
+  const got = await doc('n1', downBase);
+  assert.equal(got.state, 'failed');
+  assert.match(got.error, /distributor unreachable/);
 });
 
-test('an unanswered session records the workflow failure detail on the batch item', async () => {
+test('an unanswered session records the workflow failure detail on the document', async () => {
   answerBody = { status: 'unanswered', reason: 'failed', detail: 'rmfakecloud could not export Notes: status 500' };
-  const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1'] })).json()) as any;
+  await call('POST', '/ingest', { ids: ['n1'] });
   await service.settled();
-  assert.equal((await batch(id)).items[0].error, 'session unanswered: failed: rmfakecloud could not export Notes: status 500');
+  assert.equal((await doc('n1')).error, 'session unanswered: failed: rmfakecloud could not export Notes: status 500');
   answerBody = { status: 'done' };
 });
 
@@ -302,33 +298,27 @@ test('a failed or empty PDF export is a 502 and the service keeps serving', asyn
   assert.equal((await call('GET', '/documents/html/rmdoc')).status, 502);
 });
 
-test('a malformed batch id is a 400, not an upstream error', async () => {
-  assert.equal((await call('GET', '/batches/%E0%A4%A')).status, 400);
+test('a malformed document id is a 400, not an upstream error', async () => {
+  assert.equal((await call('GET', '/documents/%E0%A4%A/pdf')).status, 400);
 });
 
-test('a failed ingest of an unchanged document retries as a new attempt; a retry of a succeeded or untried item is refused', async () => {
+test('a failed ingest of an unchanged document retries as a new attempt, and a re-ingest after it joins that attempt', async () => {
   notes = { version: 9, lastModified: '2026-10-09T10:00:00Z' };
-  assert.equal((await call('POST', '/ingest', { ids: ['n1'], retry: true })).status, 409, 'nothing has been tried yet');
   autoAnswer = 500;
   seen.length = 0;
   await call('POST', '/ingest', { ids: ['n1'] });
   await service.settled();
   autoAnswer = 200;
-  await call('POST', '/ingest', { ids: ['n1'], retry: true });
-  await service.settled();
-  assert.deepEqual(seen.map((s) => s.body.requestId), ['9', '9#1']);
-  const refused = await call('POST', '/ingest', { ids: ['n1'], retry: true });
-  assert.equal(refused.status, 409);
-  assert.deepEqual(((await refused.json()) as any).ids, ['n1']);
-  seen.length = 0;
-  await call('POST', '/ingest', { ids: ['n1'] });
-  await service.settled();
-  assert.equal(seen[0].body.requestId, '9#1', 'a plain re-ingest joins the latest attempt');
+  for (let i = 0; i < 2; i++) {
+    await call('POST', '/ingest', { ids: ['n1'] });
+    await service.settled();
+  }
+  assert.deepEqual(seen.map((s) => s.body.requestId), ['9', '9#1', '9#1']);
 });
 
 test('the page routes list notebook states and ingest a failed one as a new attempt', async () => {
   notes = { version: 11, lastModified: '2026-10-11T10:00:00Z' };
-  const states = async () => (((await (await call('GET', '/')).json()) as any).tree as any[]).flatMap((e) => (e.folder ? e.children : [e])).map((e) => [e.id, e.state]);
+  const states = async () => (await docs()).map((e) => [e.id, e.state]);
   assert.equal((await call('GET', '/documents/x/other')).status, 404);
   assert.equal((await call('GET', '/ingest')).status, 404);
   const before = await states();
@@ -364,10 +354,9 @@ test('a 502, a 504 or a reset mid-wait resubmits the same request id with backof
   const retrying = createRemarkableService({ dbPath: ':memory:', distributorUrl: flaky, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }), sleep: async (ms) => void delays.push(ms) });
   const url = await listen(serveApp(retrying));
   const headers = { authorization: 'Bearer svc-secret' };
-  const { batch: id } = (await (await fetch(`${url}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) })).json()) as any;
+  await fetch(`${url}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) });
   await retrying.settled();
-  const done = (await (await fetch(`${url}/batches/${id}`, { headers })).json()) as any;
-  assert.equal(done.status, 'done');
+  assert.equal((await doc('n1', url)).state, 'current');
   assert.equal(new Set(requests).size, 1);
   assert.equal(requests.length, 4);
   assert.deepEqual(delays, [1000, 2000, 4000]);

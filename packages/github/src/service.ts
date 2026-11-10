@@ -78,7 +78,7 @@ const QUEUE_TTL_MS = 6 * 3600_000;
 type Queued = {
   sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number;
   /** The opening-card data computed for the first submission. */ meta?: object;
-  /** Absent in items an older release queued, which were all `/fix`. */ role?: Trigger['role'];
+  role: Trigger['role'];
 };
 type WorkQueue = ReturnType<typeof waitingQueue<Queued>>;
 

@@ -20,7 +20,7 @@ export const manifest: ExtensionManifest = {
     dbPath,
     distributorUrl,
     fetch,
-    agent: env.QUACK_REMARKABLE_AGENT || 'remarkable-ingest',
+    agent: 'remarkable-ingest',
     client: createRmClient({ url: required(env, 'RMFAKECLOUD_URL'), email: required(env, 'RMFAKECLOUD_EMAIL'), password: required(env, 'RMFAKECLOUD_PASSWORD') }),
   }),
 };

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import pg from 'pg';
 import type { WaitingStore } from '../src/queue.ts';
-import { importWaitingFile, postgresWaiting, sqliteWaiting } from '../src/waiting-store.ts';
+import { postgresWaiting, sqliteWaiting } from '../src/waiting-store.ts';
 
 const url = process.env.QUACK_TEST_DATABASE_URL;
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -46,16 +46,3 @@ for (const { name, skip, fresh } of backends) {
     await reopened.close();
   });
 }
-
-test('a JSON queue file an older release wrote is imported once, then set aside', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'gh-import-'));
-  const file = join(dir, 'github-fixes.json');
-  writeFileSync(file, JSON.stringify({ 'github:acme/widgets#7': { sessionKey: 'github:acme/widgets#7', requestId: 'r1' } }));
-  const store = sqliteWaiting(':memory:');
-  await importWaitingFile(store, file);
-  assert.deepEqual((await store.list()).map((r) => [r.key, JSON.parse(r.item).requestId]), [['github:acme/widgets#7', 'r1']]);
-  assert.equal(existsSync(file), false);
-  assert.equal(existsSync(`${file}.imported`), true);
-  await importWaitingFile(store, file);
-  assert.equal((await store.list()).length, 1);
-});

@@ -6,7 +6,7 @@ import { githubApp } from './app.ts';
 import { startRedelivery } from './redeliver.ts';
 import { assertPromoted, createGithubService } from './service.ts';
 import { settingsProblems, type GithubSettings } from './settings.ts';
-import { importWaitingFile, postgresWaiting, sqliteWaiting } from './waiting-store.ts';
+import { postgresWaiting, sqliteWaiting } from './waiting-store.ts';
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
@@ -17,7 +17,7 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 /** The GitHub app; its webhook is /apps/github/webhook, which GitHub signs instead of presenting a credential. */
 export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetch, env }: AppContext): App {
   const { implementerAgent, issueBase } = checkedSettings<GithubSettings>('github', settings, settingsProblems) ?? {};
-  const agent = env.QUACK_GH_AGENT || 'reviewer';
+  const agent = 'reviewer';
   const dataDir = env.QUACK_DATA_DIR ?? '.';
   const store = storeFor(deployment, deployment.extensions?.github?.store, env);
   const waiting = store.kind === 'postgres' ? postgresWaiting(new pg.Pool({ connectionString: store.url })) : sqliteWaiting(dbPath);
@@ -26,7 +26,7 @@ export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetc
     webhookSecret: required(env, 'QUACK_GH_WEBHOOK_SECRET'),
     distributorUrl,
     fetch,
-    label: env.QUACK_GH_LABEL || 'quack:review',
+    label: 'quack:review',
     agent,
     implementerAgent,
     issueBase,
@@ -41,7 +41,6 @@ export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetc
       await assertPromoted(distributorUrl, agent, undefined, fetch);
       if (implementerAgent) await assertPromoted(distributorUrl, implementerAgent, undefined, fetch);
       stopRedelivery = startRedelivery(app, join(dataDir, 'github-redeliver.json'));
-      await importWaitingFile(waiting, join(dataDir, 'github-fixes.json'));
       service.resume();
     },
     stop: () => { stopRedelivery(); service.stop(); void waiting.close(); },
