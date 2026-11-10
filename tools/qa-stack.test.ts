@@ -36,7 +36,8 @@ test('a distributor whose free port was taken before it listened is relaunched o
     const url = await startDistributor(parts, env, async () => ports.shift() ?? freePort());
     assert.notEqual(url, `http://127.0.0.1:${taken}`);
     assert.equal(await listening(url), true);
-    assert.equal(parts.children.length, 2, 'the first launch lost the port and exited');
+    // A later free port can be taken too under parallel test files; each loss is one more relaunch.
+    assert.ok(parts.children.length >= 2, 'the first launch lost the port and a later one serves');
   } finally {
     await teardown(parts);
     squatter.closeAllConnections();
