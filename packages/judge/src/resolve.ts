@@ -11,7 +11,7 @@ export type ClassifierRef = { provider: string; modelId: string; maxInputTokens:
 
 export type Answer = { met: boolean | null; resolver: string; note?: string };
 
-// Clef's tokenizer counted 9.6-10.6k tokens on code units the 4-byte rule put under 8,192 (spike #2190); code packs ~3 bytes a token.
+// Clef's tokenizer packs code at about 3 bytes a token, so the usual 4-byte rule puts units over its cap below it.
 const BYTES_PER_TOKEN = 3;
 
 /** One question asked of a unit: `id` is the check's key; a choice question holds when the answer is one of `pass` (its first option by default). */
@@ -34,7 +34,7 @@ function asked(ask: Ask, instructions: string): ClassifierQuestion {
 /** Each question of a request with the id the judge reads its answer by, in the order the request numbers them. */
 const questionsOf = (items: Item[]) => items.flatMap((it, i) => it.checks.map((c) => ({ id: qid(c, i, !!items[0].unit.shared), i, it, c })));
 
-// Clef reads a question's id as text, so a check id would be asked too ("no_self_contradiction" turned its question around):
+// Clef reads a question's id as part of the question, and a check id's words can reverse its meaning;
 // the request numbers its questions instead.
 function request(items: Item[]) {
   const shared = items[0].unit.shared;

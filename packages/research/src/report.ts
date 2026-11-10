@@ -40,7 +40,7 @@ function bullet(p: Parse, line: string, indent: number) {
   // A list's lead-in is the paragraph directly above it; a code block or table between them does not part them.
   if (!parent && p.para.length) [p.intro, p.para] = [p.para, []];
   if (parent) parent.kids++;
-  // Context is there to cite the bullet; an unmarked heading line ("Attleboro:") would only reframe the claim for the judge.
+  // Context is there to cite the bullet; an unmarked lead line would only reframe the claim for the judge.
   const marked = (lines: string[]) => (/\[s\d+\]/.test(lines.join(' ')) ? lines : []);
   const item = { indent, lines: [line], context: parent ? [...parent.context, ...marked(parent.lines)] : marked(p.intro), kids: 0 };
   p.items.push(item);
@@ -226,12 +226,12 @@ function citesFetchedSources(artifact: string, ev: Evidence): CodeResult {
 
 const SUPPORTED_WEIGHT = 4;
 const CONTRADICTED_WEIGHT = -4;
-// Audit weights are 4 and 3; 0 (observe-only) until their false-block rate on good reports is under 10% (Rubric v2 measurement).
+// Audit weights are 4 and 3; 0 (observe-only) until their false-block rate on good reports is under 10%.
 const ASKS_WEIGHT = 0;
 const SUMMARY_WEIGHT = 0;
 const SELF_WEIGHT = -4;
 
-// The judge's own knowledge goes stale (a real 2025 fact flagged as invented, 86833b31), so every question says so.
+// The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
 
 // Weight 0 is observe-only: the check is reported but does not score.

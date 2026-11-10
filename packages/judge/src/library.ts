@@ -82,7 +82,8 @@ export const words = (s: string) => new Set((s.toLowerCase().match(/[a-z][a-z0-9
 const MONEY = /\$\s?\d[\d,.]*(?:\s?(?:million|billion|thousand|k|m))?/gi;
 const TIME = /\b\d{1,2}(?::\d\d)?\s?(?:am|pm)\b/gi;
 const DATE = /\b(?:\d{1,2}\s)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s\d{1,2})?,?\s\d{4}\b|\b(?:19|20)\d\d\b/gi;
-const NUM = /\b\d[\d,]*(?:\.\d+)?\b(?:\s?(?:%|percent|km|hectares|days|months|years|metres|meters|m\b))?/gi;
+// A quantity is its figure; the unit word after it stays among the terms, so "190 km" and "190" are the same value.
+const NUM = /\b\d[\d,]*(?:\.\d+)?\b%?/g;
 const norm = (s: string) => s.toLowerCase().replace(/[\s,]/g, '');
 
 const extractors: Record<string, (text: string) => Digest> = {
