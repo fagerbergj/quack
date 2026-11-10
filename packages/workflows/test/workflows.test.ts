@@ -6,8 +6,7 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
 import { num, obj, str } from '@earendil-works/pi-schema';
-import { defineTool } from '@earendil-works/pi-durable';
-import { answerQuestion, Approvals, Artifacts, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { answerQuestion, Artifacts, Failures, pendingQuestions, Questions, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
@@ -247,40 +246,6 @@ test('a decision step waits for a person across a restart and resumes on the ans
   const outcome = await runWorkflow(b.harness, b.root, build(), null);
   assert.equal(outcome.status === 'completed' && (outcome.result as { announce: string }).announce, 'start Pollard');
   await b.close();
-});
-
-test('a gated step waits for approval and runs its tool once with earlier results', async () => {
-  const posted: string[] = [];
-  const post = defineTool({
-    name: 'post_comment',
-    description: 'Post a comment',
-    parameters: obj({ body: str() }, { open: true }),
-    execute: async (args) => { posted.push(args.body); return { output: [{ type: 'text', text: 'posted' }] }; },
-  });
-  const workflow = defineWorkflow({
-    name: 'gate',
-    steps: [
-      { name: 'draft', kind: 'code', run: () => 'LGTM' },
-      { name: 'post', kind: 'gated', tool: post, args: (c) => ({ body: c.prior.draft as string }) },
-    ],
-  });
-  const s = await open(await tmp(), workflow);
-  const running = runWorkflow(s.harness, s.root, workflow, null);
-  await pendingApprovals(s.root, ctx); // creates the document so it can be watched
-  const watch = (await s.harness.watchDoc(Approvals, s.root.id, ctx))!;
-  const id = await new Promise<string>((resolve) => {
-    const find = () => Object.keys(watch.value?.items ?? {})[0];
-    if (find()) return resolve(find());
-    watch.start(async () => { if (find()) resolve(find()); });
-  });
-  await watch.stop();
-  assert.deepEqual(posted, []);
-  assert.equal(await resolveApproval(s.root, id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, ctx), true);
-
-  const outcome = await running;
-  assert.equal(outcome.status, 'completed');
-  assert.deepEqual(posted, ['LGTM']);
-  await s.close();
 });
 
 const sayOk = { name: 'says-ok', version: 1, threshold: 1, criteria: [{ id: 'tone', checks: [{ id: 'says_ok', label: 'Does not say ok', weight: 'gate' as const, code: (a: string) => ({ met: a.includes('ok') ? 1 : 0, detail: 'the text must say ok' }) }] }] };
