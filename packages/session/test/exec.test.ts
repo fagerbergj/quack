@@ -60,7 +60,8 @@ test('an allocation past the address-space limit fails the command and the next 
   assert.match(next.output, /still-here/);
 });
 
-test('a fork bomb hits the process limit: the command fails, the next one runs', { skip: process.getuid?.() === 0 && 'root ignores RLIMIT_NPROC' }, async () => {
+// bash retries a failed fork with its own backoff (about 15 s in all), so this test gets twice the suite's timeout.
+test('a fork bomb hits the process limit: the command fails, the next one runs', { skip: process.getuid?.() === 0 && 'root ignores RLIMIT_NPROC', timeout: 60_000 }, async () => {
   const bomb = await run('/bin/true; /bin/echo forked', { limits: { maxProcs: 1 } });
   assert.doesNotMatch(bomb.output, /^forked$/m);
   assert.match(bomb.output, /Resource temporarily unavailable/);

@@ -27,7 +27,7 @@ async function serve(extension: ReturnType<typeof defineExtension>, ...responses
   const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { session, base, stop: async () => { await new Promise((r) => server.close(r)); await session.close(); } };
+  return { session, base, stop: async () => { await server.shutdown(); await session.close(); } };
 }
 
 test('POST /abort ends a run that is waiting on a tool', async () => {

@@ -93,7 +93,10 @@ test('a session in retry backoff reports its wake time, so the distributor can s
 const abort = () => fail('Provider finish_reason: abort');
 type Opened = Awaited<ReturnType<typeof open>>;
 const failures = async (s: Opened['session']) => failedRows(await s.harness.snapshot(Failures, s.root.id, BACKGROUND_CONTEXT));
-const settle = async (check: () => Promise<boolean>) => { for (let i = 0; i < 150 && !(await check()); i++) await new Promise((r) => setTimeout(r, 20)); };
+// Waits for the run to settle; the deadline only matters when the code is broken, and it fails loudly instead of letting the next assert guess.
+const settle = async (check: () => Promise<boolean>) => {
+  for (const deadline = Date.now() + 15_000; !(await check()); await new Promise((r) => setTimeout(r, 20))) if (Date.now() > deadline) throw new Error('the run never settled');
+};
 const answered = async (s: Opened['session']) => (await s.messages(5)).some((m) => m.text === 'Paris');
 
 test('a provider abort is retried once and the run completes without a failure', async () => {

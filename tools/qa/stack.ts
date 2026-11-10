@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { generateKeyPairSync } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -12,7 +13,8 @@ import { seedArtifacts } from './seed-artifacts.ts';
 import { seedContracts } from './seed-contracts.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const STATE = join(tmpdir(), 'quack-qa-stack.json');
+// One state file per checkout, so a stack another worktree brought up is not the one `down` stops.
+const STATE = join(tmpdir(), `quack-qa-stack-${createHash('sha256').update(ROOT).digest('hex').slice(0, 12)}.json`);
 
 export type StackOpts = {
   /** A built web dir, or `current` to build this tree's packages/web first. */

@@ -825,7 +825,7 @@ test('a session process that never reports a port fails with its output and wher
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const hang = "console.log('loading models'); setInterval(() => {}, 1000);";
-  const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 500 });
+  const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 500, reportWaitMs: 20_000 });
   await assert.rejects(driver.ensure('research:hung'), /did not report a port; stack: .*; active handles: /s);
 });
 
@@ -833,8 +833,9 @@ test('a session process whose report cannot be written still fails, naming the m
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const swallow = "process.report.directory = '/nonexistent/reports'; setInterval(() => {}, 1000);";
-  const driver = processDriver({ command: [process.execPath, '-e', swallow], dataDir, defaultAgent: '', startTimeoutMs: 500 });
-  await assert.rejects(driver.ensure('research:swallowed'), /no diagnostic report within 5s/);
+  // The report can never appear, so the whole wait is spent; a short one keeps the suite fast.
+  const driver = processDriver({ command: [process.execPath, '-e', swallow], dataDir, defaultAgent: '', startTimeoutMs: 500, reportWaitMs: 200 });
+  await assert.rejects(driver.ensure('research:swallowed'), /no diagnostic report within 0.2s/);
 });
 
 test('a session process that ignores SIGTERM is killed at the stop deadline', async () => {

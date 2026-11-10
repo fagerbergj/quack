@@ -103,8 +103,8 @@ before(async () => {
     const entry = (role: string, text: string) => ({ kind: 'entry', entry: { model: [{ role, content: [{ type: 'text', text }] }] } });
     if (streaming) {
       ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go')], live: { run: {} } }));
-      setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20);
-      setTimeout(() => ws.send(JSON.stringify({ type: 'view', live: {} })), 40);
+      ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } }));
+      ws.send(JSON.stringify({ type: 'view', live: {} }));
       return;
     }
     ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'hello')], live: {} }));
