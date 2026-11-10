@@ -15,7 +15,7 @@ export const tmp = async () => { const d = await mkdtemp(join(tmpdir(), 'quack-g
 const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 export const sh = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv }).trim();
 
-const DEFAULT_BASE = { 'AGENTS.md': '# Conventions\nComments stay at two lines.\n', 'app.ts': 'export const a = 1;\n' };
+export const DEFAULT_BASE = { 'AGENTS.md': '# Conventions\nComments stay at two lines.\n', 'app.ts': 'export const a = 1;\n' };
 const DEFAULT_HEAD = { 'app.ts': 'export const a = 2;\n' };
 
 /** A local "github.com": bare acme/widgets.git with main and refs/pull/7/head; by default the PR changes app.ts line 1. */

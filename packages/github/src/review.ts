@@ -90,10 +90,68 @@ export async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: 
   return (await gitRead(api, repoDir, ['ls-files'], ctx)).split('\n').filter(Boolean);
 }
 
-/** Where the repo's installed JS dependencies would be: node_modules beside each tracked package.json, at any depth. */
-export async function dependencyDirs(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
-  const manifests = (await gitRead(api, repoDir, ['ls-files', '--', ':(glob)**/package.json'], ctx)).split('\n').filter(Boolean);
-  return manifests.map((m) => `${repoDir}/${m.slice(0, -'package.json'.length)}node_modules`);
+/** A language whose dependencies and standard library are both searchable here: its source extensions and where they are. */
+export type DepSearch = { exts: string[]; dirs: string[] };
+
+// Each search is bounded; one that runs out cannot show a name invented, so it counts as found.
+const SEARCH_SECONDS = 20;
+
+// A bounded command's stdout, and whether it exited 0 in time.
+async function run(api: ToolExecutionApi, argv: string[], ctx: Context): Promise<{ ok: boolean; out: string }> {
+  let out = '';
+  const r = await api.env!.exec(argv, { timeout: SEARCH_SECONDS, onOutput: (t, _c, info) => { if (info.stream === 'stdout') out += t; } }, ctx);
+  return { ok: r.ok && r.value.exitCode === 0, out };
+}
+const lines = (s: string) => s.split('\n').filter(Boolean);
+const existing = async (api: ToolExecutionApi, paths: string[], ctx: Context) => (paths.length ? lines((await run(api, ['ls', '-d', '--', ...paths], ctx)).out).filter((p) => paths.includes(p)) : []);
+// grep -r already covers a directory's subdirectories.
+const outermost = (dirs: string[]) => [...new Set(dirs)].filter((d, _, all) => !all.some((o) => d.startsWith(`${o}/`)));
+
+async function jsSearch(api: ToolExecutionApi, dirs: string[], ctx: Context): Promise<DepSearch | undefined> {
+  const modules = dirs.map((d) => `${d}node_modules`);
+  const found = await existing(api, [...modules, ...modules.map((m) => `${m}/typescript/lib`)], ctx);
+  // The JS standard library exists as source only in TypeScript's lib.*.d.ts.
+  return found.some((p) => p.endsWith('/typescript/lib')) ? { exts: ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx'], dirs: modules.filter((m) => found.includes(m)) } : undefined;
+}
+
+async function goSearch(api: ToolExecutionApi, dirs: string[], ctx: Context): Promise<DepSearch | undefined> {
+  const found: string[] = [];
+  for (const d of dirs) {
+    // Every package the module builds with, stdlib and builtins included; offline, so a module not installed fails it.
+    const r = await run(api, ['env', 'GOPROXY=off', 'GOTOOLCHAIN=local', 'go', '-C', d, 'list', '-deps', '-test', '-f', '{{.Dir}}', 'builtin', './...'], ctx);
+    if (!r.ok) return undefined;
+    found.push(...lines(r.out));
+  }
+  return found.length ? { exts: ['.go'], dirs: outermost(found) } : undefined;
+}
+
+const PY_PATHS = 'import sysconfig as s; print(*{s.get_path(k) for k in ("stdlib", "purelib", "platlib")}, sep="\\n")';
+async function pySearch(api: ToolExecutionApi, dirs: string[], ctx: Context): Promise<DepSearch | undefined> {
+  const found: string[] = [];
+  for (const py of await existing(api, dirs.flatMap((d) => [`${d}.venv/bin/python`, `${d}venv/bin/python`]), ctx)) {
+    const r = await run(api, [py, '-I', '-c', PY_PATHS], ctx);
+    if (r.ok) found.push(...lines(r.out));
+  }
+  return found.length ? { exts: ['.py', '.pyi'], dirs: outermost(found) } : undefined;
+}
+
+// Languages are found by their manifests; one not listed is never searchable, so no name in it can be shown invented.
+const LANGUAGES = [
+  { manifest: /^package\.json$/, search: jsSearch },
+  { manifest: /^go\.mod$/, search: goSearch },
+  { manifest: /^(pyproject\.toml|setup\.py|setup\.cfg|Pipfile|requirements.*\.txt)$/, search: pySearch },
+];
+
+/** The repo's languages whose installed dependencies and standard library can be searched in this sandbox. */
+export async function dependencyDirs(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<DepSearch[]> {
+  const files = await trackedFiles(api, repoDir, ctx);
+  const found: DepSearch[] = [];
+  for (const { manifest, search } of LANGUAGES) {
+    const dirs = [...new Set(files.filter((f) => manifest.test(f.split('/').pop()!)).map((f) => `${repoDir}/${f.replace(/[^/]*$/, '')}`))];
+    const s = dirs.length ? await search(api, dirs, ctx) : undefined;
+    if (s) found.push(s);
+  }
+  return found;
 }
 
 async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context, tracked: Tracked = {}) {
@@ -131,11 +189,7 @@ export function quotedCode(text: string): string[][] {
     .map((s) => s.split(/\.\.\.|…/).map(squash).filter((p) => p.length >= 6));
 }
 
-const KEYWORDS = new Set(['true', 'false', 'null', 'undefined', 'void', 'this', 'new', 'typeof', 'instanceof', 'return', 'const', 'let', 'var', 'function', 'class', 'async', 'await', 'string', 'number', 'boolean']);
 const MAX_NAMES = 8;
-const DEP_GLOBS = ['--include=*.js', '--include=*.mjs', '--include=*.cjs', '--include=*.ts'];
-// Each search is bounded; one that runs out cannot show a name invented, so it counts as found.
-const SEARCH_SECONDS = 20;
 
 /** Names a span claims exist: members, callees and object keys. Bare locals and string contents are proposals. */
 export function claimedNames(span: string): string[] {
@@ -145,29 +199,34 @@ export function claimedNames(span: string): string[] {
     const before = code.slice(0, m.index);
     const inBraces = before.split('{').length > before.split('}').length;
     // The 3-character floor skips locals like i, x, ok that every repo contains anyway.
-    if (m[1].length >= 3 && !KEYWORDS.has(m[1]) && (before.endsWith('.') || m[2] === '(' || inBraces)) names.add(m[1]);
+    if (m[1].length >= 3 && (before.endsWith('.') || m[2] === '(' || inBraces)) names.add(m[1]);
   }
-  return [...names].slice(0, MAX_NAMES);
+  return [...names];
 }
 
-// A span is invented only when a name it claims exists nowhere: the cited file, the change, the repo or installed dependencies.
-export async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context, known = new Map<string, boolean>(), deps = [`${repoDir}/node_modules`]): Promise<string[]> {
+// A span is invented only when a name it claims exists nowhere: the cited file, the change, the repo, or its language's dependencies and stdlib.
+export async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context, known: Map<string, boolean>, deps: DepSearch[]): Promise<string[]> {
+  // Where the cited file's language can't be searched, a name not found is unknown, and unknown is not invented.
+  const lang = deps.find((d) => d.exts.some((e) => f.path?.endsWith(e)));
+  if (!lang) return [];
   const haystack = squash(file) + '\n' + squash(diff.split('\n').map((l) => l.replace(/^[+\- ]/, '')).join('\n'));
   const grep = async (argv: string[]) => {
     const r = await api.env!.exec(argv, { timeout: SEARCH_SECONDS }, ctx);
     return r.ok ? r.value.exitCode === 0 : r.error.code === 'timeout';
   };
-  const inDeps = (id: string) => deps.length > 0 && grep(['grep', '-rqsw', '-F', ...DEP_GLOBS, '-e', id, ...deps]);
+  const inDeps = (id: string) => grep(['grep', '-rqsw', '-F', ...lang.exts.map((e) => `--include=*${e}`), '-e', id, ...lang.dirs]);
+  const inText = (id: string) => new RegExp(`(?<![\\w$])${id.replace(/\$/g, '\\$')}(?![\\w$])`).test(haystack);
   const exists = async (id: string) => {
-    if (new RegExp(`(?<![\\w$])${id.replace(/\$/g, '\\$')}(?![\\w$])`).test(haystack)) return true;
-    if (!known.has(id)) known.set(id, await grep(['git', '-C', repoDir, 'grep', '-q', '-w', '-F', '-e', id, 'HEAD', '--']) || await inDeps(id));
-    return known.get(id)!;
+    const key = `${lang.exts[0]} ${id}`;
+    if (!known.has(key)) known.set(key, await grep(['git', '-C', repoDir, 'grep', '-q', '-w', '-F', '-e', id, 'HEAD', '--']) || await inDeps(id));
+    return known.get(key)!;
   };
   const invented: string[] = [];
   for (const parts of quotedCode(f.text)) {
     for (const p of parts) {
       if (haystack.includes(p)) continue;
-      for (const id of claimedNames(p)) if (!invented.includes(id) && !(await exists(id))) invented.push(id);
+      // Keywords and builtins need no list: the cited file or the stdlib source holds them.
+      for (const id of claimedNames(p).filter((n) => !inText(n)).slice(0, MAX_NAMES)) if (!invented.includes(id) && !(await exists(id))) invented.push(id);
     }
   }
   return invented;

@@ -112,7 +112,7 @@ test('a quote is invented only when a name it claims is in no repo file, diff or
   let calls = 0;
   const check = async (repo: string, deps: string, text: string, known?: Map<string, boolean>) => {
     const api = { env: { exec: async (argv: string[]) => (calls++, { ok: true, value: { exitCode: has(argv[0] === 'git' ? repo : deps, argv) ? 0 : 1 } }) } };
-    return misquotes(api as never, 'r', { index: 1, label: 'nit', text } as never, '', '', {} as never, known);
+    return misquotes(api as never, 'r', { index: 1, label: 'nit', path: 'a.ts', text } as never, '', '', {} as never, known ?? new Map(), [{ exts: ['.ts'], dirs: ['r/node_modules'] }]);
   };
   const spans = [
     'outer.push({ type: "error", reason: "error", error: message }); outer.end(message)',
@@ -136,22 +136,78 @@ test('a quote is invented only when a name it claims is in no repo file, diff or
   assert.equal(calls, 2, 'two searches (repo, deps) for one name across two findings');
 });
 
-test('dependencies are searched where the reviewed repo installs them, each search bounded; one that times out does not convict', async () => {
+test('dependencies are searched with their language, each search bounded; one that times out does not convict', async () => {
   const argvs: string[][] = [];
   const opts: unknown[] = [];
   const api = (dep: (argv: string[]) => unknown) => ({ env: { exec: async (argv: string[], o: unknown) => (argvs.push(argv), opts.push(o), argv[0] === 'git' ? { ok: true, value: { exitCode: 1 } } : dep(argv)) } });
-  const finding = { index: 1, label: 'nit', text: 'it calls `return computeTotals(a)`' } as never;
-  assert.deepEqual(await misquotes(api(() => ({ ok: false, error: { code: 'timeout' } })) as never, 'r', finding, '', '', {} as never, new Map(), ['r/node_modules', 'r/web/node_modules']), []);
-  assert.deepEqual(argvs.at(-1)!.slice(-2), ['r/node_modules', 'r/web/node_modules']);
+  const finding = { index: 1, label: 'nit', path: 'src/a.ts', text: 'it calls `return computeTotals(a)`' } as never;
+  const js = [{ exts: ['.ts', '.js'], dirs: ['r/node_modules', 'r/web/node_modules'] }];
+  assert.deepEqual(await misquotes(api(() => ({ ok: false, error: { code: 'timeout' } })) as never, 'r', finding, '', '', {} as never, new Map(), js), []);
+  assert.deepEqual(argvs.at(-1), ['grep', '-rqsw', '-F', '--include=*.ts', '--include=*.js', '-e', 'computeTotals', 'r/node_modules', 'r/web/node_modules']);
   assert.ok(opts.every((o) => (o as { timeout?: number }).timeout! > 0), 'every search has a timeout');
-  assert.deepEqual(await misquotes(api(() => ({ ok: true, value: { exitCode: 1 } })) as never, 'r', finding, '', '', {} as never, new Map(), []), ['computeTotals'], 'no dependencies: only the repo is searched');
-  assert.equal(argvs.at(-1)![0], 'git');
-  assert.ok(!argvs.flat().some((a) => a.includes('v1/node_modules')), 'no layout is hard-coded');
+  assert.deepEqual(await misquotes(api(() => ({ ok: true, value: { exitCode: 1 } })) as never, 'r', finding, '', '', {} as never, new Map(), js), ['computeTotals']);
+  argvs.length = 0;
+  const goFinding = { index: 1, label: 'nit', path: 'main.go', text: 'it calls `return computeTotals(a)`' } as never;
+  assert.deepEqual(await misquotes(api(() => ({ ok: true, value: { exitCode: 1 } })) as never, 'r', goFinding, '', '', {} as never, new Map(), js), [], 'Go was not searchable, so nothing in it is invented');
+  assert.equal(argvs.length, 0, 'and nothing is searched');
 });
 
-test('dependency dirs sit beside every tracked package.json', async () => {
-  const api = { env: { exec: async (_argv: string[], o: { onOutput: (t: string) => void }) => (o.onOutput('package.json\nweb/package.json\n'), { ok: true, value: { exitCode: 0 } }) } };
-  assert.deepEqual(await dependencyDirs(api as never, 'repo', {} as never), ['repo/node_modules', 'repo/web/node_modules']);
+type Sandbox = { tracked: string[]; present?: string[]; goList?: Record<string, string[]>; python?: Record<string, string[]>; repo?: string; corpus?: Record<string, string> };
+// A fake sandbox: tracked files, paths that exist, what `go list` and a venv's python print, and the text under each directory.
+function sandbox(s: Sandbox) {
+  const argvs: string[][] = [];
+  const word = (text: string, id: string) => new RegExp(`(?<![\\w$])${id}(?![\\w$])`).test(text);
+  const exec = async (argv: string[], o: { onOutput?: (t: string, c: unknown, i: { stream: string }) => void }) => {
+    argvs.push(argv);
+    const print = (out: string[], exitCode = 0) => (o.onOutput?.(out.map((l) => `${l}\n`).join(''), {}, { stream: 'stdout' }), { ok: true, value: { exitCode } });
+    const id = argv[argv.indexOf('-e') + 1];
+    if (argv[3] === 'ls-files') return print(s.tracked);
+    if (argv[3] === 'grep') return print([], word(s.repo ?? '', id) ? 0 : 1);
+    if (argv[0] === 'ls') return print(argv.slice(3).filter((p) => s.present?.includes(p)));
+    if (argv[0] === 'env') return s.goList?.[argv[5]] ? print(s.goList[argv[5]]) : print([], 1);
+    if (argv[0] === 'grep') return print([], argv.slice(argv.indexOf('-e') + 2).some((d) => word(s.corpus?.[d] ?? '', id)) ? 0 : 1);
+    return s.python?.[argv[0]] ? print(s.python[argv[0]]) : print([], 1);
+  };
+  return { api: { env: { exec } } as never, argvs };
+}
+
+test('each language is searchable only when its installed dependencies and stdlib are: node_modules with TypeScript lib, go list offline, a venv', async () => {
+  const deps = (s: Sandbox) => dependencyDirs(sandbox(s).api, 'repo', {} as never);
+  const tracked = ['package.json', 'web/package.json', 'src/a.ts'];
+  assert.deepEqual(await deps({ tracked, present: ['repo/node_modules', 'repo/node_modules/typescript/lib'] }), [{ exts: ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.mts', '.cts', '.tsx'], dirs: ['repo/node_modules'] }]);
+  assert.deepEqual(await deps({ tracked, present: ['repo/node_modules'] }), [], 'no TypeScript lib: the JS stdlib is not searchable');
+  assert.deepEqual(await deps({ tracked }), [], 'not installed');
+  const goList = { 'repo/': ['/go/src/fmt', '/go/src/net', '/go/src/net/http', '/mod/x@v1', '/mod/x@v1', '/abs/repo'] };
+  assert.deepEqual(await deps({ tracked: ['go.mod', 'main.go'], goList }), [{ exts: ['.go'], dirs: ['/go/src/fmt', '/go/src/net', '/mod/x@v1', '/abs/repo'] }]);
+  assert.deepEqual(await deps({ tracked: ['go.mod', 'tools/go.mod'], goList }), [], 'a module whose packages go cannot list offline');
+  const python = { 'repo/.venv/bin/python': ['/usr/lib/python3.14', '/abs/repo/.venv/lib/python3.14/site-packages'] };
+  assert.deepEqual(await deps({ tracked: ['pyproject.toml'], present: ['repo/.venv/bin/python'], python }), [{ exts: ['.py', '.pyi'], dirs: python['repo/.venv/bin/python'] }]);
+  assert.deepEqual(await deps({ tracked: ['requirements-dev.txt'], python }), [], 'no venv');
+  const none = sandbox({ tracked: ['main.c', 'Makefile'] });
+  assert.deepEqual(await dependencyDirs(none.api, 'repo', {} as never), []);
+  assert.equal(none.argvs.length, 1, 'no manifest: nothing to look for beyond the file list');
+});
+
+test('a quoted name is invented only where its language was searched (JS, Go, Python with and without a venv, no manifest)', async () => {
+  const check = async (s: Sandbox, path: string, text: string) => {
+    const { api } = sandbox(s);
+    return misquotes(api, 'repo', { index: 1, label: 'nit', path, text } as never, '', '', {} as never, new Map(), await dependencyDirs(api, 'repo', {} as never));
+  };
+  const js = { tracked: ['package.json'], present: ['repo/node_modules', 'repo/node_modules/typescript/lib'], corpus: { 'repo/node_modules': 'outer.end(message); findLastIndex(p)' } };
+  assert.deepEqual(await check(js, 'src/a.ts', 'calls `return outer.end(message)`'), []);
+  assert.deepEqual(await check(js, 'src/a.ts', 'calls `return totals.computeTotals(a)`'), ['computeTotals'], 'a truly invented name is still caught');
+  const go = { tracked: ['go.mod'], goList: { 'repo/': ['/go/src/os', '/mod/colorable@v0.1'] }, corpus: { '/go/src/os': 'func LookupEnv(key string); var Stdout', '/mod/colorable@v0.1': 'func NewNonColorable(w io.Writer)' } };
+  assert.deepEqual(await check(go, 'color.go', 'reads `if v, ok := os.LookupEnv("NO_COLOR"); ok {`'), []);
+  assert.deepEqual(await check(go, 'color.go', 'wraps `w := colorable.NewNonColorable(os.Stdout)`'), []);
+  assert.deepEqual(await check(go, 'color.go', 'calls `return c.applyHexPalette(code)`'), ['applyHexPalette']);
+  assert.deepEqual(await check({ ...go, goList: {} }, 'color.go', 'calls `return c.applyHexPalette(code)`'), [], 'modules not installed: unknown, not invented');
+  const venv = { tracked: ['pyproject.toml'], repo: 'self.raw = raw', present: ['repo/.venv/bin/python'], python: { 'repo/.venv/bin/python': ['/usr/lib/python3', '/site'] }, corpus: { '/usr/lib/python3': 'import os.path; def commonpath(paths):', '/site': 'def is_fp_closed(obj):' } };
+  assert.deepEqual(await check(venv, 'src/adapters.py', 'computes `prefix = os.path.commonpath([a, b])`'), []);
+  assert.deepEqual(await check(venv, 'src/adapters.py', 'checks `return is_fp_closed(self.raw)`'), []);
+  assert.deepEqual(await check(venv, 'src/adapters.py', 'then `return self.adapter.send_with_retries(request)`'), ['adapter', 'send_with_retries']);
+  assert.deepEqual(await check({ ...venv, present: [] }, 'src/adapters.py', 'then `return self.adapter.send_with_retries(request)`'), [], 'no venv: unknown');
+  assert.deepEqual(await check({ ...js, tracked: ['package.json', 'tools/requirements.txt'] }, 'tools/render.py', 'then `return self.adapter.send_with_retries(request)`'), [], 'JS searchable does not make Python searchable');
+  assert.deepEqual(await check({ tracked: ['main.c'] }, 'main.c', 'calls `return totals_compute(a)`'), [], 'no manifest: unknown');
 });
 
 test('a failing git diff fails the evidence build instead of scoring the review on no diff', async () => {

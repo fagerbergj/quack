@@ -9,7 +9,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
-import { cleanup, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
+import { cleanup, DEFAULT_BASE, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
 
@@ -52,7 +52,8 @@ approve
 
 async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[], pr: Record<string, unknown> = {}, faults: { loseFirstReview?: boolean } = {}) {
   process.env.QUACK_CLEF_KEY = 'none';
-  const { base, head } = await remotes();
+  // Installed JS dependencies, TypeScript's lib with them, so quotes_exist can convict a name that exists nowhere.
+  const { base, head } = await remotes({ ...DEFAULT_BASE, 'package.json': '{}\n', 'node_modules/typescript/lib/lib.es5.d.ts': 'interface Array<T> { length: number }\n' });
   const live: Record<string, unknown> = { headSha: head, ...pr };
   const service = await fakeService(head, live, undefined, faults);
   // Pushes a second commit to the PR (a file the review does not touch) and makes it the live head.
