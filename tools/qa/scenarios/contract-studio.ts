@@ -14,7 +14,7 @@ const scenario: Scenario = {
       const pane = paneOf(page, 'Contract');
       await visible(pane.getByRole('region', { name: 'Approval' }).getByText('Version 2 passed its checks.'));
       if (!(await pane.getByRole('button', { name: 'Approve', exact: true }).isEnabled())) throw new Error('Approve is disabled');
-      // A viewer who never looked is shown what changed since the approved version, each version labelled by its status.
+      // The page shows what changed since the approved version, each version labelled by its status.
       await visible(pane.getByRole('heading', { name: /^\d+ changes? since the approved version$/ }));
       await visible(pane.getByText('GET /apps/sleeper/schedule › 200 › runs › at › type'));
       await visible(pane.locator('del').first());

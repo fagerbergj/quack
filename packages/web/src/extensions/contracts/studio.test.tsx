@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, expect, test } from 'vitest';
+import { expect, test } from 'vitest';
 import { App } from '../../App.tsx';
 import { SUPERSEDED } from '../../SessionView.tsx';
 import type { SealedArtifact, Verdict } from '../../api.ts';
@@ -14,8 +14,6 @@ import { declarations } from './typescript-model.ts';
 import type { ContractSpec } from './spec.ts';
 
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/contracts%3As1/asks': { asks: [] } }));
-// What a viewer last looked at lives in this browser; each test is a viewer of its own.
-beforeEach(() => localStorage.clear());
 
 const KEY = 'contracts%3As1';
 const pass: Verdict = { passed: true, gatesFailed: [], score: 1, checks: [] };
@@ -93,7 +91,6 @@ test('only a version put up for approval can be approved; every other status say
 });
 
 test('until the status answers, nothing is compared and no version carries a status label', async () => {
-  localStorage.setItem('quack.contracts.seen.contracts:s1', '1');
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`));
   expect(within(pane).queryByRole('heading', { name: /^(\d+ changes?|No changes)/ })).toBeNull();
@@ -102,12 +99,11 @@ test('until the status answers, nothing is compared and no version carries a sta
   expect(within(bar()).getByRole('status')).toHaveTextContent('Reading where version 2 stands…');
 });
 
-test('the contract sits beside the conversation with what changed since this viewer last looked, and approving it decides the waiting proposal', async () => {
-  localStorage.setItem('quack.contracts.seen.contracts:s1', '1');
+test('the contract sits beside the conversation with what changed since the approved version, and approving it decides the waiting proposal', async () => {
   routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
   routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, [{ text: 'runs are now oldest first' }])]);
-  const changes = (await within(pane).findByRole('heading', { name: /^\d+ changes since the version you last looked at$/ })).closest('section')!;
+  const changes = (await within(pane).findByRole('heading', { name: /^\d+ changes since the approved version$/ })).closest('section')!;
   const order = within(changes).getByText('GET /apps/sleeper/schedule › 200 › runs › description').closest('li')!;
   expect(order.querySelector('del')).toHaveTextContent('Upcoming runs, soonest');
   expect(order.querySelector('ins')).toHaveTextContent('Runs from the start of the week, oldest');
@@ -116,7 +112,6 @@ test('the contract sits beside the conversation with what changed since this vie
   expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
   expect(within(bar()).getByText(/Breaks callers of the approved version, checked in code: runs are now oldest first/)).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Reject/ }), 'the pane decides it, not a transcript card').toBeNull();
-  expect(localStorage.getItem('quack.contracts.seen.contracts:s1')).toBe('2');
   await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
   expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
   await waitFor(() => expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled());
@@ -130,7 +125,7 @@ test('each sealed draft replaces the shown one live: checking, then failed, each
   routes[STATUS] = status([1, 'approved'], [2, 'draft']);
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, null)] });
   expect(await within(bar()).findByText("Version 2 can't be approved yet: its checks are still running.")).toBeInTheDocument();
-  expect(await screen.findByRole('heading', { name: /since the approved version$/ }), 'a viewer who never looked compares with the approved version').toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: /since the approved version$/ })).toBeInTheDocument();
   expect(side('from')).toHaveAccessibleName('Compare from: Version 1, approved');
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(contract()).toHaveTextContent('Runs from the start of the week');
@@ -162,20 +157,20 @@ test('an approval another tab already decided says so instead of failing silentl
 const bare = (version: number, content: object): SealedArtifact => { const { verdict: _, ...a } = spec(version, content); return a; };
 const tsSpec = (version: number, document: string) => ({ kind: 'typescript', title: 'Shapes', version, intent: { purpose: 'Shapes' }, choices: [], document });
 
-// Versions seen one after another, none carrying a verdict: the base is the last one put to this viewer.
+// Version 1 approved, then version 2 put up for approval, neither carrying a verdict.
 async function proposeTwo(one: object, two: object) {
-  routes[STATUS] = status([1, 'proposed']);
-  const { ws, pane } = open([bare(1, one)], [proposal(1, 1)]);
-  await waitFor(() => expect(localStorage.getItem('quack.contracts.seen.contracts:s1')).toBe('1'));
-  routes[STATUS] = status([1, 'proposed'], [2, 'proposed']);
+  routes[STATUS] = status([1, 'approved']);
+  const { ws, pane } = open([bare(1, one)]);
+  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to: Version 1, approved'));
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
   ws.frame({ type: 'artifacts', artifacts: [bare(1, one), bare(2, two)] });
   ws.frame({ type: 'standing', questions: [], failures: [], approvals: [proposal(2, 2)] });
   return pane;
 }
 
-test('with no verdicts, a REST contract marks the operations that changed since the version this viewer was shown', async () => {
+test('with no verdicts, a REST contract marks the operations that changed since the approved version', async () => {
   const pane = await proposeTwo(v1, v2);
-  expect(await within(pane).findByRole('heading', { name: /changes since the version you last looked at$/ })).toBeInTheDocument();
+  expect(await within(pane).findByRole('heading', { name: /changes since the approved version$/ })).toBeInTheDocument();
   expect(within(pane).getAllByText('Changed').length).toBeGreaterThan(0);
   expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
   expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 passed its checks.');
@@ -184,7 +179,7 @@ test('with no verdicts, a REST contract marks the operations that changed since 
 
 test('with no verdicts, a TypeScript contract marks the declarations that changed and the ones added', async () => {
   const pane = await proposeTwo(tsSpec(1, 'export type A = { n: number };'), tsSpec(2, 'export type A = { n: string; m?: B };\nexport type B = { x: number };'));
-  const changes = (await within(pane).findByRole('heading', { name: '4 changes since the version you last looked at' })).closest('section')!;
+  const changes = (await within(pane).findByRole('heading', { name: '4 changes since the approved version' })).closest('section')!;
   const n = within(changes).getByText('A › n › type').closest('li')!;
   expect([n.querySelector('del')?.textContent, n.querySelector('ins')?.textContent]).toEqual(['Removed: number', 'Added: string']);
   // The cards render once the lazy code-contract chunk and the TypeScript model load, after the summary heading.
@@ -198,7 +193,7 @@ test("each version is labelled by where it stands with the person, and the appro
   await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to: Version 2 (#4), draft'));
   expect(await offered('to')).toEqual(['Version 2 (#4)draft, draft', 'Version 2 (#3)awaiting, awaiting approval', 'Version 2 (#2)changes asked, changes requested', 'Version 1approved, approved']);
   expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 is a draft and not up for approval.');
-  expect(side('from'), 'a viewer who never looked compares with the approved version').toHaveAccessibleName('Compare from: Version 1, approved');
+  expect(side('from')).toHaveAccessibleName('Compare from: Version 1, approved');
   const v = { a: bare(2, v2), spec: v2 as ContractSpec };
   expect(approvalState(v, undefined, undefined, false, 'changes_requested').text).toBe('You asked for changes to version 2.');
   expect(approvalState(v, undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
@@ -241,21 +236,4 @@ test('before the first version the Contract tab opens on the waiting question, s
   expect((await within(pane).findByText('Cursor or offset paging')).closest('li')).toHaveTextContent('Decided: Cursor or offset paging →: Cursor');
   await userEvent.click(within(question).getByRole('button', { name: 'Token' }));
   expect(posts()).toEqual([[`sessions/${KEY}/asks/q1`, { resolution: { choice: 'Token' } }]]);
-});
-
-test('on a phone a version counts as looked at only while the Contract tab shows it', async () => {
-  stubViewport(false);
-  const seen = () => localStorage.getItem('quack.contracts.seen.contracts:s1');
-  routes[STATUS] = status([1, 'proposed']);
-  const { ws } = open([spec(1, v1)]);
-  await waitFor(() => expect(seen()).toBe('1'));
-  routes[STATUS] = status([1, 'proposed'], [2, 'proposed']);
-  const tabs = screen.getByRole('tablist', { name: 'Show' });
-  await userEvent.click(within(tabs).getByRole('tab', { name: 'Chat' }));
-  ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), spec(2, v2)] });
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to: Version 2, awaiting approval'));
-  expect(seen(), 'version 2 sealed while the chat tab was shown').toBe('1');
-  await userEvent.click(within(tabs).getByRole('tab', { name: 'Contract' }));
-  expect(seen()).toBe('2');
-  expect(side('from')).toHaveAccessibleName('Compare from: Version 1, awaiting approval');
 });

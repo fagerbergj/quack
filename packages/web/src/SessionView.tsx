@@ -375,19 +375,17 @@ function PaneTabs({ live: { label, tab, setTab, asks, id } }: { live: Live }) {
   );
 }
 
-type SideProps = Omit<StudioProps, 'visible'> & { live: Live; rail: ReactNode; meta: readonly Record<string, unknown>[] };
+type SideProps = StudioProps & { live: Live; rail: ReactNode; meta: readonly Record<string, unknown>[] };
 
 // Beside the chat: the studio's pane or the newest artifact once there is one, else the context rail.
 function Side({ live, rail, meta, ...props }: SideProps) {
-  // From lg the pane sits beside the chat; below it, only its tab shows it.
-  const visible = useDesktop() || live.tab === 'pane';
   if (!live.label) return rail;
   const Pane = live.studio?.Pane;
   return (
     <section aria-label={live.panel('pane').role ? undefined : live.label} {...live.panel('pane')} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
       {/* Questions come first in a studio pane, so the person answers them there instead of on the chat tab. */}
       {Pane && props.questions.length > 0 && <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 px-4 pt-4 sm:px-5"><SessionQuestions sessionKey={props.sessionKey} items={props.questions} /></div>}
-      {Pane ? <Pane {...props} visible={visible} />
+      {Pane ? <Pane {...props} />
         : live.shown && <ArtifactView sessionKey={props.sessionKey} {...live.shown} onPick={live.setFocus} onFollow={live.focus && (() => live.setFocus(undefined))} now={{ running: props.running, meta }} />}
     </section>
   );

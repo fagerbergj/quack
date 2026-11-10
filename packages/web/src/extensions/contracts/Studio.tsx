@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useMemo, useState } from 'react';
 import { checkFailed, decideApproval, type Approval, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import type { StudioProps } from '../../extension.ts';
@@ -54,30 +54,6 @@ export function approvalState(newest: Version | undefined, proposal: Approval | 
   if (status === 'changes_requested') return { can: false, text: `You asked for changes to version ${n}.` };
   if (proposal) return { can: true, text: `Version ${n} passed its checks.` };
   return waiting(n, newest.a.verdict, status, running);
-}
-
-const SEEN = (key: string) => `quack.contracts.seen.${key}`;
-function readSeen(key: string): number | undefined {
-  try {
-    const v = Number(localStorage.getItem(SEEN(key)));
-    return Number.isInteger(v) && v > 0 ? v : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The version put to the person that this viewer looked at before the newest such one, by artifact number; it counts as looked at only while the pane is
- * `visible`. Kept in this browser, so it is per viewer and needs no server state; a lost store only means nothing is highlighted. */
-export function useSeen(key: string, newest: number | undefined, visible: boolean): number | undefined {
-  const [base, setBase] = useState(() => readSeen(key));
-  const shown = useRef<number>(undefined);
-  useEffect(() => {
-    if (newest === undefined || !visible) return;
-    if (shown.current !== undefined && shown.current !== newest) setBase(shown.current);
-    shown.current = newest;
-    try { localStorage.setItem(SEEN(key), String(newest)); } catch { /* the highlight is a convenience */ }
-  }, [key, newest, visible]);
-  return base === newest ? undefined : base;
 }
 
 const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
@@ -161,14 +137,12 @@ function Shown({ from, to, reason }: { from?: Version; to: Version; reason?: str
 
 const layout = 'mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5';
 
-/** The contract as it stands, live beside the conversation: the newest draft with what changed since this viewer last looked, any two
+/** The contract as it stands, live beside the conversation: the newest draft with what changed since the approved version, any two
  * versions on request, and one approve action for the newest version once the judge has passed it and it is up for approval. */
-export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, visible, questions, brief, activity }: StudioProps) {
+export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, questions, brief, activity }: StudioProps) {
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
   const newest = versions.at(-1);
   const status = useStatus(sessionKey, artifacts, approvals, running);
-  // A version counts once it was put to the person; until the status answers, none does and nothing is compared.
-  const base = useSeen(sessionKey, status && versions.findLast((v) => status(v) !== 'draft')?.a.version, visible);
   const [picked, pick] = useState<{ from?: number; to: number }>();
   const decisions = <Decided sessionKey={sessionKey} asked={questions.length} running={running} open={!newest} />;
   if (!newest) return <div className={layout}><Progress activity={activity} brief={brief} waiting={questions.length > 0} />{decisions}</div>;
@@ -176,10 +150,9 @@ export function ContractStudio({ sessionKey, artifacts, approvals, running, deci
   const approved = status && versions.findLast((v) => status(v) === 'approved')?.a.version;
   const state = approvalState(newest, proposal, approved, running, status?.(newest));
   const to = versions.find((v) => v.a.version === (picked?.to ?? newest.a.version)) ?? newest;
-  // A viewer who has not looked yet is shown what changed since the approved version.
-  const since = status && (base ?? approved);
-  const from = versions.find((v) => v.a.version === (picked ? picked.from : since) && v !== to);
-  const auto = picked ? undefined : base ? 'the version you last looked at' : 'the approved version';
+  // Until the status answers there is no approved version, so nothing is compared.
+  const from = versions.find((v) => v.a.version === (picked ? picked.from : approved) && v !== to);
+  const auto = picked ? undefined : 'the approved version';
   return (
     <div className={layout}>
       {!state.done && <ApproveBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} breaks={approved === undefined ? undefined : (proposal?.args as { breaks?: Break[] } | null)?.breaks} />}
