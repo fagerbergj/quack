@@ -1,0 +1,1247 @@
+{
+ "ms": 170683,
+ "results": [
+  {
+   "id": "packages/web/src/manifest.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1457
+  },
+  {
+   "id": "packages/github/test/action.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 432
+  },
+  {
+   "id": "packages/home/test/start.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 648
+  },
+  {
+   "id": "packages/home/test/tools.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 566
+  },
+  {
+   "id": "packages/research/test/action.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 476
+  },
+  {
+   "id": "packages/runtime/test/agents.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1492
+  },
+  {
+   "id": "packages/research/test/research.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 5993
+  },
+  {
+   "id": "packages/runtime/test/catalog.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1442
+  },
+  {
+   "id": "packages/sleeper/test/action.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 438
+  },
+  {
+   "id": "packages/distributor/test/distributor.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "costly",
+   "runs": 1,
+   "failed": 0,
+   "ms": 16373
+  },
+  {
+   "id": "packages/web/src/App.test.tsx",
+   "names": [
+    "the rail links every area and marks the current one 30ms",
+    "the rail links every area and marks the current one 25ms"
+   ],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 2,
+   "ms": 17895
+  },
+  {
+   "id": "packages/session/test/ui-routes.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 12921
+  },
+  {
+   "id": "packages/github/test/checkout.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1929
+  },
+  {
+   "id": "packages/session/test/definition.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 746
+  },
+  {
+   "id": "packages/web/src/CheckList.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2052
+  },
+  {
+   "id": "packages/github/test/service.test.ts",
+   "names": [
+    "a deleted linked issue is absent from the record, not a failed read"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 6618
+  },
+  {
+   "id": "packages/github/test/summary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 463
+  },
+  {
+   "id": "packages/remarkable/test/summary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 229
+  },
+  {
+   "id": "packages/research/test/summary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 384
+  },
+  {
+   "id": "packages/sdk/test/summary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 386
+  },
+  {
+   "id": "packages/sleeper/test/summary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 227
+  },
+  {
+   "id": "packages/session/test/exec.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "costly",
+   "runs": 1,
+   "failed": 0,
+   "ms": 19119
+  },
+  {
+   "id": "packages/session/test/artifacts.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 732
+  },
+  {
+   "id": "packages/judge/test/judge.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 7887
+  },
+  {
+   "id": "packages/web/src/extensions/remarkable/Remarkable.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2831
+  },
+  {
+   "id": "packages/web/src/extensions/cards.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 10,
+   "failed": 0,
+   "ms": 1239,
+   "note": "rerun from packages/web after a runner cwd fix: 10/10 pass"
+  },
+  {
+   "id": "packages/workflows/test/workflows.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 5672
+  },
+  {
+   "id": "packages/web/src/step.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2292
+  },
+  {
+   "id": "packages/session/test/run-ceiling.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 967
+  },
+  {
+   "id": "packages/runtime/test/codemode.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2060
+  },
+  {
+   "id": "packages/distributor/test/docker-live.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 556
+  },
+  {
+   "id": "packages/traces/test/traces.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 934
+  },
+  {
+   "id": "packages/distributor/test/docker-driver.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1897
+  },
+  {
+   "id": "packages/github/test/carry.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2186
+  },
+  {
+   "id": "packages/web/src/kinds.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2583
+  },
+  {
+   "id": "packages/web/src/push.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3068
+  },
+  {
+   "id": "packages/cli/test/cli.test.ts",
+   "names": [
+    "quack",
+    "show gathers the session, its pending asks, newest artifacts and last messages"
+   ],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 1,
+   "ms": 2642
+  },
+  {
+   "id": "packages/distributor/test/agents.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 874
+  },
+  {
+   "id": "packages/contracts/test/action.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 494
+  },
+  {
+   "id": "packages/session/test/images.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 702
+  },
+  {
+   "id": "packages/contracts/test/kind.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2276
+  },
+  {
+   "id": "packages/web/src/Agents.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3762
+  },
+  {
+   "id": "packages/github/test/reviewer.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 10205
+  },
+  {
+   "id": "packages/session/test/live-queue.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 731
+  },
+  {
+   "id": "packages/session/test/live-window.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 588
+  },
+  {
+   "id": "packages/session/test/live.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 845
+  },
+  {
+   "id": "packages/session/test/old-log.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 613
+  },
+  {
+   "id": "packages/github/test/fix.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 561
+  },
+  {
+   "id": "packages/web/src/extensions/contracts/contracts.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 5291
+  },
+  {
+   "id": "packages/distributor/test/role-switch.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 4029
+  },
+  {
+   "id": "packages/distributor/test/housekeeping.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 816
+  },
+  {
+   "id": "packages/web/src/JsonView.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2241
+  },
+  {
+   "id": "packages/contracts/test/flow.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 11074
+  },
+  {
+   "id": "packages/github/test/implementer.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 6709
+  },
+  {
+   "id": "packages/web/src/extensions/sleeper/SleeperCard.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3536
+  },
+  {
+   "id": "packages/web/src/extensions/schedules/Schedules.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2180
+  },
+  {
+   "id": "packages/web/src/extensions/contracts/page.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2938
+  },
+  {
+   "id": "packages/github/test/implement.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2385
+  },
+  {
+   "id": "packages/contracts/test/json-schema.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1464
+  },
+  {
+   "id": "packages/session/test/retry.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1261
+  },
+  {
+   "id": "packages/sleeper/test/lineup.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1349
+  },
+  {
+   "id": "packages/judge/test/rubric.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 642
+  },
+  {
+   "id": "packages/sleeper/test/trades.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1218
+  },
+  {
+   "id": "tools/research-set.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 554
+  },
+  {
+   "id": "packages/sdk/test/http.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 643
+  },
+  {
+   "id": "packages/web/src/extensions/sleeper/Sleeper.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 6482
+  },
+  {
+   "id": "packages/github/test/eval.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 600
+  },
+  {
+   "id": "packages/sleeper/test/settings.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 608
+  },
+  {
+   "id": "packages/slots/test/slots.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1455
+  },
+  {
+   "id": "packages/runtime/test/validate.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1660
+  },
+  {
+   "id": "packages/distributor/test/apps.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 514
+  },
+  {
+   "id": "packages/web/src/Transcript.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2208
+  },
+  {
+   "id": "packages/schedules/test/service.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 773
+  },
+  {
+   "id": "packages/sdk/test/extensions.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 473
+  },
+  {
+   "id": "packages/sleeper/test/history.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 903
+  },
+  {
+   "id": "packages/remarkable/test/ingest.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 4367
+  },
+  {
+   "id": "packages/sleeper/test/service.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 824
+  },
+  {
+   "id": "packages/sleeper/test/report.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1345
+  },
+  {
+   "id": "packages/sleeper/test/trends.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1002
+  },
+  {
+   "id": "packages/sleeper/test/waivers.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1276
+  },
+  {
+   "id": "packages/github/test/settings.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 486
+  },
+  {
+   "id": "packages/eval/test/eval.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2419
+  },
+  {
+   "id": "packages/session/test/unknown-tool.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 574
+  },
+  {
+   "id": "packages/session/test/cut-off.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 684
+  },
+  {
+   "id": "packages/github/test/review.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 608
+  },
+  {
+   "id": "packages/contracts/test/typescript.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 5111
+  },
+  {
+   "id": "packages/distributor/test/retire.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 717
+  },
+  {
+   "id": "packages/remarkable/test/queue.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 264
+  },
+  {
+   "id": "packages/web/src/extensions/contracts/code-contract.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 4078
+  },
+  {
+   "id": "packages/contracts/test/approved.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1573
+  },
+  {
+   "id": "packages/judge/test/resolve.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 466
+  },
+  {
+   "id": "tools/qa-stack.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 22979
+  },
+  {
+   "id": "packages/web/src/boundary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1429
+  },
+  {
+   "id": "packages/web/src/approvals.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3424
+  },
+  {
+   "id": "packages/web/src/dialogs.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3871
+  },
+  {
+   "id": "packages/web/src/render.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3370
+  },
+  {
+   "id": "packages/web/src/same.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1692
+  },
+  {
+   "id": "packages/session/test/session.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 797
+  },
+  {
+   "id": "packages/web/src/useLoad.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1643
+  },
+  {
+   "id": "packages/github/test/app.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 726
+  },
+  {
+   "id": "packages/github/test/waiting-store.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 310
+  },
+  {
+   "id": "packages/github/test/dedupe.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 771
+  },
+  {
+   "id": "packages/web/src/session-live.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3165
+  },
+  {
+   "id": "packages/distributor/test/lifecycle.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 784
+  },
+  {
+   "id": "packages/eval/test/driver.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 686
+  },
+  {
+   "id": "tools/dupl.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 610
+  },
+  {
+   "id": "tools/sloplint.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 758
+  },
+  {
+   "id": "tools/leak-check.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1156
+  },
+  {
+   "id": "tools/boundary.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2732
+  },
+  {
+   "id": "packages/session/test/gate.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1421
+  },
+  {
+   "id": "packages/eval/test/judge-replay.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1158
+  },
+  {
+   "id": "packages/session/test/abort-queue.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1040
+  },
+  {
+   "id": "packages/distributor/test/session-auth.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3785
+  },
+  {
+   "id": "packages/catalog/test/core.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 545
+  },
+  {
+   "id": "packages/catalog/test/http.test.ts",
+   "names": [
+    "artifacts: the per-session list carries content and deliveries, the cross-session list metadata; ordered by sealedAt"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 295
+  },
+  {
+   "id": "packages/catalog/test/query.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 482
+  },
+  {
+   "id": "packages/subagent/test/subagent.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1127
+  },
+  {
+   "id": "packages/catalog/test/channel.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 735
+  },
+  {
+   "id": "packages/distributor/test/catalog.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 955
+  },
+  {
+   "id": "packages/distributor/test/orphans.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 776
+  },
+  {
+   "id": "packages/sdk/test/channel.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 701
+  },
+  {
+   "id": "packages/web/src/extensions/contracts/studio.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 8050
+  },
+  {
+   "id": "packages/contracts/test/evidence.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 5703
+  },
+  {
+   "id": "packages/distributor/test/notifications.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 656
+  },
+  {
+   "id": "packages/session/test/lifecycle.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2524
+  },
+  {
+   "id": "packages/judge/test/declaration.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 561
+  },
+  {
+   "id": "packages/contracts/test/app.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2012
+  },
+  {
+   "id": "packages/web/src/useUpdates.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1588
+  },
+  {
+   "id": "packages/web/src/lineDiff.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1569
+  },
+  {
+   "id": "packages/sdk/test/model-retry.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 649
+  },
+  {
+   "id": "packages/web/src/SearchFilter.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 2923
+  },
+  {
+   "id": "packages/github/test/pulls.test.ts",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 268
+  },
+  {
+   "id": "packages/web/src/header.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 3226
+  },
+  {
+   "id": "packages/remarkable/test/service.test.ts",
+   "names": [
+    "client logs in, flattens and nests the tree, re-logs in on a 401, and downloads",
+    "picker data carries id, name, version and modified",
+    "ingest submits one request per document at remarkable:<id>, and an unchanged document reuses its request id"
+   ],
+   "hogFailed": false,
+   "status": "env",
+   "runs": 1,
+   "failed": 0,
+   "ms": 40310,
+   "note": "needs the Python rmc module, absent on this box"
+  },
+  {
+   "id": "packages/web/src/extensions/prState.test.tsx",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 4247
+  },
+  {
+   "id": "packages/github/test/events.test.ts",
+   "names": [
+    "a stream subscribes before its headers, sends each event as pull_request, and a keepalive on each tick"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 10248
+  }
+ ]
+}

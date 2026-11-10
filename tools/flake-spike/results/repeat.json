@@ -1,0 +1,664 @@
+{
+ "ms": 52114,
+ "results": [
+  {
+   "id": "f01",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 320
+  },
+  {
+   "id": "f03",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 392
+  },
+  {
+   "id": "f02",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 557
+  },
+  {
+   "id": "f04",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 319
+  },
+  {
+   "id": "f05",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 264
+  },
+  {
+   "id": "f07",
+   "names": [
+    "the ttl stays what the process started with when CACHE_TTL changes later",
+    "the ttl defaults to 60 seconds"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 107
+  },
+  {
+   "id": "f06",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 249
+  },
+  {
+   "id": "f08",
+   "names": [
+    "a user not yet due gets nothing 4ms"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 337
+  },
+  {
+   "id": "f11",
+   "names": [
+    "the third retry waits four base delays plus a little jitter"
+   ],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 2,
+   "ms": 241
+  },
+  {
+   "id": "f12",
+   "names": [
+    "every task result comes back"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 120
+  },
+  {
+   "id": "f10",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 711
+  },
+  {
+   "id": "f13",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 486
+  },
+  {
+   "id": "f14",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 727
+  },
+  {
+   "id": "f15",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 731
+  },
+  {
+   "id": "f16",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 335
+  },
+  {
+   "id": "t02",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 239
+  },
+  {
+   "id": "t03",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 270
+  },
+  {
+   "id": "t01",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 702
+  },
+  {
+   "id": "t04",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 733
+  },
+  {
+   "id": "t05",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 751
+  },
+  {
+   "id": "t06",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 240
+  },
+  {
+   "id": "t08",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 226
+  },
+  {
+   "id": "t07",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 713
+  },
+  {
+   "id": "t10",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 245
+  },
+  {
+   "id": "t09",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 730
+  },
+  {
+   "id": "t11",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 227
+  },
+  {
+   "id": "t12",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 711
+  },
+  {
+   "id": "t13",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 723
+  },
+  {
+   "id": "t14",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 248
+  },
+  {
+   "id": "t15",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 231
+  },
+  {
+   "id": "t16",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 242
+  },
+  {
+   "id": "t18",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 225
+  },
+  {
+   "id": "t19",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 250
+  },
+  {
+   "id": "t17",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 700
+  },
+  {
+   "id": "t20",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 235
+  },
+  {
+   "id": "t22",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 232
+  },
+  {
+   "id": "t23",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 253
+  },
+  {
+   "id": "t21",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 708
+  },
+  {
+   "id": "g01",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 231
+  },
+  {
+   "id": "g02",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 307
+  },
+  {
+   "id": "t24",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 708
+  },
+  {
+   "id": "g03",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 222
+  },
+  {
+   "id": "g05",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 237
+  },
+  {
+   "id": "g04",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 735
+  },
+  {
+   "id": "g07",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 244
+  },
+  {
+   "id": "g06",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 737
+  },
+  {
+   "id": "g08",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 240
+  },
+  {
+   "id": "g09",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 269
+  },
+  {
+   "id": "r01",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 648
+  },
+  {
+   "id": "r02",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 663
+  },
+  {
+   "id": "r03",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 592
+  },
+  {
+   "id": "r04",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 579
+  },
+  {
+   "id": "f09",
+   "names": [
+    "tools/flake-spike/fixtures/flaky/f09-leaked-interval.test.ts"
+   ],
+   "hogFailed": false,
+   "status": "baseline-fail",
+   "runs": 1,
+   "failed": 1,
+   "ms": 10116
+  },
+  {
+   "id": "r05",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 615
+  },
+  {
+   "id": "r06",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 618
+  },
+  {
+   "id": "r08",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 295
+  },
+  {
+   "id": "r07",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 644
+  },
+  {
+   "id": "r09",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 509
+  },
+  {
+   "id": "r11",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 481
+  },
+  {
+   "id": "r10",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 630
+  },
+  {
+   "id": "r12",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 479
+  },
+  {
+   "id": "r13",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 780
+  },
+  {
+   "id": "r14",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 648
+  },
+  {
+   "id": "r15",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 591
+  },
+  {
+   "id": "r16",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 424
+  },
+  {
+   "id": "r19",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 407
+  },
+  {
+   "id": "r17",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1292
+  },
+  {
+   "id": "r20",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1485
+  },
+  {
+   "id": "r21",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1528
+  },
+  {
+   "id": "r22",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 1433
+  },
+  {
+   "id": "h1",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 19018
+  },
+  {
+   "id": "r18",
+   "names": [],
+   "hogFailed": false,
+   "status": "ok",
+   "runs": 11,
+   "failed": 0,
+   "ms": 18838
+  }
+ ]
+}

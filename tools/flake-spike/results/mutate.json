@@ -1,0 +1,1031 @@
+{
+ "ms": 117980,
+ "results": [
+  {
+   "id": "f05",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/dates.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 221
+  },
+  {
+   "id": "f07",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/config.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 218
+  },
+  {
+   "id": "f06",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notes.ts"
+   ],
+   "mutants": 2,
+   "killed": 2,
+   "survived": [],
+   "runs": 3,
+   "status": "ok",
+   "ms": 312
+  },
+  {
+   "id": "f04",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 4,
+   "killed": 4,
+   "survived": [],
+   "runs": 5,
+   "status": "ok",
+   "ms": 545
+  },
+  {
+   "id": "f11",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/backoff.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 200
+  },
+  {
+   "id": "f03",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 4,
+   "killed": 3,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/retry.ts:11 drop await sleep(o.delayMs);"
+   ],
+   "runs": 5,
+   "status": "ok",
+   "ms": 805
+  },
+  {
+   "id": "f12",
+   "subjects": [],
+   "mutants": 0,
+   "killed": 0,
+   "survived": [],
+   "runs": 1,
+   "status": "baseline-fail",
+   "ms": 113
+  },
+  {
+   "id": "f13",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/status.ts"
+   ],
+   "mutants": 3,
+   "killed": 3,
+   "survived": [],
+   "runs": 4,
+   "status": "ok",
+   "ms": 787
+  },
+  {
+   "id": "f14",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/debounce.ts"
+   ],
+   "mutants": 2,
+   "killed": 2,
+   "survived": [],
+   "runs": 3,
+   "status": "ok",
+   "ms": 979
+  },
+  {
+   "id": "f16",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 282
+  },
+  {
+   "id": "f15",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/dates.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 636
+  },
+  {
+   "id": "f08",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notify.ts"
+   ],
+   "mutants": 6,
+   "killed": 6,
+   "survived": [],
+   "runs": 7,
+   "status": "ok",
+   "ms": 2228
+  },
+  {
+   "id": "t03",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 206
+  },
+  {
+   "id": "t01",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/slug.ts:3 return undefined (was s.toLowerCase().trim().replace(/[^a-z0-9)"
+   ],
+   "runs": 2,
+   "status": "ok",
+   "ms": 637
+  },
+  {
+   "id": "t02",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:11 return undefined (was Math.max(0, Math.round(sum * 100) / 100))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 583
+  },
+  {
+   "id": "t06",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 1,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/retry.ts:8 return undefined (was await fn())"
+   ],
+   "runs": 2,
+   "status": "ok",
+   "ms": 206
+  },
+  {
+   "id": "t04",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 1,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 1902
+  },
+  {
+   "id": "t08",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notify.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 207
+  },
+  {
+   "id": "t07",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:11 return undefined (was Math.max(0, Math.round(sum * 100) / 100))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 1885
+  },
+  {
+   "id": "t05",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notify.ts"
+   ],
+   "mutants": 6,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 > -> <= in user.due > deps.now()",
+    "tools/flake-spike/fixtures/subjects/notify.ts:9 drop await deps.send(user.email, `Hi ${user.name}, your",
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 if (!(user.due > deps.now()))",
+    "tools/flake-spike/fixtures/subjects/notify.ts:6 return undefined (was {\n    async remind(user: User): Promise<)",
+    "tools/flake-spike/fixtures/subjects/notify.ts:10 return undefined (was 'sent')",
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 return undefined (was 'skipped')"
+   ],
+   "runs": 7,
+   "status": "ok",
+   "ms": 2171
+  },
+  {
+   "id": "t10",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 1,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/retry.ts:8 return undefined (was await fn())"
+   ],
+   "runs": 2,
+   "status": "ok",
+   "ms": 211
+  },
+  {
+   "id": "t11",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:11 return undefined (was Math.max(0, Math.round(sum * 100) / 100))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 596
+  },
+  {
+   "id": "t12",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/dates.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 648
+  },
+  {
+   "id": "t14",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/slug.ts:3 return undefined (was s.toLowerCase().trim().replace(/[^a-z0-9)"
+   ],
+   "runs": 2,
+   "status": "ok",
+   "ms": 212
+  },
+  {
+   "id": "t15",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 206
+  },
+  {
+   "id": "f10",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/server.ts"
+   ],
+   "mutants": 3,
+   "killed": 2,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/server.ts:19 drop server.once('error', fail);"
+   ],
+   "runs": 4,
+   "status": "ok",
+   "ms": 6255
+  },
+  {
+   "id": "t16",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 1,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 598
+  },
+  {
+   "id": "t09",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notify.ts"
+   ],
+   "mutants": 6,
+   "killed": 1,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 > -> <= in user.due > deps.now()",
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 if (!(user.due > deps.now()))",
+    "tools/flake-spike/fixtures/subjects/notify.ts:10 return undefined (was 'sent')",
+    "tools/flake-spike/fixtures/subjects/notify.ts:9 drop await deps.send(user.email, `Hi ${user.name}, your",
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 return undefined (was 'skipped')"
+   ],
+   "runs": 7,
+   "status": "ok",
+   "ms": 2270
+  },
+  {
+   "id": "t17",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 639
+  },
+  {
+   "id": "t19",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 1,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/retry.ts:8 return undefined (was await fn())"
+   ],
+   "runs": 2,
+   "status": "ok",
+   "ms": 200
+  },
+  {
+   "id": "t18",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:11 return undefined (was Math.max(0, Math.round(sum * 100) / 100))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 601
+  },
+  {
+   "id": "t20",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/slug.ts:3 return undefined (was s.toLowerCase().trim().replace(/[^a-z0-9)"
+   ],
+   "runs": 2,
+   "status": "ok",
+   "ms": 205
+  },
+  {
+   "id": "t13",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:11 return undefined (was Math.max(0, Math.round(sum * 100) / 100))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 1928
+  },
+  {
+   "id": "t23",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 208
+  },
+  {
+   "id": "t22",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 <= -> > in l.qty <= 0",
+    "tools/flake-spike/fixtures/subjects/cart.ts:11 return undefined (was Math.max(0, Math.round(sum * 100) / 100))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 === -> !== in coupon === 'SAVE10'",
+    "tools/flake-spike/fixtures/subjects/cart.ts:7 if (!(l.qty <= 0))",
+    "tools/flake-spike/fixtures/subjects/cart.ts:10 if (!(coupon === 'SAVE10'))"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 603
+  },
+  {
+   "id": "g01",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 4,
+   "killed": 4,
+   "survived": [],
+   "runs": 5,
+   "status": "ok",
+   "ms": 514
+  },
+  {
+   "id": "t21",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/retry.ts"
+   ],
+   "mutants": 4,
+   "killed": 0,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/retry.ts:10 >= -> < in i >= o.attempts",
+    "tools/flake-spike/fixtures/subjects/retry.ts:8 return undefined (was await fn())",
+    "tools/flake-spike/fixtures/subjects/retry.ts:11 drop await sleep(o.delayMs);",
+    "tools/flake-spike/fixtures/subjects/retry.ts:10 if (!(i >= o.attempts))"
+   ],
+   "runs": 5,
+   "status": "ok",
+   "ms": 1582
+  },
+  {
+   "id": "g03",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notify.ts"
+   ],
+   "mutants": 6,
+   "killed": 6,
+   "survived": [],
+   "runs": 7,
+   "status": "ok",
+   "ms": 706
+  },
+  {
+   "id": "g05",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/cart.ts"
+   ],
+   "mutants": 5,
+   "killed": 5,
+   "survived": [],
+   "runs": 6,
+   "status": "ok",
+   "ms": 654
+  },
+  {
+   "id": "t24",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notify.ts"
+   ],
+   "mutants": 6,
+   "killed": 4,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/notify.ts:10 return undefined (was 'sent')",
+    "tools/flake-spike/fixtures/subjects/notify.ts:8 return undefined (was 'skipped')"
+   ],
+   "runs": 7,
+   "status": "ok",
+   "ms": 2232
+  },
+  {
+   "id": "g04",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/debounce.ts"
+   ],
+   "mutants": 2,
+   "killed": 2,
+   "survived": [],
+   "runs": 3,
+   "status": "ok",
+   "ms": 1001
+  },
+  {
+   "id": "g07",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/backoff.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 207
+  },
+  {
+   "id": "g08",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/notes.ts"
+   ],
+   "mutants": 2,
+   "killed": 2,
+   "survived": [],
+   "runs": 3,
+   "status": "ok",
+   "ms": 307
+  },
+  {
+   "id": "g06",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/slug.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 636
+  },
+  {
+   "id": "g09",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/pool.ts"
+   ],
+   "mutants": 2,
+   "killed": 2,
+   "survived": [],
+   "runs": 3,
+   "status": "ok",
+   "ms": 307
+  },
+  {
+   "id": "f09",
+   "subjects": [],
+   "mutants": 0,
+   "killed": 0,
+   "survived": [],
+   "runs": 1,
+   "status": "baseline-fail",
+   "ms": 10115
+  },
+  {
+   "id": "r03",
+   "subjects": [
+    "packages/slots/src/table.ts",
+    "packages/slots/src/gate.ts"
+   ],
+   "mutants": 8,
+   "killed": 1,
+   "survived": [
+    "packages/slots/src/gate.ts:89 if (!(this.#calls.size === 0 && this.#leases.l))",
+    "packages/slots/src/gate.ts:109 flip true",
+    "packages/slots/src/gate.ts:88 flip false",
+    "packages/slots/src/table.ts:48 if (!(next.length))",
+    "packages/slots/src/table.ts:48 drop this.#db.prepare('DELETE FROM waits WHERE endpoint",
+    "packages/slots/src/gate.ts:125 !== -> === in l !== lease",
+    "packages/slots/src/table.ts:85 drop this.#sweep(endpoint);"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2055
+  },
+  {
+   "id": "r04",
+   "subjects": [
+    "packages/slots/src/table.ts",
+    "packages/slots/src/gate.ts"
+   ],
+   "mutants": 8,
+   "killed": 0,
+   "survived": [
+    "packages/slots/src/gate.ts:109 flip true",
+    "packages/slots/src/table.ts:48 if (!(next.length))",
+    "packages/slots/src/table.ts:68 drop this.#sweep(endpoint);",
+    "packages/slots/src/gate.ts:113 if (!(got))",
+    "packages/slots/src/gate.ts:163 drop this.#beat(lease);",
+    "packages/slots/src/gate.ts:113 return undefined (was got)",
+    "packages/slots/src/gate.ts:162 drop this.#o.setNote(null);",
+    "packages/slots/src/gate.ts:72 drop this.#cancelTimer();"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2053
+  },
+  {
+   "id": "r02",
+   "subjects": [
+    "packages/sdk/src/model-retry.ts"
+   ],
+   "mutants": 8,
+   "killed": 3,
+   "survived": [
+    "packages/sdk/src/model-retry.ts:18 return undefined (was Number.isFinite(ms) ? Math.max(0, ms) : )",
+    "packages/sdk/src/model-retry.ts:44 || -> && in attempt > MODEL_RETRY.maxRetries || !isR",
+    "packages/sdk/src/model-retry.ts:24 return undefined (was Math.round(Math.min(base, MODEL_RETRY.ma)",
+    "packages/sdk/src/model-retry.ts:46 drop log(`model retry: session=${process.env.QUACK_SESS",
+    "packages/sdk/src/model-retry.ts:16 if (!(!header))"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2297
+  },
+  {
+   "id": "r05",
+   "subjects": [
+    "packages/schedules/src/service.ts"
+   ],
+   "mutants": 8,
+   "killed": 7,
+   "survived": [
+    "packages/schedules/src/service.ts:221 flip false"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2161
+  },
+  {
+   "id": "r07",
+   "subjects": [
+    "tools/dupl.ts"
+   ],
+   "mutants": 8,
+   "killed": 7,
+   "survived": [
+    "tools/dupl.ts:41 && -> || in s <= b && e >= a"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2421
+  },
+  {
+   "id": "r08",
+   "subjects": [
+    "tools/leak-check.ts"
+   ],
+   "mutants": 8,
+   "killed": 5,
+   "survived": [
+    "tools/leak-check.ts:34 !== -> === in code !== 0",
+    "tools/leak-check.ts:34 || -> && in leaked || code !== 0",
+    "tools/leak-check.ts:26 drop setTimeout(() => {\n      leaked = true;\n      cons"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 900
+  },
+  {
+   "id": "r09",
+   "subjects": [
+    "packages/sdk/src/channel.ts"
+   ],
+   "mutants": 5,
+   "killed": 3,
+   "survived": [
+    "packages/sdk/src/channel.ts:16 && -> || in v.summary !== undefined && { summary: v.",
+    "packages/sdk/src/channel.ts:16 !== -> === in v.summary !== undefined"
+   ],
+   "runs": 6,
+   "status": "ok",
+   "ms": 1219
+  },
+  {
+   "id": "r10",
+   "subjects": [
+    "packages/catalog/src/http.ts"
+   ],
+   "mutants": 8,
+   "killed": 6,
+   "survived": [
+    "packages/catalog/src/http.ts:36 !== -> === in s.title !== undefined",
+    "packages/catalog/src/http.ts:36 && -> || in s.title !== undefined && { title: s.titl"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2287
+  },
+  {
+   "id": "r11",
+   "subjects": [
+    "packages/judge/src/resolve.ts"
+   ],
+   "mutants": 8,
+   "killed": 8,
+   "survived": [],
+   "runs": 9,
+   "status": "ok",
+   "ms": 1805
+  },
+  {
+   "id": "f02",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/server.ts",
+    "tools/flake-spike/fixtures/subjects/echo-child.ts"
+   ],
+   "mutants": 3,
+   "killed": 2,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/server.ts:11 drop s.once('error', fail);"
+   ],
+   "runs": 4,
+   "status": "ok",
+   "ms": 25683
+  },
+  {
+   "id": "r14",
+   "subjects": [
+    "packages/distributor/src/notifications.ts"
+   ],
+   "mutants": 8,
+   "killed": 6,
+   "survived": [
+    "packages/distributor/src/notifications.ts:92 && -> || in what.body && { body: what.body }",
+    "packages/distributor/src/notifications.ts:81 if (!(!events.some((e) => !('extension' in e) ))"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 2067
+  },
+  {
+   "id": "g02",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/server.ts"
+   ],
+   "mutants": 3,
+   "killed": 2,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/server.ts:19 drop server.once('error', fail);"
+   ],
+   "runs": 4,
+   "status": "ok",
+   "ms": 20397
+  },
+  {
+   "id": "r16",
+   "subjects": [
+    "packages/research/src/report.ts"
+   ],
+   "mutants": 1,
+   "killed": 1,
+   "survived": [],
+   "runs": 2,
+   "status": "ok",
+   "ms": 404
+  },
+  {
+   "id": "r01",
+   "subjects": [
+    "packages/sdk/src/model-retry.ts"
+   ],
+   "mutants": 8,
+   "killed": 8,
+   "survived": [],
+   "runs": 9,
+   "status": "ok",
+   "ms": 22089
+  },
+  {
+   "id": "r17",
+   "subjects": [
+    "packages/contracts/src/spec.ts"
+   ],
+   "mutants": 8,
+   "killed": 7,
+   "survived": [
+    "packages/contracts/src/spec.ts:65 || -> && in !isObj(b) || !text(b.what)"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 5534
+  },
+  {
+   "id": "r19",
+   "subjects": [
+    "packages/cli/src/main.ts"
+   ],
+   "mutants": 8,
+   "killed": 4,
+   "survived": [
+    "packages/cli/src/main.ts:403 && -> || in result.next && !json",
+    "packages/cli/src/main.ts:408 === -> !== in a === '--order-by'",
+    "packages/cli/src/main.ts:433 drop out.stderr(`quack: ${e instanceof Error ? e.messag",
+    "packages/cli/src/main.ts:402 if (!(!result.streamed))"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 1998
+  },
+  {
+   "id": "f01",
+   "subjects": [
+    "tools/flake-spike/fixtures/subjects/server.ts"
+   ],
+   "mutants": 6,
+   "killed": 4,
+   "survived": [
+    "tools/flake-spike/fixtures/subjects/server.ts:11 drop s.once('error', fail);",
+    "tools/flake-spike/fixtures/subjects/server.ts:19 drop server.once('error', fail);"
+   ],
+   "runs": 7,
+   "status": "ok",
+   "ms": 40658
+  },
+  {
+   "id": "r20",
+   "subjects": [
+    "packages/web/src/lineDiff.ts"
+   ],
+   "mutants": 7,
+   "killed": 5,
+   "survived": [
+    "packages/web/src/lineDiff.ts:75 > -> <= in i > 0",
+    "packages/web/src/lineDiff.ts:75 < -> >= in i < runs.length - 1"
+   ],
+   "runs": 8,
+   "status": "ok",
+   "ms": 5397
+  },
+  {
+   "id": "r21",
+   "subjects": [
+    "packages/web/src/useUpdates.ts"
+   ],
+   "mutants": 8,
+   "killed": 5,
+   "survived": [
+    "packages/web/src/useUpdates.ts:11 && -> || in TEXT.has(el.type) && el.value.trim() !==",
+    "packages/web/src/useUpdates.ts:30 drop document.removeEventListener('visibilitychange', s",
+    "packages/web/src/useUpdates.ts:10 return undefined (was true)"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 6209
+  },
+  {
+   "id": "r22",
+   "subjects": [
+    "packages/web/src/same.ts"
+   ],
+   "mutants": 8,
+   "killed": 8,
+   "survived": [],
+   "runs": 9,
+   "status": "ok",
+   "ms": 6039
+  },
+  {
+   "id": "r15",
+   "subjects": [
+    "packages/session/src/lifecycle.ts"
+   ],
+   "mutants": 8,
+   "killed": 7,
+   "survived": [
+    "packages/session/src/lifecycle.ts:79 && -> || in q.optionDescriptions && { optionDescript"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 21883
+  },
+  {
+   "id": "r06",
+   "subjects": [
+    "packages/schedules/src/service.ts"
+   ],
+   "mutants": 8,
+   "killed": 6,
+   "survived": [
+    "packages/schedules/src/service.ts:207 && -> || in req.method === 'POST' && path === '/'",
+    "packages/schedules/src/service.ts:162 if (!(config.retentionSweep && +now() - lastSw))"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 41709
+  },
+  {
+   "id": "r12",
+   "subjects": [
+    "packages/judge/src/limit.ts"
+   ],
+   "mutants": 7,
+   "killed": 7,
+   "survived": [],
+   "runs": 8,
+   "status": "ok",
+   "ms": 41204
+  },
+  {
+   "id": "r13",
+   "subjects": [
+    "packages/github/src/redeliver.ts"
+   ],
+   "mutants": 8,
+   "killed": 7,
+   "survived": [
+    "packages/github/src/redeliver.ts:25 if (!(d.redelivery))"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 72523
+  },
+  {
+   "id": "r18",
+   "subjects": [
+    "tools/qa/stack.ts"
+   ],
+   "mutants": 8,
+   "killed": 4,
+   "survived": [
+    "tools/qa/stack.ts:171 drop process.once('exit', onExit);",
+    "tools/qa/stack.ts:144 if (!(mode === 'none'))",
+    "tools/qa/stack.ts:135 drop killGroup(c, 'SIGKILL');",
+    "tools/qa/stack.ts:136 drop await Promise.all(parts.servers.map((s) => new Pro"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 83069
+  },
+  {
+   "id": "h1",
+   "subjects": [
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts"
+   ],
+   "mutants": 8,
+   "killed": 2,
+   "survived": [
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts:130 if (!(child.pid))",
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts:143 === -> !== in opts.seed === 'demo'",
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts:163 === -> !== in opts.seed === 'contracts'",
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts:159 === -> !== in opts.web === 'current'",
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts:143 || -> && in opts.seed === 'demo' || opts.script",
+    "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts:134 || -> && in c.exitCode !== null || c.signalCode"
+   ],
+   "runs": 9,
+   "status": "ok",
+   "ms": 117979
+  }
+ ]
+}

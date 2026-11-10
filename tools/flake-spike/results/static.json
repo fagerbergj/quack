@@ -1,0 +1,765 @@
+{
+ "ms": 191,
+ "results": [
+  {
+   "id": "h1",
+   "hits": [
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "freePort (reserve then release, called inside the subject)"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "h2",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "h3",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "tools/flake-spike/fixtures/history/h3-agents/agents.test.ts.txt:44 start(dataDir, agentsDir)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "h4",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "tools/flake-spike/fixtures/history/h4-distributor/distributor.test.ts.txt:59 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/history/h4-distributor/distributor.test.ts.txt:56 Date.now()"
+    },
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "freePort (reserve then release, called inside the subject)"
+    }
+   ],
+   "ms": 17
+  },
+  {
+   "id": "h5",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "tools/flake-spike/fixtures/history/h5-blast/blast.test.ts.txt:45 process.env.PI_AGENT_DIR = agentDir"
+    }
+   ],
+   "ms": 5
+  },
+  {
+   "id": "f01",
+   "hits": [
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "tools/flake-spike/fixtures/flaky/f01-port-race.test.ts:9 freePort()"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f02",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "tools/flake-spike/fixtures/flaky/f02-readiness-blind.test.ts:16 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/flaky/f02-readiness-blind.test.ts:10 Date.now()"
+    },
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "tools/flake-spike/fixtures/flaky/f02-readiness-blind.test.ts:22 freePort()"
+    },
+    {
+     "rule": "blind-poll",
+     "category": "flaky",
+     "cls": "readiness-blind",
+     "at": "tools/flake-spike/fixtures/flaky/f02-readiness-blind.test.ts:10 while (Date.now() < deadline) { try { if ((await fetch(url)).ok) return; } catch { // not listening yet } await new Promise((r) => setTi"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f03",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "tools/flake-spike/fixtures/flaky/f03-real-sleep.test.ts:14 setTimeout(r, 60)"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f04",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/flaky/f04-elapsed-bound.test.ts:7 Date.now()"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f05",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/flaky/f05-local-day.test.ts:6 new Date()"
+    },
+    {
+     "rule": "seam-default-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/flaky/f05-local-day.test.ts:6 day()"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f06",
+   "hits": [
+    {
+     "rule": "fixed-tmp-path",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "tools/flake-spike/fixtures/flaky/f06-shared-tmp.test.ts:8 join(tmpdir(), 'flake-spike-notes')"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "f07",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "tools/flake-spike/fixtures/flaky/f07-run-order.test.ts:10 process.env.CACHE_TTL = '5'"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "f08",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "tools/flake-spike/fixtures/flaky/f08-shared-module-state.test.ts:4 sent: string[] = []"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f09",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "tools/flake-spike/fixtures/flaky/f09-leaked-interval.test.ts:7 startHeartbeat(() => { if (++beats === 3) done(); }, 5)"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f10",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "tools/flake-spike/fixtures/flaky/f10-leaked-server.test.ts:5 startEcho()"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f11",
+   "hits": [
+    {
+     "rule": "seam-default-random",
+     "category": "flaky",
+     "cls": "random",
+     "at": "tools/flake-spike/fixtures/flaky/f11-random-jitter.test.ts:6 backoff(2, 100)"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f12",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "f13",
+   "hits": [
+    {
+     "rule": "seam-default-fetch",
+     "category": "flaky",
+     "cls": "network",
+     "at": "tools/flake-spike/fixtures/flaky/f13-network.test.ts:6 up('https://example.com/')"
+    },
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "tools/flake-spike/fixtures/flaky/f13-network.test.ts:6 'https://example.com/'"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "f14",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "tools/flake-spike/fixtures/flaky/f14-vitest-real-timers.test.ts:9 setTimeout(r, 40)"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "f15",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/flaky/f15-vitest-wall-clock.test.ts:6 Date.now()"
+    },
+    {
+     "rule": "seam-default-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "tools/flake-spike/fixtures/flaky/f15-vitest-wall-clock.test.ts:5 stamp({ id: i })"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "f16",
+   "hits": [
+    {
+     "rule": "tight-timeout",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "tools/flake-spike/fixtures/flaky/f16-tight-timeout.test.ts:6 timeout: 400"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "t01",
+   "hits": [
+    {
+     "rule": "literal-assert",
+     "category": "taut",
+     "cls": "literal",
+     "at": "tools/flake-spike/fixtures/taut/t01-expect-true.test.ts:6 expect(true).toBe(true)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t02",
+   "hits": [
+    {
+     "rule": "literal-assert",
+     "category": "taut",
+     "cls": "literal",
+     "at": "tools/flake-spike/fixtures/taut/t02-assert-ok-true.test.ts:7 assert.ok(true, `total ${t}`)"
+    },
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "tools/flake-spike/fixtures/taut/t02-assert-ok-true.test.ts:7 assert.ok(true, `total ${t}`)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t03",
+   "hits": [
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "tools/flake-spike/fixtures/taut/t03-truthy-only.test.ts:7 assert.ok(slug)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t04",
+   "hits": [
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "tools/flake-spike/fixtures/taut/t04-to-be-defined.test.ts:6 expect(t).toBeDefined()"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t05",
+   "hits": [
+    {
+     "rule": "mock-called",
+     "category": "taut",
+     "cls": "mock-self",
+     "at": "tools/flake-spike/fixtures/taut/t05-mock-self-vitest.test.ts:7 expect(await send('a@x', 'hi')).toBe('delivered')"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t06",
+   "hits": [
+    {
+     "rule": "mock-called",
+     "category": "taut",
+     "cls": "mock-self",
+     "at": "tools/flake-spike/fixtures/taut/t06-mock-self-node.test.ts:9 assert.equal(await call(), 42)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t07",
+   "hits": [
+    {
+     "rule": "unit-mocked",
+     "category": "taut",
+     "cls": "over-mocked",
+     "at": "tools/flake-spike/fixtures/taut/t07-over-mocked-module.test.ts:4 vi.mock('../subjects/cart.ts', () => ({ total: vi.fn(() => 27) }))"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t08",
+   "hits": [
+    {
+     "rule": "unit-mocked",
+     "category": "taut",
+     "cls": "over-mocked",
+     "at": "tools/flake-spike/fixtures/taut/t08-over-mocked-method.test.ts:7 notifier.remind = async () => 'sent'"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t09",
+   "hits": [],
+   "ms": 0
+  },
+  {
+   "id": "t10",
+   "hits": [
+    {
+     "rule": "guarded-asserts",
+     "category": "taut",
+     "cls": "no-assert",
+     "at": "tools/flake-spike/fixtures/taut/t10-interaction-sleep.test.ts:8 assert.equal(c.arguments[0], 25)"
+    },
+    {
+     "rule": "interaction-only",
+     "category": "taut",
+     "cls": "interaction-only",
+     "at": "tools/flake-spike/fixtures/taut/t10-interaction-sleep.test.ts:8 assert.equal(c.arguments[0], 25)"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "t11",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "tools/flake-spike/fixtures/taut/t11-self-set.test.ts:9 assert.equal(line.qty, 3)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t12",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "tools/flake-spike/fixtures/taut/t12-self-set-vitest.test.ts:7 expect(row).toMatchObject({ at: 1_000 })"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t13",
+   "hits": [
+    {
+     "rule": "snapshot-input",
+     "category": "taut",
+     "cls": "snapshot-input",
+     "at": "tools/flake-spike/fixtures/taut/t13-snapshot-input.test.ts:7 expect(lines).toEqual([{ price: 2.5, qty: 4 }, { price: 1, qty: 0 }])"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "t14",
+   "hits": [
+    {
+     "rule": "snapshot-input",
+     "category": "taut",
+     "cls": "snapshot-input",
+     "at": "tools/flake-spike/fixtures/taut/t14-snapshot-input-node.test.ts:8 assert.deepEqual(titles, ['Hello World', 'A -- B', ' trailing '])"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t15",
+   "hits": [
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "tools/flake-spike/fixtures/taut/t15-type-only.test.ts:6 assert.equal(typeof slugify('Release Notes 2.0'), 'string')"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t16",
+   "hits": [
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "tools/flake-spike/fixtures/taut/t16-weak-bound.test.ts:6 assert.ok(total([{ price: 19.99, qty: 2 }], 'SAVE10') >= 0)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t17",
+   "hits": [
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "tools/flake-spike/fixtures/taut/t17-match-anything.test.ts:5 expect(slugify('Hello Big World')).toMatch(/[a-z-]*/)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t18",
+   "hits": [
+    {
+     "rule": "no-assert",
+     "category": "taut",
+     "cls": "no-assert",
+     "at": "no assertion in the file"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t19",
+   "hits": [
+    {
+     "rule": "guarded-asserts",
+     "category": "taut",
+     "cls": "no-assert",
+     "at": "tools/flake-spike/fixtures/taut/t19-assert-never-runs.test.ts:7 assert.match(String(r.reason), /boom/)"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t20",
+   "hits": [
+    {
+     "rule": "guarded-asserts",
+     "category": "taut",
+     "cls": "no-assert",
+     "at": "tools/flake-spike/fixtures/taut/t20-swallowed.test.ts:7 assert.equal(slugify('a!!!b'), 'a-b')"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t21",
+   "hits": [
+    {
+     "rule": "literal-assert",
+     "category": "taut",
+     "cls": "literal",
+     "at": "tools/flake-spike/fixtures/taut/t21-unawaited-expect.test.ts:7 expect(true).toBeTruthy()"
+    },
+    {
+     "rule": "unawaited-assert",
+     "category": "taut",
+     "cls": "no-assert",
+     "at": "tools/flake-spike/fixtures/taut/t21-unawaited-expect.test.ts:8 expect(p).rejects"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t22",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "tools/flake-spike/fixtures/taut/t22-expected-from-impl.test.ts:8 assert.equal(total(lines, 'SAVE10'), expected)"
+    },
+    {
+     "rule": "logic-in-test",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "tools/flake-spike/fixtures/taut/t22-expected-from-impl.test.ts:7 expected = total(lines, 'SAVE10')"
+    }
+   ],
+   "ms": 0
+  },
+  {
+   "id": "t23",
+   "hits": [
+    {
+     "rule": "logic-in-test",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "tools/flake-spike/fixtures/taut/t23-logic-in-test.test.ts:7 expected = title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-')"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "t24",
+   "hits": [
+    {
+     "rule": "call-order-log",
+     "category": "taut",
+     "cls": "change-detector",
+     "at": "tools/flake-spike/fixtures/taut/t24-change-detector.test.ts:9 expect(calls).toEqual(['now', 'send'])"
+    }
+   ],
+   "ms": 1
+  },
+  {
+   "id": "g01",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "g02",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "g03",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "g04",
+   "hits": [],
+   "ms": 0
+  },
+  {
+   "id": "g05",
+   "hits": [],
+   "ms": 0
+  },
+  {
+   "id": "g06",
+   "hits": [],
+   "ms": 0
+  },
+  {
+   "id": "g07",
+   "hits": [],
+   "ms": 0
+  },
+  {
+   "id": "g08",
+   "hits": [],
+   "ms": 0
+  },
+  {
+   "id": "g09",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "r01",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r02",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r03",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "packages/slots/test/slots.test.ts:31 notes: Record<string, string | null> = {}"
+    }
+   ],
+   "ms": 7
+  },
+  {
+   "id": "r04",
+   "hits": [],
+   "ms": 5
+  },
+  {
+   "id": "r05",
+   "hits": [],
+   "ms": 8
+  },
+  {
+   "id": "r06",
+   "hits": [],
+   "ms": 6
+  },
+  {
+   "id": "r07",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r08",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "r09",
+   "hits": [],
+   "ms": 1
+  },
+  {
+   "id": "r10",
+   "hits": [],
+   "ms": 5
+  },
+  {
+   "id": "r11",
+   "hits": [],
+   "ms": 5
+  },
+  {
+   "id": "r12",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r13",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r14",
+   "hits": [],
+   "ms": 4
+  },
+  {
+   "id": "r15",
+   "hits": [],
+   "ms": 9
+  },
+  {
+   "id": "r16",
+   "hits": [],
+   "ms": 4
+  },
+  {
+   "id": "r17",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r18",
+   "hits": [],
+   "ms": 5
+  },
+  {
+   "id": "r19",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 16
+  },
+  {
+   "id": "r20",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r21",
+   "hits": [],
+   "ms": 2
+  },
+  {
+   "id": "r22",
+   "hits": [],
+   "ms": 1
+  }
+ ]
+}

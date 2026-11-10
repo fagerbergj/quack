@@ -1,0 +1,102 @@
+{
+ "ms": 188,
+ "results": [
+  {
+   "id": "K1",
+   "hits": [
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "freePort (reserve then release, called inside the subject)"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "K2",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    }
+   ],
+   "ms": 40
+  },
+  {
+   "id": "K3",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "K4a",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 38
+  },
+  {
+   "id": "K4b",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "K5",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "K6a",
+   "hits": [],
+   "ms": 7
+  },
+  {
+   "id": "K6b",
+   "hits": [],
+   "ms": 7
+  },
+  {
+   "id": "K7",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "K8",
+   "hits": [],
+   "ms": 4
+  }
+ ]
+}

@@ -1,0 +1,204 @@
+[
+ {
+  "id": "K1",
+  "category": "flaky",
+  "cls": "port-race",
+  "file": "tools/flake-spike/fixtures/history/h1-qa-stack/qa-stack.test.ts",
+  "name": "the stack serves /version and its stub app, then leaves no listeners",
+  "runner": "node",
+  "runnable": true,
+  "source": "#2257: tools/qa/stack.ts freePort, and the session port at port+1 (pre-fix snapshot)",
+  "subjects": [
+   "tools/flake-spike/fixtures/history/h1-qa-stack/stack.ts"
+  ]
+ },
+ {
+  "id": "K2",
+  "category": "flaky",
+  "cls": "readiness-blind",
+  "file": "packages/session/test/retry.test.ts",
+  "name": "a provider abort is retried once and the run completes without a failure",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/session/test/retry.test.ts:97: a 3 s poll that gives up silently",
+  "subjects": [
+   "packages/session/src/index.ts",
+   "packages/session/src/runtime.ts",
+   "packages/session/src/server.ts",
+   "packages/session/src/port.ts",
+   "packages/session/src/definition.ts",
+   "packages/session/src/exec.ts",
+   "packages/session/src/lifecycle.ts",
+   "packages/session/src/lifecycle-sender.ts",
+   "packages/session/src/facts.ts"
+  ]
+ },
+ {
+  "id": "K3",
+  "category": "flaky",
+  "cls": "leak",
+  "file": "packages/session/test/ui-routes.test.ts",
+  "name": "errors are RFC 9457 problem+json, and an oversized body is 413",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/session/test/ui-routes.test.ts:30: server.close() waits ~6 s on a half-sent upload",
+  "subjects": [
+   "packages/session/src/index.ts",
+   "packages/session/test/ws-helpers.ts",
+   "packages/session/src/runtime.ts",
+   "packages/session/src/server.ts",
+   "packages/session/src/port.ts",
+   "packages/session/src/definition.ts",
+   "packages/session/src/exec.ts",
+   "packages/session/src/lifecycle.ts",
+   "packages/session/src/lifecycle-sender.ts",
+   "packages/session/src/facts.ts"
+  ]
+ },
+ {
+  "id": "K4a",
+  "category": "flaky",
+  "cls": "real-sleep",
+  "file": "packages/distributor/test/distributor.test.ts",
+  "name": "a session process that never reports a port fails with its output and where it was stuck",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/distributor/src/process-driver.ts:437/:487: a fixed 5 s report wait",
+  "subjects": [
+   "packages/session/test/ws-helpers.ts",
+   "packages/distributor/src/orphans.ts",
+   "packages/distributor/src/index.ts",
+   "packages/distributor/src/server.ts",
+   "packages/distributor/src/process-driver.ts",
+   "packages/distributor/src/credentials.ts",
+   "packages/distributor/src/docker-api.ts",
+   "packages/distributor/src/docker-driver.ts",
+   "packages/distributor/src/host-config.ts"
+  ]
+ },
+ {
+  "id": "K4b",
+  "category": "flaky",
+  "cls": "real-sleep",
+  "file": "packages/distributor/test/distributor.test.ts",
+  "name": "a session process whose report cannot be written still fails, naming the missing report",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/distributor/src/process-driver.ts:437/:487: a fixed 5 s report wait",
+  "subjects": [
+   "packages/session/test/ws-helpers.ts",
+   "packages/distributor/src/orphans.ts",
+   "packages/distributor/src/index.ts",
+   "packages/distributor/src/server.ts",
+   "packages/distributor/src/process-driver.ts",
+   "packages/distributor/src/credentials.ts",
+   "packages/distributor/src/docker-api.ts",
+   "packages/distributor/src/docker-driver.ts",
+   "packages/distributor/src/host-config.ts"
+  ]
+ },
+ {
+  "id": "K5",
+  "category": "flaky",
+  "cls": "real-sleep",
+  "file": "packages/cli/test/cli.test.ts",
+  "name": "show -f prints new transcript lines until the run ends, and returns at once for an idle session",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/cli/test/cli.test.ts:106: frames sequenced by 20 and 40 ms timers",
+  "subjects": [
+   "packages/cli/src/api.ts",
+   "packages/cli/src/main.ts"
+  ]
+ },
+ {
+  "id": "K6a",
+  "category": "flaky",
+  "cls": "clock",
+  "file": "packages/sleeper/test/service.test.ts",
+  "name": "a malformed league id escape is a 400",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/sleeper/test/service.test.ts:76: reads the wall clock",
+  "subjects": [
+   "packages/sleeper/src/index.ts",
+   "packages/sleeper/src/client.ts",
+   "packages/sleeper/src/service.ts",
+   "packages/sleeper/src/snapshot.ts",
+   "packages/sleeper/src/store.ts",
+   "packages/sleeper/src/schedules.ts",
+   "packages/sleeper/src/deps.ts",
+   "packages/sleeper/src/ports.ts",
+   "packages/sleeper/src/lineup/index.ts",
+   "packages/sleeper/src/waivers/index.ts",
+   "packages/sleeper/src/trades/index.ts",
+   "packages/sleeper/src/trends/index.ts",
+   "packages/sleeper/src/history/index.ts",
+   "packages/sleeper/src/report/index.ts",
+   "packages/sleeper/src/manifest.ts",
+   "packages/sleeper/src/chat.ts"
+  ]
+ },
+ {
+  "id": "K6b",
+  "category": "flaky",
+  "cls": "clock",
+  "file": "packages/sleeper/test/service.test.ts",
+  "name": "the page routes are relative to the mount: the league id, and an unknown path is a 404",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/sleeper/test/service.test.ts:85: reads the wall clock",
+  "subjects": [
+   "packages/sleeper/src/index.ts",
+   "packages/sleeper/src/client.ts",
+   "packages/sleeper/src/service.ts",
+   "packages/sleeper/src/snapshot.ts",
+   "packages/sleeper/src/store.ts",
+   "packages/sleeper/src/schedules.ts",
+   "packages/sleeper/src/deps.ts",
+   "packages/sleeper/src/ports.ts",
+   "packages/sleeper/src/lineup/index.ts",
+   "packages/sleeper/src/waivers/index.ts",
+   "packages/sleeper/src/trades/index.ts",
+   "packages/sleeper/src/trends/index.ts",
+   "packages/sleeper/src/history/index.ts",
+   "packages/sleeper/src/report/index.ts",
+   "packages/sleeper/src/manifest.ts",
+   "packages/sleeper/src/chat.ts"
+  ]
+ },
+ {
+  "id": "K7",
+  "category": "flaky",
+  "cls": "real-sleep",
+  "file": "packages/session/test/exec.test.ts",
+  "name": "a fork bomb hits the process limit: the command fails, the next one runs",
+  "runner": "node",
+  "runnable": true,
+  "source": "packages/session/test/exec.test.ts:64: ~15 s of bash fork-retry backoff against a 30 s timeout",
+  "subjects": [
+   "packages/session/src/index.ts",
+   "packages/session/src/runtime.ts",
+   "packages/session/src/server.ts",
+   "packages/session/src/port.ts",
+   "packages/session/src/definition.ts",
+   "packages/session/src/exec.ts",
+   "packages/session/src/lifecycle.ts",
+   "packages/session/src/lifecycle-sender.ts",
+   "packages/session/src/facts.ts"
+  ]
+ },
+ {
+  "id": "K8",
+  "category": "flaky",
+  "cls": "shared-state",
+  "file": "tools/qa-stack.test.ts",
+  "name": "the stack serves /version and its stub app, then leaves no listeners",
+  "runner": "node",
+  "runnable": true,
+  "source": "tools/qa/stack.ts:16: one quack-qa-stack.json in tmpdir shared by every checkout",
+  "subjects": [
+   "tools/qa/stack.ts"
+  ]
+ }
+]

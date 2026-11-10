@@ -1,0 +1,8332 @@
+{
+ "ms": 26442,
+ "results": [
+  {
+   "id": "2081:packages/distributor/test/distributor.test.ts:274",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:60 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:57 Date.now()"
+    }
+   ],
+   "ms": 56
+  },
+  {
+   "id": "2072:packages/web/src/manifest.test.ts:8",
+   "hits": [],
+   "ms": 7
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1183",
+   "hits": [],
+   "ms": 52
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1226",
+   "hits": [],
+   "ms": 39
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1247",
+   "hits": [],
+   "ms": 48
+  },
+  {
+   "id": "2073:packages/research/test/research.test.ts:325",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2073:packages/research/test/research.test.ts:336",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2073:packages/research/test/research.test.ts:347",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2073:packages/research/test/research.test.ts:353",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2070:packages/github/test/action.test.ts:12",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/github/test/action.test.ts:13 reviewPullRequest.start({ url: 'https://github.com/acme/widgets/pull/7' }, ctx)"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2070:packages/github/test/action.test.ts:20",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/github/test/action.test.ts:21 reviewPullRequest.start({ url }, ctx)"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2070:packages/github/test/action.test.ts:24",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/github/test/action.test.ts:26 reviewPullRequest.start({ url: 'https://github.com/acme/widgets/pull/7' }, refusing)"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2220:packages/home/test/start.test.ts:50",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/home/test/start.test.ts:45 setTimeout(r, 10)"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/home/test/start.test.ts:16 started: unknown[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/home/test/start.test.ts:57 assert.deepEqual(started, [], 'nothing starts before the verdict')"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2220:packages/home/test/start.test.ts:66",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/home/test/start.test.ts:45 setTimeout(r, 10)"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/home/test/start.test.ts:16 started: unknown[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/home/test/start.test.ts:73 assert.deepEqual(started, [])"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/home/test/tools.test.ts:74",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2070:packages/home/test/tools.test.ts:81",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2208:packages/home/test/tools.test.ts:111",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/home/test/tools.test.ts:10 calls: Array<{ method: string; url: string; body: string }> = []"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2070:packages/home/test/tools.test.ts:103",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2070:packages/home/test/tools.test.ts:111",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/home/test/tools.test.ts:10 calls: Array<{ method: string; url: string; body: string }> = []"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2070:packages/home/test/tools.test.ts:118",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/home/test/tools.test.ts:124 assert.deepEqual(started, [])"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "2070:packages/home/test/tools.test.ts:127",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2070:packages/research/test/action.test.ts:5",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/research/test/action.test.ts:11 researchQuestion.start({ question: 'Why is the sky blue?' }, { distributorUrl: 'http://d', fetch: fakeFetch, env: {} })"
+    }
+   ],
+   "ms": 11
+  },
+  {
+   "id": "2231:packages/runtime/test/agents.test.ts:114",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "packages/runtime/test/agents.test.ts:115 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2070:packages/runtime/test/agents.test.ts:119",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2187:packages/runtime/test/catalog.test.ts:24",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2111:packages/runtime/test/catalog.test.ts:40",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2070:packages/session/test/ui-routes.test.ts:85",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2096:packages/sleeper/test/action.test.ts:7",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/sleeper/test/action.test.ts:13 runJob.start({ job: 'waivers', league: 'L 1', week: 9 }, { distributorUrl: 'http://d', fetch: fetchStub, env })"
+    }
+   ],
+   "ms": 11
+  },
+  {
+   "id": "2177:packages/sleeper/test/action.test.ts:23",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/sleeper/test/action.test.ts:25 runJob.start({ job: 'digest', league: 'L1' }, { distributorUrl: 'http://d', fetch: refusing, env })"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2077:packages/github/test/blast.test.ts:45",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2077:packages/github/test/checkout.test.ts:96",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2077:packages/session/test/exec.test.ts:41",
+   "hits": [],
+   "ms": 11
+  },
+  {
+   "id": "2079:packages/sdk/test/lsp-hold.test.ts:30",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2079:packages/sdk/test/lsp-hold.test.ts:42",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2080:packages/github/test/blast.test.ts:29",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2080:packages/github/test/blast.test.ts:75",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/blast.test.ts:88 process.env.PI_AGENT_DIR = agentDir"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2132:packages/web/src/App.test.tsx:636",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2067:packages/web/src/App.test.tsx:567",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/web/src/App.test.tsx:575 expect(document.documentElement.dataset.theme).toBe('dark')"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2067:packages/web/src/App.test.tsx:582",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2082:packages/github/test/service.test.ts:117",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:40 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:65 invocations: Array<{ path: string; body: any }> = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:122 assert.equal(invocations.length, 1)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:215",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 49
+  },
+  {
+   "id": "2220:packages/distributor/test/distributor.test.ts:787",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:789 setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end('{\"status\":\"answered\"}'), 2_000)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:64 Date.now()"
+    }
+   ],
+   "ms": 39
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:788",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 49
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:897",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    }
+   ],
+   "ms": 33
+  },
+  {
+   "id": "2083:packages/distributor/test/housekeeping.test.ts:38",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:39 start()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2083:packages/distributor/test/housekeeping.test.ts:46",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:47 start()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2166:packages/distributor/test/housekeeping.test.ts:55",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:56 start({ busy: 'busy', waiting: ['asking'] })"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2083:packages/distributor/test/housekeeping.test.ts:65",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:66 start({ busy: 'busy' })"
+    },
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:70 readdir(dataDir)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2083:packages/distributor/test/housekeeping.test.ts:73",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:74 start()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2083:packages/web/src/App.test.tsx:1170",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2246:packages/web/src/App.test.tsx:1441",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1413",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1429",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1491",
+   "hits": [],
+   "ms": 41
+  },
+  {
+   "id": "2208:packages/web/src/App.test.tsx:1619",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1515",
+   "hits": [],
+   "ms": 37
+  },
+  {
+   "id": "2086:packages/github/test/checkout.test.ts:96",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:20",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:21 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2061:packages/judge/test/judge.test.ts:147",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2061:packages/judge/test/judge.test.ts:156",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2175:packages/runtime/test/catalog.test.ts:51",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:102",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2061:packages/web/src/CheckList.test.tsx:7",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2061:packages/web/src/CheckList.test.tsx:13",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2061:packages/web/src/CheckList.test.tsx:18",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2115:packages/workflows/test/workflows.test.ts:332",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2088:packages/session/test/definition.test.ts:56",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2068:packages/github/test/summary.test.ts:8",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2068:packages/remarkable/test/summary.test.ts:5",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2068:packages/research/test/summary.test.ts:5",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2068:packages/research/test/summary.test.ts:9",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2068:packages/sdk/test/summary.test.ts:7",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2068:packages/sdk/test/summary.test.ts:13",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2068:packages/sleeper/test/summary.test.ts:7",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:1121",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:1144",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2068:packages/web/src/App.test.tsx:872",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:69",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:81",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:115",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:212",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/web/src/App.test.tsx:213 startFromHome('review it')"
+    }
+   ],
+   "ms": 35
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:218",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/web/src/App.test.tsx:219 startFromHome('review it')"
+    }
+   ],
+   "ms": 31
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:511",
+   "hits": [],
+   "ms": 36
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:671",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/web/src/App.test.tsx:678 expect(location.hash).toBe('#/')"
+    }
+   ],
+   "ms": 30
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:689",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:704",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:725",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:995",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:953",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:979",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:1067",
+   "hits": [],
+   "ms": 45
+  },
+  {
+   "id": "2128:packages/web/src/App.test.tsx:902",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1135",
+   "hits": [],
+   "ms": 36
+  },
+  {
+   "id": "2206:packages/web/src/App.test.tsx:1225",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1126",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1476",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1490",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1500",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2155:packages/web/src/App.test.tsx:1600",
+   "hits": [],
+   "ms": 50
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1336",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1353",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1359",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1371",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1381",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2071:packages/web/src/App.test.tsx:1388",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1663",
+   "hits": [],
+   "ms": 36
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1621",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2071:packages/web/src/extensions/remarkable/Remarkable.test.tsx:68",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2090:packages/session/test/artifacts.test.ts:34",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2090:packages/web/src/extensions/cards.test.tsx:124",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2090:packages/web/src/extensions/cards.test.tsx:136",
+   "hits": [],
+   "ms": 40
+  },
+  {
+   "id": "2090:packages/web/src/step.test.ts:7",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2090:packages/web/src/step.test.ts:15",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2090:packages/web/src/step.test.ts:19",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2090:packages/web/src/step.test.ts:26",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2087:packages/runtime/test/codemode.test.ts:38",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2087:packages/runtime/test/codemode.test.ts:47",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2087:packages/runtime/test/codemode.test.ts:54",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2094:packages/github/test/reviewer.test.ts:219",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2094:packages/github/test/reviewer.test.ts:228",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2094:packages/session/test/run-ceiling.test.ts:31",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2094:packages/session/test/run-ceiling.test.ts:42",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2175:packages/session/test/run-ceiling.test.ts:54",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2089:packages/distributor/test/docker-driver.test.ts:70",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:19 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:16 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2089:packages/distributor/test/docker-driver.test.ts:88",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:19 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:16 Date.now()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2091:packages/distributor/test/docker-driver.test.ts:103",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:153",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2089:packages/distributor/test/docker-driver.test.ts:120",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:19 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:16 Date.now()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:172",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:212",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    },
+    {
+     "rule": "unit-mocked",
+     "category": "taut",
+     "cls": "over-mocked",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:216 broker.mint = (key) => (minted.push(mint(key)), minted.at(-1)!)"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2220:packages/distributor/test/docker-driver.test.ts:252",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:21 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:18 Date.now()"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2089:packages/distributor/test/docker-driver.test.ts:179",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:19 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:16 Date.now()"
+    }
+   ],
+   "ms": 16
+  },
+  {
+   "id": "2091:packages/distributor/test/docker-driver.test.ts:231",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2089:packages/distributor/test/docker-driver.test.ts:197",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:19 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:16 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2091:packages/distributor/test/docker-live.test.ts:22",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2095:packages/github/test/carry.test.ts:79",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "v1/packages/github/test/carry.test.ts:91 'https://github.com/acme/widgets/pull/7#review-9'"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2095:packages/github/test/carry.test.ts:94",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2095:packages/github/test/carry.test.ts:101",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2095:packages/github/test/carry.test.ts:107",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2095:packages/github/test/carry.test.ts:112",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2095:packages/web/src/extensions/cards.test.tsx:142",
+   "hits": [],
+   "ms": 40
+  },
+  {
+   "id": "2220:packages/distributor/test/docker-driver.test.ts:118",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:21 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:18 Date.now()"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:128",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:148",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:270",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2131:packages/index/test/price.test.ts:53",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2131:packages/index/test/price.test.ts:72",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2104:packages/traces/test/traces.test.ts:217",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/traces/test/traces.test.ts:40 setTimeout(r, 20)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2104:packages/web/src/App.test.tsx:1419",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2208:packages/web/src/App.test.tsx:1813",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:37",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:47",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:58",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:73",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:84",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:91",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:111",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2105:packages/index/test/push.test.ts:125",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2212:packages/index/test/push.test.ts:148",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2105:packages/web/src/push.test.tsx:30",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2105:packages/web/src/push.test.tsx:36",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2105:packages/web/src/push.test.tsx:44",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2105:packages/web/src/push.test.tsx:54",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2105:packages/web/src/push.test.tsx:62",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2108:packages/schedules/test/service.test.ts:254",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:224",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/web/src/App.test.tsx:225 startFromHome('first')"
+    }
+   ],
+   "ms": 34
+  },
+  {
+   "id": "2230:packages/web/src/kinds.test.ts:64",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:136",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:77",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:83",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:92",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:100",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2208:packages/cli/test/cli.test.ts:170",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:77 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:119",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2208:packages/cli/test/cli.test.ts:185",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:77 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:143",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:149",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:163",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:172",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:176",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:381",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2100:packages/cli/test/cli.test.ts:191",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2110:packages/distributor/test/agents.test.ts:40",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/agents.test.ts:44 start(dataDir, agentsDir)"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2110:packages/distributor/test/agents.test.ts:54",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/agents.test.ts:57 start(dataDir, join(root, 'a'))"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2110:packages/distributor/test/agents.test.ts:64",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/agents.test.ts:67 start(dataDir, join(root, 'a'))"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2110:packages/distributor/test/agents.test.ts:79",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2110:packages/web/src/Agents.test.tsx:40",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2110:packages/web/src/Agents.test.tsx:50",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2110:packages/web/src/Agents.test.tsx:60",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2110:packages/web/src/Agents.test.tsx:69",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2110:packages/web/src/Agents.test.tsx:80",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2110:packages/web/src/Agents.test.tsx:86",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2107:packages/session/test/definition.test.ts:193",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2107:packages/session/test/images.test.ts:29",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2107:packages/session/test/images.test.ts:40",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/session/test/images.test.ts:55 readdir(join(session.workspace, 'attachments'))"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2107:packages/session/test/images.test.ts:59",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2107:packages/session/test/images.test.ts:65",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2115:packages/session/test/images.test.ts:72",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2115:packages/web/src/App.test.tsx:398",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:1470",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2155:packages/web/src/App.test.tsx:1770",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:1499",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/web/src/App.test.tsx:1500 startFromHome('review it')"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:1514",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:1527",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2107:packages/web/src/App.test.tsx:1534",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2111:packages/contracts/test/action.test.ts:5",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/contracts/test/action.test.ts:11 defineContract.start({ description: 'Define GET /x for the page' }, { distributorUrl: 'http://d', fetch: fakeFetch, env: {} })"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:102",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2149:packages/contracts/test/flow.test.ts:102",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:153 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2111:packages/contracts/test/flow.test.ts:111",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2111:packages/contracts/test/kind.test.ts:14",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2111:packages/contracts/test/kind.test.ts:19",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2111:packages/contracts/test/kind.test.ts:37",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2111:packages/contracts/test/kind.test.ts:45",
+   "hits": [
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "v1/packages/contracts/test/kind.test.ts:47 assert.ok(anchors.has(a), a)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2111:packages/contracts/test/kind.test.ts:50",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2109:packages/web/src/extensions/contracts/contracts.test.tsx:18",
+   "hits": [],
+   "ms": 56
+  },
+  {
+   "id": "2109:packages/web/src/extensions/contracts/contracts.test.tsx:35",
+   "hits": [],
+   "ms": 56
+  },
+  {
+   "id": "2109:packages/web/src/extensions/contracts/contracts.test.tsx:54",
+   "hits": [],
+   "ms": 53
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:63",
+   "hits": [],
+   "ms": 57
+  },
+  {
+   "id": "2150:packages/web/src/extensions/contracts/contracts.test.tsx:78",
+   "hits": [],
+   "ms": 53
+  },
+  {
+   "id": "2256:packages/web/src/extensions/contracts/contracts.test.tsx:89",
+   "hits": [],
+   "ms": 60
+  },
+  {
+   "id": "2109:packages/web/src/extensions/contracts/contracts.test.tsx:94",
+   "hits": [],
+   "ms": 54
+  },
+  {
+   "id": "2109:packages/web/src/extensions/contracts/contracts.test.tsx:100",
+   "hits": [],
+   "ms": 52
+  },
+  {
+   "id": "2256:packages/web/src/extensions/contracts/contracts.test.tsx:109",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "packages/web/src/extensions/contracts/contracts.test.tsx:121 expect(location.hash).toBe('#/s/home%3Amain/a/contract.spec?v=2')"
+    }
+   ],
+   "ms": 56
+  },
+  {
+   "id": "2256:packages/web/src/extensions/contracts/contracts.test.tsx:125",
+   "hits": [],
+   "ms": 58
+  },
+  {
+   "id": "2109:packages/web/src/extensions/contracts/contracts.test.tsx:140",
+   "hits": [],
+   "ms": 55
+  },
+  {
+   "id": "2150:packages/web/src/extensions/contracts/contracts.test.tsx:156",
+   "hits": [],
+   "ms": 52
+  },
+  {
+   "id": "2118:packages/distributor/test/agents.test.ts:40",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/agents.test.ts:43 start(dataDir, agentsDir)"
+    }
+   ],
+   "ms": 18
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:175",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2115:packages/index/test/cost.test.ts:18",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2115:packages/index/test/publisher.test.ts:118",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/index/test/publisher.test.ts:52 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/index/test/publisher.test.ts:49 Date.now()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2115:packages/session/test/live-queue.test.ts:14",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2115:packages/session/test/live-window.test.ts:16",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2115:packages/session/test/live.test.ts:17",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2115:packages/session/test/live.test.ts:46",
+   "hits": [
+    {
+     "rule": "unit-mocked",
+     "category": "taut",
+     "cls": "over-mocked",
+     "at": "v1/packages/session/test/live.test.ts:59 session.submit = async () => { throw new Error('storage unavailable'); }"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2217:packages/session/test/live.test.ts:78",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2115:packages/session/test/old-log.test.ts:15",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2115:packages/session/test/ui-routes.test.ts:33",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2115:packages/session/test/ui-routes.test.ts:60",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2115:packages/web/src/App.test.tsx:255",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2128:packages/web/src/App.test.tsx:275",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2115:packages/web/src/App.test.tsx:285",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:536",
+   "hits": [],
+   "ms": 41
+  },
+  {
+   "id": "2142:packages/web/src/App.test.tsx:546",
+   "hits": [],
+   "ms": 41
+  },
+  {
+   "id": "2115:packages/web/src/App.test.tsx:712",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:1483",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2115:packages/web/src/App.test.tsx:1561",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2115:packages/web/src/step.test.ts:26",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2115:packages/workflows/test/workflows.test.ts:44",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2115:packages/workflows/test/workflows.test.ts:102",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2115:packages/workflows/test/workflows.test.ts:183",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2220:packages/workflows/test/workflows.test.ts:252",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2120:packages/github/test/reviewer.test.ts:175",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1031",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2114:packages/web/src/App.test.tsx:883",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2121:packages/distributor/test/distributor.test.ts:203",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:60 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:57 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:302",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 38
+  },
+  {
+   "id": "2121:packages/distributor/test/role-switch.test.ts:45",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2121:packages/distributor/test/role-switch.test.ts:68",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/role-switch.test.ts:73 setTimeout(r, 20)"
+    },
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/role-switch.test.ts:69 start('gate-session.ts')"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2122:packages/github/test/fix.test.ts:9",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2122:packages/github/test/fix.test.ts:18",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2122:packages/github/test/fix.test.ts:22",
+   "hits": [],
+   "ms": 11
+  },
+  {
+   "id": "2122:packages/github/test/implementer.test.ts:63",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:59 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:51 Date.now()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2122:packages/github/test/implementer.test.ts:76",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:59 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:51 Date.now()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2122:packages/github/test/implementer.test.ts:84",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:59 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:51 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2122:packages/github/test/implementer.test.ts:106",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:59 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:51 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2122:packages/github/test/implementer.test.ts:125",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:59 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:51 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2122:packages/github/test/implementer.test.ts:135",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:59 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:51 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2191:packages/github/test/service.test.ts:181",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:59 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:100 invocations: Array<{ path: string; body: any }> = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:190 assert.equal(invocations.length, 1)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:1863",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2127:packages/cli/test/cli.test.ts:147",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2127:packages/distributor/test/housekeeping.test.ts:82",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:83 start()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2127:packages/session/test/ui-routes.test.ts:96",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2127:packages/web/src/App.test.tsx:1310",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2131:packages/index/test/price.test.ts:59",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2131:packages/index/test/price.test.ts:64",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2131:packages/index/test/price.test.ts:78",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2129:packages/web/src/App.test.tsx:1603",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2128:packages/web/src/App.test.tsx:294",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2128:packages/web/src/App.test.tsx:355",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:403",
+   "hits": [],
+   "ms": 37
+  },
+  {
+   "id": "2128:packages/web/src/JsonView.test.tsx:7",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "v1/packages/web/src/JsonView.test.tsx:9 'https://example.com/a'"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2128:packages/web/src/JsonView.test.tsx:15",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2128:packages/web/src/JsonView.test.tsx:22",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2128:packages/web/src/extensions/sleeper/SleeperCard.test.tsx:18",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2256:packages/web/src/extensions/sleeper/SleeperCard.test.tsx:27",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2128:packages/web/src/extensions/sleeper/SleeperCard.test.tsx:36",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2256:packages/web/src/extensions/sleeper/SleeperCard.test.tsx:54",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2256:packages/web/src/extensions/sleeper/SleeperCard.test.tsx:60",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2125:packages/schedules/test/service.test.ts:246",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2125:packages/web/src/extensions/schedules/Schedules.test.tsx:10",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2125:packages/web/src/extensions/schedules/Schedules.test.tsx:22",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2125:packages/web/src/extensions/schedules/Schedules.test.tsx:38",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2125:packages/web/src/extensions/schedules/Schedules.test.tsx:44",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2125:packages/web/src/extensions/schedules/Schedules.test.tsx:50",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2125:packages/web/src/extensions/schedules/Schedules.test.tsx:56",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2139:packages/web/src/App.test.tsx:1636",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:162",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:170",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:179",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:186",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:194",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:201",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2126:packages/github/test/implementer.test.ts:205",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2132:packages/web/src/App.test.tsx:1482",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2130:packages/web/src/App.test.tsx:1470",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2204:packages/web/src/extensions/cards.test.tsx:30",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2138:packages/web/src/extensions/cards.test.tsx:154",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2137:packages/github/test/pulls.test.ts:12",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2137:packages/github/test/pulls.test.ts:25",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2137:packages/github/test/pulls.test.ts:36",
+   "hits": [
+    {
+     "rule": "seam-default-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/pulls.test.ts:39 pullStates()"
+    }
+   ],
+   "ms": 18
+  },
+  {
+   "id": "2137:packages/github/test/service.test.ts:345",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:40 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:20 calls: Array<{ method: string; path: string; auth: string; body: any }> = []"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/github/test/service.test.ts:356 assert.equal(calls.length, before, 'recorded states need no GitHub read')"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:351 assert.equal(invocations.length, 0)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2137:packages/github/test/service.test.ts:362",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:40 Date.now()"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2137:packages/github/test/service.test.ts:370",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:40 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2245:packages/web/src/App.test.tsx:81",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2245:packages/web/src/App.test.tsx:100",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2220:packages/contracts/test/flow.test.ts:177",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:171 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2220:packages/contracts/test/flow.test.ts:194",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:171 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2220:packages/contracts/test/flow.test.ts:209",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:171 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 16
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:251",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2132:packages/web/src/extensions/contracts/page.test.tsx:14",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2132:packages/web/src/extensions/contracts/page.test.tsx:36",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2132:packages/web/src/extensions/contracts/page.test.tsx:43",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/extensions/contracts/page.test.tsx:58",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2132:packages/web/src/extensions/contracts/page.test.tsx:61",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2141:packages/web/src/extensions/cards.test.tsx:161",
+   "hits": [],
+   "ms": 41
+  },
+  {
+   "id": "2143:packages/distributor/test/distributor.test.ts:334",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:60 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:57 Date.now()"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2143:packages/web/src/App.test.tsx:673",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "v1/packages/web/src/App.test.tsx:678 'https://github.com/fagerbergj/quack/commit/abc1234def5678'"
+    }
+   ],
+   "ms": 39
+  },
+  {
+   "id": "2143:packages/web/src/App.test.tsx:682",
+   "hits": [],
+   "ms": 39
+  },
+  {
+   "id": "2143:packages/web/src/App.test.tsx:690",
+   "hits": [],
+   "ms": 41
+  },
+  {
+   "id": "2143:packages/web/src/App.test.tsx:698",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2143:packages/web/src/App.test.tsx:706",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:532",
+   "hits": [],
+   "ms": 36
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1919",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:1980",
+   "hits": [],
+   "ms": 55
+  },
+  {
+   "id": "2142:packages/web/src/App.test.tsx:1757",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:853",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2146:packages/web/src/App.test.tsx:906",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2146:packages/web/src/App.test.tsx:917",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:909",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:915",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:926",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2220:packages/workflows/test/workflows.test.ts:216",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2220:packages/workflows/test/workflows.test.ts:426",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2220:packages/workflows/test/workflows.test.ts:445",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2232:packages/judge/test/judge.test.ts:169",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:595",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:715",
+   "hits": [],
+   "ms": 39
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1296",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1840",
+   "hits": [],
+   "ms": 39
+  },
+  {
+   "id": "2133:packages/web/src/App.test.tsx:1847",
+   "hits": [],
+   "ms": 45
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1869",
+   "hits": [],
+   "ms": 37
+  },
+  {
+   "id": "2133:packages/web/src/App.test.tsx:1878",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2147:packages/web/src/extensions/sleeper/Sleeper.test.tsx:57",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2167:packages/web/src/extensions/sleeper/Sleeper.test.tsx:244",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2147:packages/web/src/extensions/sleeper/Sleeper.test.tsx:308",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2144:packages/contracts/test/action.test.ts:19",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:1967",
+   "hits": [],
+   "ms": 45
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:2094",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/contracts.test.tsx:167",
+   "hits": [],
+   "ms": 56
+  },
+  {
+   "id": "2150:packages/web/src/extensions/contracts/contracts.test.tsx:179",
+   "hits": [],
+   "ms": 54
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:201",
+   "hits": [],
+   "ms": 59
+  },
+  {
+   "id": "2151:packages/web/src/App.test.tsx:1878",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1973",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "v1/packages/web/src/App.test.tsx:1982 'https://github.com/o/r/pull/1'"
+    }
+   ],
+   "ms": 37
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:2057",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:2065",
+   "hits": [],
+   "ms": 48
+  },
+  {
+   "id": "2148:packages/web/src/App.test.tsx:2011",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2148:packages/web/src/App.test.tsx:2023",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2177:tools/qa-stack.test.ts:10",
+   "hits": [
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "freePort (reserve then release, called inside the subject)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:23",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:35",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:87",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 17
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:99",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:113",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:124",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2158:packages/github/test/implement.test.ts:139",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:83 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/github/test/service.test.ts:181",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:41 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:22 commented: string[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:189 assert.equal(invocations[0].path, '/sessions/github:acme/widgets#12/invocations?agent=implementer')"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2186:packages/github/test/service.test.ts:201",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:41 Date.now()"
+    }
+   ],
+   "ms": 24
+  },
+  {
+   "id": "2158:packages/github/test/service.test.ts:207",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:40 Date.now()"
+    }
+   ],
+   "ms": 24
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:119",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:13",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:20",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:24",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:41",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:47",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:61",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:72",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2154:packages/contracts/test/json-schema.test.ts:79",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/contracts.test.tsx:213",
+   "hits": [],
+   "ms": 55
+  },
+  {
+   "id": "2154:packages/web/src/extensions/contracts/contracts.test.tsx:208",
+   "hits": [],
+   "ms": 53
+  },
+  {
+   "id": "2154:packages/web/src/extensions/contracts/page.test.tsx:14",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2229:packages/distributor/test/distributor.test.ts:145",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:68 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:65 Date.now()"
+    },
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/distributor.test.ts:153 readdir(dataDir)"
+    }
+   ],
+   "ms": 38
+  },
+  {
+   "id": "2155:packages/web/src/App.test.tsx:261",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2155:packages/web/src/App.test.tsx:272",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:243",
+   "hits": [],
+   "ms": 37
+  },
+  {
+   "id": "2155:packages/web/src/App.test.tsx:1761",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2153:packages/session/test/retry.test.ts:99",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2153:packages/session/test/retry.test.ts:108",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2153:packages/session/test/retry.test.ts:126",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    },
+    {
+     "rule": "interaction-only",
+     "category": "taut",
+     "cls": "interaction-only",
+     "at": "v1/packages/session/test/retry.test.ts:131 assert.equal(faux.state.callCount, 3)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2153:packages/session/test/retry.test.ts:135",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    },
+    {
+     "rule": "weak-only",
+     "category": "taut",
+     "cls": "truthy",
+     "at": "v1/packages/session/test/retry.test.ts:140 assert.ok(results.some((r) => typeof r === 'object' && r?.status === 'placed'))"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2153:packages/session/test/retry.test.ts:144",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2153:packages/session/test/retry.test.ts:156",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/retry.test.ts:96 setTimeout(r, 20)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:885",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:893",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2226:packages/sleeper/test/lineup.test.ts:190",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2226:packages/sleeper/test/lineup.test.ts:213",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2219:packages/sleeper/test/lineup.test.ts:339",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2226:packages/sleeper/test/trades.test.ts:156",
+   "hits": [],
+   "ms": 50
+  },
+  {
+   "id": "2162:packages/sleeper/test/trades.test.ts:208",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:281",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:386",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:305",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2163:packages/cli/test/cli.test.ts:196",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:63 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:157",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2251:packages/cli/test/cli.test.ts:415",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 30
+  },
+  {
+   "id": "2163:packages/cli/test/cli.test.ts:214",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:63 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2165:packages/session/test/ui-routes.test.ts:105",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2166:packages/distributor/test/apps.test.ts:66",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2166:packages/distributor/test/distributor.test.ts:121",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:60 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:57 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2164:packages/judge/test/rubric.test.ts:31",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2164:packages/research/test/research.test.ts:374",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2164:packages/research/test/research.test.ts:403",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2232:tools/research-set.test.ts:7",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2167:packages/cli/test/cli.test.ts:110",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:65 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 25
+  },
+  {
+   "id": "2167:packages/home/test/tools.test.ts:131",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2212:packages/index/test/index.test.ts:439",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/index/test/index.test.ts:85 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/index/test/index.test.ts:80 Date.now()"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2167:packages/index/test/index.test.ts:430",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/index/test/index.test.ts:83 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/index/test/index.test.ts:78 Date.now()"
+    }
+   ],
+   "ms": 24
+  },
+  {
+   "id": "2167:packages/sdk/test/http.test.ts:44",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2167:packages/web/src/App.test.tsx:1077",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2167:packages/web/src/extensions/sleeper/Sleeper.test.tsx:231",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2168:packages/research/test/research.test.ts:367",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2169:packages/session/test/ui-routes.test.ts:105",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2220:packages/contracts/test/flow.test.ts:239",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:171 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 16
+  },
+  {
+   "id": "2170:packages/contracts/test/flow.test.ts:251",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:171 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 16
+  },
+  {
+   "id": "2171:packages/index/test/push.test.ts:162",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2172:packages/distributor/test/apps.test.ts:49",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2174:packages/contracts/test/flow.test.ts:262",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/contracts/test/flow.test.ts:171 setTimeout(r, 25)"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2175:packages/runtime/test/validate.test.ts:29",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2175:packages/runtime/test/validate.test.ts:34",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2175:packages/runtime/test/validate.test.ts:43",
+   "hits": [],
+   "ms": 11
+  },
+  {
+   "id": "2177:packages/runtime/test/validate.test.ts:50",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/validate.test.ts:51 delete process.env.QUACK_INDEX_URL"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2175:packages/runtime/test/validate.test.ts:59",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:29",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:98",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:162",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:194",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:205",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:216",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:224",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2175:packages/session/test/definition.test.ts:231",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2175:packages/session/test/images.test.ts:39",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2175:packages/slots/test/slots.test.ts:290",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2176:packages/distributor/test/apps.test.ts:91",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2176:packages/distributor/test/apps.test.ts:97",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2176:packages/github/test/checkout.test.ts:119",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2177:packages/github/test/eval.test.ts:15",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2176:packages/index/test/index.test.ts:170",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/index/test/index.test.ts:83 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/index/test/index.test.ts:78 Date.now()"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "2176:packages/runtime/test/agents.test.ts:107",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2176:packages/runtime/test/agents.test.ts:115",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2176:packages/runtime/test/agents.test.ts:132",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2176:packages/runtime/test/validate.test.ts:64",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2176:packages/sdk/test/services.test.ts:10",
+   "hits": [],
+   "ms": 11
+  },
+  {
+   "id": "2176:packages/sdk/test/services.test.ts:23",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2176:packages/sdk/test/services.test.ts:32",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2176:packages/session/test/definition.test.ts:202",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2176:packages/sleeper/test/settings.test.ts:6",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:522",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:877",
+   "hits": [],
+   "ms": 41
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:884",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:893",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:900",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2173:packages/web/src/App.test.tsx:908",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2173:packages/web/src/Transcript.test.tsx:10",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:34",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/distributor/test/apps.test.ts:12 seen: Array<{ method?: string; url?: string; auth?: string; body: string }> = []"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:42",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:53",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/distributor/test/apps.test.ts:12 seen: Array<{ method?: string; url?: string; auth?: string; body: string }> = []"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/distributor/test/apps.test.ts:65 assert.equal(seen.length, before, 'none of them reached a handler')"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/distributor/test/apps.test.ts:65 assert.equal(seen.length, before, 'none of them reached a handler')"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:68",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:74",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:85",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/distributor/test/apps.test.ts:12 seen: Array<{ method?: string; url?: string; auth?: string; body: string }> = []"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:94",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/distributor/test/apps.test.ts:106",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:103",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2177:packages/distributor/test/docker-driver.test.ts:197",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:20 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:17 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/github/test/service.test.ts:416",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:41 Date.now()"
+    }
+   ],
+   "ms": 24
+  },
+  {
+   "id": "2177:packages/github/test/service.test.ts:421",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:41 Date.now()"
+    }
+   ],
+   "ms": 24
+  },
+  {
+   "id": "2177:packages/remarkable/test/ingest.test.ts:233",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/remarkable/test/service.test.ts:122",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/remarkable/test/service.test.ts:186",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/remarkable/test/service.test.ts:237",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/remarkable/test/service.test.ts:292",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/remarkable/test/service.test.ts:85 seen: Seen[] = []"
+    }
+   ],
+   "ms": 16
+  },
+  {
+   "id": "2177:packages/remarkable/test/service.test.ts:313",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:36",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:37 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:54",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:55 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 18
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:62",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:63 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:70",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:71 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 18
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:78",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:79 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:86",
+   "hits": [
+    {
+     "rule": "env-unrestored",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/runtime/test/agents.test.ts:87 process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080'"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:94",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:102",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2177:packages/runtime/test/agents.test.ts:109",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2230:packages/runtime/test/catalog.test.ts:62",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2177:packages/runtime/test/validate.test.ts:64",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/runtime/test/validate.test.ts:74",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:53",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:70",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:84",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:95",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2219:packages/schedules/test/service.test.ts:105",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2219:packages/schedules/test/service.test.ts:138",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:135",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:153",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2219:packages/schedules/test/service.test.ts:186",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:176",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:188",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:202",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:214",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:233",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:245",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2208:packages/schedules/test/service.test.ts:254",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:278",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:302",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2177:packages/schedules/test/service.test.ts:311",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2177:packages/sdk/test/extensions.test.ts:10",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2177:packages/sdk/test/extensions.test.ts:19",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/sdk/test/extensions.test.ts:28",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/sdk/test/http.test.ts:56",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/session/test/definition.test.ts:202",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/session/test/definition.test.ts:214",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/sleeper/test/action.test.ts:7",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/sleeper/test/action.test.ts:13 runJob.start({ job: 'waivers', league: 'L 1', week: 9 }, { distributorUrl: 'http://d', fetch: fetchStub, env })"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/sleeper/test/history.test.ts:142",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2177:packages/sleeper/test/lineup.test.ts:238",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2177:packages/sleeper/test/lineup.test.ts:260",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2177:packages/sleeper/test/lineup.test.ts:280",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2177:packages/sleeper/test/report.test.ts:269",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2177:packages/sleeper/test/report.test.ts:290",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2177:packages/sleeper/test/service.test.ts:83",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/sleeper/test/service.test.ts:84 new Date()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2177:packages/sleeper/test/service.test.ts:125",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/sleeper/test/service.test.ts:140",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/sleeper/test/service.test.ts:146",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2177:packages/sleeper/test/trades.test.ts:226",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2177:packages/sleeper/test/trades.test.ts:249",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2177:packages/sleeper/test/trends.test.ts:230",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2177:packages/sleeper/test/trends.test.ts:254",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2219:packages/sleeper/test/trends.test.ts:261",
+   "hits": [],
+   "ms": 37
+  },
+  {
+   "id": "2177:packages/sleeper/test/trends.test.ts:294",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2177:packages/sleeper/test/waivers.test.ts:332",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2177:packages/sleeper/test/waivers.test.ts:363",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2177:packages/slots/test/slots.test.ts:222",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2177:packages/slots/test/slots.test.ts:262",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2177:packages/slots/test/slots.test.ts:281",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2179:packages/judge/test/judge.test.ts:133",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/judge/test/judge.test.ts:33 setTimeout(r, holdMs)"
+    }
+   ],
+   "ms": 17
+  },
+  {
+   "id": "2179:packages/sdk/test/http.test.ts:65",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/sdk/test/http.test.ts:68 setTimeout(() => (res.writeHead(200), res.end('{}'), ended()), 10)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2226:packages/eval/test/eval.test.ts:164",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2184:packages/github/test/settings.test.ts:6",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2183:packages/github/test/eval.test.ts:35",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:16",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:23",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:29",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:37",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:42",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:51",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:58",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:64",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:75",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2185:packages/contracts/test/typescript.test.ts:82",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2185:packages/web/src/extensions/contracts/contracts.test.tsx:225",
+   "hits": [],
+   "ms": 54
+  },
+  {
+   "id": "2191:packages/github/test/implementer.test.ts:77",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:223",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:26 commented: string[] = []"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/github/test/service.test.ts:236 assert.equal(metaReads(), before, 'retries reuse the stored opening-card data')"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:231 assert.deepEqual(commented, [fixQueued])"
+    }
+   ],
+   "ms": 36
+  },
+  {
+   "id": "2191:packages/github/test/service.test.ts:235",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/service.test.ts:244 sleep(60)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:59 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:100 invocations: Array<{ path: string; body: any }> = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:245 assert.equal(invocations.length, 0, 'nothing retries without the timer')"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:273",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:26 commented: string[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:281 assert.deepEqual(commented, [fixRefused('agent implementer is not registered')])"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2191:packages/github/test/service.test.ts:359",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:59 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:25 calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = []"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2191:packages/github/test/service.test.ts:368",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:59 Date.now()"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2192:packages/github/test/fix.test.ts:18",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2192:packages/github/test/implement.test.ts:35",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implement.test.ts:87 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implement.test.ts:79 Date.now()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2192:packages/session/test/unknown-tool.test.ts:14",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2194:packages/github/test/service.test.ts:347",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:59 Date.now()"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2195:packages/session/test/cut-off.test.ts:29",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2195:packages/session/test/cut-off.test.ts:35",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2195:packages/session/test/cut-off.test.ts:40",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2188:packages/github/test/review.test.ts:68",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2188:packages/github/test/review.test.ts:75",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2216:packages/github/test/reviewer.test.ts:84",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2196:packages/github/test/implementer.test.ts:139",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2196:packages/github/test/implementer.test.ts:148",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/github/test/implementer.test.ts:60 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/implementer.test.ts:52 Date.now()"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2196:packages/github/test/service.test.ts:357",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:59 Date.now()"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "2226:packages/sleeper/test/history.test.ts:126",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2198:packages/judge/test/judge.test.ts:156",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2199:packages/sleeper/test/lineup.test.ts:337",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2226:packages/sleeper/test/waivers.test.ts:267",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2226:packages/sleeper/test/waivers.test.ts:277",
+   "hits": [],
+   "ms": 36
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:61",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2202:packages/sleeper/test/waivers.test.ts:200",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2202:packages/sleeper/test/waivers.test.ts:244",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2203:packages/sleeper/test/history.test.ts:97",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1217",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1855",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:39",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:46",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:52",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:58",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:63",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:70",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/code-contract.test.tsx:78",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/code-contract.test.tsx:103",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:36",
+   "hits": [],
+   "ms": 53
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:101",
+   "hits": [],
+   "ms": 57
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:179",
+   "hits": [],
+   "ms": 55
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:185",
+   "hits": [],
+   "ms": 55
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:194",
+   "hits": [],
+   "ms": 57
+  },
+  {
+   "id": "2204:packages/web/src/extensions/contracts/contracts.test.tsx:224",
+   "hits": [],
+   "ms": 58
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/contracts.test.tsx:243",
+   "hits": [],
+   "ms": 55
+  },
+  {
+   "id": "2204:packages/web/src/extensions/sleeper/Sleeper.test.tsx:274",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2207:packages/web/src/extensions/contracts/contracts.test.tsx:255",
+   "hits": [],
+   "ms": 56
+  },
+  {
+   "id": "2206:packages/web/src/extensions/sleeper/Sleeper.test.tsx:44",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/code-contract.test.tsx:123",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2205:packages/web/src/extensions/contracts/code-contract.test.tsx:113",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2205:packages/web/src/extensions/contracts/code-contract.test.tsx:125",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2208:packages/cli/test/cli.test.ts:113",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:77 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:247",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:249 Date.now()"
+    }
+   ],
+   "ms": 37
+  },
+  {
+   "id": "2208:packages/distributor/test/distributor.test.ts:219",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:60 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:57 Date.now()"
+    }
+   ],
+   "ms": 18
+  },
+  {
+   "id": "2208:packages/distributor/test/housekeeping.test.ts:76",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/housekeeping.test.ts:77 start()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2208:packages/distributor/test/retire.test.ts:95",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:63",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:64 start({ running: ['github:o/r#1'] })"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:77",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:78 start()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:86",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:87 start()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:96",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:97 start()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:116",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:117 start()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:125",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:126 start()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:132",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:134 start({ spend: async () => [{ key: 'sleeper:gold:1:lineup', cost: 1.5, tokens }] })"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:145",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:146 start({ spend: async () => [{ key: 'sleeper:platinum:2:lineup', cost: 2, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] })"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:155",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:156 start()"
+    }
+   ],
+   "ms": 17
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:168",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:169 start({ running: ['github:o/r#1'] })"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2220:packages/distributor/test/sessions-api.test.ts:202",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:203 start({ token: 'admin' })"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:199",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:200 start()"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:203 assert.deepEqual((await list()).body.sessions, before)"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:206",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:220",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:221 start({ sessions: { empty: {} } })"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:227",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:228 start()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:244",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:245 start({ sessions: { down: { activity: 2000 } } })"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2208:packages/distributor/test/sessions-api.test.ts:252",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/sessions-api.test.ts:253 start({ sessions: { gone: { activity: 1 } } })"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2230:packages/home/test/tools.test.ts:85",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "packages/home/test/tools.test.ts:10 calls: Array<{ method: string; url: string; body: string }> = []"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:23",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2246:packages/web/src/App.test.tsx:51",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2208:packages/web/src/App.test.tsx:295",
+   "hits": [],
+   "ms": 43
+  },
+  {
+   "id": "2230:packages/web/src/extensions/sleeper/Sleeper.test.tsx:236",
+   "hits": [],
+   "ms": 39
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:168",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    },
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/distributor.test.ts:181 readdir(dataDir)"
+    }
+   ],
+   "ms": 40
+  },
+  {
+   "id": "2209:packages/distributor/test/sessions-api.test.ts:185",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2213:packages/remarkable/test/ingest.test.ts:126",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2213:packages/remarkable/test/ingest.test.ts:281",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2213:packages/remarkable/test/ingest.test.ts:305",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2213:packages/remarkable/test/queue.test.ts:7",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2213:packages/remarkable/test/service.test.ts:227",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2213:packages/research/test/research.test.ts:231",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2214:packages/contracts/test/approved.test.ts:26",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2214:packages/contracts/test/approved.test.ts:39",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2214:packages/contracts/test/approved.test.ts:46",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2232:packages/contracts/test/typescript.test.ts:89",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2232:packages/judge/test/resolve.test.ts:37",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2228:packages/judge/test/resolve.test.ts:49",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2228:packages/judge/test/resolve.test.ts:58",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2214:packages/remarkable/test/ingest.test.ts:319",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2214:packages/workflows/test/workflows.test.ts:325",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2217:packages/session/test/live.test.ts:114",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:394",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "v1/packages/web/src/App.test.tsx:399 'https://github.com/o/r/pull/1#pullrequestreview-9'"
+    }
+   ],
+   "ms": 36
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:412",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:420",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "v1/packages/web/src/App.test.tsx:425 'https://github.com/o/r/pull/1'"
+    }
+   ],
+   "ms": 37
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:460",
+   "hits": [],
+   "ms": 36
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:499",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/web/src/App.test.tsx:506 expect(ws.sent).toEqual([])"
+    }
+   ],
+   "ms": 36
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:741",
+   "hits": [],
+   "ms": 40
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:994",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1012",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2217:packages/web/src/App.test.tsx:1281",
+   "hits": [],
+   "ms": 37
+  },
+  {
+   "id": "2217:packages/web/src/approvals.test.tsx:19",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2217:packages/web/src/approvals.test.tsx:32",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2230:packages/web/src/approvals.test.tsx:43",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2217:packages/web/src/boundary.test.ts:5",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/web/src/boundary.test.ts:7 readdirSync(dir)"
+    }
+   ],
+   "ms": 6
+  },
+  {
+   "id": "2217:packages/web/src/dialogs.test.tsx:26",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2217:packages/web/src/dialogs.test.tsx:54",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2217:packages/web/src/dialogs.test.tsx:73",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2217:packages/web/src/dialogs.test.tsx:85",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2217:packages/web/src/extensions/prState.test.tsx:19",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2217:packages/web/src/extensions/prState.test.tsx:31",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2217:packages/web/src/extensions/prState.test.tsx:39",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2217:packages/web/src/render.test.tsx:35",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/web/src/render.test.tsx:39 expect(rowRenders()).toEqual(before)"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2217:packages/web/src/render.test.tsx:42",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/web/src/render.test.tsx:47 expect(rowRenders()).toEqual(before)"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2217:packages/web/src/render.test.tsx:54",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/web/src/render.test.tsx:59 expect(rowRenders()).toEqual(before)"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2217:packages/web/src/render.test.tsx:63",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2217:packages/web/src/same.test.ts:4",
+   "hits": [],
+   "ms": 11
+  },
+  {
+   "id": "2217:packages/web/src/session-live.test.tsx:10",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2217:packages/web/src/useLoad.test.tsx:12",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2217:packages/web/src/useLoad.test.tsx:21",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2211:packages/session/test/session.test.ts:33",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:18",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:25",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:34",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/app.test.ts:35 Date.now()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:41",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:47",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:54",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2216:packages/github/test/app.test.ts:60",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2216:packages/github/test/dedupe.test.ts:14",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2216:packages/github/test/review.test.ts:42",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2216:packages/github/test/review.test.ts:139",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2216:packages/github/test/review.test.ts:152",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2216:packages/github/test/review.test.ts:157",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2216:packages/github/test/reviewer.test.ts:109",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:251",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:116 invocations: Array<{ path: string; body: any }> = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:260 assert.equal(invocations.length, 0)"
+    }
+   ],
+   "ms": 34
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:295",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:26 commented: string[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:304 assert.deepEqual(commented, [reviewQueued], 'said once, not once per push')"
+    }
+   ],
+   "ms": 35
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:320",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:116 invocations: Array<{ path: string; body: any }> = []"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:337",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:26 commented: string[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:345 assert.deepEqual(commented, [reviewRefused('agent reviewer version 2 changed since it was first used; bump its version')])"
+    }
+   ],
+   "ms": 36
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:356",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:26 commented: string[] = []"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/github/test/service.test.ts:364 assert.deepEqual(commented, [], 'an outage is not worth a comment')"
+    }
+   ],
+   "ms": 36
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:494",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 31
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:571",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 34
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:626",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 34
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:638",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 31
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:644",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "v1/packages/github/test/service.test.ts:25 calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = []"
+    }
+   ],
+   "ms": 34
+  },
+  {
+   "id": "2216:packages/github/test/service.test.ts:653",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2216:packages/github/test/waiting-store.test.ts:50",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:96",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:672",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/distributor/test/distributor.test.ts:686 assert.deepEqual(fleet.log, [], 'the retry after 1 s failed too')"
+    }
+   ],
+   "ms": 33
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:697",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/distributor/test/distributor.test.ts:705 assert.deepEqual(fleet.log, [])"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:708",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "v1/packages/distributor/test/distributor.test.ts:720 assert.deepEqual(fleet.log, ['start sleeper:trends'])"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:724",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2218:packages/distributor/test/distributor.test.ts:858",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:66 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:63 Date.now()"
+    }
+   ],
+   "ms": 35
+  },
+  {
+   "id": "2220:packages/distributor/test/distributor.test.ts:876",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:67 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:64 Date.now()"
+    }
+   ],
+   "ms": 30
+  },
+  {
+   "id": "2218:packages/distributor/test/docker-driver.test.ts:198",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:21 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:18 Date.now()"
+    }
+   ],
+   "ms": 22
+  },
+  {
+   "id": "2218:packages/distributor/test/lifecycle.test.ts:43",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/distributor/test/lifecycle.test.ts:53 readdir(dataDir)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/distributor/test/lifecycle.test.ts:60",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2218:packages/distributor/test/lifecycle.test.ts:72",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/distributor/test/lifecycle.test.ts:81 readdir(join(launches[1].dir, 'agent-def'))"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/distributor/test/lifecycle.test.ts:85",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/distributor/test/lifecycle.test.ts:108",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/distributor/test/lifecycle.test.ts:114 readdir(dataDir)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/distributor/test/lifecycle.test.ts:117",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/distributor/test/lifecycle.test.ts:131",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/distributor/test/role-switch.test.ts:68",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/role-switch.test.ts:69 start('echo-session.ts')"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/session/test/definition.test.ts:247",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2218:packages/session/test/live-queue.test.ts:14",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/session/test/live.test.ts:15",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2218:packages/session/test/session.test.ts:100",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "v1/packages/session/test/session.test.ts:106 readdir(own)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2218:packages/slots/test/slots.test.ts:301",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2219:packages/schedules/test/service.test.ts:118",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2219:packages/sleeper/test/history.test.ts:76",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2219:packages/sleeper/test/history.test.ts:153",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2219:packages/sleeper/test/lineup.test.ts:99",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2219:packages/sleeper/test/lineup.test.ts:111",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2219:packages/sleeper/test/lineup.test.ts:119",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2219:packages/sleeper/test/lineup.test.ts:126",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2219:packages/sleeper/test/lineup.test.ts:198",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2219:packages/sleeper/test/report.test.ts:92",
+   "hits": [],
+   "ms": 45
+  },
+  {
+   "id": "2219:packages/sleeper/test/report.test.ts:117",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2226:packages/sleeper/test/report.test.ts:194",
+   "hits": [],
+   "ms": 51
+  },
+  {
+   "id": "2226:packages/sleeper/test/report.test.ts:207",
+   "hits": [],
+   "ms": 53
+  },
+  {
+   "id": "2219:packages/sleeper/test/report.test.ts:333",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2219:packages/sleeper/test/service.test.ts:128",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2219:packages/sleeper/test/service.test.ts:145",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2219:packages/sleeper/test/service.test.ts:160",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2219:packages/sleeper/test/service.test.ts:178",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "v1/packages/sleeper/test/service.test.ts:194 assert.equal(sessionClient({ QUACK_INDEX_URL: 'http://index', QUACK_INDEX_TOKEN: 'tok' }), client, 'one client, and one cache, per session process')"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2219:packages/sleeper/test/trades.test.ts:47",
+   "hits": [],
+   "ms": 40
+  },
+  {
+   "id": "2219:packages/sleeper/test/trades.test.ts:114",
+   "hits": [],
+   "ms": 42
+  },
+  {
+   "id": "2226:packages/sleeper/test/trades.test.ts:174",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2219:packages/sleeper/test/trends.test.ts:122",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2226:packages/sleeper/test/trends.test.ts:204",
+   "hits": [],
+   "ms": 40
+  },
+  {
+   "id": "2226:packages/sleeper/test/trends.test.ts:213",
+   "hits": [],
+   "ms": 44
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:102",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:106",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:125",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:132",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:187",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:195",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2226:packages/sleeper/test/waivers.test.ts:286",
+   "hits": [],
+   "ms": 39
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:292",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:320",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2219:packages/sleeper/test/waivers.test.ts:427",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2256:packages/web/src/extensions/sleeper/SleeperCard.test.tsx:36",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2215:packages/cli/test/cli.test.ts:326",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/cli/test/cli.test.ts:77 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2220:packages/eval/test/driver.test.ts:27",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/eval/test/driver.test.ts:25 Date.now()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2220:packages/eval/test/driver.test.ts:34",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/eval/test/driver.test.ts:25 Date.now()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2220:packages/eval/test/driver.test.ts:42",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/eval/test/driver.test.ts:44 Date.now()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2215:packages/eval/test/driver.test.ts:48",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/eval/test/driver.test.ts:25 Date.now()"
+    },
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/eval/test/driver.test.ts:49 spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)\"], { stdio: ['ignore', 'pipe', 'ignore'] })"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2215:packages/eval/test/driver.test.ts:56",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/eval/test/driver.test.ts:25 Date.now()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2230:tools/boundary.test.ts:27",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2215:tools/boundary.test.ts:45",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2215:tools/boundary.test.ts:59",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2215:tools/dupl.test.ts:16",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2215:tools/dupl.test.ts:22",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2215:tools/dupl.test.ts:31",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2215:tools/dupl.test.ts:39",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2215:tools/leak-check.test.ts:18",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2215:tools/leak-check.test.ts:24",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2215:tools/leak-check.test.ts:29",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2215:tools/sloplint.test.ts:32",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2215:tools/sloplint.test.ts:42",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2220:packages/distributor/test/distributor.test.ts:899",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/distributor.test.ts:67 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/distributor.test.ts:64 Date.now()"
+    }
+   ],
+   "ms": 33
+  },
+  {
+   "id": "2220:packages/distributor/test/docker-driver.test.ts:316",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:21 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/docker-driver.test.ts:18 Date.now()"
+    }
+   ],
+   "ms": 23
+  },
+  {
+   "id": "2222:packages/distributor/test/docker-driver.test.ts:342",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/docker-driver.test.ts:22 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/docker-driver.test.ts:19 Date.now()"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/distributor/test/retire.test.ts:68",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/distributor/test/session-auth.test.ts:69",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/session-auth.test.ts:34 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/session-auth.test.ts:29 Date.now()"
+    },
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/distributor/test/session-auth.test.ts:70 start()"
+    }
+   ],
+   "ms": 35
+  },
+  {
+   "id": "2220:packages/distributor/test/session-auth.test.ts:79",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/session-auth.test.ts:33 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/session-auth.test.ts:28 Date.now()"
+    },
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "v1/packages/distributor/test/session-auth.test.ts:80 start()"
+    }
+   ],
+   "ms": 38
+  },
+  {
+   "id": "2230:packages/distributor/test/session-auth.test.ts:101",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/session-auth.test.ts:34 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/session-auth.test.ts:29 Date.now()"
+    },
+    {
+     "rule": "seam-default-fetch",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/distributor/test/session-auth.test.ts:107 withCredential(held.get('quack:home')!)"
+    },
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/distributor/test/session-auth.test.ts:102 start()"
+    }
+   ],
+   "ms": 37
+  },
+  {
+   "id": "2220:packages/distributor/test/session-auth.test.ts:109",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/distributor/test/session-auth.test.ts:33 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/distributor/test/session-auth.test.ts:28 Date.now()"
+    }
+   ],
+   "ms": 40
+  },
+  {
+   "id": "2220:packages/session/test/gate.test.ts:161",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "v1/packages/session/test/gate.test.ts:67 setTimeout(r, 10)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "v1/packages/session/test/gate.test.ts:62 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2221:packages/eval/test/judge-replay.test.ts:71",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2221:tools/leak-check.test.ts:29",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2221:tools/sloplint.test.ts:51",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2221:tools/sloplint.test.ts:56",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2222:packages/distributor/test/docker-driver.test.ts:348",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/docker-driver.test.ts:22 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/docker-driver.test.ts:19 Date.now()"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2223:packages/contracts/test/approved.test.ts:52",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:139",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:158",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:193",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:212",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:232",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2223:packages/contracts/test/flow.test.ts:261",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/code-contract.test.tsx:72",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/code-contract.test.tsx:82",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/studio.test.tsx:39",
+   "hits": [],
+   "ms": 60
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/studio.test.tsx:54",
+   "hits": [],
+   "ms": 65
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:102",
+   "hits": [],
+   "ms": 69
+  },
+  {
+   "id": "2256:packages/web/src/extensions/contracts/studio.test.tsx:125",
+   "hits": [],
+   "ms": 66
+  },
+  {
+   "id": "2230:packages/web/src/extensions/contracts/studio.test.tsx:94",
+   "hits": [],
+   "ms": 63
+  },
+  {
+   "id": "2230:packages/web/src/extensions/contracts/studio.test.tsx:105",
+   "hits": [],
+   "ms": 62
+  },
+  {
+   "id": "2223:packages/web/src/extensions/contracts/studio.test.tsx:112",
+   "hits": [],
+   "ms": 65
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:243",
+   "hits": [],
+   "ms": 64
+  },
+  {
+   "id": "2225:packages/contracts/test/flow.test.ts:254",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2232:packages/contracts/test/flow.test.ts:160",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2226:packages/eval/test/eval.test.ts:56",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2226:packages/eval/test/eval.test.ts:75",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2226:packages/eval/test/eval.test.ts:148",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/eval/test/eval.test.ts:149 Date.now()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2226:packages/eval/test/eval.test.ts:156",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/eval/test/eval.test.ts:157 Date.now()"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2226:packages/eval/test/judge-replay.test.ts:33",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2226:packages/eval/test/judge-replay.test.ts:62",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2226:packages/eval/test/judge-replay.test.ts:72",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2232:packages/research/test/research.test.ts:163",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2226:packages/sleeper/test/lineup.test.ts:204",
+   "hits": [],
+   "ms": 35
+  },
+  {
+   "id": "2226:packages/sleeper/test/trades.test.ts:167",
+   "hits": [],
+   "ms": 47
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:73",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:92",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:107",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:122",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:152",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:161",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2227:packages/session/test/abort-queue.test.ts:177",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2224:packages/catalog/test/core.test.ts:14",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:59",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:76",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:85",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:97",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:114",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:132",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2224:packages/catalog/test/http.test.ts:148",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:8",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:13",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:21",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:25",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:32",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:45",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:54",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:60",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:67",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2224:packages/catalog/test/query.test.ts:74",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2187:packages/slots/test/slots.test.ts:231",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "packages/slots/test/slots.test.ts:31 notes: Record<string, string | null> = {}"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2187:packages/slots/test/slots.test.ts:245",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "packages/slots/test/slots.test.ts:258 assert.equal(rival.granted, false, 'a slots: 1 provider never runs two calls')"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2187:packages/slots/test/slots.test.ts:263",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2187:packages/subagent/test/subagent.test.ts:59",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2187:packages/subagent/test/subagent.test.ts:72",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2187:packages/subagent/test/subagent.test.ts:100",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2187:packages/subagent/test/subagent.test.ts:118",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2187:packages/subagent/test/subagent.test.ts:127",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2187:packages/web/src/Transcript.test.tsx:20",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2228:packages/contracts/test/evidence.test.ts:31",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2228:packages/contracts/test/evidence.test.ts:42",
+   "hits": [
+    {
+     "rule": "logic-in-test",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "packages/contracts/test/evidence.test.ts:44 expected = ['properties', 'patternProperties', '$defs'].flatMap((k) => Object.keys(env[k]).map((n) => `/${k}/${n}`))"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2228:packages/contracts/test/evidence.test.ts:51",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2228:packages/contracts/test/evidence.test.ts:64",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2232:packages/contracts/test/evidence.test.ts:80",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2232:packages/contracts/test/evidence.test.ts:130",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2228:packages/judge/test/resolve.test.ts:68",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2232:packages/judge/test/resolve.test.ts:79",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2228:packages/judge/test/resolve.test.ts:108",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2229:packages/catalog/test/channel.test.ts:34",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2229:packages/catalog/test/channel.test.ts:45",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/catalog/test/channel.test.ts:54",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2235:packages/catalog/test/channel.test.ts:60",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2229:packages/catalog/test/channel.test.ts:78",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/catalog/test/channel.test.ts:85",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/catalog/test/channel.test.ts:92",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "packages/catalog/test/channel.test.ts:100 assert.deepEqual(await catalog.getSession(key), before, 'the echo and the extension event changed no row')"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2229:packages/distributor/test/catalog.test.ts:47",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/catalog.test.ts:57 readdir(dataDir)"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2229:packages/distributor/test/catalog.test.ts:105",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2229:packages/distributor/test/catalog.test.ts:118",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2229:packages/distributor/test/catalog.test.ts:133",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2229:packages/distributor/test/orphans.test.ts:37",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/orphans.test.ts:45 readdir(join(dataDir, RECORDS))"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2229:packages/distributor/test/orphans.test.ts:48",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2229:packages/distributor/test/orphans.test.ts:61",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/orphans.test.ts:66 readdir(dir)"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2229:packages/distributor/test/orphans.test.ts:72",
+   "hits": [
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/orphans.test.ts:85 readdir(dataDir)"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2229:packages/sdk/test/channel.test.ts:8",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2229:packages/sdk/test/channel.test.ts:15",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:19",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:47",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:94",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:106",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:121",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:133",
+   "hits": [
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "packages/session/test/lifecycle.test.ts:146 assert.equal(h.gate.posts.length, tried, 'the refused body is not sent again')"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "packages/session/test/lifecycle.test.ts:146 assert.equal(h.gate.posts.length, tried, 'the refused body is not sent again')"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:149",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:159",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2229:packages/session/test/lifecycle.test.ts:165",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:124",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:131",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 26
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:141",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:146",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:161",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:173",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:187",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:193",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:212",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:219",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:236",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:245",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:253",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:263",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:355",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/cli/test/cli.test.ts:362",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:87 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/contracts/test/app.test.ts:36",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2236:packages/contracts/test/app.test.ts:58",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/distributor/test/catalog.test.ts:118",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2230:packages/distributor/test/catalog.test.ts:152",
+   "hits": [],
+   "ms": 20
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:227",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 36
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:279",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "packages/distributor/test/distributor.test.ts:288 assert.equal(await read(), before)"
+    }
+   ],
+   "ms": 39
+  },
+  {
+   "id": "2230:packages/distributor/test/distributor.test.ts:320",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    }
+   ],
+   "ms": 37
+  },
+  {
+   "id": "2230:packages/distributor/test/housekeeping.test.ts:51",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/distributor/test/housekeeping.test.ts:52 start()"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2230:packages/distributor/test/housekeeping.test.ts:60",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/distributor/test/housekeeping.test.ts:61 start({ busy: 'busy' })"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2230:packages/distributor/test/housekeeping.test.ts:66",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/distributor/test/housekeeping.test.ts:67 start({ busy: 'busy', waiting: ['asking'] })"
+    },
+    {
+     "rule": "unordered",
+     "category": "flaky",
+     "cls": "order",
+     "at": "packages/distributor/test/housekeeping.test.ts:71 readdir(dataDir)"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2230:packages/distributor/test/housekeeping.test.ts:75",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/distributor/test/housekeeping.test.ts:76 start()"
+    }
+   ],
+   "ms": 12
+  },
+  {
+   "id": "2230:packages/distributor/test/notifications.test.ts:52",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2230:packages/distributor/test/notifications.test.ts:63",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/distributor/test/notifications.test.ts:73",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2230:packages/distributor/test/notifications.test.ts:80",
+   "hits": [],
+   "ms": 17
+  },
+  {
+   "id": "2230:packages/distributor/test/retire.test.ts:39",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2230:packages/distributor/test/retire.test.ts:46",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/home/test/tools.test.ts:95",
+   "hits": [
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "packages/home/test/tools.test.ts:10 calls: Array<{ method: string; url: string; body: string }> = []"
+    }
+   ],
+   "ms": 20
+  },
+  {
+   "id": "2230:packages/home/test/tools.test.ts:108",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2230:packages/schedules/test/service.test.ts:274",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:45",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:102",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2246:packages/web/src/App.test.tsx:242",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:763",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:780",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:802",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:809",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:838",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:900",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:938",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:965",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1011",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1021",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1050",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1062",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1087",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1105",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1120",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1163",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/App.test.tsx:1176 'https://nfl.com/x'"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1199",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1207",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1319",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1326",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2245:packages/web/src/App.test.tsx:1688",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/App.test.tsx:1757",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2249:packages/web/src/App.test.tsx:2007",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2230:packages/web/src/approvals.test.tsx:19",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2230:packages/web/src/extensions/contracts/page.test.tsx:13",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2237:packages/web/src/extensions/contracts/page.test.tsx:28",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2230:packages/web/src/extensions/contracts/page.test.tsx:47",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2230:packages/web/src/extensions/sleeper/Sleeper.test.tsx:310",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2230:packages/web/src/kinds.test.ts:25",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2230:packages/web/src/kinds.test.ts:49",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2230:packages/web/src/kinds.test.ts:56",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:12",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:27",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:40",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:60",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:74",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:88",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:95",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:111",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2243:packages/judge/test/declaration.test.ts:159",
+   "hits": [],
+   "ms": 33
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:174",
+   "hits": [],
+   "ms": 30
+  },
+  {
+   "id": "2243:packages/judge/test/declaration.test.ts:186",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:196",
+   "hits": [],
+   "ms": 32
+  },
+  {
+   "id": "2232:packages/judge/test/declaration.test.ts:208",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2243:packages/judge/test/declaration.test.ts:219",
+   "hits": [],
+   "ms": 31
+  },
+  {
+   "id": "2235:packages/catalog/test/channel.test.ts:108",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2235:packages/session/test/lifecycle.test.ts:181",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2236:packages/contracts/test/app.test.ts:69",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2236:packages/web/src/extensions/contracts/studio.test.tsx:58",
+   "hits": [],
+   "ms": 65
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:92",
+   "hits": [],
+   "ms": 69
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:173",
+   "hits": [],
+   "ms": 66
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:182",
+   "hits": [],
+   "ms": 68
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:192",
+   "hits": [],
+   "ms": 67
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:134",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "packages/contracts/test/app.test.ts:145 assert.match(calls[0]!, /[?&]pageSize=100(&|$)/, 'the default page is 100')"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:148",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:165",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:177",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:195",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:207",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:225",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:237",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2237:packages/contracts/test/app.test.ts:248",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2238:packages/research/test/research.test.ts:416",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2238:packages/research/test/research.test.ts:421",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2238:packages/research/test/research.test.ts:426",
+   "hits": [],
+   "ms": 23
+  },
+  {
+   "id": "2238:packages/research/test/research.test.ts:431",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2238:packages/research/test/research.test.ts:437",
+   "hits": [],
+   "ms": 24
+  },
+  {
+   "id": "2238:packages/research/test/research.test.ts:443",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2240:packages/distributor/test/distributor.test.ts:880",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/distributor/test/distributor.test.ts:78 setTimeout(r, 20)"
+    },
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/distributor/test/distributor.test.ts:75 Date.now()"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "packages/distributor/test/distributor.test.ts:893 assert.deepEqual([dst.listenerCount('error'), dst.listenerCount('close')], before)"
+    }
+   ],
+   "ms": 41
+  },
+  {
+   "id": "2240:packages/session/test/lifecycle.test.ts:181",
+   "hits": [],
+   "ms": 16
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:175",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 30
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:251",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 31
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:270",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 28
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:348",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:359",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2241:packages/cli/test/cli.test.ts:370",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:104 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2243:packages/judge/test/judge.test.ts:171",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2243:packages/judge/test/judge.test.ts:179",
+   "hits": [],
+   "ms": 18
+  },
+  {
+   "id": "2247:packages/web/src/useUpdates.test.tsx:33",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2247:packages/web/src/useUpdates.test.tsx:40",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2247:packages/web/src/useUpdates.test.tsx:51",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2247:packages/web/src/useUpdates.test.tsx:59",
+   "hits": [],
+   "ms": 12
+  },
+  {
+   "id": "2247:packages/web/src/useUpdates.test.tsx:72",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2246:packages/web/src/App.test.tsx:118",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2246:packages/web/src/App.test.tsx:152",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2246:packages/web/src/App.test.tsx:171",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:1214",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2246:packages/web/src/SearchFilter.test.tsx:21",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2246:packages/web/src/SearchFilter.test.tsx:42",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2246:packages/web/src/SearchFilter.test.tsx:51",
+   "hits": [],
+   "ms": 27
+  },
+  {
+   "id": "2246:packages/web/src/SearchFilter.test.tsx:65",
+   "hits": [],
+   "ms": 29
+  },
+  {
+   "id": "2246:packages/web/src/SearchFilter.test.tsx:71",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:53",
+   "hits": [],
+   "ms": 65
+  },
+  {
+   "id": "2249:packages/web/src/extensions/contracts/studio.test.tsx:61",
+   "hits": [],
+   "ms": 68
+  },
+  {
+   "id": "2256:packages/web/src/extensions/contracts/studio.test.tsx:209",
+   "hits": [],
+   "ms": 67
+  },
+  {
+   "id": "2256:packages/web/src/extensions/contracts/studio.test.tsx:223",
+   "hits": [],
+   "ms": 66
+  },
+  {
+   "id": "2249:packages/web/src/lineDiff.test.ts:6",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2249:packages/web/src/lineDiff.test.ts:12",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2249:packages/web/src/lineDiff.test.ts:22",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2251:packages/cli/test/cli.test.ts:522",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2251:packages/cli/test/cli.test.ts:534",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 30
+  },
+  {
+   "id": "2251:packages/cli/test/cli.test.ts:541",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2251:packages/cli/test/cli.test.ts:562",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 29
+  },
+  {
+   "id": "2251:packages/cli/test/cli.test.ts:572",
+   "hits": [
+    {
+     "rule": "real-sleep",
+     "category": "flaky",
+     "cls": "real-sleep",
+     "at": "packages/cli/test/cli.test.ts:106 setTimeout(() => ws.send(JSON.stringify({ type: 'view', items: [entry('user', 'go'), entry('assistant', 'streamed one')], live: { run: {} } })), 20)"
+    }
+   ],
+   "ms": 33
+  },
+  {
+   "id": "2248:packages/web/src/App.test.tsx:430",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/App.test.tsx:437 'https://github.com/o/r/pull/1'"
+    }
+   ],
+   "ms": 31
+  },
+  {
+   "id": "2248:packages/web/src/extensions/sleeper/Sleeper.test.tsx:207",
+   "hits": [],
+   "ms": 38
+  },
+  {
+   "id": "2248:packages/web/src/extensions/sleeper/Sleeper.test.tsx:224",
+   "hits": [],
+   "ms": 34
+  },
+  {
+   "id": "2248:packages/web/src/header.test.tsx:35",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2248:packages/web/src/header.test.tsx:54",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/header.test.tsx:63 'https://github.com/fagerbergj/quack/pull/2243'"
+    }
+   ],
+   "ms": 15
+  },
+  {
+   "id": "2253:packages/judge/test/resolve.test.ts:49",
+   "hits": [],
+   "ms": 22
+  },
+  {
+   "id": "2253:packages/sdk/test/model-retry.test.ts:31",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2253:packages/sdk/test/model-retry.test.ts:40",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2253:packages/sdk/test/model-retry.test.ts:46",
+   "hits": [],
+   "ms": 13
+  },
+  {
+   "id": "2253:packages/sdk/test/model-retry.test.ts:52",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2253:packages/sdk/test/model-retry.test.ts:59",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2245:packages/web/src/extensions/prState.test.tsx:32",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/extensions/prState.test.tsx:36 'https://github.com/a/one/pull/1'"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2245:packages/web/src/extensions/prState.test.tsx:45",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/extensions/prState.test.tsx:60 'https://github.com/a/one/pull/2'"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2254:packages/github/test/events.test.ts:33",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2254:packages/github/test/events.test.ts:48",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2254:packages/github/test/pulls.test.ts:22",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/github/test/pulls.test.ts:28 'https://github.com/A/B/pull/1'"
+    }
+   ],
+   "ms": 21
+  },
+  {
+   "id": "2254:packages/github/test/pulls.test.ts:35",
+   "hits": [],
+   "ms": 21
+  },
+  {
+   "id": "2254:packages/github/test/pulls.test.ts:45",
+   "hits": [
+    {
+     "rule": "unclosed-handle",
+     "category": "flaky",
+     "cls": "leak",
+     "at": "packages/github/test/pulls.test.ts:48 watch(s)"
+    }
+   ],
+   "ms": 19
+  },
+  {
+   "id": "2254:packages/github/test/pulls.test.ts:66",
+   "hits": [],
+   "ms": 19
+  },
+  {
+   "id": "2254:packages/github/test/service.test.ts:673",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/github/test/service.test.ts:60 Date.now()"
+    },
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/github/test/service.test.ts:690 'https://github.com/acme/widgets/pull/21'"
+    },
+    {
+     "rule": "shared-accumulator",
+     "category": "flaky",
+     "cls": "shared-state",
+     "at": "packages/github/test/service.test.ts:25 calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = []"
+    },
+    {
+     "rule": "same-expression",
+     "category": "taut",
+     "cls": "logic-in-test",
+     "at": "packages/github/test/service.test.ts:688 assert.equal(calls.length, before, 'webhook writes need no GitHub read')"
+    },
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "packages/github/test/service.test.ts:684 assert.equal(invocations.length, 0)"
+    }
+   ],
+   "ms": 37
+  },
+  {
+   "id": "2254:packages/github/test/service.test.ts:693",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 32
+  },
+  {
+   "id": "2254:packages/github/test/service.test.ts:701",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/github/test/service.test.ts:60 Date.now()"
+    }
+   ],
+   "ms": 33
+  },
+  {
+   "id": "2254:packages/github/test/service.test.ts:707",
+   "hits": [
+    {
+     "rule": "wall-clock",
+     "category": "flaky",
+     "cls": "clock",
+     "at": "packages/github/test/service.test.ts:709 Date.now()"
+    }
+   ],
+   "ms": 35
+  },
+  {
+   "id": "2254:packages/web/src/App.test.tsx:81",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/App.test.tsx:89 'https://github.com/a/one/pull/1'"
+    }
+   ],
+   "ms": 27
+  },
+  {
+   "id": "2254:packages/web/src/extensions/prState.test.tsx:25",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/extensions/prState.test.tsx:32 'https://github.com/a/one/pull/2'"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2254:packages/web/src/extensions/prState.test.tsx:43",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/extensions/prState.test.tsx:58 'https://github.com/a/one/pull/2'"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2254:packages/web/src/extensions/prState.test.tsx:62",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2254:packages/web/src/extensions/prState.test.tsx:78",
+   "hits": [],
+   "ms": 15
+  },
+  {
+   "id": "2254:packages/web/src/extensions/prState.test.tsx:90",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2254:packages/web/src/header.test.tsx:35",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/header.test.tsx:41 'https://github.com/fagerbergj/quack/pull/2243'"
+    }
+   ],
+   "ms": 13
+  },
+  {
+   "id": "2257:tools/qa-stack.test.ts:22",
+   "hits": [
+    {
+     "rule": "free-port",
+     "category": "flaky",
+     "cls": "port-race",
+     "at": "tools/qa-stack.test.ts:36 freePort()"
+    }
+   ],
+   "ms": 14
+  },
+  {
+   "id": "2258:packages/research/test/research.test.ts:95",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2252:packages/eval/test/judge-replay.test.ts:88",
+   "hits": [],
+   "ms": 14
+  },
+  {
+   "id": "2252:packages/research/test/research.test.ts:399",
+   "hits": [],
+   "ms": 25
+  },
+  {
+   "id": "2252:packages/research/test/research.test.ts:404",
+   "hits": [],
+   "ms": 28
+  },
+  {
+   "id": "2252:packages/research/test/research.test.ts:560",
+   "hits": [],
+   "ms": 26
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:419",
+   "hits": [],
+   "ms": 50
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:743",
+   "hits": [],
+   "ms": 52
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:761",
+   "hits": [],
+   "ms": 53
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:780",
+   "hits": [],
+   "ms": 48
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:794",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:809",
+   "hits": [],
+   "ms": 52
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:832",
+   "hits": [],
+   "ms": 46
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:1171",
+   "hits": [
+    {
+     "rule": "self-set",
+     "category": "taut",
+     "cls": "self-set",
+     "at": "packages/web/src/App.test.tsx:1189 expect(location.hash).toBe('#/s/gh%3A3/a/github.review')"
+    }
+   ],
+   "ms": 49
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:1207",
+   "hits": [],
+   "ms": 49
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:1364",
+   "hits": [],
+   "ms": 48
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:2029",
+   "hits": [],
+   "ms": 50
+  },
+  {
+   "id": "2256:packages/web/src/App.test.tsx:2036",
+   "hits": [
+    {
+     "rule": "public-url",
+     "category": "flaky",
+     "cls": "network",
+     "at": "packages/web/src/App.test.tsx:2046 'https://github.com/o/r/pull/1'"
+    }
+   ],
+   "ms": 48
+  }
+ ]
+}
