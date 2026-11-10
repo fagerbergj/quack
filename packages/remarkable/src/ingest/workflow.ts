@@ -24,7 +24,7 @@ export type IngestDeps = {
   service: IngestService;
   /** The vision-capable model named in the agent definition; the agent's own model when unset. */
   visionModel?: ModelRef;
-  /** A decision model such as Clef, asked first for type and topic. */
+  /** A decision model such as Clef, asked first for the topic. */
   classifier?: ClassifierRef;
 };
 
@@ -139,7 +139,7 @@ async function propose(c: StepContext): Promise<string> {
   return c.api.memo<string>('topic-proposal', parseTopic(contentText(reply.content), existing), c.ctx);
 }
 
-/** Ingest (RMK-2, RMK-3): render pages, transcribe each, classify by type and topic, then seal the transcript. */
+/** Ingest (RMK-2, RMK-3): render pages, transcribe each, classify by topic, then seal the transcript. */
 export function ingestWorkflow(deps: IngestDeps) {
   const doc = (c: StepContext) => JSON.parse(String(c.input)) as Doc;
   const resolvers = (describe: (o: string) => string) => [...(deps.classifier ? [classifierChoice(deps.classifier, describe)] : []), agentModel];
