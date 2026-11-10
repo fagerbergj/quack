@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { afterEach, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadAgent, parseDeployment } from '@quack/session';
 import { catalog } from '../src/catalog.ts';
@@ -17,9 +17,11 @@ const deployment = parseDeployment({
   },
 });
 
+// Extensions reach their apps through the distributor, so loading an agent needs its url and credential; each test sets them afresh.
+beforeEach(() => Object.assign(process.env, { QUACK_INDEX_URL: 'http://127.0.0.1:8080', QUACK_INDEX_TOKEN: 'x' }));
+afterEach(() => { delete process.env.QUACK_INDEX_URL; delete process.env.QUACK_INDEX_TOKEN; });
+
 test('the shipped reviewer definition loads with its prompt, and the GitHub tools', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You review one pull request/);
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
@@ -34,8 +36,6 @@ test('the shipped researcher definition loads with the research tools and the re
 });
 
 test('the shipped sleeper-lineup definition loads its prompt and binds the lineup workflow', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-lineup/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the lineup analyst/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
@@ -43,8 +43,6 @@ test('the shipped sleeper-lineup definition loads its prompt and binds the lineu
 
 for (const [name, opening] of [['sleeper-trade', /^You are the trade analyst/], ['sleeper-trade-finder', /^You are the trade finder/]] as const) {
   test(`the shipped ${name} definition loads its prompt and binds its workflow`, async () => {
-    process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-    process.env.QUACK_INDEX_TOKEN = 'x';
     const agent = await loadAgent(fileURLToPath(new URL(`../../../agents/${name}/agent.json`, import.meta.url)), deployment, catalog);
     assert.match(agent.instructions!, opening);
     assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
@@ -52,40 +50,30 @@ for (const [name, opening] of [['sleeper-trade', /^You are the trade analyst/], 
 }
 
 test('the shipped sleeper-history definition loads its prompt and binds the history workflow', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-history/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the history analyst/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-waivers definition loads its prompt and binds the waivers workflow', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-waivers/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the waiver scout/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-digest definition loads its prompt and binds the digest workflow', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-digest/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the league reporter/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-retro definition loads its prompt and binds the retro workflow', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-retro/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the league reporter/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
 test('the shipped sleeper-trends definition loads its prompt and binds the trends workflow', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
-  process.env.QUACK_INDEX_TOKEN = 'x';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-trends/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the trend scout/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
@@ -112,7 +100,6 @@ test('the gate is on for a session that was handed the distributor and its launc
 });
 
 test('the shipped quack definition loads with the home tools, offering every extension\'s actions', async () => {
-  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/quack/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are quack's front door/);
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []));

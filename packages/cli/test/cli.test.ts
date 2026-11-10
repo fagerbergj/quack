@@ -85,10 +85,11 @@ before(async () => {
   server = createServer(async (req, res) => {
     const u = new URL(req.url!, 'http://x');
     const path = decodeURIComponent(u.pathname);
-    calls.push({ method: req.method!, path, query: Object.fromEntries(u.searchParams), body: await readBody(req), auth: req.headers.authorization });
+    const call = { method: req.method!, path, query: Object.fromEntries(u.searchParams), body: await readBody(req), auth: req.headers.authorization };
+    calls.push(call);
     const reply = (status: number, body: object) => { res.writeHead(status, { 'content-type': status < 400 ? 'application/json' : 'application/problem+json' }); res.end(JSON.stringify(body)); };
     if (path.endsWith('/invocations')) {
-      const body = calls.at(-1)!.body as { input: string; wait?: boolean };
+      const body = call.body as { input: string; wait?: boolean };
       return reply(body.wait ? 200 : 202, body.input === 'fail' ? { status: 'unanswered', reason: 'model_fault' } : body.wait ? { status: 'done', answer: 'final answer' } : { status: 'running' });
     }
     for (const [method, pattern, route] of ROUTES) {
@@ -238,10 +239,11 @@ describe('quack', () => {
     assert.match(r.stdout, /plan\s+v2\s+t2\s+s2/);
     assert.doesNotMatch(r.stdout, /v1/);
     assert.match(r.stdout, /assistant: hi there/);
-    assert.deepEqual(calls.map((c) => [c.path, c.query]), [
+    // show reads the session, then the rest at once: they reach the server in any order.
+    assert.deepEqual(calls.map((c) => [c.path, c.query] as const).sort(([x], [y]) => x.localeCompare(y)), [
       ['/sessions/ui:a', {}],
-      ['/sessions/ui:a/asks', { q: 'state:pending' }],
       ['/sessions/ui:a/artifacts', {}],
+      ['/sessions/ui:a/asks', { q: 'state:pending' }],
       ['/sessions/ui:a/messages', { limit: '5' }],
     ]);
     const j = JSON.parse((await cli(['show', 'ui:b', '--json'])).stdout);
@@ -281,7 +283,7 @@ describe('quack', () => {
   it('show --messages N prints the last N messages and refuses what the server would cut', async () => {
     const r = await cli(['show', 'ui:a', '--messages', '1']);
     assert.match(r.stdout, /Last messages\nassistant: hi there$/);
-    assert.equal(calls.at(-1)!.query.limit, '1');
+    assert.equal(calls.find((c) => c.path === '/sessions/ui:a/messages')!.query.limit, '1');
     for (const n of ['0', '51', 'x']) assert.equal((await cli(['show', 'ui:a', '--messages', n])).code, 1);
   });
 

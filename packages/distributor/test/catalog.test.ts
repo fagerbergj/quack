@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -54,7 +54,10 @@ test('the first boot backfills existing sessions from their logs, seeds each str
   assert.deepEqual([row?.agent, row?.title, row?.state, row?.createdAt, row?.lastActivity, row?.lastRun?.outcome],
     ['quack', 'Check the lineup for matchday 2', 'stopped', Date.parse('2026-10-01T00:00:00Z'), Date.parse('2026-10-02T00:00:00Z'), 'succeeded']);
   assert.equal(await backfillCatalog(catalog, dataDir, () => undefined), undefined, 'a later boot skips it');
-  assert.ok(existsSync(join(dataDir, 'catalog-journal')) || !(await readdir(dataDir)).includes('catalog-journal'), 'the journal, when written, is the data dir\'s own');
+  const journal = await readdir(join(dataDir, 'catalog-journal'));
+  assert.equal(journal.length, 1, 'the data dir holds the journal');
+  const lines = (await readFile(join(dataDir, 'catalog-journal', journal[0]!), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(lines.map((l) => [l.method, l.args]), [['transitionSession', { key: 'sleeper:platinum:2:lineup', to: 'stopped' }]], 'the backfill journals its stop');
 
   // The session, started on the new runtime, continues the seeded numbering: nothing it sends is new to the catalog.
   const session = await old.open();
