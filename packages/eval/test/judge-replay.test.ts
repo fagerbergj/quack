@@ -48,7 +48,7 @@ test('two cases, two arms and repeat 2 give the met values of each repeat for th
 async function fakeClef(t: TestContext, probability: number) {
   const server = createServer(async (req, res) => {
     for await (const _ of req);
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers: { 'c.helpful': { type: 'noul', noul: probability } }, usage: { input_tokens: 1, output_tokens: 0 } }));
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers: { q0: { type: 'noul', noul: probability } }, usage: { input_tokens: 1, output_tokens: 0 } }));
   }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const key = process.env.QUACK_CLEF_KEY;

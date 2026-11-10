@@ -20,7 +20,7 @@ after(async () => {
   await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-// A stand-in for Clef speaking its real wire format; probability decides per question and unit.
+// A stand-in for Clef speaking its real wire format; probability decides per question text and unit, as Clef never sees a check id.
 const clefCalls: Array<{ unit: string; questions: string[] }> = [];
 async function fakeClef(probability: (question: string, unit: string) => number) {
   const server = createServer(async (req, res) => {
@@ -28,7 +28,7 @@ async function fakeClef(probability: (question: string, unit: string) => number)
     for await (const chunk of req) body += chunk;
     const { state, questions } = JSON.parse(body);
     clefCalls.push({ unit: state.unit, questions: Object.keys(questions) });
-    const answers = Object.fromEntries(Object.keys(questions).map((q) => [q, { type: 'noul', noul: probability(q, state.unit) }]));
+    const answers = Object.fromEntries(Object.entries(questions as Record<string, { instructions: string }>).map(([q, { instructions }]) => [q, { type: 'noul', noul: probability(instructions, state.unit) }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 0 } }));
   }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -88,7 +88,7 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   process.env.QUACK_CLEF_KEY = 'none';
   clefCalls.length = 0;
   // Clef is unsure whether f2 says why (0.5); everything else it answers confidently, preference_only at exactly the 0.2 edge.
-  const baseUrl = await fakeClef((q, unit) => (q.endsWith('says_why') && unit === 'f2' ? 0.5 : q.endsWith('preference_only') ? 0.2 : 0.95));
+  const baseUrl = await fakeClef((q, unit) => (q.includes('say why') && unit === 'f2' ? 0.5 : q.includes('only on preference') ? 0.2 : 0.95));
   const good = '## Takeaway\nFix the off-by-one.\n## Verdict\nrequest_changes\n## Findings\n- blocking: src/x.ts:12 off by one\n- nit: src/y.ts:3 rename\n';
   const { done, versions } = await run(baseUrl, 8192, [
     tool('write', { path: 'artifacts/review.md', content: good.replace('## Verdict\nrequest_changes\n', '') }),

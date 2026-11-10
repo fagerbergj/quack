@@ -32,7 +32,7 @@ function callApi(classify: () => Promise<unknown>) {
   return api;
 }
 
-const confident = { stopReason: 'stop', answers: { 'c.says_why': { type: 'bool', probability: 0.95 } } };
+const confident = { stopReason: 'stop', answers: { q0: { type: 'bool', probability: 0.95 } } };
 
 test('a classifier that throws is not memoized: a rerun of the call asks it again', async () => {
   const outcomes = [() => Promise.reject(new Error('503 busy')), () => Promise.resolve({ stopReason: 'error', answers: {} }), () => Promise.resolve(confident)];
@@ -44,6 +44,18 @@ test('a classifier that throws is not memoized: a rerun of the call asks it agai
   assert.equal(api.memos.has(memoKey), false, 'an error stop is an outage too');
   const third = await answerUnit(api, ref, BACKGROUND_CONTEXT);
   assert.deepEqual([api.calls(), third['c.says_why']!.resolver], [3, 'clef']);
+});
+
+test('a unit\'s questions go to the classifier numbered, never under their check ids, and each answer comes back to its check', async () => {
+  const two = [{ id: 'c.no_self_contradiction', question: { type: 'choice' as const, instructions: 'Does any figure conflict?', options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } }, pass: ['no'] }, ...checks];
+  let sent: { questions: Record<string, unknown> } | undefined;
+  const api = callApi(async () => ({ stopReason: 'stop', answers: { q0: { type: 'choice', probabilities: { yes: 0.05, no: 0.95 } }, q1: { type: 'bool', probability: 0.1 } } }));
+  const classify = api.models.classify;
+  api.models.classify = ((_m: unknown, req: never) => ((sent = req), classify())) as never;
+  const answered = await answerItems(api as never, { ref, memo: 'm', clef: limiter(1), escalations: limiter(1) }, [{ unit, checks: two }], BACKGROUND_CONTEXT);
+  assert.deepEqual(Object.keys(sent!.questions), ['q0', 'q1']);
+  assert.doesNotMatch(JSON.stringify(sent), /no_self_contradiction|says_why/);
+  assert.deepEqual(answered.map((a) => [a.check.id, a.answer!.met]), [['c.no_self_contradiction', true], ['c.says_why', false]]);
 });
 
 test('a classifier refused with a 503 is asked again after the backoff and its answer stands', async () => {
@@ -90,7 +102,7 @@ test('a packed request sends the context once and one question per unit; unsure 
   const units = ['u0', 'u1', 'u2', 'u3'].map((id) => ({ id, shared, state: { text: id } }));
   const sent: Array<{ state: unknown; questions: Record<string, { instructions: string }> }> = [];
   const probabilities = [0.95, 0.5, 0.6, 0.05];
-  const api = callApi(async () => ({ stopReason: 'stop', answers: Object.fromEntries(probabilities.map((p, i) => [`c.says_why#${i}`, { type: 'bool', probability: p }])) }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: Object.fromEntries(probabilities.map((p, i) => [`q${i}`, { type: 'bool', probability: p }])) }));
   const classify = api.models.classify;
   api.models.classify = ((_m: unknown, req: never) => (sent.push(req), classify())) as never;
   for (const id of ['u1', 'u2']) api.memos.set(`decision:m:${id}:c.says_why`, { choice: 'yes', confidence: 0.9, resolver: 'agent-model' });
@@ -108,7 +120,8 @@ test('a packed request sends the context once and one question per unit; unsure 
   const answered = await answerItems(api as never, { ref, memo: 'm', clef: limiter(1), escalations }, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].state, { context: shared, items: units.map((u) => ({ id: u.id, text: u.id })) });
-  assert.equal(sent[0].questions['c.says_why#2'].instructions, 'About items[2] (u2): Does it say why?');
+  assert.equal(sent[0].questions.q2.instructions, 'About items[2] (u2): Does it say why?');
+  assert.doesNotMatch(JSON.stringify(sent[0]), /says_why/, 'no check id reaches the classifier, which would read it as part of the question');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver]), [['u0', true, 'clef'], ['u1', true, 'agent-model'], ['u2', true, 'agent-model'], ['u3', false, 'clef']]);
   assert.equal(peak, 1, 'the escalation limit holds');
   assert.ok(api.memos.has('m:u0+4:classifier'), 'a packed request is memoized under its first unit and size');
