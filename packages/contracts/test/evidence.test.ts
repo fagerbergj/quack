@@ -8,7 +8,9 @@ import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, faux
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, classifierTokens, type Evidence, type Unit } from '@quack/judge';
+import type { RecordedSession } from '@quack/sdk';
 import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
+import { scheduleSpecV1 } from './fixtures.ts';
 
 // Approved contracts as they were sealed: two whole specs, and two documents whose specs are not kept here.
 const fixture = (name: string) => readFileSync(new URL(`fixtures-specs/${name}`, import.meta.url), 'utf8');
@@ -19,10 +21,10 @@ const env = JSON.parse(fixture('env-v4.schema.json')) as Record<string, Record<s
 // A bare document is judged with the store port's intent, a real one of the usual size.
 const wrap = (kind: ContractSpec['kind'], document: unknown): ContractSpec => ({ ...storePort, kind, document, choices: [] });
 
-const inputsOf = (spec: ContractSpec) => {
+const inputsOf = (spec: ContractSpec, session: Partial<RecordedSession> = {}) => {
   const content = JSON.stringify(spec);
-  const sealed = { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 1, verdict: null };
-  return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined }, content);
+  const sealed = { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 10, verdict: null };
+  return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined, ...session }, content);
 };
 const evidenceOf = async (spec: ContractSpec): Promise<Evidence> => (await buildEvidence(contractDeclaration, await inputsOf(spec))).evidence;
 const checksOf = (scope: string) => Object.entries(contractDeclaration.checks).filter(([, d]) => d.scope === scope).map(([id, d]) => ({ id: `matches_intent.${id}`, question: d.question }));
@@ -100,6 +102,28 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   const usedBy = (id: string) => def(ev, id).usedBy;
   assert.ok(usedBy('/components/schemas/Problem').includes('POST /sessions/{key}/events'));
   assert.ok(money.usedBy.includes('/SessionCatalogStore'));
+});
+
+test('an answer is cited by the question as asked or by its ask_question id, once answered before the seal', async () => {
+  const asked = 'Keep the existing unversioned route, or add /v1?';
+  const answered = (at: number) => ({ question: asked, options: [], evidence: null, askedAt: 1, answer: { choice: 'Keep it', by: 'jf', at }, closed: false });
+  const unresolved = async (ref: string, at: number) => {
+    const docs = { 'quack.questions': { items: { '7:versioning': answered(at) } } } as never;
+    const { facts } = await inputsOf(scheduleSpecV1({ versioning: ref, time: 'request' }), { docs });
+    return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => / answer ref /.test(u));
+  };
+  assert.deepEqual(await unresolved(asked, 5), []);
+  assert.deepEqual(await unresolved('versioning', 5), []);
+  assert.deepEqual(await unresolved('versioning', 11), ['versioning: answer ref "versioning" does not resolve'], 'answered after the seal');
+  assert.deepEqual(await unresolved('7', 5), ['versioning: answer ref "7" does not resolve'], 'the task part of the key is not an id');
+});
+
+test('a code ref missing from the workspace says where refs are read, without repeating the clone directory', async () => {
+  const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
+  spec.choices[1].why[1].ref = 'repo/v1/packages/sleeper/src/service.ts:85';
+  const { facts } = await inputsOf(spec);
+  const [note] = (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.includes('repo/v1/packages/sleeper'));
+  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace (refs are workspace paths: a repository cloned into repo/ is cited as repo/<path in it>)');
 });
 
 // A stand-in for Clef on its wire format: a confident yes to every bool and no to every choice, so the intent is met and no pitfall is present.

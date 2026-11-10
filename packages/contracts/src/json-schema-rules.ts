@@ -7,13 +7,15 @@ type Schema = Record<string, unknown>;
 const isObj = (v: unknown): v is Schema => typeof v === 'object' && v !== null && !Array.isArray(v);
 export const esc = (s: string) => s.replaceAll('~', '~0').replaceAll('/', '~1');
 
-/** Every subschema with its JSON pointer; only the keywords this kind's rules and diff care about are followed. */
-export function* subschemas(s: unknown, at = ''): Generator<[Schema, string]> {
+const CONDITIONAL = ['if', 'then', 'else'];
+
+/** Every subschema with its JSON pointer and whether it sits under if/then/else; only the keywords this kind's rules and diff care about are followed. */
+export function* subschemas(s: unknown, at = '', conditional = false): Generator<[Schema, string, boolean]> {
   if (!isObj(s)) return;
-  yield [s, at];
-  for (const k of ['properties', '$defs', 'patternProperties', 'dependentSchemas']) if (isObj(s[k])) for (const [n, c] of Object.entries(s[k])) yield* subschemas(c, `${at}/${k}/${esc(n)}`);
-  for (const k of ['items', 'additionalProperties', 'unevaluatedProperties', 'contains', 'not', 'if', 'then', 'else', 'propertyNames']) yield* subschemas(s[k], `${at}/${k}`);
-  for (const k of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) if (Array.isArray(s[k])) for (const [i, c] of s[k].entries()) yield* subschemas(c, `${at}/${k}/${i}`);
+  yield [s, at, conditional];
+  for (const k of ['properties', '$defs', 'patternProperties', 'dependentSchemas']) if (isObj(s[k])) for (const [n, c] of Object.entries(s[k])) yield* subschemas(c, `${at}/${k}/${esc(n)}`, conditional);
+  for (const k of ['items', 'additionalProperties', 'unevaluatedProperties', 'contains', 'not', ...CONDITIONAL, 'propertyNames']) yield* subschemas(s[k], `${at}/${k}`, conditional || CONDITIONAL.includes(k));
+  for (const k of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) if (Array.isArray(s[k])) for (const [i, c] of s[k].entries()) yield* subschemas(c, `${at}/${k}/${i}`, conditional);
 }
 
 const text = (v: unknown) => typeof v === 'string' && v.trim() !== '';
@@ -45,6 +47,8 @@ export async function lintJsonSchema(document: unknown): Promise<Finding[]> {
   if (!isObj(document)) return [find('schema-invalid', 'the document must be a JSON Schema object', '')];
   const out = validity(document);
   if (document.$schema !== DRAFT_2020_12) out.push(find('schema-declared', `$schema must be "${DRAFT_2020_12}"`, '/$schema'));
-  for (const [s, at] of subschemas(document)) out.push(...objectProblems(s, at));
+  // A conditional branch constrains an object its parent defines (and closing it there would reject the parent's own
+  // properties), so the object rules hold for the parent only.
+  for (const [s, at, conditional] of subschemas(document)) if (!conditional) out.push(...objectProblems(s, at));
   return out;
 }
