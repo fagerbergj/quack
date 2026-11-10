@@ -17,6 +17,10 @@ export async function prWebhook(url: string, fullName: string, number: number, s
   if (!res.ok) throw new Error(`webhook ${state} ${fullName}#${number}: ${res.status} ${await res.text()}`);
 }
 
+/** A session's side pane: a region named `name` beside the chat, or below lg the tab panel its tab names (that name may carry a count). */
+export const paneOf = (page: Page, name: string): Locator =>
+  page.viewportSize()!.width < 1024 ? page.getByRole('tabpanel', { name: new RegExp(`^${name}`) }) : page.getByRole('region', { name, exact: true });
+
 /** Starts a quack session under a github review key through the stack's fake model, so the list and header have a review to show. */
 export async function seedReview(url: string, key: string) {
   const res = await fetch(`${url}/sessions/${encodeURIComponent(key)}/invocations?agent=quack`, { method: 'POST', body: JSON.stringify({ input: `Review PR ${key.split('#')[1]}`, wait: true }) });
@@ -39,11 +43,13 @@ export type Scenario = { name: string; stack: StackOpts; run(ctx: Ctx): Promise<
 export const visible = (locator: Locator) => locator.waitFor({ state: 'visible', timeout: 10_000 });
 
 export const VIEWPORTS = [{ width: 1280, height: 800 }, { width: 400, height: 800 }];
+/** VIEWPORTS plus a 1920 px desktop, for layouts that change with the room beside the chat. */
+export const WITH_WIDE = [...VIEWPORTS, { width: 1920, height: 1080 }];
 export const SCHEMES = ['light', 'dark'] as const;
 
 /** Runs `fn` in a fresh page for each viewport and colour scheme, so every check covers desktop, phone, light and dark. */
-export async function eachView(ctx: Ctx, name: string, fn: (page: Page, label: string) => Promise<void>): Promise<void> {
-  for (const viewport of VIEWPORTS) {
+export async function eachView(ctx: Ctx, name: string, fn: (page: Page, label: string) => Promise<void>, viewports = VIEWPORTS): Promise<void> {
+  for (const viewport of viewports) {
     for (const colorScheme of SCHEMES) {
       const label = `${viewport.width}-${colorScheme}`;
       await ctx.step(`${name} @${label}`, async () => {

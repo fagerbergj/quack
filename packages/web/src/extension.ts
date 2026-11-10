@@ -5,6 +5,10 @@ import type { Row } from './sessions.ts';
 /** The session an artifact is shown from, for links that open it on its own page. */
 export const SessionKeyContext = createContext<string | undefined>(undefined);
 
+/** An artifact's own page: one kind of one session, at a version or else its newest. */
+export const artifactHref = (sessionKey: string, kind: string, version?: number) =>
+  `#/s/${encodeURIComponent(sessionKey)}/a/${encodeURIComponent(kind)}${version === undefined ? '' : `?v=${version}`}`;
+
 export type Tone = 'plain' | 'muted' | 'warn' | 'ok' | 'bad';
 /** A row's line while a run works, once its last run succeeded, and before any run ended. */
 export type Words = { run: string; done: string; none: string };
@@ -34,7 +38,7 @@ export type Extension = {
   /** Session-key prefix and the label the "started by" filter shows for it. */
   start?: { prefix: string; label: string };
   /** What one of this extension's artifacts is called on the transcript line ("Review"), with a posted state when `posted`; undefined when it is not its artifact. */
-  artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean; /** Its card draws a passed check beside its own title, so the line carries none. */ titled?: boolean; /** How the context rail says a posted version went out ("Posted to GitHub as Approve"); "Posted" when absent. */ postedTo?: string } | undefined;
+  artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean; /** How the context rail says a posted version went out ("Posted to GitHub as Approve"); "Posted" when absent. */ postedTo?: string } | undefined;
   /** A sealed artifact drawn as a card instead of a line; undefined when it is not this extension's or cannot be read as one. */
   card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
   /** The artifact drawn as its own page (opened from a link on its card); undefined when it is not this extension's. */

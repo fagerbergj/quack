@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
@@ -8,7 +8,8 @@ import { SessionFailures } from './Failures.tsx';
 import { artifactName } from './Artifacts.tsx';
 import { CheckProgress, liveChecks, progressLabel } from './CheckResult.tsx';
 import { SessionKeyContext, type StudioProps } from './extension.ts';
-import { Work } from './Work.tsx';
+import { ArtifactView, paneVersions } from './ArtifactPane.tsx';
+import { useSplit } from './Split.tsx';
 import { ContextRail, openingOf, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { useMenu } from './useMenu.ts';
@@ -187,9 +188,10 @@ function Title({ sessionKey, name, status, tone, spend, archived }: Facts) {
         {name.number && <><span className="sr-only">{name.number}</span>{' '}</>}
         {name.full}
       </h1>
-      <p className="m-0 flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] leading-[18px] whitespace-nowrap text-muted">
+      {/* Clipped across only, so a chip's hit area can reach past the 18px line to the 24px minimum target without growing the bar. */}
+      <p className="m-0 flex min-w-0 items-center gap-1.5 overflow-x-clip text-[12px] leading-[18px] whitespace-nowrap text-muted">
         <StatusText text={status} tone={tone} />
-        <SessionChips sessionKey={sessionKey} />
+        <span className="contents [&>*]:relative [&>*]:before:absolute [&>*]:before:inset-x-0 [&>*]:before:-inset-y-1 [&>*]:before:content-['']"><SessionChips sessionKey={sessionKey} /></span>
         {name.scope && <span className={`min-w-0 truncate ${dot}`}>{name.scope}</span>}
         <SpendChip spend={spend} className={`flex-none ${dot}`} />
         {archived && <span className={`flex-none ${dot}`}>Archived</span>}
@@ -213,11 +215,10 @@ function MenuEntry({ e, close }: { e: Entry; close: () => void }) {
 type MenuActions = { archived: boolean; exportHref: string; rename: () => void; archive: () => void; remove: () => void };
 
 // Grouped from harmless to destructive: stop the run, everyday actions, reversible archive, then delete last.
-function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort: () => void, onOpen: (a: SealedArtifact) => void, manage?: MenuActions, link?: Link): Entry[][] {
+function groupsOf(running: boolean, onAbort: () => void, manage?: MenuActions, link?: Link): Entry[][] {
   return [
     running ? [{ label: 'Stop', run: onAbort }] : [],
     [
-      ...(latest ? [{ label: `Open ${artifactName(latest).toLowerCase()}`, run: () => onOpen(latest) }] : []),
       ...(link ? [{ label: link.label, href: link.url, external: true }] : []),
       ...(manage ? [{ label: 'Rename', run: manage.rename }, { label: 'Export', href: manage.exportHref }] : []),
     ],
@@ -226,16 +227,16 @@ function groupsOf(running: boolean, latest: SealedArtifact | undefined, onAbort:
   ].filter((g) => g.length);
 }
 
-// Stopping the run, opening the latest output or the source page, and housekeeping live behind one quiet menu; absent when none applies.
-function More({ running, onAbort, latest, onOpen, manage, link }: { running: boolean; onAbort: () => void; latest?: SealedArtifact; onOpen: (a: SealedArtifact) => void; manage?: MenuActions; link?: Link }) {
+// Stopping the run, opening the source page, and housekeeping live behind one quiet menu; absent when none applies.
+function More({ running, onAbort, manage, link }: { running: boolean; onAbort: () => void; manage?: MenuActions; link?: Link }) {
   const menu = useMenu();
-  if (!running && !latest && !manage && !link) return null;
+  if (!running && !manage && !link) return null;
   return (
     <div ref={menu.root} onKeyDown={menu.keys} className="relative">
       <button ref={menu.button} type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded={menu.open} onClick={menu.toggle} title="More actions" className={iconBtn}><MoreIcon /></button>
       {menu.open && (
         <div role="menu" aria-label="More actions" className="absolute right-0 z-20 mt-1 min-w-44 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
-          {groupsOf(running, latest, onAbort, onOpen, manage, link).map((g, i) => (
+          {groupsOf(running, onAbort, manage, link).map((g, i) => (
             <div key={i} role="group" className={i ? 'mt-1 border-t border-line pt-1' : ''}>{g.map((e) => <MenuEntry key={e.label} e={e} close={menu.close} />)}</div>
           ))}
         </div>
@@ -316,50 +317,78 @@ const activityOf = (status: string, tone: Tone, view: View) => (tone === 'run' ?
 // The reason a studio's approval is declined with when the person writes instead of approving; their message says the rest.
 export const SUPERSEDED = 'Sent a message instead';
 
-// A studio session shows its pane beside the transcript, and decides the approvals the pane owns there rather than as transcript cards.
-function useStudio(sessionKey: string, approvals: Approval[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
+type Tab = 'pane' | 'chat';
+
+// Where the person answers what waits on them: a studio pane takes its questions and the approvals it owns, the chat everything else.
+function asksOf(studio: ReturnType<typeof studioFor>, approvals: Approval[], questions: Question[]) {
+  const owned = studio ? approvals.filter(studio.owns) : [];
+  const cards = approvals.filter((a) => !owned.includes(a));
+  return { owned, cards, inPane: owned.length + (studio ? questions.length : 0), inChat: cards.length + (studio ? 0 : questions.length) };
+}
+
+// A session has a pane beside the chat once it has something to show there: a studio always, any other session from its first sealed version.
+// Until the person picks a tab on a phone, it opens where a pending ask is answered, else on the pane.
+function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
   const studio = studioFor(sessionKey);
-  const [tab, setTab] = useState<'pane' | 'chat'>('pane');
-  if (!studio) return { studio, tab, setTab, send, cards: approvals, busy: running, chat: '' };
-  const owned = approvals.filter(studio.owns);
+  const [picked, setTab] = useState<Tab>();
+  const [focus, setFocus] = useState<SealedArtifact>();
+  const open = useCallback((a: SealedArtifact) => (setFocus(a), setTab('pane')), []);
+  const id = useId();
+  // Below lg the tabs show one column at a time, so each column is the tab panel its tab controls.
+  const tabbed = !useDesktop();
+  const asks = asksOf(studio, approvals, questions);
+  const shown = studio ? undefined : paneVersions(items, focus);
+  const label = studio?.label ?? (shown && artifactName(shown.a));
+  const tab: Tab = !label ? 'chat' : (picked ?? (asks.inChat && !asks.inPane ? 'chat' : 'pane'));
   // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
   const steer: Send = async (input, whenBusy, images) => {
-    if (!owned.length) return send(input, whenBusy, images);
+    if (!asks.owned.length) return send(input, whenBusy, images);
     if (!(await send(input, 'steer', images))) return false;
-    await Promise.all(owned.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
+    await Promise.all(asks.owned.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
     return true;
   };
-  // Below lg the chat column shows only on its tab; from lg it is a fixed column beside the pane.
-  const chat = `lg:max-w-[440px] lg:border-r lg:border-line ${tab === 'chat' ? '' : 'max-lg:hidden'}`;
-  return { studio, tab, setTab, send: steer, cards: approvals.filter((a) => !studio.owns(a)), busy: running && !owned.length, chat };
+  const panel = (t: Tab) => (label && tabbed ? { id: `${id}${t}`, role: 'tabpanel', 'aria-labelledby': `${id}${t}-tab` } : {});
+  return { studio, label, tab, setTab, open, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
 }
-type Live = ReturnType<typeof useStudio>;
+type Live = ReturnType<typeof usePane>;
 
-// Below lg a studio session is one pane at a time; the pane's tab counts the questions it shows.
-function StudioTabs({ live: { studio, tab, setTab }, waiting }: { live: Live; waiting: number }) {
-  if (!studio) return null;
+const count = (n: number) => n > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] leading-4 font-semibold text-warning">{n}</span>;
+
+// Below lg a session with a pane is one tab at a time; each tab counts the asks answered on it.
+function PaneTabs({ live: { label, tab, setTab, asks, id } }: { live: Live }) {
+  if (!label) return null;
   const cls = 'flex min-h-11 flex-1 cursor-pointer items-center justify-center gap-1.5 border-0 border-b-2 border-transparent bg-transparent text-[13.5px] text-muted aria-selected:border-ink aria-selected:font-semibold aria-selected:text-ink';
+  // Two tabs, so either arrow moves to the other one.
+  const arrows = (e: KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = tab === 'pane' ? 'chat' : 'pane';
+    setTab(next);
+    document.getElementById(`${id}${next}-tab`)?.focus();
+  };
+  const props = (t: Tab) => ({ id: `${id}${t}-tab`, type: 'button', role: 'tab', 'aria-selected': tab === t, 'aria-controls': `${id}${t}`, tabIndex: tab === t ? 0 : -1, onClick: () => setTab(t), className: cls }) as const;
   return (
-    <div role="tablist" aria-label="Show" className="flex border-b border-line lg:hidden">
-      <button type="button" role="tab" aria-selected={tab === 'pane'} onClick={() => setTab('pane')} className={cls}>
-        {studio.label}{waiting > 0 && ' '}{waiting > 0 && <span className="rounded-full bg-warning-bg px-1.5 text-[11px] leading-4 font-semibold text-warning">{waiting}</span>}
-      </button>
-      <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')} className={cls}>Chat</button>
+    <div role="tablist" aria-label="Show" onKeyDown={arrows} className="flex border-b border-line lg:hidden">
+      <button {...props('pane')}>{label}{asks.inPane > 0 && ' '}{count(asks.inPane)}</button>
+      <button {...props('chat')}>Chat{asks.inChat > 0 && ' '}{count(asks.inChat)}</button>
     </div>
   );
 }
 
-// Beside the chat: the studio's pane when the session has one, else the context rail.
-function Side({ live, rail, ...props }: Omit<StudioProps, 'visible'> & { live: Live; rail: ReactNode }) {
-  const Pane = live.studio?.Pane;
+type SideProps = Omit<StudioProps, 'visible'> & { live: Live; rail: ReactNode; meta: readonly Record<string, unknown>[] };
+
+// Beside the chat: the studio's pane or the newest artifact once there is one, else the context rail.
+function Side({ live, rail, meta, ...props }: SideProps) {
   // From lg the pane sits beside the chat; below it, only its tab shows it.
   const visible = useDesktop() || live.tab === 'pane';
-  if (!Pane) return rail;
+  if (!live.label) return rail;
+  const Pane = live.studio?.Pane;
   return (
-    <section aria-label={live.studio!.label} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
-      {/* Questions come first in the pane, so the person answers them there instead of on the chat tab. */}
-      {props.questions.length > 0 && <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 px-4 pt-4 sm:px-5"><SessionQuestions sessionKey={props.sessionKey} items={props.questions} /></div>}
-      <Pane {...props} visible={visible} />
+    <section aria-label={live.panel('pane').role ? undefined : live.label} {...live.panel('pane')} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
+      {/* Questions come first in a studio pane, so the person answers them there instead of on the chat tab. */}
+      {Pane && props.questions.length > 0 && <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 px-4 pt-4 sm:px-5"><SessionQuestions sessionKey={props.sessionKey} items={props.questions} /></div>}
+      {Pane ? <Pane {...props} visible={visible} />
+        : live.shown && <ArtifactView sessionKey={props.sessionKey} {...live.shown} onPick={live.setFocus} onFollow={live.focus && (() => live.setFocus(undefined))} now={{ running: props.running, meta }} />}
     </section>
   );
 }
@@ -368,35 +397,38 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
-  const [work, setWork] = useState<SealedArtifact | null>(null);
   const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
-  const details = useDetails();
+  const live = usePane(sessionKey, items, approvals, standing.questions, send, pending.decide, setError, view.running);
+  const split = useSplit();
+  // The pane takes the room the rail would; the rail then opens as the Details sheet at any width.
+  const details = useDetails(!live.label);
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
-  const live = useStudio(sessionKey, approvals, send, pending.decide, setError, view.running);
+  // Below lg the chat fills the width on its tab and hides on the other; from lg it is a resizable column beside the pane.
+  const chat = live.label ? `lg:w-(--chat-w) lg:max-w-[calc(100%-360px)] lg:min-w-[320px] lg:flex-none ${live.tab === 'chat' ? '' : 'max-lg:hidden'}` : '';
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
       <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} onDetails={details.show}>
-        <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
+        <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
-      <StudioTabs live={live} waiting={standing.questions.length} />
-      <div className="flex min-h-0 flex-1">
-      <div className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${live.chat}`}>
+      <PaneTabs live={live} />
+      <div ref={split.row} style={split.style} className="flex min-h-0 flex-1">
+      <div {...live.panel('chat')} className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${chat}`}>
         <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <SessionKeyContext value={sessionKey}>
-              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={setWork} />
+              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} />
             </SessionKeyContext>
-            <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.cards} decide={pending.decide} />
+            <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.asks.cards} decide={pending.decide} />
             {/* A studio pane answers its session's questions above the contract, so the chat does not repeat them. */}
             {!live.studio && <SessionQuestions sessionKey={sessionKey} items={standing.questions} />}
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
@@ -410,10 +442,10 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
           </div>
         </div>
       </div>
-      <Side live={live} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
+      {live.label && <div {...split.separator} className="relative hidden w-px flex-none cursor-col-resize bg-line outline-none before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-line-strong focus-visible:bg-link focus-visible:ring-2 focus-visible:ring-link lg:block" />}
+      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />
-      {work && <Work artifact={work} session={sessionKey} onClose={() => setWork(null)} />}
     </div>
   );
 }

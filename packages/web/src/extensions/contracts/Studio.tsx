@@ -3,7 +3,7 @@ import { checkFailed, decideApproval, type Approval, type SealedArtifact, type V
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import type { StudioProps } from '../../extension.ts';
 import { useLoad } from '../../useLoad.ts';
-import { useMenu } from '../../useMenu.ts';
+import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
 import { ChangeList } from './ChangeList.tsx';
 import { Decided, Progress } from './Progress.tsx';
 import { DiffContext, diffUnits, units, type Diff } from './diff.ts';
@@ -81,7 +81,7 @@ export function useSeen(key: string, newest: number | undefined, visible: boolea
 }
 
 const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
-const nameOf = (v: Version, all: Version[], status?: StatusOf) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}${status ? `, ${LABEL[status(v)]}` : ''}`;
+const nameOf = (v: Version, all: Version[]) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}`;
 
 // A TypeScript spec is compared through its parsed declarations, which load with the compiler; until then there is no comparison.
 function useDiff(from: Version | undefined, to: Version) {
@@ -128,51 +128,21 @@ const TONE: Record<VersionStatus, [string, string]> = {
   draft: ['draft', 'bg-soft text-muted'], proposed: ['awaiting', 'bg-warning-bg text-warning'], approved: ['approved', 'bg-success-bg text-success'], changes_requested: ['changes asked', 'bg-danger-bg text-danger'],
 };
 const short = (v: Version, all: Version[]) => `v${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` #${v.a.version}` : ''}`;
-
-function Badge({ s }: { s: VersionStatus }) {
-  return <span aria-hidden="true" className={`rounded px-1.5 text-[10.5px] font-semibold tracking-wide whitespace-nowrap uppercase ${TONE[s][1]}`}>{TONE[s][0]}</span>;
-}
-
-const item = 'flex min-h-11 w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 text-left text-[13px] text-ink hover:bg-soft aria-[current=true]:font-semibold lg:min-h-9';
-const chevron = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>;
-
-// One side of the comparison: a version and its status, a menu of every version to pick another; `none` offers the whole contract instead.
-function Side({ name, versions, status, value, none, title, onPick }: { name: string; versions: Version[]; status?: StatusOf; value?: number; none?: string; title?: string; onPick: (v?: number) => void }) {
-  const menu = useMenu();
-  const v = versions.find((x) => x.a.version === value);
-  const choose = (n?: number) => { menu.close(); onPick(n); };
-  return (
-    <div ref={menu.root} onKeyDown={menu.keys} className="relative">
-      <button ref={menu.button} type="button" aria-haspopup="menu" aria-expanded={menu.open} aria-label={`${name}: ${v ? nameOf(v, versions, status) : none}`} title={title} onClick={menu.toggle} className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-soft px-3 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
-        <span className="font-mono font-semibold whitespace-nowrap">{v ? short(v, versions) : 'none'}</span>{v && status && <Badge s={status(v)} />}{chevron}
-      </button>
-      {menu.open && (
-        <div role="menu" aria-label={name} className="absolute left-0 z-20 mt-1 min-w-60 rounded-xl border border-line-strong bg-surface py-1 shadow-float">
-          {none && <button type="button" role="menuitem" aria-current={!v || undefined} tabIndex={-1} onClick={() => choose(undefined)} className={item}>{none}</button>}
-          {[...versions].reverse().map((x) => (
-            <button key={x.a.version} type="button" role="menuitem" aria-current={x === v || undefined} tabIndex={-1} onClick={() => choose(x.a.version)} className={item}>
-              <span className="flex-1">{nameOf(x, versions)}</span>{status && <Badge s={status(x)} />}<span className="sr-only">{status && `, ${LABEL[status(x)]}`}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => {
+  const s = status?.(v);
+  return { id: v.a.version, short: short(v, versions), name: nameOf(v, versions), status: s && LABEL[s], badge: s && { text: TONE[s][0], cls: TONE[s][1] } };
+});
 
 // The two versions compared on one row; once the person picks, an icon goes back to following the newest version.
 function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
+  const items = itemsOf(versions, status);
   return (
     <div className="flex items-center gap-1.5">
-      <Side name="Compare from" versions={versions} status={status} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
+      <VersionMenu name="Compare from" items={items} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
       <span aria-hidden="true" className="text-muted">→</span>
-      <Side name="Compare to" versions={versions} status={status} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
+      <VersionMenu name="Compare to" items={items} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
       <span className="flex-1" />
-      {auto === undefined && (
-        <button type="button" aria-label="Follow the newest version" title="Follow the newest version" onClick={() => pick(undefined)} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5" /></svg>
-        </button>
-      )}
+      {auto === undefined && <FollowNewest onClick={() => pick(undefined)} />}
     </div>
   );
 }

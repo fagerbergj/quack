@@ -1,24 +1,24 @@
 import { escapeTerm } from '@quack/sdk/query';
 import { useEffect, useState } from 'react';
-import { listAllArtifacts, listArtifacts, type Artifact, type SealedArtifact } from './api.ts';
+import { listAllArtifacts, type Artifact, type SealedArtifact } from './api.ts';
+import { artifactHref } from './extension.ts';
 import { artifactName } from './Artifacts.tsx';
 import { artifactKind } from './kinds.ts';
 import { SearchFilter, searchTerms, type FilterField, type FilterValues } from './SearchFilter.tsx';
 import { age, titleOf } from './sessions.ts';
 import type { Row } from './sessions.ts';
 import { useLoad } from './useLoad.ts';
-import { Work } from './Work.tsx';
 
-function Item({ a, noun, title, now, onOpen }: { a: Artifact; noun: string; title: string; now: number; onOpen: () => void }) {
+function Item({ a, noun, title, now }: { a: Artifact; noun: string; title: string; now: number }) {
   return (
     <li>
-      <button type="button" aria-label={`Open ${title}`} onClick={onOpen} className="flex min-h-16 w-full cursor-pointer flex-col justify-center gap-0.5 px-3 py-2 text-left text-ink hover:bg-soft sm:px-4">
+      <a href={artifactHref(a.session, a.kind)} aria-label={`Open ${title}`} className="flex min-h-16 w-full flex-col justify-center gap-0.5 px-3 py-2 text-left text-ink no-underline hover:bg-soft sm:px-4">
         <span className="flex w-full items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">{title}</span>
           <time className="flex-none text-[13px] tabular-nums text-muted">{age(a.sealedAt, now)}</time>
         </span>
         <span className="w-full truncate text-[13px] text-muted">{[noun, a.summary].filter(Boolean).join(' · ')}</span>
-      </button>
+      </a>
     </li>
   );
 }
@@ -56,19 +56,6 @@ export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: numb
   // The kind menu remembers what the unfiltered list held, so choosing a kind keeps the others on offer.
   const [kinds, setKinds] = useState<string[]>([]);
   useEffect(() => void (items && !q && setKinds([...new Set(items.map((a) => a.kind))].sort())), [items]);
-  const [open, setOpen] = useState<SealedArtifact[]>();
-  const [session, setSession] = useState<string>();
-  const [error, setError] = useState('');
-  // The list carries no content, so opening reads the full versions from their session.
-  const show = (a: Artifact) =>
-    listArtifacts(a.session).then((all) => {
-      const versions = all.filter((x) => x.kind === a.kind).sort((x, y) => y.version - x.version);
-      if (versions.length) {
-        setSession(a.session);
-        setOpen(versions);
-      }
-      else setError('That artifact is no longer in its session.');
-    }, (e: Error) => setError(e.message));
   const entries = (items ? newest(items) : []).map((a) => {
     const r = rows?.find((x) => x.key === a.session);
     return { a, r, ...artifactKind(r) };
@@ -79,12 +66,11 @@ export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: numb
       <div className="mb-3">
         <SearchFilter label="Search artifacts" text={text} onText={setText} fields={fieldsOf(kinds)} values={values} onValues={setValues} />
       </div>
-      {(error || listError) && <p role="alert" className="text-[13px] text-danger">{error || listError}</p>}
+      {listError && <p role="alert" className="text-[13px] text-danger">{listError}</p>}
       {items?.length === 0 && <p className="text-sm text-muted">{q ? 'No artifacts match.' : 'Nothing here yet.'}</p>}
       <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-[22px] border border-line bg-surface p-0 shadow-card empty:hidden">
-        {entries.map(({ a, r, noun }) => <Item key={`${a.session}:${a.kind}`} a={a} noun={noun} title={r ? titleOf(r) : a.session} now={now} onOpen={() => void show(a)} />)}
+        {entries.map(({ a, r, noun }) => <Item key={`${a.session}:${a.kind}`} a={a} noun={noun} title={r ? titleOf(r) : a.session} now={now} />)}
       </ul>
-      {open && <Work artifact={open[0]!} versions={open} session={session} onClose={() => setOpen(undefined)} />}
     </div>
   );
 }

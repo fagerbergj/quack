@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AgentsRoute } from './Agents.tsx';
-import { ArtifactPage } from './ArtifactPage.tsx';
+import { ArtifactPage, parseArtifactRoute } from './ArtifactPage.tsx';
 import { ArtifactList } from './ArtifactList.tsx';
 import { FOCUS_ASK } from './Home.tsx';
 import { More } from './More.tsx';
@@ -26,13 +26,6 @@ function parseHash(hash: string): { key: string; agent?: string } | undefined {
   const m = /^#\/s\/([^?]+)(?:\?agent=(.*))?$/.exec(hash);
   const key = m && safeDecode(m[1]);
   return m && key ? { key, agent: m[2] ? safeDecode(m[2]) : undefined } : undefined;
-}
-
-// An artifact's own page: #/s/<key>/spec, with ?v=<version> to pick one.
-function parseFull(hash: string): { key: string; version?: number } | undefined {
-  const m = /^#\/s\/([^/?]+)\/spec(?:\?v=(\d+))?$/.exec(hash);
-  const key = m && safeDecode(m[1]!);
-  return m && key ? { key, version: m[2] ? Number(m[2]) : undefined } : undefined;
 }
 
 function useHash() {
@@ -66,6 +59,9 @@ function Placeholder({ title }: { title: string }) {
   );
 }
 
+// A session's page sits under Home when it is Home's chat, else under Sessions.
+const sessionRoute = (key?: string): Route | undefined => (key === undefined ? undefined : key.startsWith('home:') ? 'home' : 'sessions');
+
 const trimSlash = (h: string) => (h !== '#/' && h.endsWith('/') ? h.slice(0, -1) : h);
 
 // On desktop the list lives in the sidebar, except on #/sessions itself, where it is the page.
@@ -74,7 +70,7 @@ const listInSidebar = (desktop: boolean, nav: Route, open: boolean) => desktop &
 export function App() {
   const raw = useHash();
   const hash = trimSlash(raw);
-  const full = parseFull(hash);
+  const full = parseArtifactRoute(hash);
   const session = full ?? parseHash(hash);
   useUpdates();
   // Inbox folded into Home; old links still land.
@@ -85,7 +81,7 @@ export function App() {
       dispatchEvent(new Event(FOCUS_ASK));
     }
   }, [hash]);
-  const nav = session?.key.startsWith('home:') ? 'home' : session ? 'sessions' : navRoute(hash);
+  const nav = full ? 'artifacts' : sessionRoute(session?.key) ?? navRoute(hash);
   const Page = session ? undefined : NAVS.find((n) => n.route === nav)?.page;
   const title = !session && PLACEHOLDERS[nav];
   const data = useWorkspaceData(session?.key);
@@ -95,7 +91,7 @@ export function App() {
   return (
     <ExtensionProviders rows={data.rows}>
       <Shell route={nav} bare={Boolean(session)} sidebar={inSidebar ? list : undefined}>
-        {full ? <ArtifactPage sessionKey={full.key} version={full.version} />
+        {full ? <ArtifactPage sessionKey={full.key} kind={full.kind} version={full.version} rows={data.rows} />
           : Page ? <Page rows={data.rows} />
           : nav === 'more' ? <More />
           : nav === 'settings' ? <Settings />

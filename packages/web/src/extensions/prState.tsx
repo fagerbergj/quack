@@ -104,7 +104,7 @@ export function PrChip({ sessionKey }: { sessionKey: string }) {
   const at = pr?.merged_at ?? pr?.closed_at;
   return (
     // relative lifts it over the row link's overlay; the after: box takes the 18 px badge to a 30 px tap target. The border keeps every state one size.
-    // The focus outline is drawn inside the pill, since the session header's line 2 clips overflow.
+    // The focus outline is drawn inside the pill: the session header's line 2 clips sideways (overflow-x), though not above or below.
     <a href={url} target="_blank" rel="noopener noreferrer" aria-label={pr ? `Pull request ${n}, ${state}, on GitHub` : `Pull request ${n} on GitHub`} title={pr ? `Pull request ${state}${at ? ` ${new Date(at).toLocaleDateString()}` : ''}` : undefined} className={`relative flex flex-none items-center gap-1 rounded-full border px-1.5 text-[11px] leading-4 font-medium tabular-nums whitespace-nowrap no-underline after:absolute after:-inset-x-1 after:-inset-y-1.5 hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-link ${BADGE[state].cls}`}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={BADGE[state].icon} /></svg>
       {n}
