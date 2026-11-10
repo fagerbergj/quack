@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { AgentsRoute } from './Agents.tsx';
 import { ArtifactPage, parseArtifactRoute } from './ArtifactPage.tsx';
 import { ArtifactList } from './ArtifactList.tsx';
-import { FOCUS_ASK } from './Home.tsx';
 import { More } from './More.tsx';
 import { Shell, type Route } from './Shell.tsx';
 import { Settings } from './Settings.tsx';
@@ -39,24 +38,12 @@ function useHash() {
 }
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
-const PLACEHOLDERS: Record<Route, string> = {
-  more: 'More', artifacts: 'Artifacts', agents: 'Agents', settings: 'Settings',
-  ...Object.fromEntries(NAVS.map((n) => [n.route, n.label])),
-};
+const ROUTES = new Set<Route>(['more', 'artifacts', 'agents', 'settings', ...NAVS.map((n) => n.route)]);
 
 function navRoute(hash: string): Route {
-  if (hash === '#/' || hash === '' || hash === '#/new') return 'home';
+  if (hash === '#/' || hash === '') return 'home';
   const name = /^#\/(\w+)(?:\/[^/?]+)?\/?$/.exec(hash)?.[1];
-  return name && Object.hasOwn(PLACEHOLDERS, name) ? name : 'sessions';
-}
-
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <h1 className="m-0 text-2xl">{title}</h1>
-      <p className="text-sm text-muted">Nothing here yet.</p>
-    </div>
-  );
+  return name && ROUTES.has(name) ? name : 'sessions';
 }
 
 // A session's page sits under Home when it is Home's chat, else under Sessions.
@@ -73,17 +60,8 @@ export function App() {
   const full = parseArtifactRoute(hash);
   const session = full ?? parseHash(hash);
   useUpdates();
-  // Inbox folded into Home; old links still land.
-  useEffect(() => {
-    if (hash === '#/inbox') location.replace('#/');
-    if (hash === '#/new') {
-      location.replace('#/');
-      dispatchEvent(new Event(FOCUS_ASK));
-    }
-  }, [hash]);
   const nav = full ? 'artifacts' : sessionRoute(session?.key) ?? navRoute(hash);
   const Page = session ? undefined : NAVS.find((n) => n.route === nav)?.page;
-  const title = !session && PLACEHOLDERS[nav];
   const data = useWorkspaceData(session?.key);
   const desktop = useDesktop();
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
@@ -97,7 +75,7 @@ export function App() {
           : nav === 'settings' ? <Settings />
           : nav === 'agents' ? <AgentsRoute hash={hash} />
           : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
-          : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} home={nav === 'home'} list={inSidebar ? undefined : list} />}
+          : <Workspace data={data} selected={session} home={nav === 'home'} list={inSidebar ? undefined : list} />}
       </Shell>
     </ExtensionProviders>
   );

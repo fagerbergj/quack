@@ -710,14 +710,6 @@ test('a failed version fetch shows nothing', async () => {
   expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).toBeNull();
 });
 
-test('More lists Settings and no longer carries the theme toggle', async () => {
-  stubViewport(false);
-  location.hash = '#/more';
-  render(<App />);
-  expect((await screen.findAllByRole('link', { name: 'Settings' })).length).toBeGreaterThan(0);
-  expect(screen.queryByRole('button', { name: 'Day / night' })).toBeNull();
-});
-
 test('assistant text renders as markdown with a table, highlighted code and citation chips; calls collapse into one card', async () => {
   const ws = await openSession();
   const md = '## Result\n\n| Server | Gain |\n| --- | --- |\n| vLLM | 1.9x |\n\nSee [S9] and `TP=4`.\n\n```ts\nconst x = 1;\n```';
@@ -846,18 +838,6 @@ test('a malformed socket frame is skipped and later frames still apply', async (
   act(() => ws.onmessage?.({ data: '{not json' }));
   ws.frame(view({ run: true }));
   expect(screen.getByRole('status')).toHaveTextContent('Running');
-});
-
-test('#/new lands on Home with the box focused, on phone and desktop alike', async () => {
-  for (const desktop of [false, true]) {
-    stubViewport(desktop);
-    location.hash = '#/new';
-    const { unmount } = render(<App />);
-    const box = await screen.findByRole('textbox', { name: 'What do you need?' });
-    await waitFor(() => expect(box).toHaveFocus());
-    expect(location.hash).toBe('#/');
-    unmount();
-  }
 });
 
 const pendingAsks = { asks: [ask('gh:3', 'a/1', { createdAt: iso(1), toolCall: { tool: 'github_post_review', args: {} } })] };
@@ -1653,15 +1633,12 @@ test('the Home box opens a home: session for the quack agent and seeds its first
   expect(document.querySelector('a[aria-label="Home"]')).toHaveAttribute('href', '#/');
 });
 
-test('#/sessions is the session list on a phone, and #/inbox goes to Home', async () => {
+test('#/sessions is the session list on a phone', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Old work' })] };
   phoneAt('#/sessions');
   render(<App />);
   expect(await screen.findByRole('region', { name: 'Recent' })).toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'What do you need?' })).toBeNull();
-  goTo('#/inbox');
-  expect(await screen.findByRole('textbox', { name: 'What do you need?' })).toBeInTheDocument();
-  expect(location.hash).toBe('#/');
 });
 
 const tabs = () => within(screen.getAllByRole('navigation', { name: 'Main' })[1]).getAllByRole('link').map((l) => l.textContent);
@@ -1986,17 +1963,6 @@ test('the session menu runs from harmless to destructive', async () => {
   const items = await screen.findAllByRole('menuitem');
   const names = items.map((i) => i.textContent);
   expect(names).toEqual(['Stop', 'Rename', 'Export', 'Archive', 'Delete']);
-});
-
-test('nothing above the nav duplicates Home: no link to #/new on desktop or on the phone Sessions header', async () => {
-  routes['GET /sessions'] = { sessions: [] };
-  location.hash = '#/sessions';
-  const { unmount } = render(<App />);
-  expect(document.querySelector('a[href="#/new"]')).toBeNull();
-  unmount();
-  stubViewport(false);
-  render(<App />);
-  expect(document.querySelector('a[href="#/new"]')).toBeNull();
 });
 
 describe('the session context rail', () => {

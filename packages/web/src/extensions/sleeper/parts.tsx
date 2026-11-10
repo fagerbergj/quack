@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { StatusIcon } from '../../StatusIcon.tsx';
-import { FailedCheck, failedChecks } from '../../CheckList.tsx';
-import type { SealedArtifact } from '../../api.ts';
+import { FailedCheck } from '../../CheckList.tsx';
+import { checkFailed, type SealedArtifact } from '../../api.ts';
 import { Markdown } from '../../Markdown.tsx';
 
 export type News = Array<{ title: string; url: string; date: string; player: string }>;
@@ -19,7 +19,7 @@ export function Verdict({ artifact }: { artifact: SealedArtifact }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
       <div className="flex items-center gap-2"><StatusIcon verdict={v} /><span className="font-medium text-ink-2">Didn't pass its checks</span></div>
-      {failedChecks(v.checks).map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
+      {v.checks.filter(checkFailed).map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} />)}
     </div>
   );
 }
@@ -28,7 +28,7 @@ export function Verdict({ artifact }: { artifact: SealedArtifact }) {
 export function TitleTick({ artifact }: { artifact: SealedArtifact }) {
   const v = artifact.verdict;
   if (!v?.passed) return null;
-  const missed = failedChecks(v.checks).map((c) => c.label);
+  const missed = v.checks.filter(checkFailed).map((c) => c.label);
   return <StatusIcon verdict={v} label={missed.length ? `Double-checked; partly missed: ${missed.join('; ')}` : undefined} />;
 }
 

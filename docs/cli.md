@@ -4,7 +4,7 @@
 
 | Command | Does |
 | --- | --- |
-| `sessions [--state S] [--agent A] [--order-by "F [asc\|desc]"] [--page-size N] [--page-token T] [--keys] [q]` | One page of `GET /sessions`; `--keys` prints bare keys. |
+| `sessions [--state S] [--agent A] [--order-by F] [--page-size N] [--page-token T] [--keys] [q]` | One page of `GET /sessions`; `--keys` prints bare keys. |
 | `show [-f] [--verdict] [--messages N] <key>` | The session, its pending asks, the newest version of each artifact kind and the last N messages (default 5, at most 50); `-f` then streams new transcript lines until the run ends. |
 | `new [--agent A] [--key K] [-p] <text>` | Start a session through `POST /sessions/:key/invocations` and print its key. |
 | `send [-p] <key> <text>` | Send a message; returns once accepted and prints its submission id. A message sent during a run queues as a follow-up. |
@@ -55,13 +55,13 @@ prod  http://100.64.0.6:18081  reachable, version eca6df0c2618 built 2026-11-09T
 
 `sessions` hides archived sessions (`-state:archived`) unless it is given a `q`, and `asks` always adds `state:pending`.
 
-`--order-by` takes a field and, AIP-132 style, an optional direction, quoted or not: `quack sessions --order-by createdAt desc` lists the newest sessions first. The Sessions API runs each order one way and takes the field alone, so the CLI sends the field and refuses a direction the order does not run in:
+`--order-by` names the field the server orders by; each order runs one way, and the server refuses a field its list does not offer:
 
 | List | Orders |
 | --- | --- |
-| `sessions` | `lastActivity desc` (the default), `createdAt desc`, `oldestAskAt asc` |
-| `asks` | `createdAt asc` across sessions, `createdAt desc` with `--session` |
-| `artifacts` | `sealedAt desc` |
+| `sessions` | `lastActivity` (the default, newest first), `createdAt` (newest first), `oldestAskAt` (oldest first) |
+| `asks` | `createdAt`, oldest first across sessions, newest first with `--session` |
+| `artifacts` | `sealedAt`, newest first |
 
 A list prints one page, of at most `--page-size` rows (the server's default 100, capped at 1000). When more remain, `next page: --page-token T` goes to stderr, so stdout still pipes; pass it back with the same query for the next page. With `--json` the token is the page's `nextPageToken`.
 

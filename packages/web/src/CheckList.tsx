@@ -51,13 +51,10 @@ export function CheckRow({ check, pill }: { check: Check; pill?: boolean }) {
 }
 
 /** One failed check on a card, open on its reason. */
-export function FailedCheck({ check, tone }: { check: Check; tone: 'danger' | 'muted' }) {
-  const box = tone === 'danger' ? 'border-danger-line bg-danger-bg/60 text-danger' : 'border-line bg-soft text-ink-2';
+export function FailedCheck({ check }: { check: Check }) {
   return (
-    <div className={`rounded-lg border px-3 ${box}`}>
+    <div className="rounded-lg border border-danger-line bg-danger-bg/60 px-3 text-danger">
       <CheckRow check={check} />
     </div>
   );
 }
-
-export const failedChecks = (checks: Check[]) => checks.filter(checkFailed);

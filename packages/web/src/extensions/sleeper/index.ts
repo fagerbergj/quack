@@ -34,15 +34,12 @@ function cardName(a: SealedArtifact): string {
   return '';
 }
 
-// Card and page draw the same view; undefined (not a known card) leaves the generic JSON tree.
-const view = (a: SealedArtifact) => {
-  const card = cardOf(a);
-  return card && createElement(SleeperCard, { key: a.hash, a, card });
-};
-
 export const sleeper: Extension = {
-  card: view,
-  full: view,
+  // Undefined (not a known card) leaves the generic JSON tree.
+  card: (a) => {
+    const card = cardOf(a);
+    return card && createElement(SleeperCard, { key: a.hash, a, card });
+  },
   wholeUnits: ['card', 'facts'],
   artifact: (a) => (a.kind === 'sleeper.cards' ? { name: cardName(a) } : undefined),
   session: {

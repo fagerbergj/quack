@@ -9,7 +9,6 @@ export const SessionKeyContext = createContext<string | undefined>(undefined);
 export const artifactHref = (sessionKey: string, kind: string, version?: number) =>
   `#/s/${encodeURIComponent(sessionKey)}/a/${encodeURIComponent(kind)}${version === undefined ? '' : `?v=${version}`}`;
 
-export type Tone = 'plain' | 'muted' | 'warn' | 'ok' | 'bad';
 /** A row's line while a run works, once its last run succeeded, and before any run ended. */
 export type Words = { run: string; done: string; none: string };
 export type Named = { title: string; full: string; num?: string; repo?: string };
@@ -41,16 +40,12 @@ export type Extension = {
   artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean; /** How the context rail says a posted version went out ("Posted to GitHub as Approve"); "Posted" when absent. */ postedTo?: string } | undefined;
   /** A sealed artifact drawn as a card instead of a line; undefined when it is not this extension's or cannot be read as one. */
   card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
-  /** The artifact drawn as its own page (opened from a link on its card); undefined when it is not this extension's. */
-  full?: (a: SealedArtifact) => ReactNode | undefined;
   /** The version a kind's content calls itself, when sealed versions repeat it (a revised draft); undefined otherwise. */
   versionOf?: (a: SealedArtifact) => number | undefined;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */
   opening?: (text: string, meta: readonly Record<string, unknown>[]) => ReactNode | undefined;
-  /** A starter the home screen offers: the pill shows `label`, a click fills the composer with `prompt`. */
-  suggestion?: { label: string; prompt: string };
   /** A badge beside a session's name in the list and its header (a pull request's state); it draws nothing for a session that is not its own. */
   chip?: ComponentType<{ sessionKey: string }>;
   /** Wraps the shell to share what its chips read across the listed sessions, such as one lookup for every row. */
@@ -68,9 +63,9 @@ export type Extension = {
   wholeUnits?: string[];
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
   scope?: (key: string) => string | undefined;
-  /** A nav entry under Apps; without `page` it shows the placeholder. */
+  /** A nav entry under Apps and the page it opens. */
   nav?: {
-    route: string; label: string; icon: string; tint?: string; page?: ComponentType<{ rows: Row[] | undefined }>;
+    route: string; label: string; icon: string; tint?: string; page: ComponentType<{ rows: Row[] | undefined }>;
     /** In the bottom bar until the person picks their own pages. */
     pinned?: boolean;
     /** A hook for the plain line under its tile on the More page; `warn` marks something waiting. */

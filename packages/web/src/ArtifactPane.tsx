@@ -1,10 +1,8 @@
 import type { SealedArtifact, Verdict } from './api.ts';
-import { ArtifactBoundary } from './ArtifactBoundary.tsx';
 import { artifactCard, artifactName } from './Artifacts.tsx';
 import { CheckResult } from './CheckResult.tsx';
 import { delivered, versionOf } from './delivered.ts';
 import { SessionKeyContext } from './extension.ts';
-import { EXTENSIONS } from './extensions/index.ts';
 import { Content } from './JsonView.tsx';
 import { FollowNewest, VersionMenu, type VersionItem } from './VersionMenu.tsx';
 
@@ -25,11 +23,7 @@ const statusOf = (v: Verdict | null | undefined): Pick<VersionItem, 'status' | '
 const itemsOf = (versions: SealedArtifact[]): VersionItem[] =>
   versions.map((v) => ({ id: versionOf(v), short: `v${versionOf(v)}`, name: `Version ${versionOf(v)}`, ...statusOf(v.verdict) })).reverse();
 
-const fullOf = (a: SealedArtifact) => EXTENSIONS.map((e) => e.full?.(a)).find(Boolean);
-
 function Body({ a, now }: { a: SealedArtifact; now?: { running: boolean; meta: readonly Record<string, unknown>[] } }) {
-  const full = fullOf(a);
-  if (full) return <ArtifactBoundary artifact={a}>{full}</ArtifactBoundary>;
   return artifactCard(a, now) ?? (
     <div className="rounded-[22px] border border-line bg-surface p-5 text-sm leading-relaxed text-ink-2 shadow-card [overflow-wrap:anywhere]">
       <p className="m-0 mb-3"><span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{artifactName(a)}</span></p>

@@ -1,5 +1,5 @@
 import { escapeTerm } from '@quack/sdk/query';
-import { useEffect, useRef, useState, type SubmitEvent } from 'react';
+import { useRef, useState, type SubmitEvent } from 'react';
 import { listSessions, startSession } from './api.ts';
 import { AttachButton, Pending, useAttachments } from './Attach.tsx';
 import { look } from './kinds.ts';
@@ -8,21 +8,13 @@ import { Needs } from './Needs.tsx';
 import { age, group, pendingInput, titleOf, type Row } from './sessions.ts';
 
 const HOME_AGENT = 'quack';
-// A #/new link (old bookmarks) sends this; Home answers by focusing its box.
 // The one standing conversation; every Home send lands in it.
 export const HOME_KEY = 'home:main';
-export const FOCUS_ASK = 'quack:focus-ask';
 
-// Same hand-off as a #/new link: the text waits for the session's socket to open.
+// The text waits for the session's socket to open.
 function Ask({ failed }: { failed: boolean }) {
   const [input, setInput] = useState('');
   const attach = useAttachments();
-  const box = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const focus = () => box.current?.focus();
-    addEventListener(FOCUS_ASK, focus);
-    return () => removeEventListener(FOCUS_ASK, focus);
-  }, []);
   const [error, setError] = useState('');
   // A ref, not state: a second submit can land before a re-render, and two first sends would each create a run.
   const sending = useRef(false);
@@ -60,7 +52,6 @@ function Ask({ failed }: { failed: boolean }) {
       <div className="flex flex-col gap-2.5 rounded-[22px] border border-line-strong bg-surface py-3 pr-3 pl-4 shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring">
         <textarea
           id="ask"
-          ref={box}
           rows={3}
           value={input}
           onChange={(e) => setInput(e.target.value)}

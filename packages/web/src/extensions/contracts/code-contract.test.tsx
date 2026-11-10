@@ -103,7 +103,7 @@ test(`a type more than ${HUB} boxes in view name is a chip on each field, not an
 test('a TypeScript contract opens as a diagram and a card per declaration, with linked types and the why on its card', async () => {
   const { contracts } = await import('./index.ts');
   const spec = { kind: 'typescript', title: 'Stores', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: dts, choices: [{ id: 's', pointer: '/Store', decision: 'Store is a union.', why: [{ source: 'guide', text: 'One shape per kind.', ref: 'typescript#unions' }] }] };
-  render(<>{contracts.full!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
+  render(<>{contracts.card!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
   const diagram = await screen.findByRole('region', { name: 'Class diagram' });
   // A click alone: d3-zoom's mousedown reads the event's view, which jsdom leaves null.
   fireEvent.click(await within(diagram).findByRole('button', { name: 'Centre the diagram on Manifest' }));
