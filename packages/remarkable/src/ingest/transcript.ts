@@ -1,11 +1,8 @@
 import type { ArtifactKind } from '@quack/sdk';
 
-export const TYPES = ['meeting', 'idea', 'todo-list', 'journal', 'sketch', 'reading-notes'] as const;
-
 export type Transcript = {
   kind: 'remarkable.transcript';
   document: { id: string; name: string; version: string };
-  type: string;
   topic: string;
   pages: Array<{ page: number; text: string }>;
 };
@@ -15,7 +12,6 @@ export function problems(t: Partial<Transcript> | null): string[] {
   if (t?.kind !== 'remarkable.transcript') return ['kind must be "remarkable.transcript"'];
   const out: string[] = [];
   if (!t.document?.id || !t.document.name || !t.document.version) out.push('document needs an id, name and version');
-  if (!(TYPES as readonly string[]).includes(t.type ?? '')) out.push(`type must be one of ${TYPES.join(', ')}`);
   if (!t.topic?.trim()) out.push('topic is empty');
   if (!t.pages?.length) out.push('there are no pages');
   (t.pages ?? []).forEach((p, i) => {

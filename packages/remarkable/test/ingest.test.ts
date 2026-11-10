@@ -36,7 +36,7 @@ function fakeService(topics: string[] = []): IngestService & { list: string[] } 
   return { list: topics, pdf: async () => pdf(2), rmdoc: async () => fixture('pdf'), topics: async () => [...topics], addTopic: async (n) => void (topics.some((t) => t.toLowerCase() === n.toLowerCase()) || topics.push(n)) };
 }
 
-type Answers = { type: string; topic: string; proposal?: string };
+type Answers = { topic: string; proposal?: string };
 
 // A model that answers by what it is asked: an image is a page to transcribe, the rest are the decision points and the topic proposal.
 function fakeModel(answers: Answers) {
@@ -52,7 +52,6 @@ function fakeModel(answers: Answers) {
     }
     const ask = String(last);
     const choose = (choice: string) => fauxAssistantMessage(JSON.stringify({ choice, confidence: 0.9, reason: 'fits' }));
-    if (ask.includes('What kind of')) return calls.push('type'), choose(answers.type);
     if (ask.includes('Which existing topic')) return calls.push('topic'), choose(answers.topic);
     calls.push('propose');
     return fauxAssistantMessage(answers.proposal ?? 'unused');
@@ -79,47 +78,45 @@ async function ingest(service: IngestService, answers: Answers, runs: Array<{ ve
   }
 }
 
-test('a two-page document is rendered, transcribed per page and sealed with its type and topic', async () => {
+test('a two-page document is rendered, transcribed per page and sealed with its topic', async () => {
   const service = fakeService();
-  const r = await ingest(service, { type: 'meeting', topic: NONE, proposal: '"Home Renovation".' });
+  const r = await ingest(service, { topic: NONE, proposal: '"Home Renovation".' });
   assert.equal(r.outcomes[0].status, 'completed', JSON.stringify(r.outcomes[0]));
   assert.equal(r.sealed.length, 1);
   assert.deepEqual(r.transcript(), {
     kind: 'remarkable.transcript',
     document: { id: 'n1', name: 'Notes', version: 'v1' },
-    type: 'meeting',
     topic: 'Home Renovation',
     pages: [{ page: 1, text: 'Handwritten words of Page 1 of 2' }, { page: 2, text: 'Handwritten words of Page 2 of 2' }],
   });
-  assert.deepEqual(r.calls, ['transcribe Page 1 of 2.', 'transcribe Page 2 of 2.', 'type', 'topic', 'propose']);
+  assert.deepEqual(r.calls, ['transcribe Page 1 of 2.', 'transcribe Page 2 of 2.', 'topic', 'propose']);
 });
 
 test('an existing topic wins when it fits, and nothing is proposed', async () => {
   const service = fakeService(['home renovation', 'taxes']);
-  const r = await ingest(service, { type: 'todo-list', topic: 'taxes' });
+  const r = await ingest(service, { topic: 'taxes' });
   assert.equal(r.transcript().topic, 'taxes');
-  assert.equal(r.transcript().type, 'todo-list');
   assert.ok(!r.calls.includes('propose'));
   assert.deepEqual(service.list, ['home renovation', 'taxes']);
 });
 
 test('none of these proposes a topic that joins the list for the next document', async () => {
   const service = fakeService(['taxes']);
-  const first = await ingest(service, { type: 'idea', topic: NONE, proposal: 'garden plan' });
+  const first = await ingest(service, { topic: NONE, proposal: 'garden plan' });
   assert.equal(first.transcript().topic, 'garden plan');
   assert.deepEqual(service.list, ['taxes', 'garden plan']);
-  const next = await ingest(service, { type: 'journal', topic: 'garden plan' });
+  const next = await ingest(service, { topic: 'garden plan' });
   assert.equal(next.transcript().topic, 'garden plan');
   assert.ok(!next.calls.includes('propose'));
 });
 
 test('a re-ingest of the same version joins the sealed run: no model call, one version, one topic', async () => {
   const service = fakeService();
-  const r = await ingest(service, { type: 'sketch', topic: NONE, proposal: 'bike frame' }, [{ version: 'v1' }, { version: 'v1' }]);
+  const r = await ingest(service, { topic: NONE, proposal: 'bike frame' }, [{ version: 'v1' }, { version: 'v1' }]);
   assert.deepEqual(r.outcomes.map((o) => o.status), ['completed', 'completed']);
   assert.equal(r.sealed.length, 1);
   assert.equal(r.calls.filter((c) => c === 'propose').length, 1);
-  assert.equal(r.calls.length, 5);
+  assert.equal(r.calls.length, 4);
   assert.deepEqual(service.list, ['bike frame']);
 });
 
@@ -173,14 +170,14 @@ test('a page rmc cannot read fails naming its number and the document', async ()
 
 test('a notebook ingests from its raw pages and never asks for the PDF export', async () => {
   const service = { ...fakeService(), rmdoc: () => fixture('notebook'), pdf: async (): Promise<Uint8Array> => { throw new Error('pdf export must not be used'); } };
-  const r = await ingest(service, { type: 'meeting', topic: NONE, proposal: 'Campaigns' });
+  const r = await ingest(service, { topic: NONE, proposal: 'Campaigns' });
   assert.equal(r.outcomes[0].status, 'completed');
   assert.deepEqual(r.transcript().pages.map((p) => p.page), [1]);
 });
 
-test('the transcript check names every page without text and a wrong type', () => {
-  const t: Transcript = { kind: 'remarkable.transcript', document: { id: 'n1', name: 'N', version: '1' }, type: 'poem', topic: 'x', pages: [{ page: 1, text: 'a' }, { page: 3, text: ' ' }] };
-  assert.deepEqual(problems(t), ['type must be one of meeting, idea, todo-list, journal, sketch, reading-notes', 'page 2 is numbered 3', 'page 2 has no text']);
+test('the transcript check names every page without text', () => {
+  const t: Transcript = { kind: 'remarkable.transcript', document: { id: 'n1', name: 'N', version: '1' }, topic: 'x', pages: [{ page: 1, text: 'a' }, { page: 3, text: ' ' }] };
+  assert.deepEqual(problems(t), ['page 2 is numbered 3', 'page 2 has no text']);
 });
 
 test('parseTopic keeps a short name, reuses an existing one by case, and refuses a sentence', () => {
@@ -219,14 +216,14 @@ test('a low-confidence Clef answer escalates to the session model; a confident o
 
 test('a failed export fails the render step naming the document and the upstream reason', async () => {
   const service = { ...fakeService(), pdf: async () => { throw new Error('remarkable service: GET /documents/n1/pdf returned 502: rmfakecloud GET /ui/api/documents: status 500'); } };
-  const r = await ingest(service, { type: 'meeting', topic: NONE });
+  const r = await ingest(service, { topic: NONE });
   assert.equal(r.outcomes[0].status, 'failed');
   assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^rmfakecloud could not export Notes: .*returned 502: rmfakecloud GET .*status 500/);
 });
 
 test('an unreachable service fails the render step as such, not as an rmfakecloud fault', async () => {
   const down = createIngestService('http://unreachable.test', 't', async () => { throw new TypeError('fetch failed'); });
-  const r = await ingest({ ...fakeService(), pdf: down.pdf }, { type: 'meeting', topic: NONE });
+  const r = await ingest({ ...fakeService(), pdf: down.pdf }, { topic: NONE });
   assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^the reMarkable service is unreachable: fetch failed/);
 });
 
