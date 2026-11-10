@@ -18,7 +18,8 @@ export type SessionsApiDeps = {
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string>;
 };
 
-const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
+/** The one session-key pattern: the Sessions API, the lifecycle channel and the distributor's routes and driver all test it. */
+export const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 const ASK_ID = /^[A-Za-z0-9._:-]{1,100}$/;
 const TITLE_MAX = 120;
 const { send, json } = serviceHttp({ maxBody: 64 * 1024 });
@@ -56,7 +57,7 @@ function listRequest(params: URLSearchParams): ListRequest {
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return undefined; } };
 const keyOf = (raw: string) => {
   const key = decode(raw);
-  if (!key || !KEY.test(key)) throw new Problem(400, 'invalid session key');
+  if (!key || !SESSION_KEY.test(key)) throw new Problem(400, 'invalid session key');
   return key;
 };
 
