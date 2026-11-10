@@ -93,6 +93,16 @@ test('a case naming units judges only those units of the evidence the adapter bu
   assert.deepEqual(rows.rows[0].notes, ['keep: because']);
 });
 
+test('a case naming units judges only those items of a declared rubric, by item id or unit id', async () => {
+  const declared: Rubric = { name: 'acme', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 2 }] }] };
+  const declaration = { scopes: { note: { split: { name: 'jsonItems', from: 'note' } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' as const }, question: { type: 'bool' as const, instructions: 'Is it helpful?' } } } };
+  const two: EvalAdapter = { kind: 'acme.note', judge: { rubric: declared, declaration, inputs: async () => ({ note: JSON.stringify({ keep: 'a', drop: 'b' }) }) } };
+  for (const units of [['keep'], ['note keep']]) {
+    const rows = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', units }], arms: [{ label: 'base', adapters: [two] }], repeat: 1, concurrency: 1, models: judgeModels([false]), judgeModel });
+    assert.deepEqual(rows.rows.map((r) => [r.check, r.met, r.notes]), [['helpful', 0, ['note keep: because']]], units[0]);
+  }
+});
+
 test('a check the judge model could not answer prints null, not a failed check', async () => {
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   faux.setResponses([fauxAssistantMessage('no json here')]);
