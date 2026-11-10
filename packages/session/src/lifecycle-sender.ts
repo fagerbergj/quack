@@ -21,8 +21,9 @@ export const LAUNCH_ENV = ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'] as const;
 /** The session listener and the launch credential the distributor handed this process, when it has both. */
 export const launchEnv = (env: NodeJS.ProcessEnv = process.env) => (env.QUACK_INDEX_URL && env.QUACK_INDEX_TOKEN ? { url: env.QUACK_INDEX_URL, token: env.QUACK_INDEX_TOKEN } : undefined);
 
-type SetTimer = (fn: () => void, ms: number) => () => void;
-const realTimer: SetTimer = (fn, ms) => {
+export type SetTimer = (fn: () => void, ms: number) => () => void;
+/** A timer that never holds the process open; returns its cancel. */
+export const unrefTimer: SetTimer = (fn, ms) => {
   const t = setTimeout(fn, ms);
   t.unref();
   return () => clearTimeout(t);
@@ -77,7 +78,7 @@ async function post(opts: SenderOptions, batch: WireEvent[]): Promise<Outcome> {
 export async function startLifecycleSender(session: { harness: Harness; root: Conversation }, opts: SenderOptions) {
   const { harness, root } = session;
   const now = opts.now ?? Date.now;
-  const setTimer = opts.setTimer ?? realTimer;
+  const setTimer = opts.setTimer ?? unrefTimer;
   const log = opts.log ?? ((l: string) => console.error(l));
   const retryMs = opts.retryMs ?? 5000;
   let stopped = false;

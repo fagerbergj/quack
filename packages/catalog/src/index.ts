@@ -5,6 +5,6 @@ export { postgresCatalog } from './postgres.ts';
 export { parseQuery, QueryError } from './query.ts';
 export { sqliteCatalog } from './sqlite.ts';
 export type * from './port.ts';
-export { artifactWire, askWire, sessionsApi, sessionWire, type Caller, type SessionsApiDeps } from './http.ts';
+export { artifactWire, askWire, SESSION_KEY, sessionsApi, sessionWire, type Caller, type SessionsApiDeps } from './http.ts';
 export { eventsRoute, parseBatch, parseEvents } from './channel.ts';
 export { catalogStore, openCatalog } from './open.ts';

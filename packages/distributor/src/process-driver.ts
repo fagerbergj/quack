@@ -4,7 +4,8 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promi
 import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { childPort, lastActivity, readExport, shellEnv, type SessionExport } from '@quack/session';
+import { SESSION_KEY } from '@quack/catalog';
+import { childPort, lastActivity, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -68,9 +69,6 @@ export async function writeLaunchToken(dir: string): Promise<string> {
   await writeFile(join(dir, LAUNCH_TOKEN_FILE), token, { mode: 0o600 });
   return token;
 }
-
-/** The one session-key pattern, shared with the Sessions API and the lifecycle channel. */
-export const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
@@ -361,15 +359,10 @@ export function processDriver(opts: LauncherOptions & { dataDir: string; agentsD
   return sessionHost(opts, processLauncher(opts));
 }
 
-type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: (fn: () => void, ms: number) => () => void };
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: SetTimer };
 
 // Below the distributor's 20 s drain, so a drain still finishes after a kill.
 const STOP_TIMEOUT_MS = 10_000;
-const unrefTimer = (fn: () => void, ms: number) => {
-  const t = setTimeout(fn, ms);
-  t.unref();
-  return () => clearTimeout(t);
-};
 
 function processLauncher(opts: LauncherOptions): Launch {
   return async ({ key, dir, agentPath }) => {

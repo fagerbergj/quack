@@ -2,8 +2,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
 import { BatchError, type Catalog, type CatalogEvent, type CoreEvent } from './core.ts';
+import { SESSION_KEY } from './http.ts';
 
-const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 const ROUTE = /^\/sessions\/([^/]+)\/events$/;
 export const MAX_EVENTS = 500;
 const EXTENSION = /^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/;
@@ -129,7 +129,7 @@ export function eventsRoute(catalog: Catalog, onApplied?: (key: string, events: 
     if (!match) return false;
     const key = decode(match[1]!);
     // The key is an object boundary the credential cannot reach, so a foreign one is not found.
-    if (!key || !KEY.test(key) || key !== caller) return sendProblem(res, 404, 'no such session for this credential'), true;
+    if (!key || !SESSION_KEY.test(key) || key !== caller) return sendProblem(res, 404, 'no such session for this credential'), true;
     let events: CatalogEvent[];
     try {
       events = parseBatch(await json(req));

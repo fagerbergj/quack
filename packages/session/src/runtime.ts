@@ -24,8 +24,6 @@ export type AgentSpec = {
   instructions?: string;
   /** From the agent's bundle: shortens the deployment's command timeout, never lengthens it. */
   commandTimeoutSeconds?: number;
-  /** Model responses one run may take before it is failed (default TURN_CEILING). */
-  turnCeiling?: number;
 };
 
 export type SubmitResult =
@@ -67,7 +65,7 @@ export function reportLine({ error, ...info }: Report): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth.
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; /** Test seam: model responses one run may take (default TURN_CEILING). */ turnCeiling?: number; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
@@ -78,7 +76,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const log = opts.log ?? console.error;
   const note = (event: string, fields: Record<string, unknown>) => log(JSON.stringify({ event: `session.${event}`, key: opts.key, ...fields }));
   registry.install(unknownToolExtension(async (id) => (await (await open!.conversation(id, ctx))!.agent(ctx)).tools.map((t) => t.name)));
-  registry.install(runCeilingExtension(opts.agent.turnCeiling ?? TURN_CEILING, {
+  registry.install(runCeilingExtension(opts.turnCeiling ?? TURN_CEILING, {
     async record(id, run, error) {
       const conversation = await open!.conversation(id, ctx);
       await conversation!.commit(async (tx) => { (await tx.doc(Failures, id)).items.runaway = { error, run: Number(run) || 0, at: Date.now() }; }, ctx);

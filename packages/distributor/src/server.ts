@@ -4,14 +4,12 @@ import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
-import { sessionsApi, type Caller, type Catalog } from '@quack/catalog';
+import { SESSION_KEY, sessionsApi, type Caller, type Catalog } from '@quack/catalog';
 import { principalName, safeEqual, sendProblem, serviceHttp, type Principal } from '@quack/sdk';
-import { PRINCIPAL_HEADER, principalHeader } from '@quack/session';
+import { PRINCIPAL_HEADER, principalHeader, unrefTimer, type SetTimer } from '@quack/session';
 import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
 import { sessionRefusal, type SessionCaller } from './session-access.ts';
-
-const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
 export const { readBody, send, json } = serviceHttp();
 function safeDecode(s: string): string | undefined {
@@ -60,7 +58,7 @@ function sessionPath(url: string | undefined): { key: string; path: string; sear
   const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(pathname);
   if (!match) return undefined;
   const key = safeDecode(match[1]);
-  if (!key || !KEY.test(key)) return undefined;
+  if (!key || !SESSION_KEY.test(key)) return undefined;
   const agent = searchParams.get('agent') || undefined;
   searchParams.delete('agent');
   const search = searchParams.size ? `?${searchParams}` : '';
@@ -116,12 +114,6 @@ function errorStatus(err: unknown): number {
   return err instanceof Error && err.message === 'body too large' ? 400 : 502;
 }
 
-type SetTimer = (fn: () => void, ms: number) => () => void;
-const realTimer: SetTimer = (fn, ms) => {
-  const t = setTimeout(fn, ms);
-  t.unref();
-  return () => clearTimeout(t);
-};
 const MAX_TIMER_MS = 2 ** 31 - 1;
 // A session that cannot answer this fast is left for the next sweep, so one stuck process cannot stall the sweep and every wake behind it.
 export const PING_TIMEOUT_MS = 2_000;
@@ -137,7 +129,7 @@ type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
 export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
-  const setTimer = opts.setTimer ?? realTimer;
+  const setTimer = opts.setTimer ?? unrefTimer;
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const holds = new Map<string, number>();

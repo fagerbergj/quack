@@ -194,7 +194,7 @@ test('the run ceiling stops the run and keeps the follow-ups queued behind it fo
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const lines: string[] = [];
-  const session = await openSession({ dir: await tempDir(), models, log: (l) => lines.push(l), agent: { model: { provider: m.provider, modelId: m.id }, turnCeiling: 2, extensions: [defineExtension({ name: 'probe', tools: [probe] })] } });
+  const session = await openSession({ dir: await tempDir(), models, log: (l) => lines.push(l), turnCeiling: 2, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'probe', tools: [probe] })] } });
   const first = await session.submit('go');
   await running;
   const ids = [(await session.submit('one more thing', undefined, false, 'followUp')).submissionId, (await session.submit('and another', undefined, false, 'followUp')).submissionId];

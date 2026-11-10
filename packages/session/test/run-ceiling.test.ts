@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type Fa
 import { num, obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { failedRows, Failures } from '@quack/sdk';
-import { openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
+import { openSession } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-ceiling-'));
 after(() => rm(root, { recursive: true, force: true }));
@@ -23,7 +23,7 @@ async function open(name: string, turnCeiling: number | undefined, steps: FauxRe
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const session = await openSession({ dir: join(root, name), models, agent: { model: { provider: m.provider, modelId: m.id }, turnCeiling, extensions: [defineExtension({ name: 'probe', tools: [probe] })] } });
+  const session = await openSession({ dir: join(root, name), models, turnCeiling, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'probe', tools: [probe] })] } });
   return { session, faux };
 }
 
@@ -49,12 +49,4 @@ test('a run within the ceiling is untouched, and a later run clears an earlier c
   assert.equal(again.status === 'done' && again.answer, 'Done.');
   assert.deepEqual(await failures(session), []);
   await session.close();
-});
-
-test('turnCeiling is a positive integer in an agent definition', () => {
-  const deployment = parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl: 'http://x/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } });
-  const catalog: Catalog = { coding: () => [] };
-  const base = { name: 'r', version: 1, model: 'local/m', extensions: {} };
-  assert.equal(parseDefinition({ ...base, turnCeiling: 50 }, deployment, catalog).turnCeiling, 50);
-  for (const bad of [0, -1, 1.5, '300']) assert.throws(() => parseDefinition({ ...base, turnCeiling: bad }, deployment, catalog), /turnCeiling must be a positive integer/);
 });
