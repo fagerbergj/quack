@@ -39,6 +39,11 @@ test('own threads keep the newest threads and the newest replies of each, in ord
   assert.match(text, /\(1 older comments of yours not shown\)$/);
 });
 
+test('threads past the size budget are counted as your comments', () => {
+  const { threads } = ownThreads([1, 2].map((id) => comment(id, BOT, id, { body: 'x'.repeat(500) })), BOT);
+  assert.match(renderOwnThreads({ reviews: [], comments: [], ownThreads: threads }, 700), /\(1 more of your comments cut to fit the size budget; read them on the pull request\)/);
+});
+
 test('a first review shows no thread section; a failed read says so', () => {
   assert.equal(renderOwnThreads({ reviews: [], comments: [], ownThreads: [] }), '');
   assert.equal(renderOwnThreads(undefined), '');

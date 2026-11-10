@@ -97,7 +97,7 @@ const EACH = 1_500;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)} [cut ${s.length - n} chars]` : s);
 
 // Items in order until the budget runs out, each clipped; the rest are counted, not dropped silently.
-function fit(items: string[], budget: number, each = EACH): string[] {
+function fit(items: string[], budget: number, each = EACH, what = 'review items'): string[] {
   const shown: string[] = [];
   let used = 0;
   for (const item of items) {
@@ -106,7 +106,7 @@ function fit(items: string[], budget: number, each = EACH): string[] {
     shown.push(text);
     used += text.length;
   }
-  return [...shown, ...(shown.length < items.length ? [`(${items.length - shown.length} more review items cut to fit the size budget; read them on the pull request)`] : [])];
+  return [...shown, ...(shown.length < items.length ? [`(${items.length - shown.length} more ${what} cut to fit the size budget; read them on the pull request)`] : [])];
 }
 
 /** The feedback as text for the implementer, within a total character budget. */
@@ -137,5 +137,5 @@ export function renderOwnThreads(f: ReviewFeedback | undefined, budget = OWN_BUD
   if (!f?.ownThreads?.length) return '';
   const cut = f.ownThreadsCut ? [`(${f.ownThreadsCut} older comments of yours not shown)`] : [];
   const head = `Your earlier inline comments on this pull request, newest first: up to ${MAX_OWN_THREADS}, each with its newest ${MAX_THREAD_REPLIES} replies.`;
-  return [head, ...fit(f.ownThreads.map(renderThread), budget, 3_000), ...cut].join('\n\n');
+  return [head, ...fit(f.ownThreads.map(renderThread), budget, 3_000, 'of your comments'), ...cut].join('\n\n');
 }

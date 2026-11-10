@@ -36,6 +36,7 @@ const reviews = [
   review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
 ];
 let graphqlErrors = false;
+let reviewCommentsDown = false;
 const posted15: any[] = [];
 const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
 const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 'Fixed already.')];
@@ -108,6 +109,7 @@ const github = await listen(
     const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
     if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
     const commentPage = /^\/repos\/acme\/widgets\/pulls\/7\/comments\?sort=created&direction=desc&per_page=100&page=(\d+)$/.exec(url);
+    if (commentPage && reviewCommentsDown) return reply(503, { message: 'unavailable' });
     if (commentPage && auth === 'token ghs_test') return reply(200, reviewComments.slice((Number(commentPage[1]) - 1) * 100, Number(commentPage[1]) * 100));
     if (url === '/repos/acme/widgets/pulls/15' && req.method === 'GET') return reply(200, { number: 15, user: { login: 'dev' } });
     if (url === '/repos/acme/widgets/pulls/15/reviews' && req.method === 'POST') {
@@ -497,6 +499,20 @@ test("a pull request record carries the app's own inline comments with their rep
   const pr = await (await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } })).json();
   assert.deepEqual(pr.feedback.ownThreads, [{ id: 800, path: 'app.ts', line: 4, commit: 'old999', at: '2026-11-09T22:58:00Z', outdated: false, body: 'question: exposed?', replies: [{ author: 'dev', at: '2026-11-09T23:01:00Z', body: 'Checked on prod.' }], repliesCut: 0 }]);
   assert.equal(pr.feedback.ownThreadsCut, 0);
+});
+
+test("a failed read of the app's own comments leaves the record readable, with the failure noted", async () => {
+  reviewCommentsDown = true;
+  try {
+    const res = await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } });
+    assert.equal(res.status, 200);
+    const pr = await res.json();
+    assert.equal(pr.headSha, 'abc123');
+    assert.equal(pr.feedback.ownThreads, undefined);
+    assert.match(pr.feedback.ownThreadsError, /comments\?sort=created.*: 503/);
+  } finally {
+    reviewCommentsDown = false;
+  }
 });
 
 test('GraphQL errors in a 200 answer are reported, not read as no threads', async () => {
