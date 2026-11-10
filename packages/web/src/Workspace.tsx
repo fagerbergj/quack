@@ -16,7 +16,7 @@ export async function loadRows(q?: string): Promise<Row[]> {
   return sessions.map((s) => rowOf(s, multiRepo));
 }
 
-export function useWorkspaceData(selected: string | undefined) {
+export function useWorkspaceData() {
   const [rows, setRows] = useState<Row[]>();
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
@@ -30,7 +30,7 @@ export function useWorkspaceData(selected: string | undefined) {
       live = false;
       clearInterval(timer);
     };
-  }, [selected, tick]);
+  }, [tick]);
   return { rows, error, now, reload: () => setTick((t) => t + 1) };
 }
 

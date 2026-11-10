@@ -62,7 +62,7 @@ export function App() {
   useUpdates();
   const nav = full ? 'artifacts' : sessionRoute(session?.key) ?? navRoute(hash);
   const Page = session ? undefined : NAVS.find((n) => n.route === nav)?.page;
-  const data = useWorkspaceData(session?.key);
+  const data = useWorkspaceData();
   const desktop = useDesktop();
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
   const inSidebar = listInSidebar(desktop, nav, Boolean(session));

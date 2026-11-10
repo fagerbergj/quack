@@ -15,7 +15,7 @@ const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: '
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /artifacts': { artifacts: [] } }));
 
 // A list read with q, as the route the fake fetch answers.
-const listed = (path: string, q: string, token?: string) => `GET /${path}?${new URLSearchParams({ pageSize: '1000', q, ...(token && { pageToken: token }) })}`;
+const listed = (path: string, q?: string, token?: string) => `GET /${path}?${new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) })}`;
 const ACTIVE = 'NOT state:archived';
 const queries = (path: string) => fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === `/${path}`).map((u) => u.searchParams.get('q'));
 
@@ -52,8 +52,8 @@ test('the list is newest-created first however the server pages it, and labels r
 });
 
 test('sessions past the first page are listed: the pages are followed to the end', async () => {
-  routes[listed('sessions', ACTIVE)] = { sessions: [sess('gh:1', { title: 'First page' })], nextPageToken: 'p2' };
-  routes[listed('sessions', ACTIVE, 'p2')] = { sessions: [sess('gh:2', { title: 'Second page' })] };
+  routes[listed('sessions')] = { sessions: [sess('gh:1', { title: 'First page' })], nextPageToken: 'p2' };
+  routes[listed('sessions', undefined, 'p2')] = { sessions: [sess('gh:2', { title: 'Second page' })] };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
@@ -174,9 +174,9 @@ test('search and the filters narrow the list on the server, by q', async () => {
   expect(screen.getByRole('button', { name: 'Remove Started by: GitHub' })).toBeInTheDocument();
 });
 
-test('quick typing sends one search request, after the pause, and clearing applies at once', async () => {
+test('quick typing sends one search request, after the pause, and clearing shows the workspace rows with none', async () => {
   render(<App />);
-  await waitFor(() => expect(queries('sessions')).toContain(ACTIVE));
+  await waitFor(() => expect(queries('sessions')).toContain(null));
   const box = screen.getByRole('searchbox', { name: 'Search sessions' });
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
@@ -187,7 +187,7 @@ test('quick typing sends one search request, after the pause, and clearing appli
     expect(queries('sessions').filter((q) => q?.includes('*'))).toEqual([`${ACTIVE} AND flake*`]);
     const before = queries('sessions').length;
     fireEvent.change(box, { target: { value: '' } });
-    expect(queries('sessions').slice(before)).toEqual([ACTIVE]);
+    expect(queries('sessions').slice(before)).toEqual([]);
   } finally {
     vi.useRealTimers();
   }
@@ -1509,7 +1509,6 @@ test('Rename saves the title, reloads the list and the header shows the new name
 test('archived sessions leave the list and Home, and the Archived filter shows them', async () => {
   const trip = sess('ui:u1', { title: 'Plan the trip', state: 'archived' });
   routes['GET /sessions'] = { sessions: [trip, sess('ui:u2', { title: 'Other' })] };
-  routes[listed('sessions', ACTIVE)] = { sessions: [sess('ui:u2', { title: 'Other' })] };
   routes[listed('sessions', 'state:archived')] = { sessions: [trip] };
   render(<App />);
   await screen.findByRole('link', { name: /Other/ });

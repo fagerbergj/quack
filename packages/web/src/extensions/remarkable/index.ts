@@ -1,16 +1,11 @@
-import { useEffect, useState } from 'react';
 import { BLUE, plain, type Extension } from '../../extension.ts';
 import { documentTree, notebooks } from './api.ts';
 import { Remarkable } from './Remarkable.tsx';
+import { useLoad } from '../../useLoad.ts';
 
 // No line while loading, or when the service is not registered; the tile still opens the page, which says why.
 function useStatus() {
-  const [changed, setChanged] = useState<number>();
-  useEffect(() => {
-    let live = true;
-    documentTree().then((t) => live && setChanged(notebooks(t).filter((n) => n.state === 'changed').length), () => {});
-    return () => void (live = false);
-  }, []);
+  const { data: changed } = useLoad<number | undefined>(async () => notebooks(await documentTree()).filter((n) => n.state === 'changed').length, [], undefined);
   return changed === undefined ? undefined : { text: changed ? `${changed} changed` : 'Up to date', warn: changed > 0 };
 }
 

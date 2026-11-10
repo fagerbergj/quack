@@ -9,6 +9,7 @@ import { loadRows } from './Workspace.tsx';
 
 const TONE: Record<Tone, string> = { muted: 'text-muted', warn: 'text-warning', bad: 'text-danger' };
 type Kind = 'needs' | 'running' | 'recent' | 'failed';
+const DEFAULT_Q = sessionQuery('', {});
 
 function Tile({ l, kind }: { l: Look; kind: Kind }) {
   const tint = kind === 'failed' ? 'bg-danger-bg text-danger' : kind === 'needs' ? 'bg-warning-bg text-warning' : kind === 'running' ? l.tint : 'bg-soft text-muted';
@@ -78,8 +79,10 @@ export function SessionList({ rows, selected, error, now }: { rows: Row[] | unde
   const [text, setText] = useState('');
   const [values, setValues] = useState<FilterValues>({});
   const q = sessionQuery(text, values);
-  // Refetched on each workspace refresh, so the filtered list stays as live as the sidebar.
-  const { data: shown, error: listError } = useLoad(() => loadRows(q), [q, rows], undefined);
+  // The default view is the workspace's own rows; a search or filter asks the server again on each workspace refresh.
+  const plain = q === DEFAULT_Q;
+  const { data: found, error: listError } = useLoad(() => (plain ? Promise.resolve(undefined) : loadRows(q)), [q, rows], undefined);
+  const shown = plain ? rows?.filter((r) => r.state !== 'archived') : found;
   const g = group(shown ?? []);
   return (
     <section aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">

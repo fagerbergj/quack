@@ -1,16 +1,11 @@
-import type { Ask } from '../../api.ts';
+import { listAsks, type Ask } from '../../api.ts';
 import { Markdown } from '../../Markdown.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { card, label } from './RestView.tsx';
 
 /** This session's answered questions, oldest first, from the Sessions API's asks; none when the read fails. */
-export async function decidedQuestions(key: string): Promise<Ask[]> {
-  const q = new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' });
-  const res = await fetch(`sessions/${encodeURIComponent(key)}/asks?${q}`).catch(() => undefined);
-  if (!res?.ok) return [];
-  const asks = ((await res.json().catch(() => ({}))) as { asks?: Ask[] }).asks ?? [];
-  return asks.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-}
+export const decidedQuestions = (key: string): Promise<Ask[]> =>
+  listAsks('type:question state:resolved', key).then((asks) => asks.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), () => []);
 
 const NONE: Ask[] = [];
 const titleOf = (a: Ask) => a.prompt?.title || a.prompt?.question || 'Question';

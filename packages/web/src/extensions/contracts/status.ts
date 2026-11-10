@@ -1,3 +1,4 @@
+import { listAll } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 
 export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
@@ -32,17 +33,8 @@ export const contractRows = (rows: Row[], records: ReadonlyMap<string, ContractR
   rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map((r) => contractOf(r, records.get(r.key))).sort((a, b) => a.rank - b.rank);
 
 /** The contracts extension's records by session key, every page of them; an app that is not mounted reads as none, and the rows still show. */
-export async function contractRecords(): Promise<Map<string, ContractRecord>> {
-  const records = new Map<string, ContractRecord>();
-  for (let token = ''; ;) {
-    const res = await fetch(`apps/contracts/contracts?pageSize=1000${token && `&pageToken=${encodeURIComponent(token)}`}`).catch(() => undefined);
-    if (!res?.ok) return records;
-    const body = (await res.json().catch(() => ({}))) as { contracts?: ContractRecord[]; nextPageToken?: string };
-    for (const c of body.contracts ?? []) records.set(c.key, c);
-    if (!body.nextPageToken) return records;
-    token = body.nextPageToken;
-  }
-}
+export const contractRecords = async (): Promise<Map<string, ContractRecord>> =>
+  new Map((await listAll<ContractRecord>('apps/contracts/contracts', 'contracts').catch(() => [])).map((c) => [c.key, c]));
 
 /** Where one sealed spec stands with the person, as the contracts extension reads it from the session's approval records and proposals. */
 export type VersionStatus = 'draft' | 'proposed' | 'approved' | 'changes_requested';

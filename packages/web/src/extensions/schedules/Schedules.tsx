@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Row } from '../../sessions.ts';
+import { useLoad } from '../../useLoad.ts';
 import { deleteSchedule, listSchedules, type ScheduleItem } from './api.ts';
 
 const when = (iso: string | null) => (iso ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) : null);
@@ -38,11 +39,10 @@ function Card({ s, remove }: { s: ScheduleItem; remove: () => void }) {
 }
 
 export function Schedules(_: { rows: Row[] | undefined }) {
-  const [items, setItems] = useState<ScheduleItem[]>();
-  const [error, setError] = useState('');
-  const load = useCallback(() => listSchedules().then((l) => (setItems(l), setError('')), (e: Error) => setError(e.message === 'no such app' ? 'Schedules is not connected.' : `Schedules is unavailable: ${e.message}`)), []);
-  useEffect(() => void load(), [load]);
-  const remove = (id: string) => deleteSchedule(id).then(load, (e: Error) => setError(e.message));
+  const { data: items, error: loadError, reload } = useLoad<ScheduleItem[] | undefined>(listSchedules, [], undefined);
+  const [removeError, setRemoveError] = useState('');
+  const remove = (id: string) => deleteSchedule(id).then(() => (setRemoveError(''), reload()), (e: Error) => setRemoveError(e.message));
+  const error = removeError || (loadError && (loadError === 'no such app' ? 'Schedules is not connected.' : `Schedules is unavailable: ${loadError}`));
   return (
     <div className="mx-auto max-w-3xl px-4 py-4 lg:py-8">
       <h1 className="m-0 mb-3 hidden text-[19px] lg:block">Schedules</h1>
