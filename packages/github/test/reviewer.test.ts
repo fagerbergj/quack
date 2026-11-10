@@ -243,13 +243,6 @@ test('a reply to an own comment on the reviewed head is worth another look: the 
   await session.close();
 });
 
-test('reply_mention sends the answer to the service with the thread it was given', async () => {
-  const { seen, service, session } = await reviewRun((seen) => [call('reply_mention', { repository: 'acme/widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }), recorder(seen)(fauxAssistantMessage('Answered.'))]);
-  assert.match(seen[0], /Replied: https:\/\/github.com\/acme\/widgets\/pull\/7#discussion_r56/);
-  assert.deepEqual(service.replies, [{ owner: 'acme', repo: 'widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }]);
-  await session.close();
-});
-
 // A looping model: its first turn is `first`, then it alternates a fresh draft with a submit, forever.
 const loop = (first: ReturnType<typeof call>, seen: string[], counter: { turns: number }): FauxResponseStep[] => [
   ...Array.from({ length: 60 }, (_, i) => (_c: unknown) => {

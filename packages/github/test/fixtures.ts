@@ -52,7 +52,6 @@ export async function listen(server: Server) {
 export async function fakeService(head: string, extra: Record<string, unknown> = {}, issue?: Record<string, unknown>, faults: { loseFirstReview?: boolean } = {}) {
   const posted: any[] = [];
   const opened: any[] = [];
-  const replies: any[] = [];
   const edited: any[] = [];
   const url = await listen(
     createServer(async (req, res) => {
@@ -60,10 +59,6 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       let raw = '';
       for await (const c of req) raw += c;
       if (req.url?.startsWith('/git-credential')) return res.writeHead(200).end(JSON.stringify({ username: 'x-access-token', token: 'ghs_from_service' }));
-      if (req.url === '/replies') {
-        replies.push(JSON.parse(raw));
-        return res.writeHead(201).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7#discussion_r56' }));
-      }
       if (req.method === 'PATCH') {
         edited.push({ path: req.url, ...JSON.parse(raw) });
         return res.writeHead(200).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7' }));
@@ -85,5 +80,5 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       res.writeHead(200).end(JSON.stringify(pr));
     }),
   );
-  return { url, posted, replies, opened, edited };
+  return { url, posted, opened, edited };
 }

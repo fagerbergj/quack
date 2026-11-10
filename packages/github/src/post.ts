@@ -4,7 +4,6 @@ import { feedback, judge, type ClassifierRef, type ModelRef, type Verdict } from
 import { artifactsExtension, attachLink, type SealedArtifact } from '@quack/sdk';
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { postable } from './inline.ts';
-import { replyTool } from './reply.ts';
 import { parseReview, reviewEvidence, reviewKind } from './review.ts';
 import { reviewerRubric } from './rubric.ts';
 import { checkoutTaskTool, deliverTool, prBodyKind } from './task.ts';
@@ -60,7 +59,7 @@ export function githubSessionExtensions(config: GithubSessionConfig): Extension[
   // No judge rubric for the implementer yet (the audit wants a labelled set first): a person's approval gates the push.
   if (config.role === 'implementer') return [defineExtension({ name: 'github', tools: [checkoutTaskTool(config), deliverTool(config)] }), artifactsExtension([prBodyKind])];
   return [
-    defineExtension({ name: 'github', tools: [checkoutTool(config), replyTool(config)] }),
+    defineExtension({ name: 'github', tools: [checkoutTool(config)] }),
     artifactsExtension([reviewKind]),
     judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, refuse: refuseAfterSkip, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
   ];

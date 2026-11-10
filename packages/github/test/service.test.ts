@@ -98,8 +98,6 @@ const github = await listen(
     const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(url);
     // 150 check runs: the only failing one is on the second page.
     if (page) return reply(200, { check_runs: Array.from({ length: page[1] === '1' ? 100 : 50 }, (_, i) => ({ name: `c${page[1]}-${i}`, status: 'completed', conclusion: page[1] === '2' && i === 49 ? 'failure' : 'success' })) });
-    if (url === '/repos/acme/widgets/pulls/7/comments/55/replies') return reply(201, { id: 56, html_url: 'https://github.com/acme/widgets/pull/7#discussion_r56' });
-    if (url === '/repos/acme/widgets/issues/comments/60') return reply(200, { body: '@quack-app why is this cached?\nIt looks wrong.' });
     // GitHub refuses a whole review when one inline line is off the diff.
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
@@ -424,11 +422,11 @@ test('a pull request is opened with the installation token, mentions of the bot 
   const open = (body: unknown) => fetch(`${service}/pulls`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
   assert.equal((await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'main', title: 't' })).status, 400);
   calls.length = 0;
-  const made = await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping @quack-app\n\nCloses #12' });
+  const made = await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping @quack-app; keep `@quack-app`, @quack-apple, me@quack-app.dev\n\nCloses #12' });
   assert.deepEqual(made, { status: 201, body: { number: 13, url: 'https://github.com/acme/widgets/pull/13' } });
   const sent = calls.find((c) => c.path === '/repos/acme/widgets/pulls')!;
   assert.equal(sent.auth, 'token ghs_test');
-  assert.deepEqual(sent.body, { head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping quack-app\n\nCloses #12' });
+  assert.deepEqual(sent.body, { head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping quack-app; keep `@quack-app`, @quack-apple, me@quack-app.dev\n\nCloses #12' });
 });
 
 test('git credentials are minted per repository and cached until near expiry', async () => {
@@ -587,57 +585,6 @@ async function deliveredRunIsSilent(webhookOwner: string, id: string) {
 test('a run that delivered a review gets no notice', () => deliveredRunIsSilent('acme', 'd-delivered'));
 
 test('a review counts for the run however the webhook cases the owner', () => deliveredRunIsSilent('ACME', 'd-delivered-case'));
-
-const mention = (body: string, extra: Record<string, unknown> = {}) => ({ action: 'created', issue: { ...pr, pull_request: {} }, comment: { id: 60, body, html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-60', author_association: 'MEMBER', user: { login: 'dev', type: 'User' }, ...extra }, repository });
-
-test('a trusted mention is queued behind the PR session\'s run with its text, author and link', async () => {
-  invocations.length = 0;
-  assert.equal(await deliver('issue_comment', mention('@QUACK-APP why is this cached?'), { id: 'd-m1' }), 202);
-  const [sent] = invocations;
-  assert.equal(sent.path, '/sessions/github:acme/widgets#7/invocations?agent=reviewer');
-  assert.equal(sent.body.whenBusy, 'followUp');
-  assert.equal(sent.body.requestId, 'github-delivery:d-m1');
-  assert.match(sent.body.input, /^dev mentioned you in a comment on acme\/widgets#7: https:\/\/github.com\/acme\/widgets\/pull\/7#issuecomment-60/);
-  assert.match(sent.body.input, /reply_mention with repository acme\/widgets, number 7, kind issue, commentId 60/);
-  assert.match(sent.body.input, /@QUACK-APP why is this cached\?$/);
-  assert.equal(sent.body.meta, undefined);
-});
-
-test('a mention whose submission throws answers 502, which the sweeper redelivers', async () => {
-  const failing = (async (url: string | URL, init?: RequestInit) => (String(url).includes('/invocations') ? Promise.reject(new Error('dispatch failed')) : fetch(url, init))) as typeof fetch;
-  const down = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), { ...config, fetch: failing })));
-  assert.equal(await deliver('issue_comment', mention('@quack-app why?'), { id: 'd-m-down', to: down }), 502);
-});
-
-test('a review-comment mention names the thread root, so the reply lands under it', async () => {
-  invocations.length = 0;
-  const payload = { action: 'created', pull_request: pr, comment: { id: 56, in_reply_to_id: 55, body: 'thanks @quack-app, and the fix?', html_url: 'https://github.com/acme/widgets/pull/7#discussion_r56', author_association: 'OWNER', user: { login: 'dev', type: 'User' } }, repository };
-  assert.equal(await deliver('pull_request_review_comment', payload, { id: 'd-m2' }), 202);
-  assert.match(invocations[0].body.input, /review comment thread/);
-  assert.match(invocations[0].body.input, /kind review, commentId 55/);
-});
-
-test('an untrusted, self-authored or token-less comment is ignored', async () => {
-  invocations.length = 0;
-  assert.equal(await deliver('issue_comment', mention('@quack-app hi', { author_association: 'NONE' })), 200);
-  assert.equal(await deliver('issue_comment', mention('@quack-app hi', { user: { login: 'Quack-App[bot]', type: 'User' } })), 200);
-  assert.equal(await deliver('issue_comment', mention('@quack-app hi', { user: { login: 'other-app[bot]', type: 'Bot' } })), 200);
-  assert.equal(await deliver('issue_comment', mention('@quack hi, @quack-apple, email me@quack-app.dev')), 200);
-  assert.equal(await deliver('issue_comment', mention('@quack-app hi'), { secret: 'wrong' }), 401);
-  assert.equal(invocations.length, 0);
-});
-
-test('replies post in the right thread and strip its own handle outside code', async () => {
-  const reply = (body: unknown) => fetch(`${service}/replies`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  assert.equal((await reply({ owner: 'acme', repo: 'widgets', number: 7, kind: 'nope', commentId: 1, body: 'x' })).status, 400);
-  calls.length = 0;
-  const inThread = await reply({ owner: 'acme', repo: 'widgets', number: 7, kind: 'review', commentId: 55, body: 'Ask @alice and @quack-app; keep `@quack-app`.' });
-  assert.equal(inThread.status, 201);
-  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/replies'))!.body, { body: 'Ask @alice and quack-app; keep `@quack-app`.' });
-  commented.length = 0;
-  await reply({ owner: 'acme', repo: 'widgets', number: 7, kind: 'issue', commentId: 60, body: 'It is cached for speed, @dev.' });
-  assert.equal(commented[0], '> quack-app why is this cached?\n> It looks wrong.\n\nIt is cached for speed, @dev.');
-});
 
 test('a review posts its inline comments on the right side, mentions stripped; a 422 refusal posts the review as written, an outage is not retried', async () => {
   const post = (comments: unknown[]) => fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'COMMENT', body: 'cc @quack-app', comments }), headers: { authorization: 'Bearer svc-secret' } }).then((r) => r.status);

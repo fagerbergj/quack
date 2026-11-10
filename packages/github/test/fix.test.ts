@@ -4,13 +4,12 @@ import { triggerFor } from '../src/index.ts';
 
 const repository = { name: 'widgets', owner: { login: 'acme' } };
 const comment = (body: string, association = 'MEMBER', pull = true) => ({ action: 'created', issue: { number: 7, title: 'Fix the cache', ...(pull ? { pull_request: {} } : {}) }, comment: { body, author_association: association, user: { login: 'someone' } }, repository });
-const fix = (body: string, association?: string, pull?: boolean) => triggerFor('issue_comment', comment(body, association, pull), 'quack:review', 'quack-app');
+const fix = (body: string, association?: string, pull?: boolean) => triggerFor('issue_comment', comment(body, association, pull), 'quack:review');
 
 test('a trusted /fix on a PR starts the implementer in the PR session, with the text after it as the instruction', () => {
   const t = fix('/fix the flaky cache test\nand the lint error')!;
   assert.equal(t.role, 'implementer');
   assert.equal(t.sessionKey, 'github:acme/widgets#7');
-  assert.equal(t.followUp, undefined);
   assert.match(t.input, /Fix pull request acme\/widgets#7 \(\/fix by someone\)/);
   assert.match(t.input, /Instruction: the flaky cache test\nand the lint error/);
 });
