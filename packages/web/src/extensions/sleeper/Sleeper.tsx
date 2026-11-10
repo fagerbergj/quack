@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { SealedArtifact } from '../../api.ts';
 import { sentence } from '../../extension.ts';
 import type { Row } from '../../sessions.ts';
-import { CURRENT, Full, JOBS, ORDER, RUNNABLE, Short, brief, titleOf, whatIs } from './cards.tsx';
+import { CURRENT, Full, JOBS, ORDER, Short, brief, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { sessionsOf, useResults, wanted, weekResult, type Result, type Sess } from './week.ts';
@@ -237,7 +237,7 @@ function JobSheet({ found, runs, live, status, onRun, onClose }: SheetProps) {
         </div>
         {status && <p role="status" className="m-0 mb-1 px-4 text-[13px] text-danger">{status}</p>}
         <ul className="m-0 flex min-h-0 list-none flex-col overflow-y-auto overscroll-contain px-1 pt-1 pb-[calc(0.75rem+var(--safe-b))]">
-          {RUNNABLE.map((job) => {
+          {ORDER.map((job) => {
             const name = JOBS[job]!.label;
             const last = found.find((r) => r.job === job);
             const next = runs.find((r) => r.job === job);

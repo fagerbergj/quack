@@ -76,17 +76,16 @@ function Waivers({ c }: { c: Card }) {
 }
 
 function Trades({ c }: { c: Card }) {
-  const deals: any[] = c.suggestions ?? c.offers ?? [];
+  const deals: any[] = c.suggestions ?? [];
   return (
     <>
       <Sum text={c.summary} />
       <List>
         {deals.map((d, i) => (
           <Row key={i}>
-            <span className="break-words text-[14px] font-medium">{(c.partner ?? d.partner).team}</span>
-            <p className="m-0 text-[13px] text-ink-2">{`Give ${(d.give.name ? [d.give] : d.give).map((p: P) => p.name).join(', ')}, get ${(d.get.name ? [d.get] : d.get).map((p: P) => p.name).join(', ')}`}</p>
-            {d.verdict && <Chip>{sentence(String(d.verdict).replace(/_/g, ' '))}</Chip>}
-            <Blurb text={d.why ?? d.note} />
+            <span className="break-words text-[14px] font-medium">{d.partner.team}</span>
+            <p className="m-0 text-[13px] text-ink-2">{`Give ${d.give.name}, get ${d.get.name}`}</p>
+            <Blurb text={d.note} />
             <NewsList items={d.news ?? []} />
           </Row>
         ))}
@@ -203,19 +202,17 @@ export const JOBS: Record<string, Job> = {
   lineup: { label: 'Lineup', what: 'Your starters and bench', run: 'Checking your lineup', tone: 'bg-link' },
   waivers: { label: 'Waivers', what: 'Claims for the week', run: 'Looking at waivers', tone: 'bg-warning', View: Waivers },
   'trade-finder': { label: 'Trade finder', what: 'Deals worth asking about', run: 'Looking for trades', tone: 'bg-success', View: Trades },
-  trade: { label: 'Trade', what: 'Your offer, checked', run: 'Looking for trades', tone: 'bg-muted', View: Trades },
   trends: { label: 'Trends', what: 'What is moving in the league', run: 'Reading trends', tone: 'bg-muted', View: Trends },
   digest: { label: 'Recap', what: 'League recap', run: 'Writing the recap', tone: 'bg-muted', View: Recap },
   retro: { label: 'Retro', what: 'Your lineup calls, looked back on', run: 'Writing the retro', tone: 'bg-muted', View: Retro },
   history: { label: 'League history', title: () => 'League history', what: 'Your seasons so far', run: 'Reading league history', tone: 'bg-info', View: History },
 };
 export const ORDER = Object.keys(JOBS);
-// A trade check needs a partner, so the sheet does not offer it; the lineup heads the current week on its own.
-export const RUNNABLE = ORDER.filter((j) => j !== 'trade');
-export const CURRENT = RUNNABLE.filter((j) => j !== 'lineup');
+// The lineup heads the current week on its own.
+export const CURRENT = ORDER.filter((j) => j !== 'lineup');
 
 const KEY = /^sleeper:([^:]+):(\d+):([a-z-]+)(?::|$)/;
-/** A Sleeper session key, sleeper:<league>:<week>:<job>[:...] (a trade carries its offer after the job); undefined for any other key or job. */
+/** A Sleeper session key, sleeper:<league>:<week>:<job>[:...]; undefined for any other key or job. */
 export function parseKey(key: string): { league: string; week: number; job: string } | undefined {
   const m = KEY.exec(key);
   return m && Object.hasOwn(JOBS, m[3]!) ? { league: m[1]!, week: Number(m[2]), job: m[3]! } : undefined;
