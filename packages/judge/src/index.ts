@@ -25,7 +25,7 @@ type Common = {
   classifier?: ClassifierRef;
   /** Where uncertain items escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
-  /** The most escalations to the judge model in flight at once; 4 by default. Decision-model requests stay one at a time. */
+  /** The most judge-model requests in flight at once; 4 by default. A packed group's sub-batch is one request. Decision-model requests stay one at a time. */
   escalations?: number;
   toolName?: string;
   /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
@@ -61,23 +61,28 @@ export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; 
 
 const modelChecks = (rubric: Rubric) => rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code).map((k) => k.id));
 
+// The checks a stage of evidence can answer: a declared check once its scope is built, a legacy one with its question.
 function planChecks(rubric: Rubric, decl: Declaration | undefined, built: BuiltEvidence): Plan[] {
-  return rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code && (decl || k.question)).map((k): Plan => {
+  const ready = (id: string, question?: string) => (decl ? Object.hasOwn(built.evidence, decl.checks[id].scope) : !!question);
+  return rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code && ready(k.id, k.question)).map((k): Plan => {
     const key = `${c.id}.${k.id}`;
     const d = decl?.checks[k.id];
     const units = d ? built.evidence[d.scope] ?? [] : unitsFor(k.scope, built.evidence);
     const split = d && built.splits[d.scope];
     const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}), ...(split?.reason ? { splitterReason: split.reason } : {}) };
-    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass } : { id: key, question: { type: 'bool', instructions: k.question! } };
+    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.classifier === false && { classifier: false as const }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
     return { key, result, ask, units, aggregate: d?.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, failed: split?.failed };
   }));
 }
 
-// coverageUnion counts an item covered when code found related material; `by: 'related'` never asks the model at all.
+// An item code found related material for holds without a model, under coverageUnion (`either` by default) or a share with `by`;
+// `by: 'related'` never asks the model at all.
 function preset(p: Plan, u: Unit): Answer | undefined {
-  if (p.aggregate?.name !== 'coverageUnion' || p.aggregate.by === 'answer') return undefined;
+  const ag = p.aggregate;
+  const by = ag?.name === 'coverageUnion' ? ag.by ?? 'either' : ag?.name === 'share' ? ag.by : undefined;
+  if (!by || by === 'answer') return undefined;
   const found = Object.values(u.related ?? {}).some((n) => n > 0);
-  return found ? { met: true, resolver: 'code' } : p.aggregate.by === 'related' ? { met: false, resolver: 'code' } : undefined;
+  return found ? { met: true, resolver: 'code' } : by === 'related' ? { met: false, resolver: 'code' } : undefined;
 }
 
 const triOf = (p: Plan, u: Unit): Tri => p.answers.get(u.id)?.met ?? undefined;
@@ -153,13 +158,12 @@ function itemsOf(plans: Plan[]): Item[] {
   return [...byUnit.values()];
 }
 
-// Every request starts at once: decision-model requests queue on their own limit (one at a time) and escalations on theirs.
-async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: BuiltEvidence, memo: string, ctx: Context, code: CheckResult[], report?: Report): Promise<CheckResult[]> {
-  const plans = planChecks(opts.rubric, opts.declaration, built);
-  const byKey = new Map(plans.map((p) => [p.key, p]));
-  const items = itemsOf(plans);
+// Each stage's requests start as soon as its evidence is built: decision-model requests queue on their own limit (one at
+// a time) and escalations on theirs, so a slow LLM split delays only the checks on its scope.
+async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: Array<Promise<BuiltEvidence>>, memo: string, ctx: Context, code: CheckResult[], report?: Report): Promise<CheckResult[]> {
+  const plans: Plan[] = [];
+  const byKey = new Map<string, Plan>();
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
-  await publish();
   const settings = { ref: opts.classifier, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4) };
   const tally = async ({ unit, check, answer }: Answered) => {
     const p = byKey.get(check.id)!;
@@ -172,15 +176,23 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: Bu
   };
   // An unsure item escalates only while its check's fold can still go either way.
   const need = (_u: Unit, check: Ask) => !decided(byKey.get(check.id)!);
-  await Promise.all(pack(items, opts.classifier?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
-  return plans.map(finalize);
+  const ask = async (built: BuiltEvidence) => {
+    const mine = planChecks(opts.rubric, opts.declaration, built);
+    for (const p of mine) plans.push(p), byKey.set(p.key, p);
+    await publish();
+    await Promise.all(pack(itemsOf(mine), opts.classifier?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
+  };
+  await Promise.all(stages.map((s) => s.then(ask)));
+  const order = opts.rubric.criteria.flatMap((c) => c.checks.map((k) => `${c.id}.${k.id}`));
+  return plans.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key)).map(finalize);
 }
 
-// A declared rubric's evidence is built from its inputs; a legacy one hands its evidence over as built.
-async function evidenceFor(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context): Promise<BuiltEvidence> {
-  if (!opts.declaration) return { evidence: await opts.evidence(api, sealed, ctx), splits: {} };
+// A declared rubric's evidence is built from its inputs in two stages, the LLM-split scopes last; a legacy one hands it over as built.
+async function evidenceFor(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context): Promise<Array<Promise<BuiltEvidence>>> {
+  if (!opts.declaration) return [opts.evidence(api, sealed, ctx).then((evidence) => ({ evidence, splits: {} }))];
   checkDeclaration(opts.declaration, modelChecks(opts.rubric));
-  return buildEvidence(opts.declaration, await opts.inputs(api, sealed, ctx), modelSplit(api, opts.judgeModel, memo, ctx));
+  const [decl, inputs, split] = [opts.declaration, await opts.inputs(api, sealed, ctx), modelSplit(api, opts.judgeModel, memo, ctx)];
+  return [false, true].map((slow) => buildEvidence(decl, inputs, split, (scope) => (scope.split.name === 'llm') === slow));
 }
 
 // The run's first input id: stable through the run, where its task id changes between tool rounds.
@@ -199,9 +211,12 @@ const terminal = (text: string) => ({ output: [{ type: 'text' as const, text }],
 
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
   await report?.(progressOf(opts.rubric, []));
-  const built = await evidenceFor(api, opts, sealed, memo, ctx);
-  const code = codeResults(opts.rubric, sealed.content, built.evidence);
-  const checks = [...code, ...(await modelResults(api, opts, built, memo, ctx, code, report))];
+  const stages = await evidenceFor(api, opts, sealed, memo, ctx);
+  // Code checks may read any scope, so they wait for every stage; until then progress shows them as still checking.
+  const code: CheckResult[] = [];
+  const all = Promise.all(stages).then((built) => void code.push(...codeResults(opts.rubric, sealed.content, Object.assign({}, ...built.map((b) => b.evidence)))));
+  const [, model] = await Promise.all([all, modelResults(api, opts, stages, memo, ctx, code, report)]);
+  const checks = [...code, ...model];
   const s = score(opts.rubric, checks);
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
   // The same budget the submit tool enforces: failures in this run since its last pass, not the session's.

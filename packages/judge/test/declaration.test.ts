@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { buildEvidence, type Declaration, type ModelSplit } from '../src/declaration.ts';
 import { fold, metOf } from '../src/fold.ts';
-import { registerSplitter, rejudge, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
+import { registerSelector, registerSplitter, rejudge, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
 
 const T = true;
 const F = false;
@@ -121,8 +121,19 @@ test('a declaration error is loud: an input nobody provided, a splitter nobody r
   const mine = () => [];
   registerSplitter('test.mine', mine);
   registerSplitter('test.mine', mine);
-  assert.throws(() => registerSplitter('test.mine', () => []), /already registered/);
+  assert.throws(() => registerSplitter('test.mine', () => [{ id: 'x', text: 'x' }]), /already registered/);
   assert.throws(() => registerSplitter('whole', () => []), /library's own/);
+  // A replay arm loads the extension again from another tree: a new function object with the same source.
+  registerSplitter('test.mine', () => []);
+});
+
+test('a bool pitfall asked as the defect holds on "no": a confident yes flags the item, from either model', async () => {
+  const p: Record<string, number> = { q0: 0.9, q1: 0.1, q2: 0.5 };
+  const { api, escalated } = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
+  const decl: Declaration = { scopes: { rows: scope }, checks: { broken: { scope: 'rows', question: { type: 'bool', instructions: 'Is it broken?', pass: ['no'] }, aggregate: { name: 'share' } } } };
+  const v = await rejudge(api, opts(rubricOf('broken', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);
+  assert.deepEqual(escalated, ['Is it broken?']);
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows a: flagged by clef (no reason given)', 'rows c: fine']]);
 });
 
 // A tool call's api as the judge reads it: memos, a classifier answering by question number and a judge model, with every request recorded.
@@ -210,6 +221,40 @@ test('coverageUnion by related counts what code found and asks no model; a decla
   assert.equal(requests.length, 0);
   assert.deepEqual([v.checks[0].met, v.checks[0].resolvers], [true, { code: 2 }]);
   await assert.rejects(rejudge(api, opts(rubricOf('other', 2), decl), sealed, 'm', BACKGROUND_CONTEXT), /no declaration for other; declared checks the rubric lacks: cited/);
+  const routed = { ...decl, checks: { cited: { ...decl.checks.cited, classifier: true as never } } };
+  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /classifier may only be false: cited/);
+});
+
+registerSelector('test.backed', (_i, chunk) => ({ value: '', matches: chunk.text.includes('backed') ? 1 : 0 }));
+registerSelector('test.plain', (_i, chunk) => `seen ${chunk.id}`);
+const sourced = (...texts: string[]) => ({ rows: JSON.stringify(texts.map((text, n) => ({ id: String.fromCharCode(97 + n), text }))) });
+const backedDecl = (by: 'related' | 'either'): Declaration => ({
+  scopes: { rows: { split: { name: 'jsonItems', from: 'rows', pick: ['text'] }, context: { src: { name: 'test.backed' } } } },
+  checks: { named: { scope: 'rows', question: { type: 'bool', instructions: 'Is it named?' }, aggregate: { name: 'share', by } } },
+});
+
+test('a share by either: an item a selector matched holds without a model, the rest are asked, and the share is over all items', async () => {
+  const { api, requests } = fakeApi(() => ({ type: 'bool', probability: 0.05 }), () => yes);
+  const v = await rejudge(api, opts(rubricOf('named', 2), backedDecl('either'), sourced('backed', 'plain', 'backed too')), sealed, 'm', BACKGROUND_CONTEXT);
+  assert.deepEqual(requests.map((r) => r.state), [{ piece: { text: 'plain' } }], 'only the unmatched item is asked, and the empty selector value adds no field');
+  assert.deepEqual([v.checks[0].met, v.checks[0].resolvers], [2 / 3, { code: 2, clef: 1 }]);
+});
+
+test('a share by related asks no model, and is met, not null, when code settles every item', async () => {
+  const { api, requests } = fakeApi(() => ({ type: 'bool', probability: 0.95 }), () => yes);
+  const related = await rejudge(api, opts(rubricOf('named', 2), backedDecl('related'), sourced('backed', 'plain')), sealed, 'm1', BACKGROUND_CONTEXT);
+  assert.deepEqual([related.checks[0].met, related.checks[0].resolvers], [0.5, { code: 2 }]);
+  const settled = await rejudge(api, opts(rubricOf('named', 2), backedDecl('either'), sourced('backed', 'backed too')), sealed, 'm2', BACKGROUND_CONTEXT);
+  assert.deepEqual([settled.checks[0].met, settled.checks[0].units], [1, 2]);
+  assert.equal(requests.length, 0);
+});
+
+test('a registered selector that returns a string still adds its context, and counts no match', async () => {
+  const decl: Declaration = { scopes: { rows: { split: { name: 'jsonItems', from: 'rows' }, context: { seen: { name: 'test.plain' } } } }, checks: {} };
+  const { evidence } = await buildEvidence(decl, { rows: JSON.stringify([{ id: 'a' }]) });
+  assert.deepEqual(evidence.rows[0], { id: 'rows a', state: { piece: { id: 'a' }, seen: 'seen a' } });
+  const empty = await buildEvidence(backedDecl('either'), sourced('backed'));
+  assert.deepEqual(empty.evidence.rows[0], { id: 'rows a', state: { piece: { text: 'backed' } }, related: { src: 1 } }, 'an empty value adds no field but its matches count');
 });
 
 test('the llm splitter asks the judge model once per sealed version: a rejudge under the same memo reuses its split', async () => {
@@ -221,6 +266,27 @@ test('the llm splitter asks the judge model once per sealed version: a rejudge u
   await rejudge(api, o, sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['split'], 'one model split, then the memo');
   assert.deepEqual([first.checks[0].met, first.checks[0].units, first.checks[0].splitter], [true, 1, 'llm']);
+});
+
+test('checks on deterministic scopes are asked while an llm split still runs; the verdict keeps rubric order', async () => {
+  const split = JSON.stringify([{ item: 'the bus count', span: 'The fleet has 38 buses.' }]);
+  const { api, requests } = fakeApi(() => ({ type: 'bool', probability: 0.95 }), () => split);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const models = (api as unknown as { models: { completeSimple: (...a: unknown[]) => Promise<unknown> } }).models;
+  const complete = models.completeSimple;
+  models.completeSimple = async (...a) => (await gate, complete(...a));
+  const decl: Declaration = {
+    scopes: { claims: { split: { name: 'llm', from: 'report' } }, rows: scope },
+    checks: { true_claim: { scope: 'claims', question: { type: 'bool', instructions: 'Is it true?' }, aggregate: { name: 'all' } }, kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'all' } } },
+  };
+  const rubric: Rubric = { name: 'r', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id: 'true_claim', label: 'claim', weight: 2 }, { id: 'kept', label: 'kept', weight: 2 }] }] };
+  const judged = rejudge(api, opts(rubric, decl, { report }), sealed, 'm', BACKGROUND_CONTEXT);
+  for (let i = 0; i < 100 && !requests.length; i++) await Promise.resolve();
+  assert.equal(requests.length, 1, 'the rows were asked before the split came back');
+  release();
+  const v = await judged;
+  assert.deepEqual([requests.length, v.checks.map((k) => [k.id, k.met])], [2, [['true_claim', true], ['kept', true]]]);
 });
 
 test('a share pitfall asks every unsure item even after a flag, and costs its weight times the share flagged', async () => {

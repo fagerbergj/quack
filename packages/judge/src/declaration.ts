@@ -66,8 +66,8 @@ export type SelectorDecl =
 /** A named set of items a check fans out over: how they are split, and the named context shown with each. */
 export type Scope = { split: SplitDecl; piece?: string; context?: Record<string, SelectorDecl> };
 
-/** The question asked of one item, shown with the scope's named context. */
-export type Question = { type: 'bool'; instructions: string } | { type: 'choice'; instructions: string; options: Record<string, string> };
+/** The question asked of one item, shown with the scope's named context; a bool question's `pass` names the answer that means the item holds (`['yes']` by default). */
+export type Question = { type: 'bool'; instructions: string; pass?: ('yes' | 'no')[] } | { type: 'choice'; instructions: string; options: Record<string, string> };
 
 /** The fan-in: how the per-item answers fold into the check's result. */
 export type AggregateDecl = {
@@ -79,7 +79,13 @@ export type AggregateDecl = {
 };
 
 /** How one model check is judged: the scope it fans out over, the question asked per item, and the fold. */
-export type CheckDecl = { scope: string; question: Question; aggregate: AggregateDecl };
+export type CheckDecl = {
+  scope: string;
+  question: Question;
+  aggregate: AggregateDecl;
+  /** false: the check's questions skip the decision model and go to the judge model, packed with the group's other escalations. */
+  classifier?: false;
+};
 
 /** The named scopes, and, keyed by rubric check id, how each model check is judged. */
 export type Declaration = { scopes: Record<string, Scope>; checks: Record<string, CheckDecl> };
@@ -139,21 +145,26 @@ function asValue(text: string): JsonValue {
 
 type Built = { unit: Unit } | undefined;
 
-// An item is dropped when a selector finds nothing it requires, or a cross-input `where` does not hold for it.
-function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitOther: (o: SplitDecl) => Chunk[]): Built {
-  const crossing = (scope.split.where ?? []).filter((w) => 'as' in w);
-  for (const w of crossing) {
+// Whether every cross-input `where` holds for the item against its joined record.
+function crossHolds(inputs: Inputs, name: string, scope: Scope, chunk: Chunk): boolean {
+  return (scope.split.where ?? []).filter((w) => 'as' in w).every((w) => {
     const sel = scope.context?.[(w as { as: string }).as];
     if (sel?.name !== 'join') throw new Error(`scope ${name}: a where compares against "${(w as { as: string }).as}", which is not a join in its context`);
-    if (!holds(w, chunk.meta ?? {}, joined(inputs, chunk, sel as Extract<SelectorDecl, { name: 'join' }>))) return undefined;
-  }
+    return holds(w, chunk.meta ?? {}, joined(inputs, chunk, sel as Extract<SelectorDecl, { name: 'join' }>));
+  });
+}
+
+// An item is dropped when a selector finds nothing it requires, or a cross-input `where` does not hold for it.
+function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitOther: (o: SplitDecl) => Chunk[]): Built {
+  if (!crossHolds(inputs, name, scope, chunk)) return undefined;
   const state: JsonObject = { [scope.piece ?? 'piece']: asValue(chunk.text) };
   const shared: JsonObject = {};
   const related: Record<string, number> = {};
   for (const [as, sel] of Object.entries(scope.context ?? {})) {
     const got = select(inputs, chunk, sel, splitOther);
     if (got.value === undefined) return undefined;
-    (itemIndependent(sel) ? shared : state)[as] = asValue(got.value);
+    // A selector that reports matches with an empty value adds no field: an empty field reads to the model as a missing thing.
+    if (got.value !== '' || got.matches === undefined) (itemIndependent(sel) ? shared : state)[as] = asValue(got.value);
     if (got.matches !== undefined) related[as] = got.matches;
   }
   // A declared item is named by its scope, so units of two scopes never share an id; a whole-input item is named once.
@@ -163,14 +174,14 @@ function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitO
 
 export type BuiltEvidence = { evidence: Evidence; splits: Record<string, Splitting> };
 
-/** Builds every scope's units from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
-export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: ModelSplit): Promise<BuiltEvidence> {
+/** Builds the units of every scope (or those `only` keeps) from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
+export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: ModelSplit, only: (scope: Scope) => boolean = () => true): Promise<BuiltEvidence> {
   const evidence: Evidence = {};
   const splits: Record<string, Splitting> = {};
   // A related selector's candidates are the same for every item, so each chunker runs once per build.
   const cache = new Map<string, Chunk[]>();
   const splitOther = (o: SplitDecl) => cache.get(JSON.stringify(o)) ?? cache.set(JSON.stringify(o), runSplitter(inputs, o)).get(JSON.stringify(o))!;
-  for (const [name, scope] of Object.entries(decl.scopes)) {
+  for (const [name, scope] of Object.entries(decl.scopes).filter(([, s]) => only(s))) {
     try {
       const { chunks, ...how } = await split(inputs, scope.split, model, name);
       evidence[name] = chunks.map((c) => unitOf(inputs, name, scope, c, splitOther)).filter((b) => b !== undefined).map((b) => b.unit);
@@ -189,6 +200,7 @@ export function checkDeclaration(decl: Declaration, modelChecks: string[]): void
   const missing = modelChecks.filter((id) => !decl.checks[id]);
   const extra = Object.keys(decl.checks).filter((id) => !modelChecks.includes(id));
   const unscoped = Object.entries(decl.checks).filter(([, c]) => !decl.scopes[c.scope]).map(([id, c]) => `${id} (${c.scope})`);
-  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`].filter(Boolean);
+  const routed = Object.entries(decl.checks).filter(([, c]) => c.classifier !== undefined && c.classifier !== false).map(([id]) => id);
+  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `classifier may only be false: ${routed.join(', ')}`].filter(Boolean);
   if (problems.length) throw new Error(`the judge declaration does not match its rubric: ${problems.join('; ')}`);
 }

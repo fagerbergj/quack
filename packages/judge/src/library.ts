@@ -150,12 +150,16 @@ const library: Record<string, Splitter> = {
 };
 
 const registered = new Map<string, Splitter>();
-const registeredSelectors = new Map<string, (inputs: Inputs, chunk: Chunk, options: SelectorDecl) => string | undefined>();
+/** What a registered selector returns: the item's context, optionally with how many matches it found. */
+export type SelectorResult = string | undefined | Selected;
+const registeredSelectors = new Map<string, (inputs: Inputs, chunk: Chunk, options: SelectorDecl) => SelectorResult>();
 
 function register<T>(table: Map<string, T>, kind: string, name: string, run: T, builtIn: boolean) {
   if (builtIn) throw new Error(`"${name}" is the library's own ${kind}`);
   // Registrations are process-wide: a second, different strategy under one name would judge with whichever loaded last.
-  if (table.has(name) && table.get(name) !== run) throw new Error(`a different ${kind} is already registered as "${name}"`);
+  // A replay loads one extension twice (its arm at another ref), so the same source registering again is the same strategy.
+  const prior = table.get(name);
+  if (prior && prior !== run && String(prior) !== String(run)) throw new Error(`a different ${kind} is already registered as "${name}"`);
   table.set(name, run);
 }
 
@@ -164,8 +168,8 @@ export function registerSplitter(name: string, run: Splitter): void {
   register(registered, 'splitter', name, run, name in library || name === 'llm');
 }
 
-/** Registers a named context selector the library does not offer; returning undefined drops the item from the scope. */
-export function registerSelector(name: string, run: (inputs: Inputs, chunk: Chunk, options: SelectorDecl) => string | undefined): void {
+/** Registers a named context selector the library does not offer; returning undefined drops the item from the scope, and `matches` counts as related material. */
+export function registerSelector(name: string, run: (inputs: Inputs, chunk: Chunk, options: SelectorDecl) => SelectorResult): void {
   register(registeredSelectors, 'selector', name, run, name in selectors);
 }
 
@@ -285,5 +289,6 @@ export function select(inputs: Inputs, chunk: Chunk, o: SelectorDecl, split: (o:
   if (own) return own(inputs, chunk, o, split);
   const run = registeredSelectors.get(o.name);
   if (!run) throw new Error(`no context selector "${o.name}" in the judge's library or registered`);
-  return { value: run(inputs, chunk, o) };
+  const got = run(inputs, chunk, o);
+  return typeof got === 'object' ? got : { value: got };
 }
