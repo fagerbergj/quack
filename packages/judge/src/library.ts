@@ -85,19 +85,31 @@ const DATE = /\b(?:\d{1,2}\s)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec
 const NUM = /\b\d[\d,]*(?:\.\d+)?\b(?:\s?(?:%|percent|km|hectares|days|months|years|metres|meters|m\b))?/gi;
 const norm = (s: string) => s.toLowerCase().replace(/[\s,]/g, '');
 
-const extractors: Record<string, (text: string) => Digest> = {
-  /** Money, times, dates and plain quantities, each tagged with a class; the rest of the passage is its terms. */
-  numbers: (text) => {
-    const facts: Fact[] = [];
-    let rest = text;
-    for (const [cls, re] of [['money', MONEY], ['time', TIME], ['date', DATE]] as const) {
-      for (const m of rest.matchAll(re)) facts.push({ cls, value: norm(m[0]) });
-      rest = rest.replace(re, ' ');
-    }
-    for (const m of rest.matchAll(NUM)) facts.push({ cls: 'number', value: norm(m[0]) });
-    return { facts, terms: words(rest.replace(NUM, ' ')) };
-  },
-};
+/** Money, times, dates and plain quantities, each tagged with a class; the rest of the passage is its terms. */
+function numbers(text: string): Digest {
+  const facts: Fact[] = [];
+  let rest = text;
+  for (const [cls, re] of [['money', MONEY], ['time', TIME], ['date', DATE]] as const) {
+    for (const m of rest.matchAll(re)) facts.push({ cls, value: norm(m[0]) });
+    rest = rest.replace(re, ' ');
+  }
+  for (const m of rest.matchAll(NUM)) facts.push({ cls: 'number', value: norm(m[0]) });
+  return { facts, terms: words(rest.replace(NUM, ' ')) };
+}
+
+const NAME = /(?<![\p{L}\p{N}])\p{Lu}[\p{L}\p{N}'’&-]*(?:\s+\p{Lu}[\p{L}\p{N}'’&-]*)*/gu;
+const CALENDAR = /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|mon|tue|wed|thu|fri|sat|sun)[a-z]*$/i;
+// A capitalised word opening the passage is a name only with a second one beside it: "The" and "All" are not names, "Tidewater Marine" is.
+const isName = (m: RegExpMatchArray, text: string) => !CALENDAR.test(m[0]) && (/\s/.test(m[0]) || /[\p{L}\p{N}]/u.test(text.slice(0, m.index)));
+
+/** `numbers` with its terms as they are, so figure pairs rank as under `numbers`, plus each proper name as a fact of class `name`. */
+function figuresAndNames(text: string): Digest {
+  const d = numbers(text);
+  const found = [...text.matchAll(NAME)].filter((m) => isName(m, text));
+  return { facts: [...d.facts, ...found.map((m) => ({ cls: 'name', value: norm(m[0]) }))], terms: d.terms };
+}
+
+const extractors: Record<string, (text: string) => Digest> = { numbers, figuresAndNames };
 
 const valuesOf = (d: Digest, cls: string) => new Set(d.facts.filter((f) => f.cls === cls).map((f) => f.value));
 const within = (p: Set<string>, q: Set<string>) => [...p].every((v) => q.has(v));
@@ -121,6 +133,8 @@ function strategy<T>(table: Record<string, T>, kind: string, name: string | unde
   return s;
 }
 
+const figures = (d: Digest): Digest => ({ ...d, facts: d.facts.filter((f) => f.cls !== 'name') });
+
 /** Pairs of passages whose digests may conflict, best `top` first; the check's fold is the reduce over them. */
 function digestPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   if (!o.of) throw new Error('digestPairs needs `of`, the splitter whose passages it compares');
@@ -128,9 +142,13 @@ function digestPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   const extract = strategy(extractors, 'digest extractor', o.extract);
   const compare = strategy(comparators, 'comparator', o.compare);
   const digests = pieces.map((p) => extract(p.text));
-  const pairs = pieces.flatMap((a, x) => pieces.slice(x + 1).map((b, y) => ({ a, b, s: compare(digests[x], digests[x + 1 + y], o.minShared ?? 2) })));
-  const best = pairs.filter((p) => p.s > 0).sort((p, q) => q.s - p.s).slice(0, o.top ?? pairs.length);
-  return best.map(({ a, b }) => ({ id: `${a.id}|${b.id}`, text: JSON.stringify({ first: a.text, second: b.text }) }));
+  const pairs = pieces.flatMap((a, x) => pieces.slice(x + 1).map((b, y) => {
+    const [da, db] = [digests[x], digests[x + 1 + y]];
+    return { a, b, s: compare(da, db, o.minShared ?? 2), byName: compare(figures(da), figures(db), o.minShared ?? 2) === 0 };
+  }));
+  // Passages naming different things clash far more often than figures do, so name-only pairs get a `top` of their own and never displace a figure pair.
+  const best = (byName: boolean) => pairs.filter((p) => p.s > 0 && p.byName === byName).sort((p, q) => q.s - p.s).slice(0, o.top ?? pairs.length);
+  return [...best(false), ...best(true)].map(({ a, b }) => ({ id: `${a.id}|${b.id}`, text: JSON.stringify({ first: a.text, second: b.text }) }));
 }
 
 type Splitter = (inputs: Inputs, o: SplitDecl) => Chunk[];

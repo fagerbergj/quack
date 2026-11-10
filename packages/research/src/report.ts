@@ -264,14 +264,14 @@ export const reportDeclaration: Declaration = {
       piece: 'sentence',
       context: { findings: { name: 'related', chunker: { name: 'research.findings', from: 'report', strip: CITE }, match: 'overlap', min: 2, top: 5, maxChars: 6000 } },
     },
-    report: { split: { name: 'whole', from: 'report' }, piece: 'report' },
+    report: { split: { name: 'digestPairs', from: 'report', of: { name: 'sentences', from: 'report', strip: CITE }, extract: 'figuresAndNames', compare: 'sameTermsOtherValue', minShared: 2, top: 12 }, piece: 'passages' },
   },
   checks: {
     supported_by_source: { scope: 'claim', aggregate: { name: 'share' }, question: bool('Does the fetched text of the source this finding cites state what the finding claims?') },
     contradicted_by_source: { scope: 'claim', aggregate: { name: 'share', pass: ['no'] }, question: defect('Does the fetched text of the source this finding cites contradict it?', 'Yes: the source says something different from the finding.', 'No: the source does not say otherwise.') },
     answers_every_ask: { scope: 'request', aggregate: { name: 'all' }, question: bool("Is every distinct ask and constraint in the request (place, timeframe, budget, audience) answered in the report's Summary and Findings, or named under Assumptions as unsettled?") },
     summary_follows_findings: { scope: 'summary', aggregate: { name: 'all' }, question: bool("Does this sentence of the report's Summary follow from the findings shown with it?") },
-    no_self_contradiction: { scope: 'report', aggregate: { name: 'all', pass: ['no'] }, question: defect('Does any figure, date or name in the report conflict with another passage of the report?', 'Yes: two passages give different figures, dates or names for the same thing.', 'No: they all agree.') },
+    no_self_contradiction: { scope: 'report', aggregate: { name: 'all', pass: ['no'] }, question: defect('Do these two passages of one report give conflicting figures, dates or names for the same thing? Different values for different things (another year, place, item or measure) are not a conflict.', 'Yes: the two passages give different figures, dates or names for the same thing.', 'No: they agree.') },
   },
 };
 
