@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { approvalOf, decideApproval, listAsks, questionOf, resumeRun, type Approval, type Ask } from './api.ts';
+import { approvalOf, decideApproval, listAsks, questionOf, type Approval, type Ask } from './api.ts';
+import { useRunAgain } from './Failures.tsx';
 import { Args } from './JsonView.tsx';
 import { QuestionCard } from './Questions.tsx';
 import { age, failedLine, needId, titleOf, type Row } from './sessions.ts';
@@ -69,13 +70,7 @@ export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: 
 }
 
 function FailedCard({ row, done }: { row: Row; done: () => void }) {
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const run = () => {
-    setBusy(true);
-    setError('');
-    resumeRun(row.key).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
-  };
+  const { run, busy, error } = useRunAgain(row.key, done);
   const title = titleOf(row);
   return (
     <section aria-label="Failed run" className={`${card} border-danger-line bg-danger-bg`}>

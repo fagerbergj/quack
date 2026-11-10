@@ -12,7 +12,7 @@ import sql from 'highlight.js/lib/languages/sql';
 import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -72,3 +72,16 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     </div>
   );
 });
+
+/** Model prose as markdown, cut to its first sentence behind More; `whole` shows it all. */
+export function Blurb({ text, whole, className = 'text-[13px]' }: { text: string; whole?: boolean; className?: string }) {
+  const [more, setMore] = useState(false);
+  const first = /^[\s\S]+?(?<!\b(?:e\.g|i\.e))[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
+  const long = !whole && first.length < text.length;
+  return (
+    <div className={`flex min-w-0 flex-col items-start gap-1 text-ink-2 [&_p]:m-0 ${className}`}>
+      <Markdown text={long && !more ? first : text} />
+      {long && <button type="button" onClick={() => setMore(!more)} className="min-h-11 min-w-11 cursor-pointer border-0 bg-transparent p-0 text-left text-[12.5px] text-link hover:underline lg:min-h-0 lg:min-w-0">{more ? 'Less' : 'More'}</button>}
+    </div>
+  );
+}

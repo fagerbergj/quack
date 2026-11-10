@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Duck } from '../../Pond.tsx';
 import type { Row } from '../../sessions.ts';
 import { documentTree, ingest, notebooks, type Entry, type State } from './api.ts';
 
@@ -16,18 +17,6 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 // Folders are found by walking the tree with the ids in the breadcrumb.
 function walk(tree: Entry[], path: Entry[]): Entry[] {
   return path.length ? (path[path.length - 1].children ?? []) : tree;
-}
-
-function Swimmer({ className }: { className?: string }) {
-  return (
-    <svg width="34" height="26" viewBox="0 0 64 48" aria-hidden="true" className={className}>
-      <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" />
-      <circle cx="20" cy="18" r="10" fill="#1f7a63" />
-      <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
-      <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
-      <circle cx="17" cy="15" r="1.8" fill="#0b0f0e" />
-    </svg>
-  );
 }
 
 const SCRIBBLES = [
@@ -167,7 +156,7 @@ export function Remarkable(_: { rows: Row[] | undefined }) {
         </>
       )}
       <div className="fixed inset-x-3 bottom-[calc(76px+env(safe-area-inset-bottom,0px))] z-20 mx-auto flex max-w-3xl items-center gap-2.5 rounded-[22px] border border-line bg-soft py-2.5 pr-2.5 pl-4 shadow-lift lg:right-3 lg:bottom-4 lg:left-[calc(18rem+0.75rem)]">
-        <Swimmer className="bob absolute top-[-24px] left-[18px]" />
+        <Duck width="34" height="26" className="bob absolute top-[-24px] left-[18px]" />
         <span className="text-[13.5px] text-ink-2">{picked.size} selected</span>
         {failure && <span role="alert" className="min-w-0 text-xs text-danger">Could not start the ingest.</span>}
         <button type="button" disabled={busy || picked.size === 0} onClick={() => void start()} className="ml-auto h-11 cursor-pointer rounded-[14px] border-0 bg-ink px-5 text-sm font-semibold text-on-ink disabled:cursor-default disabled:opacity-50">

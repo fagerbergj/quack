@@ -6,6 +6,7 @@ import { ledger, LedgerItem } from './Artifacts.tsx';
 import type { SealedArtifact } from './api.ts';
 import { Args } from './JsonView.tsx';
 import { Markdown } from './Markdown.tsx';
+import { Duck } from './Pond.tsx';
 import { same } from './same.ts';
 import { SubagentTranscript } from './Subagent.tsx';
 import type { View } from './view.ts';
@@ -134,21 +135,11 @@ function Compacted({ m }: { m: Message }) {
   );
 }
 
-const DUCK = (
-  <svg width="26" height="18" viewBox="0 0 64 48" aria-hidden="true">
-    <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".25" />
-    <circle cx="20" cy="18" r="10" fill="#1f7a63" />
-    <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
-    <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
-    <circle cx="17" cy="15" r="1.8" fill="#fff" />
-    <path d="M50 28 Q60 24 58 34" fill="#fdfcf7" />
-  </svg>
-);
 // The duck paddles while a run is active or waits on the user; reduced-motion stops it.
 export function Working({ label }: { label: string }) {
   return (
     <p aria-label={label} className="ducklings m-0 flex items-center gap-2 text-[13px] text-muted">
-      {DUCK}
+      <Duck width="26" height="18" />
       {label}
     </p>
   );

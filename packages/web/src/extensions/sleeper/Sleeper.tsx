@@ -8,6 +8,7 @@ import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './
 import { sessionsOf, useResults, wanted, weekResult, type Result, type Sess } from './week.ts';
 import { Dialog } from '../../Dialog.tsx';
 import { MoreIcon } from '../../MoreIcon.tsx';
+import { Duck } from '../../Pond.tsx';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
 type Player = { id: string; name: string; pos: string; team: string | null; inj: string | null };
@@ -88,11 +89,7 @@ const DAY = 864e5;
 const toneOf = (job: string) => JOBS[job]?.tone ?? 'bg-muted';
 
 // The duck art faces left; mirrored so it faces forward in time.
-function Duck() {
-  return (
-    <svg role="img" aria-label="Today" width="26" height="20" viewBox="0 0 64 48" style={{ transform: 'scaleX(-1)' }}><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".35" strokeWidth="2" /><circle cx="20" cy="18" r="10" fill="#1f7a63" /><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" /><circle cx="17" cy="15" r="1.8" fill="#0b0f0e" /></svg>
-  );
-}
+const today = <Duck role="img" aria-label="Today" width="26" height="20" style={{ transform: 'scaleX(-1)' }} />;
 
 // Midnight today in the league zone; a DST change inside the day shifts it by an hour at most.
 function dayStart(now: number) {
@@ -131,7 +128,7 @@ function Track({ start, now, items }: { start: number; now: number; items: Item[
       {items.filter((m) => inside(m.at)).map((m) => m.lock
         ? <span key="lock" aria-hidden="true" data-marker="lock" className="absolute top-5 h-7 w-1 -translate-x-1/2 rounded-full bg-danger" style={{ left: pct(m.at) }} />
         : <span key={m.at} aria-hidden="true" data-marker="run" className={`absolute top-[26px] h-3.5 w-3.5 -translate-x-1/2 rounded-full ${m.tone}`} style={{ left: pct(m.at) }} />)}
-      <div className="absolute top-[14px] -translate-x-1/2" style={{ left: pct(now) }}><Duck /></div>
+      <div className="absolute top-[14px] -translate-x-1/2" style={{ left: pct(now) }}>{today}</div>
     </div>
   );
 }

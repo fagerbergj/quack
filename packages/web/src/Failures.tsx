@@ -1,34 +1,30 @@
 import { useState } from 'react';
 import { resumeRun, type Failure } from './api.ts';
+import { Duck } from './Pond.tsx';
 
 const btn = 'h-11 flex-1 cursor-pointer rounded-xl text-sm disabled:cursor-not-allowed disabled:opacity-50';
 
-// The pond's duck, still, with the same ochre "!" the sessions page shows.
-const STILL_DUCK = (
-  <svg width="30" height="22" viewBox="0 0 64 48" aria-hidden="true">
-    <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".25" />
-    <circle cx="20" cy="18" r="10" fill="#1f7a63" />
-    <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
-    <path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" />
-    <path d="M14 13 l6 4 M20 13 l-6 4" stroke="#0b0f0e" strokeWidth="1.8" strokeLinecap="round" />
-  </svg>
-);
-
-function FailedRun({ sessionKey, f }: { sessionKey: string; f: Failure }) {
+/** Resumes a session's failed run at the step it ended on; `error` says why it could not. */
+export function useRunAgain(sessionKey: string, done?: () => void) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [first, ...rest] = f.error.split('\n');
   const run = () => {
     setBusy(true);
     setError('');
-    resumeRun(sessionKey).catch((e: Error) => setError(e.message)).finally(() => setBusy(false));
+    resumeRun(sessionKey).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
+  return { run, busy, error, setError };
+}
+
+function FailedRun({ sessionKey, f }: { sessionKey: string; f: Failure }) {
+  const { run, busy, error, setError } = useRunAgain(sessionKey);
+  const [copied, setCopied] = useState(false);
+  const [first, ...rest] = f.error.split('\n');
   const copy = () => navigator.clipboard.writeText(f.error).then(() => setCopied(true), () => setError('Could not copy the error.'));
   return (
     <section aria-label="Failed run" className="flex flex-col gap-2.5 rounded-2xl border border-danger-line bg-danger-bg p-3.5">
       <div className="flex flex-wrap items-center gap-2">
-        {STILL_DUCK}
+        <Duck failed width="30" height="22" />
         <span className="text-[11px] font-bold tracking-[.06em] text-danger">RUN FAILED</span>
         <span className="min-w-0 rounded-full bg-surface px-2.5 py-0.5 text-xs font-medium text-ink-2 [overflow-wrap:anywhere]">{f.step}</span>
       </div>

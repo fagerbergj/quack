@@ -1,13 +1,13 @@
 import { createElement } from 'react';
 import { BLUE, cut, sentence, type Extension, type Nameable } from '../extension.ts';
 import type { SealedArtifact } from '../api.ts';
-import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
+import { headMeta, parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
 import { PrSection } from './PrRail.tsx';
 import { PrChip, PrStates, PrStatesNotice, prUrl } from './prState.tsx';
+import { prOf } from './pulls.ts';
 import { parseReview } from './review.ts';
 import { reviewCard } from './ReviewCard.tsx';
 
-const KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
 // Sessions opened before titles were recorded carry the trigger prompt as their title; the PR's own title follows "Title: ".
 const TRIGGER = /^Review pull request .*? Title: (.+)$/s;
 const CC_PREFIX = /^\w+(\([^)]*\))?!?:\s*/;
@@ -34,22 +34,20 @@ const postedTo = (a: SealedArtifact) => {
 export const github: Extension = {
   wholeUnits: ['review'],
   session: {
-    label: 'review', noun: () => 'Review', match: (r) => KEY.test(r.key), icon: 'M3.5 6a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M15.5 18a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M6 8.5v11M18 15.5V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5', tint: BLUE,
+    label: 'review', noun: () => 'Review', match: (r) => prOf(r.key) !== undefined, icon: 'M3.5 6a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M15.5 18a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M6 8.5v11M18 15.5V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5', tint: BLUE,
     name: (r) => {
-      const [, owner, repo, n] = KEY.exec(r.key)!;
-      const full = prTitle(r, repo!);
-      return { title: cut(full), full, num: `#${n}`, ...(r.multiRepo && { repo: `${owner}/${repo}` }) };
+      const { repo, name, number } = prOf(r.key)!;
+      const full = prTitle(r, name);
+      return { title: cut(full), full, num: `#${number}`, ...(r.multiRepo && { repo }) };
     },
     words: () => ({ run: 'Reviewing', done: 'Reviewed', none: 'Not reviewed yet' }),
   },
   artifact: (a, running) => (a.kind === KIND ? { name: 'Review', posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length), postedTo: postedTo(a) } : undefined),
   card: (a, now) => (a.kind === KIND ? reviewCard(a, outdated(a, now)) : undefined),
   steps: { checkout_pr: () => 'Checking out the latest commit', submit_review: () => 'Waiting for the double-check' },
-  // The card's extras are keyed by head sha; a review started by a comment has no head in its text and takes the newest.
   opening: (text, meta) => {
     const o = parseOpening(text);
-    const records = meta as readonly PrMeta[];
-    return o && createElement(PrCard, { o, meta: o.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head) });
+    return o && createElement(PrCard, { o, meta: headMeta(meta, o) });
   },
   start: { prefix: 'github', label: 'GitHub' },
   chip: PrChip,
@@ -60,5 +58,5 @@ export const github: Extension = {
     const url = prUrl(key);
     return url ? { url, label: 'Open on GitHub' } : undefined;
   },
-  scope: (key) => /^github:([^#]+)#/.exec(key)?.[1],
+  scope: (key) => prOf(key)?.repo,
 };

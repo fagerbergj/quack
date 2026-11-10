@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from 'react';
 import { sentence } from '../../extension.ts';
-import { Markdown } from '../../Markdown.tsx';
-import { Blurb, NewsList } from './parts.tsx';
+import { Blurb, Markdown } from '../../Markdown.tsx';
+import { NewsList } from './parts.tsx';
 import type { Result } from './week.ts';
 
 type P = { name: string; pos: string; team: string | null; inj?: string | null };

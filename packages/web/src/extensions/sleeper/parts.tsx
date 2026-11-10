@@ -1,8 +1,6 @@
-import { useState } from 'react';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import { FailedCheck } from '../../CheckList.tsx';
 import { checkFailed, type SealedArtifact } from '../../api.ts';
-import { Markdown } from '../../Markdown.tsx';
 
 export type News = Array<{ title: string; url: string; date: string; player: string }>;
 
@@ -53,18 +51,5 @@ export function NewsList({ items }: { items: News }) {
         </div>
       ))}
     </details>
-  );
-}
-
-/** Model prose as markdown, cut to its first sentence behind More; `whole` shows it all. */
-export function Blurb({ text, whole }: { text: string; whole?: boolean }) {
-  const [more, setMore] = useState(false);
-  const first = /^[\s\S]+?(?<!\b(?:e\.g|i\.e))[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
-  const long = !whole && first.length < text.length;
-  return (
-    <div className="flex min-w-0 flex-col items-start gap-1 text-[13px] text-ink-2 [&_p]:m-0">
-      <Markdown text={long && !more ? first : text} />
-      {long && <button type="button" onClick={() => setMore(!more)} className="min-h-11 min-w-11 cursor-pointer border-0 bg-transparent p-0 text-left text-[12.5px] text-link hover:underline lg:min-h-0 lg:min-w-0">{more ? 'Less' : 'More'}</button>}
-    </div>
   );
 }

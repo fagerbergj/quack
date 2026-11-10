@@ -1,7 +1,6 @@
 import { PrChip } from './prState.tsx';
-import { checkState, parseOpening, type PrMeta } from './PrCard.tsx';
-
-const KEY = /^github:([^/]+\/[^#]+)#(\d+)$/;
+import { checkState, Diffstat, headMeta, parseOpening, type PrMeta } from './PrCard.tsx';
+import { prOf } from './pulls.ts';
 
 type Checks = NonNullable<PrMeta['checks']>;
 
@@ -15,13 +14,11 @@ function checkLines(checks: Checks): Array<{ text: string; tone: string }> {
 }
 
 function Changes({ files, url }: { files: NonNullable<PrMeta['files']>; url: string }) {
-  const add = files.reduce((n, f) => n + f.additions, 0);
-  const del = files.reduce((n, f) => n + f.deletions, 0);
   return (
     <>
       <dt className="text-muted">Changes</dt>
       <dd className="m-0 flex flex-col gap-1">
-        <span className="tabular-nums">{`${files.length} ${files.length === 1 ? 'file' : 'files'} changed `}<span className="text-success">{`+${add}`}</span>{' '}<span className="text-danger">{`−${del}`}</span></span>
+        <span className="tabular-nums"><Diffstat files={files} changed /></span>
         <a href={url} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center text-link no-underline hover:underline lg:min-h-0">Open on GitHub ↗</a>
       </dd>
     </>
@@ -30,12 +27,11 @@ function Changes({ files, url }: { files: NonNullable<PrMeta['files']>; url: str
 
 /** The pull request a review session is about: state, title, branches, checks and size, from the opening message and the service's meta; a row with no data is left out. */
 export function PrSection({ sessionKey, opening, meta, title }: { sessionKey: string; title: string; opening?: string; meta: readonly Record<string, unknown>[] }) {
-  const match = KEY.exec(sessionKey);
-  if (!match) return null;
-  const [, repo, number] = match;
+  const key = prOf(sessionKey);
+  if (!key) return null;
+  const { repo, number } = key;
   const o = opening ? parseOpening(opening) : undefined;
-  const records = meta as readonly PrMeta[];
-  const pr = o?.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head);
+  const pr = headMeta(meta, o);
   const lines = pr?.checks ? checkLines(pr.checks) : [];
   return (
     <section aria-labelledby="rail-pr">

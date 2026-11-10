@@ -1,24 +1,19 @@
-import { useState } from 'react';
 import { checkFailed, type Check } from './api.ts';
 import { EXTENSIONS } from './extensions/index.ts';
-import { Markdown } from './Markdown.tsx';
+import { Blurb } from './Markdown.tsx';
 
 // The judge prefixes a note with the unit it judged ("RB2: ..."); a prefix equal to the check's scope names the whole artifact, so it adds nothing.
 const wholeUnits = () => EXTENSIONS.flatMap((e) => e.wholeUnits ?? []);
 const UNIT = /^([A-Za-z0-9_.-]{1,12}): ([\s\S]*)$/;
 
 export function Note({ text, scope }: { text: string; scope?: string }) {
-  const [more, setMore] = useState(false);
   const m = UNIT.exec(text);
   const unit = m && m[1] !== scope && !wholeUnits().includes(m[1]!) ? m[1] : undefined;
   const body = m ? m[2]! : text;
-  const first = /^[\s\S]+?(?<!\b(?:e\.g|i\.e))[.!?](?=\s|$)/.exec(body)?.[0] ?? body;
-  const long = first.length < body.length;
   return (
     <div className="flex flex-col items-start gap-1">
       {unit && <span className="rounded-md bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-2">{unit}</span>}
-      <div className="min-w-0 text-[12.5px] text-ink-2 [&_p]:m-0"><Markdown text={long && !more ? first : body} /></div>
-      {long && <button type="button" onClick={() => setMore(!more)} className="min-h-11 min-w-11 cursor-pointer border-0 bg-transparent p-0 text-left text-[12.5px] text-link hover:underline lg:min-h-0 lg:min-w-0">{more ? 'Less' : 'More'}</button>}
+      <Blurb text={body} className="text-[12.5px]" />
     </div>
   );
 }

@@ -17,6 +17,19 @@ export function parseOpening(text: string): Opening | undefined {
   return m ? { repo: m[1]!, number: m[2]!, why: m[3]!, title: m[4]!, head: m[5], headRef: m[6], baseRef: m[7], body: m[8]!.trim() } : undefined;
 }
 
+/** The meta record of the head a review was opened on; a review started by a comment has no head in its text and takes the newest. */
+export function headMeta(meta: readonly Record<string, unknown>[], o?: Opening): PrMeta | undefined {
+  const records = meta as readonly PrMeta[];
+  return o?.head === undefined ? records.at(-1) : records.find((m) => m.id === o.head);
+}
+
+/** "3 files +40 −2"; `changed` says "3 files changed". */
+export function Diffstat({ files, changed }: { files: NonNullable<PrMeta['files']>; changed?: boolean }) {
+  const add = files.reduce((n, f) => n + f.additions, 0);
+  const del = files.reduce((n, f) => n + f.deletions, 0);
+  return <>{`${files.length} ${files.length === 1 ? 'file' : 'files'}${changed ? ' changed' : ''} `}<span className="text-success">{`+${add}`}</span>{' '}<span className="text-danger">{`−${del}`}</span></>;
+}
+
 const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure']);
 const SKIPPED = new Set(['skipped', 'neutral']);
 export const checkState = (c: NonNullable<PrMeta['checks']>[number]) => (c.status !== 'completed' ? 'running' : FAILING.has(c.conclusion ?? '') ? 'failing' : SKIPPED.has(c.conclusion ?? '') ? 'skipped' : 'passing');
@@ -51,10 +64,8 @@ function Description({ body }: { body: string }) {
 }
 
 function Changes({ files }: { files: NonNullable<PrMeta['files']> }) {
-  const add = files.reduce((n, f) => n + f.additions, 0);
-  const del = files.reduce((n, f) => n + f.deletions, 0);
   return (
-    <Section name="Changes" hint={<>{`${files.length} ${files.length === 1 ? 'file' : 'files'} `}<span className="text-success">{`+${add}`}</span>{' '}<span className="text-danger">{`−${del}`}</span></>} open>
+    <Section name="Changes" hint={<Diffstat files={files} />} open>
       <ul className="m-0 list-none p-0 pb-2">
         {files.map((f) => (
           <li key={f.path} className="flex gap-2 px-3.5 py-1.5 text-[12.5px]">
