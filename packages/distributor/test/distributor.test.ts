@@ -3,6 +3,7 @@ import { createServer as createHttpServer, request as httpRequest } from 'node:h
 import { connect, type AddressInfo } from 'node:net';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -351,6 +352,46 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
   });
   assert.match(raw, /^HTTP\/1.1 404/);
   assert.deepEqual(await (await fetch(`${base}/agents`)).json(), { agents: [] });
+});
+
+test('QUACK_WEB_DIR serves the best precompressed variant Accept-Encoding allows', async () => {
+  const web = await mkdtemp(join(tmpdir(), 'quack-web-'));
+  dirs.push(web);
+  await mkdir(join(web, 'assets'));
+  const js = Buffer.from('console.log("quack");\n'.repeat(200));
+  const variants = { br: brotliCompressSync(js), gzip: gzipSync(js), identity: js };
+  await writeFile(join(web, 'assets', 'app.js'), js);
+  await writeFile(join(web, 'assets', 'app.js.br'), variants.br);
+  await writeFile(join(web, 'assets', 'app.js.gz'), variants.gzip);
+  await writeFile(join(web, 'assets', 'plain.js'), js);
+  const server = createDistributor(processDriver({ command: [process.execPath], dataDir: web, defaultAgent: '' }), { webDir: web }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  servers.push(() => new Promise((r) => server.close(() => r())));
+  const port = (server.address() as AddressInfo).port;
+  // node:http, unlike fetch, neither sends its own Accept-Encoding nor decodes the body.
+  const get = (path: string, headers: Record<string, string>) => new Promise<{ headers: Record<string, unknown>; body: Buffer; status: number }>((done, fail) => {
+    httpRequest({ port, host: '127.0.0.1', path, headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(c)).on('end', () => done({ headers: res.headers, body: Buffer.concat(chunks), status: res.statusCode! }));
+    }).on('error', fail).end();
+  });
+  const cases: Array<[string, keyof typeof variants]> = [['gzip, deflate, br', 'br'], ['gzip', 'gzip'], ['br;q=0, gzip', 'gzip'], ['', 'identity'], ['br;q=0, gzip;q=0', 'identity']];
+  const etags = new Set<unknown>();
+  for (const [accept, want] of cases) {
+    const res = await get('/assets/app.js', { 'accept-encoding': accept });
+    assert.equal(res.headers['content-encoding'], want === 'identity' ? undefined : want, accept);
+    assert.deepEqual(res.body, variants[want], accept);
+    assert.equal(res.headers['content-length'], String(variants[want].length), accept);
+    assert.equal(res.headers['vary'], 'Accept-Encoding');
+    assert.match(String(res.headers['content-type']), /^text\/javascript/);
+    assert.equal(res.headers['cache-control'], 'public, max-age=31536000, immutable');
+    assert.equal((await get('/assets/app.js', { 'accept-encoding': accept, 'if-none-match': String(res.headers.etag) })).status, 304);
+    etags.add(res.headers.etag);
+  }
+  assert.equal(etags.size, 3, 'each encoding is its own representation with its own ETag');
+  const plain = await get('/assets/plain.js', { 'accept-encoding': 'br, gzip' });
+  assert.equal(plain.headers['content-encoding'], undefined);
+  assert.deepEqual(plain.body, js);
 });
 
 test('without QUACK_WEB_DIR nothing is served', async () => {
