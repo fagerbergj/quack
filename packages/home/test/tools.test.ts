@@ -50,8 +50,14 @@ const listing = (url: string) => {
   const mine = <T extends { session: string; state?: string }>(rows: T[]) => rows.filter((r) => r.session === termOf(q, 'session') && (!termOf(q, 'state') || r.state === termOf(q, 'state')));
   return url.startsWith('/artifacts?') ? { artifacts: mine(artifacts) } : { asks: mine(asks) };
 };
+const REPORT = '## Summary\nRayleigh scattering.\n\n## Findings\n- Air scatters blue light about 5.5 times more than red. [s1]';
+// The export carries every version with its content, beside the transcript.
 const reply: Record<string, unknown> = {
   'GET /sessions/github%3Aacme%2Fwidgets%237/messages?limit=6': { messages: [{ role: 'user', text: 'Review it' }, { role: 'assistant', text: long }] },
+  'GET /sessions/github%3Aacme%2Fwidgets%237/export': { transcript: [], artifacts: [
+    { kind: 'review', version: 1, content: 'old body' }, { kind: 'review', version: 2, content: 'y'.repeat(7000) }, { kind: 'notes', version: 1, content: 'plain notes body' }, { kind: 'extra', version: 1, content: 'e' },
+  ] },
+  'GET /sessions/research%3Aabc/export': { transcript: [], artifacts: [{ kind: 'report', version: 1, content: REPORT }] },
 };
 
 // The home agent's credential as the distributor holds it: listings and process routes reach any session, but the
@@ -113,7 +119,8 @@ test('find_sessions asks the server to drop home chats and keep one agent, and f
 test('read_session reads another session through the listings the home grant allows: newest results, what waits on you, last messages', async () => {
   calls.length = 0;
   const { text } = await run('read_session', { key: widgets });
-  assert.ok(text.length <= 4001);
+  const [overview] = text.split('\n--- ');
+  assert.ok(overview!.length <= 4001);
   assert.match(text, /state needs_you/);
   assert.match(text, /- review v2: Requests changes: a nil check is missing \(github https:/);
   assert.match(text, /- notes v1\n- extra v1\n/);
@@ -121,15 +128,21 @@ test('read_session reads another session through the listings the home grant all
   assert.doesNotMatch(text, /push/, 'resolved asks stay out');
   assert.match(text, /Waiting on you:\n- Merge\? \[yes \/ no\]\n- approve merge_pr\?/);
   assert.match(text, /- user: Review it/);
+  assert.match(text, /\n--- review v2 ---\ny{6000}\n… \[1000 more characters; the whole review is at #\/s\/github%3Aacme%2Fwidgets%237\]\n--- notes v1 ---\nplain notes body\n--- extra v1 ---\ne$/);
+  assert.doesNotMatch(text, /old body/, 'only the newest version of a kind');
   assert.ok(!calls.some((c) => /\/(ping|questions|failures)$/.test(c.url)), 'no read wakes the session');
 });
 
-test("read_session returns a researcher session's report", async () => {
-  assert.match((await run('read_session', { key: 'research:abc' })).text, /^Why is the sky blue \(researcher\), state running[\s\S]*- report v1: Rayleigh scattering/);
+test("read_session returns a researcher session's report text", async () => {
+  const { text } = await run('read_session', { key: 'research:abc' });
+  assert.match(text, /^Why is the sky blue \(researcher\), state running[\s\S]*- report v1: Rayleigh scattering/);
+  assert.ok(text.endsWith(`--- report v1 ---\n${REPORT}`), text);
 });
 
-test("read_session shows a failed run's steps from the row", async () => {
+test("read_session shows a failed run's steps from the row, and skips the export when nothing is sealed", async () => {
+  calls.length = 0;
   assert.match((await run('read_session', { key: 'sleeper:L1:9:waivers' })).text, /state failed[\s\S]*Failures:\n- submit: deadline passed/);
+  assert.ok(!calls.some((c) => c.url.endsWith('/export')));
 });
 
 test('a key the distributor does not list is refused before any session endpoint is touched', async () => {

@@ -26,11 +26,12 @@ const scenario: Scenario = {
   stack: { script, seed: 'artifacts' },
   async run(ctx) {
     await ctx.step('a researcher session runs on the fake model', async () => void (await invoke(ctx.url, RESEARCH, 'researcher', 'Why is the sky blue?')));
-    for (const [key, want] of [[RESEARCH, ANSWER], [SEEDED, 'research.report v1']] as const) {
+    // The seeded report's text comes back in full beside its listing line, not only a summary.
+    for (const [key, wants] of [[RESEARCH, [ANSWER]], [SEEDED, ['- research.report v1', '--- research.report v1 ---', 'Scores keep their own endpoint']]] as const) {
       await ctx.step(`the home agent reads ${key} through its session credential`, async () => {
         const body = await invoke(ctx.url, 'home:qa', 'quack', `read ${key}`);
-        if (!body.includes(want) || body.includes('no session with key')) throw new Error(body);
-        console.log(`  ${body.slice(0, 600)}`);
+        if (!wants.every((w) => body.includes(w)) || body.includes('no session with key')) throw new Error(body);
+        console.log(`  ${body.slice(0, 1600)}`);
       });
     }
   },

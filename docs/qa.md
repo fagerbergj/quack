@@ -41,7 +41,7 @@ node tools/qa/stack.ts down
 | `search-filter` | The one search-and-filter row on Sessions and Artifacts: the funnel's panel (popover at 1280 px, sheet at 400 px), a filter set from it answered by the server, and its removable chip, light and dark |
 | `pr-chips` | Four github review sessions whose PR badges are open, merged and closed (from signed webhooks to the github app) and unknown (a repo the app is not installed on), in the Sessions list and each session's header; a badge links to its pull request, takes focus, and opens a new tab without opening the session, at 1280 and 400 px, light and dark |
 | `pr-live` | A github review session in the Sessions list whose badge is open after a signed `reopened` webhook, then flips to merged on a signed `closed` webhook through the app's `pull_request` stream, with no re-read, at 1280 and 400 px, light and dark |
-| `home-read-session` | The home agent's `read_session`, called through the fake model with the home session's own credential, reads a researcher session and a seeded session with a sealed report (no browser steps) |
+| `home-read-session` | The home agent's `read_session`, called through the fake model with the home session's own credential, reads a researcher session, and a seeded session whose sealed report comes back in full (no browser steps) |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed artifacts`, or `--seed <dir>` with a copied session, to check a real artifact card.
 

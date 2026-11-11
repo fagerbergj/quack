@@ -38,6 +38,8 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
     // The listing carries an artifact's summary, never its content.
     artifacts: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; summary?: string; deliveries?: Array<{ where: string; link: string }> }> }>(list('artifacts', `session:${escapeTerm(key)}`))).artifacts,
     pendingAsks: async (key: string) => (await call<{ asks: Ask[] }>(list('asks', `session:${escapeTerm(key)} AND state:pending`))).asks,
+    // The export reads a stopped session's store without booting it, and is the one route to another session's artifact bodies.
+    sealed: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; content: string }> }>(path(key, '/export'))).artifacts,
     messages: async (key: string, limit: number) => (await call<{ messages: Array<{ role: string; text: string }> }>(path(key, `/messages?limit=${limit}`))).messages,
     send: (key: string, agent: string, input: string, requestId: string) => post(`${path(key, '/invocations')}?agent=${encodeURIComponent(agent)}`, { input, requestId, whenBusy: 'followUp' }),
     abort: (key: string) => post(path(key, '/abort')),
