@@ -1,11 +1,11 @@
 import type { ClassifierModel } from '@earendil-works/pi-ai';
-import type { ClassifierRef } from '@quack/judge';
+import type { DecisionModelRef } from '@quack/judge';
 import type { Resolver } from '@quack/sdk';
 
 const BYTES_PER_TOKEN = 4;
 
 /** A decision model such as Clef picking one option; undefined (escalate) when it is missing, over its input cap, or fails. */
-export function classifierChoice(ref: ClassifierRef, describe: (option: string) => string): Resolver {
+export function decisionModelChoice(ref: DecisionModelRef, describe: (option: string) => string): Resolver {
   return {
     id: ref.modelId,
     async resolve(point, api, ctx) {

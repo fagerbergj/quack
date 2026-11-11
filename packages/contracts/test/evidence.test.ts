@@ -7,7 +7,7 @@ import ts from 'typescript';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { replayJudge } from '@quack/eval';
-import { buildEvidence, classifierTokens, type Evidence, type Unit } from '@quack/judge';
+import { buildEvidence, decisionModelTokens, type Evidence, type Unit } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
 import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
@@ -69,7 +69,7 @@ test('every choice and definition unit of the approved contracts fits the decisi
   for (const [name, spec] of [['lifecycle', lifecycle], ['store-port', storePort], ['sdk', wrap('typescript', sdk)], ['env', wrap('json-schema', env)]] as const) {
     const ev: Evidence = await evidenceOf(spec);
     for (const scope of ['choice', 'definition']) {
-      const over = ev[scope].filter((u) => classifierTokens(u, checksOf(scope)) >= 8192);
+      const over = ev[scope].filter((u) => decisionModelTokens(u, checksOf(scope)) >= 8192);
       assert.deepEqual(ids(over), [], `${name} ${scope}`);
       counts[`${name} ${scope}`] = ev[scope].length;
     }
@@ -163,7 +163,7 @@ test('with Clef on, Clef answers every choice and definition unit and only meets
   const inputs = await inputsOf(lifecycle);
   const { rows } = await replayJudge({
     cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked'], content, inputs }],
-    arms: [{ label: 'clef', adapters, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
+    arms: [{ label: 'clef', adapters, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });
   const by = Object.fromEntries(rows.map((r) => [r.check, { met: r.met, clef: r.clef, esc: r.esc }]));

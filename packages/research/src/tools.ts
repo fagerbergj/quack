@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import type { ClassifierRef, ModelRef } from '@quack/judge';
+import type { DecisionModelRef, ModelRef } from '@quack/judge';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { safeGet } from './net.ts';
 
@@ -11,7 +11,7 @@ export type ResearchConfig = {
   exaUrl?: string;
   maxFetchBytes?: number;
   maxRevisions?: number;
-  classifier?: ClassifierRef;
+  decisionModel?: DecisionModelRef;
   judgeModel?: ModelRef;
 };
 

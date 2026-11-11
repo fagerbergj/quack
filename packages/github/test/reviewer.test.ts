@@ -70,7 +70,7 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   models.setProvider(faux.provider);
   models.setProvider(fauxJudge().provider);
   const m = faux.getModel();
-  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' } })];
+  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
   return { done, seen, service, head, session, live };

@@ -1,10 +1,10 @@
 import { appEndpoint } from '@quack/sdk';
-import type { ClassifierRef, ModelRef } from '@quack/judge';
+import type { DecisionModelRef, ModelRef } from '@quack/judge';
 import { ingestWorkflow, INGEST_WORKFLOW, UNREACHABLE, type IngestService } from './workflow.ts';
 
 export { ingestWorkflow, INGEST_WORKFLOW, NONE, type IngestDeps, type IngestService } from './workflow.ts';
 export { problems, transcriptKind, type Transcript } from './transcript.ts';
-export { classifierChoice, parseTopic } from './classify.ts';
+export { decisionModelChoice, parseTopic } from './classify.ts';
 export { PAGE_WIDTH, renderNotebook, renderPages } from './render.ts';
 
 /** The service half over HTTP; the bearer token is the service's shared secret. */
@@ -28,7 +28,7 @@ export function createIngestService(url: string, token: string, doFetch: typeof 
 }
 
 /** The workflow wired to the remarkable app through the session's primed endpoint; the models come from the agent definition. */
-export function ingestFromEnv(config: { visionModel?: ModelRef; classifier?: ClassifierRef } = {}) {
+export function ingestFromEnv(config: { visionModel?: ModelRef; decisionModel?: DecisionModelRef } = {}) {
   const { url, token } = appEndpoint('remarkable');
-  return ingestWorkflow({ service: createIngestService(url, token), visionModel: config.visionModel, classifier: config.classifier });
+  return ingestWorkflow({ service: createIngestService(url, token), visionModel: config.visionModel, decisionModel: config.decisionModel });
 }

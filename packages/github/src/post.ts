@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { feedback, judge, type ClassifierRef, type ModelRef, type Verdict } from '@quack/judge';
+import { feedback, judge, type DecisionModelRef, type ModelRef, type Verdict } from '@quack/judge';
 import { artifactsExtension, attachLink, type SealedArtifact } from '@quack/sdk';
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { postable } from './inline.ts';
@@ -52,7 +52,7 @@ async function refuseAfterSkip(api: ToolExecutionApi, ctx: Context) {
   return skipped && `Nothing to submit: ${skipped}. This run is over.`;
 }
 
-export type GithubSessionConfig = SessionConfig & { /** Which job this agent does; reviewer unless set. */ role?: 'reviewer' | 'implementer'; maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
+export type GithubSessionConfig = SessionConfig & { /** Which job this agent does; reviewer unless set. */ role?: 'reviewer' | 'implementer'; maxRevisions?: number; decisionModel?: DecisionModelRef; judgeModel?: ModelRef };
 
 /** The GitHub extension's session half: checkout, the review artifact, its judge, and the gated post. */
 export function githubSessionExtensions(config: GithubSessionConfig): Extension[] {
@@ -61,6 +61,6 @@ export function githubSessionExtensions(config: GithubSessionConfig): Extension[
   return [
     defineExtension({ name: 'github', tools: [checkoutTool(config)] }),
     artifactsExtension([reviewKind]),
-    judge({ kind: reviewKind, rubric: reviewerRubric, declaration: reviewDeclaration, inputs: reviewInputs(config.repoDir), maxRevisions: config.maxRevisions ?? 2, refuse: refuseAfterSkip, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
+    judge({ kind: reviewKind, rubric: reviewerRubric, declaration: reviewDeclaration, inputs: reviewInputs(config.repoDir), maxRevisions: config.maxRevisions ?? 2, refuse: refuseAfterSkip, decisionModel: config.decisionModel, judgeModel: config.judgeModel, toolName: 'submit_review', onCleared: postCleared(config) }),
   ];
 }

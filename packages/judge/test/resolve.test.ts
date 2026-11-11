@@ -4,14 +4,14 @@ import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord/context';
 import { limiter } from '../src/limit.ts';
-import { answerItems, classifierTokens, MAX_BATCH_QUESTIONS, pack, type ClassifierRef } from '../src/resolve.ts';
+import { answerItems, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, type DecisionModelRef } from '../src/resolve.ts';
 
 const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
 const unit = { id: 'f1', state: { finding: '- nit: rename' } };
 const checks = [{ id: 'c.says_why', question: { type: 'bool' as const, instructions: 'Does it say why?' } }];
 const memoKey = 'judge:github.review:v1:f1:classifier';
 // One unit judged alone, answers by check id.
-const answerUnit = async (api: unknown, r: ClassifierRef, ctx: Context) =>
+const answerUnit = async (api: unknown, r: DecisionModelRef, ctx: Context) =>
   Object.fromEntries((await answerItems(api as never, { ref: r, memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1) }, [{ unit, checks }], ctx)).map((a) => [a.check.id, a.answer]));
 
 // A tool call's api as the judge sees it: its memos survive a rerun of the call, so one api stands for one call.
@@ -35,7 +35,7 @@ function callApi(classify: () => Promise<unknown>) {
 
 const confident = { stopReason: 'stop', answers: { q0: { type: 'bool', probability: 0.95 } } };
 
-test('a classifier that throws is not memoized: a rerun of the call asks it again', async () => {
+test('a decision model that throws is not memoized: a rerun of the call asks it again', async () => {
   const outcomes = [() => Promise.reject(new Error('503 busy')), () => Promise.resolve({ stopReason: 'error', answers: {} }), () => Promise.resolve(confident)];
   const api = callApi(() => outcomes.shift()!());
   const first = await answerUnit(api, ref, BACKGROUND_CONTEXT);
@@ -47,7 +47,7 @@ test('a classifier that throws is not memoized: a rerun of the call asks it agai
   assert.deepEqual([api.calls(), third['c.says_why']!.resolver], [3, 'clef']);
 });
 
-test('a unit\'s questions go to the classifier numbered, never under their check ids, and each answer comes back to its check', async () => {
+test('a unit\'s questions go to the decision model numbered, never under their check ids, and each answer comes back to its check', async () => {
   const two = [{ id: 'c.no_self_contradiction', question: { type: 'choice' as const, instructions: 'Does any figure conflict?', options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } }, pass: ['no'] }, ...checks];
   let sent: { questions: Record<string, unknown> } | undefined;
   const api = callApi(async () => ({ stopReason: 'stop', answers: { q0: { type: 'choice', probabilities: { yes: 0.05, no: 0.95 } }, q1: { type: 'bool', probability: 0.1 } } }));
@@ -59,7 +59,7 @@ test('a unit\'s questions go to the classifier numbered, never under their check
   assert.deepEqual(answered.map((a) => [a.check.id, a.answer!.met]), [['c.no_self_contradiction', true], ['c.says_why', false]]);
 });
 
-test('a classifier refused with a 503 is asked again after the backoff and its answer stands', async () => {
+test('a decision model refused with a 503 is asked again after the backoff and its answer stands', async () => {
   const outcomes = [{ stopReason: 'error', answers: {}, errorMessage: 'Typesafe system one (503): busy' }, confident];
   const api = callApi(() => Promise.resolve(outcomes.shift()));
   const slept: number[] = [];
@@ -68,7 +68,7 @@ test('a classifier refused with a 503 is asked again after the backoff and its a
   assert.deepEqual([api.calls(), slept, a.answer!.resolver], [2, [2000], 'clef']);
 });
 
-test('a request the classifier refuses as too large is over the cap: not retried, memoized, escalated', async () => {
+test('a request the decision model refuses as too large is over the cap: not retried, memoized, escalated', async () => {
   const over = { stopReason: 'error', answers: {}, errorMessage: 'System One API error (500): input (8288 tokens) is too large to process' };
   const api = callApi(() => Promise.resolve(over));
   const retry = { sleep: async () => assert.fail('an input too large is not retried'), random: () => 0, log: () => {} };
@@ -76,7 +76,7 @@ test('a request the classifier refuses as too large is over the cap: not retried
   assert.deepEqual([api.calls(), api.memos.get(memoKey), a.answer!.resolver], [1, null, 'agent-model']);
 });
 
-test('an over-cap unit is memoized: a rerun escalates without asking the classifier', async () => {
+test('an over-cap unit is memoized: a rerun escalates without asking the decision model', async () => {
   const api = callApi(() => Promise.resolve(confident));
   const tiny = { ...ref, maxInputTokens: 1 };
   await answerUnit(api, tiny, BACKGROUND_CONTEXT);
@@ -99,11 +99,11 @@ test('units that share context pack in order up to the cap; one without it goes 
   const shared = { guide: 'g'.repeat(300) };
   const item = (id: string, text: string, s: Record<string, string> | undefined = shared) => ({ unit: { id, state: { text }, ...(s ? { shared: s } : {}) }, checks });
   const items = [item('a', 'x'), item('b', 'y'), item('lone', 'z', undefined), item('c', 'w'.repeat(400)), item('huge', 'h'.repeat(3000))];
-  const one = classifierTokens(items[0].unit, checks);
+  const one = decisionModelTokens(items[0].unit, checks);
   const ids = (cap: number | undefined) => pack(items, cap).map((g) => g.map((it) => it.unit.id));
   assert.deepEqual(ids(Math.ceil(one * 1.5)), [['a', 'b'], ['lone'], ['c', 'huge']], 'c and huge each exceed the cap, so they escalate as one');
-  assert.deepEqual(ids(undefined), [['a'], ['b'], ['lone'], ['c'], ['huge']], 'without a classifier nothing packs');
-  assert.ok(classifierTokens([items[0].unit, items[1].unit], checks) < one * 1.5, 'the shared context is counted once');
+  assert.deepEqual(ids(undefined), [['a'], ['b'], ['lone'], ['c'], ['huge']], 'without a decision model nothing packs');
+  assert.ok(decisionModelTokens([items[0].unit, items[1].unit], checks) < one * 1.5, 'the shared context is counted once');
 });
 
 test('a packed request sends the context once and one question per unit; its unsure units escalate together in one judge-model request', async () => {
@@ -138,7 +138,7 @@ test('a packed request sends the context once and one question per unit; its uns
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].state, { context: shared, items: units.map((u) => ({ id: u.id, text: u.id })) });
   assert.equal(sent[0].questions.q2.instructions, 'About items[2] (u2): Does it say why?');
-  assert.doesNotMatch(JSON.stringify(sent[0]), /says_why/, 'no check id reaches the classifier, which would read it as part of the question');
+  assert.doesNotMatch(JSON.stringify(sent[0]), /says_why/, 'no check id reaches the decision model, which would read it as part of the question');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [['u0', true, 'clef', undefined], ['u1', true, 'judge-model', 'says so'], ['u2', false, 'judge-model', 'only asserts'], ['u3', false, 'clef', undefined]]);
   assert.equal(prompts.length, 1, 'one judge-model request for both unsure units');
   assert.equal(prompts[0].split('serve the page').length, 2, 'the shared context is sent once');
@@ -235,10 +235,10 @@ test('a batch over the judge model window splits into sub-batches that each fit;
   assert.equal(peak, 1, 'a left-out question waits for its own slot');
 });
 
-test('a check with classifier false never reaches the classifier and is escalated with the group\'s other unsure questions', async () => {
+test('a check with decisionModel false never reaches the decision model and is escalated with the group\'s other unsure questions', async () => {
   const shared = { ci: 'ci=success' };
   const units = ['f0', 'f1'].map((id) => ({ id, shared, state: { finding: id } }));
-  const contra = { id: 'c.contradicted', question: { type: 'bool' as const, instructions: 'Does the code contradict it?', pass: ['no' as const] }, classifier: false as const };
+  const contra = { id: 'c.contradicted', question: { type: 'bool' as const, instructions: 'Does the code contradict it?', pass: ['no' as const] }, decisionModel: false as const };
   const sent: Array<{ questions: Record<string, { instructions: string }> }> = [];
   // Clef is sure about f0's says_why and unsure about f1's.
   const api = callApi(async () => ({ stopReason: 'stop', answers: { q0: { type: 'bool', probability: 0.95 }, q1: { type: 'bool', probability: 0.5 } } }));
@@ -261,7 +261,7 @@ test('a check with classifier false never reaches the classifier and is escalate
   assert.deepEqual(answered.map((a) => [a.unit.id, a.check.id, a.answer!.met, a.answer!.resolver]), [
     ['f0', 'c.says_why', true, 'clef'], ['f0', 'c.contradicted', true, 'judge-model'], ['f1', 'c.says_why', true, 'judge-model'], ['f1', 'c.contradicted', false, 'judge-model'],
   ]);
-  const only = callApi(async () => assert.fail('a group of classifier-false checks sends the classifier nothing'));
+  const only = callApi(async () => assert.fail('a group of decisionModel-false checks sends the decision model nothing'));
   Object.assign(only, { now: () => 0, agent: async () => ({}) });
   Object.assign(only.models, { getModel: (provider: string, id: string) => ({ provider, id }), completeSimple: async () => ({ stopReason: 'stop', content: [{ type: 'text', text: '{"choice": "no", "confidence": 0.9, "reason": "fine"}' }] }) });
   await answerItems(only as never, settings, [{ unit: { id: 'lone', state: { finding: 'x' } }, checks: [contra] }], BACKGROUND_CONTEXT);

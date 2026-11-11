@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { Artifacts, decide, serveApp } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, startWorkflow, WorkflowDoc, workflowExtension } from '@quack/workflows';
-import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
+import { decisionModelChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
 
 // A real two-page PDF, written by hand so the render step runs the actual library.
 function pdf(pages: number): Uint8Array {
@@ -186,16 +186,16 @@ test('parseTopic keeps a short name, reuses an existing one by case, and refuses
   assert.throws(() => parseTopic('This document is about many different things at once', []), /short topic/);
 });
 
-test('the classifier resolver answers from the decision model, and escalates when it is over its input cap', async () => {
+test('the decision-model resolver answers from the decision model, and escalates when it is over its input cap', async () => {
   const point = { name: 'type', question: 'What kind?', options: ['meeting', 'idea'], evidence: 'x'.repeat(100) };
   let asked: unknown;
   const model = { id: 'clef', type: 'classifier' };
   const api = { models: { getAllModels: () => [model], classify: async (_m: unknown, c: unknown) => ((asked = c), { stopReason: 'stop', answers: { pick: { type: 'choice', choice: 'idea', probabilities: { idea: 0.9 }, confidence: 0.9 } } }) } };
   const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-  const got = await classifierChoice(ref, (o) => `is ${o}`).resolve(point, api as never, ctx);
+  const got = await decisionModelChoice(ref, (o) => `is ${o}`).resolve(point, api as never, ctx);
   assert.equal(got?.choice, 'idea');
   assert.deepEqual((asked as { questions: { pick: { criteria: unknown } } }).questions.pick.criteria, { meeting: 'is meeting', idea: 'is idea' });
-  assert.equal(await classifierChoice({ ...ref, maxInputTokens: 10 }, String).resolve(point, api as never, ctx), undefined);
+  assert.equal(await decisionModelChoice({ ...ref, maxInputTokens: 10 }, String).resolve(point, api as never, ctx), undefined);
 });
 
 test('a low-confidence Clef answer escalates to the session model; a confident one stands', async () => {
@@ -208,7 +208,7 @@ test('a low-confidence Clef answer escalates to the session model; a confident o
   });
   const run = async (confidence: number) => {
     memos.clear();
-    return decide(api(confidence) as never, point, [classifierChoice(ref, String), { id: 'session', resolve: async () => ({ choice: 'meeting', confidence: 0.9, reason: 'x' }) }], ctx);
+    return decide(api(confidence) as never, point, [decisionModelChoice(ref, String), { id: 'session', resolve: async () => ({ choice: 'meeting', confidence: 0.9, reason: 'x' }) }], ctx);
   };
   assert.equal((await run(0.79))?.resolver, 'session');
   assert.equal((await run(0.8))?.resolver, 'clef');

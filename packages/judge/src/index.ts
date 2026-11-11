@@ -5,13 +5,13 @@ import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact 
 import { buildEvidence, checkDeclaration, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, metOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
-import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type ClassifierRef, type Item, type ModelRef } from './resolve.ts';
+import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Item, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
 export { buildEvidence, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type SplitExpect, type Where } from './declaration.ts';
 export { registerSelector, registerSplitter } from './library.ts';
-export { classifierTokens, type ClassifierRef, type ModelRef } from './resolve.ts';
+export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './resolve.ts';
 export { limiter } from './limit.ts';
 
 type Common = {
@@ -22,7 +22,7 @@ type Common = {
   /** Text when this run has nothing to submit (a checkout found no work); the submit is then refused and ends the run. */
   refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
   /** A decision model asked first; uncertain items, and a unit that alone is over its input cap, escalate to the judge model. */
-  classifier?: ClassifierRef;
+  decisionModel?: DecisionModelRef;
   /** Where uncertain items escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
   /** The most judge-model requests in flight at once; 4 by default. A packed group's sub-batch is one request. Decision-model requests stay one at a time. */
@@ -70,7 +70,7 @@ function planChecks(rubric: Rubric, decl: Declaration | undefined, built: BuiltE
     const units = d ? built.evidence[d.scope] ?? [] : unitsFor(k.scope, built.evidence);
     const split = d && built.splits[d.scope];
     const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}), ...(split?.reason ? { splitterReason: split.reason } : {}) };
-    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.classifier === false && { classifier: false as const }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
+    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel === false && { decisionModel: false as const }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
     return { key, result, ask, units, aggregate: d?.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, failed: split?.failed };
   }));
 }
@@ -164,7 +164,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
   const plans: Plan[] = [];
   const byKey = new Map<string, Plan>();
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
-  const settings = { ref: opts.classifier, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4) };
+  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4) };
   const tally = async ({ unit, check, answer }: Answered) => {
     const p = byKey.get(check.id)!;
     p.left--;
@@ -180,7 +180,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
     const mine = planChecks(opts.rubric, opts.declaration, built);
     for (const p of mine) plans.push(p), byKey.set(p.key, p);
     await publish();
-    await Promise.all(pack(itemsOf(mine), opts.classifier?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
+    await Promise.all(pack(itemsOf(mine), opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
   };
   await Promise.all(stages.map((s) => s.then(ask)));
   const order = opts.rubric.criteria.flatMap((c) => c.checks.map((k) => `${c.id}.${k.id}`));

@@ -136,7 +136,7 @@ test('a bool pitfall asked as the defect holds on "no": a confident yes flags th
   assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows a: flagged by clef (no reason given)', 'rows c: fine']]);
 });
 
-// A tool call's api as the judge reads it: memos, a classifier answering by question number and a judge model, with every request recorded.
+// A tool call's api as the judge reads it: memos, a decision model answering by question number and a judge model, with every request recorded.
 function fakeApi(clef: (q: string) => unknown, judge: (name: string) => string) {
   const memos = new Map<string, unknown>();
   const requests: Array<{ state: unknown; questions: Record<string, unknown> }> = [];
@@ -168,7 +168,7 @@ const sealed = { kind: 'k', version: 1, hash: '', content: 'x', sealedAt: 0, ver
 const rows = JSON.stringify([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
 const opts = (rubric: Rubric, declaration: Declaration, more: Inputs = {}): JudgeOptions => ({
   kind: { kind: 'k', path: 'x' }, rubric, declaration, inputs: async () => ({ rows, guide: '{"rule":"r"}', ...more }), maxRevisions: 0,
-  classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' },
+  decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' },
 });
 const yes = JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'fine' });
 const rubricOf = (id: string, weight: number | 'gate'): Rubric => ({ name: 'r', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id, label: id, weight }] }] });
@@ -221,8 +221,8 @@ test('coverageUnion by related counts what code found and asks no model; a decla
   assert.equal(requests.length, 0);
   assert.deepEqual([v.checks[0].met, v.checks[0].resolvers], [true, { code: 2 }]);
   await assert.rejects(rejudge(api, opts(rubricOf('other', 2), decl), sealed, 'm', BACKGROUND_CONTEXT), /no declaration for other; declared checks the rubric lacks: cited/);
-  const routed = { ...decl, checks: { cited: { ...decl.checks.cited, classifier: true as never } } };
-  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /classifier may only be false: cited/);
+  const routed = { ...decl, checks: { cited: { ...decl.checks.cited, decisionModel: true as never } } };
+  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /decisionModel may only be false: cited/);
 });
 
 registerSelector('test.backed', (_i, chunk) => ({ value: '', matches: chunk.text.includes('backed') ? 1 : 0 }));
