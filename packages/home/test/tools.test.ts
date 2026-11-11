@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { obj, str } from '@earendil-works/pi-schema';
-import type { Action } from '@quack/sdk';
+import { unescapeTerm, type Action } from '@quack/sdk';
 import { distributor } from '../src/client.ts';
 import { homeTools } from '../src/tools.ts';
 
@@ -17,34 +17,61 @@ const sessions = [
 ];
 const long = 'x'.repeat(5000);
 
-// The Sessions API as the tools use it: the q they send (agent, not home:) applied, two rows to a page so every list is followed.
+// The term a q sets for one field, unescaped; `-key:` (a negation) is not a `key:` term.
+const termOf = (q: string, field: string) => {
+  const m = new RegExp(String.raw`(?:^| )${field}:((?:\\.|\S)+)`).exec(q);
+  return m ? unescapeTerm(m[1]!).text : undefined;
+};
+
+// The Sessions API as the tools use it: the q they send (key, agent, not home:) applied, two rows to a page so every list is followed.
 function sessionPage(url: string) {
   const q = new URL(url, 'http://x').searchParams;
-  const agent = /agent:(\S+)/.exec(q.get('q') ?? '')?.[1];
-  const rows = sessions.filter((s) => (!q.get('q')?.includes(String.raw`-key:home\:*`) || !s.key.startsWith('home:')) && (!agent || s.agent === agent));
+  const [agent, key] = [termOf(q.get('q') ?? '', 'agent'), termOf(q.get('q') ?? '', 'key')];
+  const rows = sessions.filter((s) => (!q.get('q')?.includes(String.raw`-key:home\:*`) || !s.key.startsWith('home:')) && (!agent || s.agent === agent) && (!key || s.key === key));
   const from = Number(q.get('pageToken') ?? 0);
   return { sessions: rows.slice(from, from + 2), ...(from + 2 < rows.length && { nextPageToken: String(from + 2) }) };
 }
+const widgets = 'github:acme/widgets#7';
+// The cross-session listings carry no artifact content.
+const artifacts = [
+  { session: widgets, kind: 'review', version: 2, summary: 'Requests changes: a nil check is missing', deliveries: [{ where: 'github', link: 'https://github.com/acme/widgets/pull/7#r1' }] },
+  { session: widgets, kind: 'notes', version: 1 },
+  { session: widgets, kind: 'extra', version: 1 },
+  { session: widgets, kind: 'review', version: 1, summary: 'old' },
+  { session: 'research:abc', kind: 'report', version: 1, summary: 'Rayleigh scattering' },
+];
+const asks = [
+  { session: widgets, id: 'q1', state: 'pending', type: 'question', prompt: { question: 'Merge?', options: ['yes', 'no'] } },
+  { session: widgets, id: 'a1', state: 'pending', type: 'approval', toolCall: { tool: 'merge_pr' } },
+  { session: widgets, id: 'a0', state: 'resolved', type: 'approval', toolCall: { tool: 'push' } },
+];
+const listing = (url: string) => {
+  const q = new URL(url, 'http://x').searchParams.get('q') ?? '';
+  const mine = <T extends { session: string; state?: string }>(rows: T[]) => rows.filter((r) => r.session === termOf(q, 'session') && (!termOf(q, 'state') || r.state === termOf(q, 'state')));
+  return url.startsWith('/artifacts?') ? { artifacts: mine(artifacts) } : { asks: mine(asks) };
+};
+const REPORT = '## Summary\nRayleigh scattering.\n\n## Findings\n- Air scatters blue light about 5.5 times more than red. [s1]';
+// The export carries every version with its content, beside the transcript entries GET /messages would have read.
+const entry = (kind: string, text: string) => ({ kind, model: [{ role: kind === 'pi.user' ? 'user' : 'assistant', content: [{ type: 'text', text }] }] });
 const reply: Record<string, unknown> = {
-  'GET /sessions/github%3Aacme%2Fwidgets%237/artifacts?pageSize=1000': {
-    artifacts: [
-      { kind: 'review', version: 2, content: 'Verdict: request changes\nbecause...', summary: 'Requests changes: a nil check is missing', deliveries: [{ where: 'github', link: 'https://github.com/acme/widgets/pull/7#r1' }] },
-      { kind: 'notes', version: 1, content: 'plain notes body' },
-      { kind: 'extra', version: 1, content: 'e' },
-      { kind: 'review', version: 1, content: 'old' },
-    ],
-  },
-  'GET /sessions/github%3Aacme%2Fwidgets%237/asks?q=state:pending&pageSize=1000': { asks: [{ id: 'q1', type: 'question', prompt: { question: 'Merge?', options: ['yes', 'no'] } }, { id: 'a1', type: 'approval', toolCall: { tool: 'merge_pr' } }] },
-  'GET /sessions/github%3Aacme%2Fwidgets%237/messages?limit=6': { messages: [{ role: 'user', text: 'Review it' }, { role: 'assistant', text: long }] },
+  'GET /sessions/github%3Aacme%2Fwidgets%237/export': { transcript: [
+    entry('pi.user', 'too old'), { kind: 'pi.tool-result', model: [{ role: 'toolResult', content: [{ type: 'text', text: 'tool output' }] }] },
+    entry('pi.user', 'Review it'), entry('pi.assistant', long), entry('pi.user', 'and the tests'), entry('pi.assistant', 'looked'), entry('pi.user', 'thanks'), entry('pi.assistant', 'done'),
+  ], artifacts: [
+    { kind: 'review', version: 1, content: 'old body' }, { kind: 'review', version: 2, content: 'y'.repeat(7000) }, { kind: 'notes', version: 1, content: 'plain notes body' }, { kind: 'extra', version: 1, content: 'e' },
+  ] },
+  'GET /sessions/research%3Aabc/export': { transcript: [], artifacts: [{ kind: 'report', version: 1, content: REPORT }] },
 };
 
+// The home agent's credential as the distributor holds it: listings and process routes reach any session, but the
+// Sessions API's single-key reads answer 404 for every key but its own, and no test reads its own.
 const server = createServer(async (req, res) => {
   const chunks: Buffer[] = [];
   for await (const c of req) chunks.push(c);
   const url = req.url ?? '';
   calls.push({ method: req.method ?? '', url, body: Buffer.concat(chunks).toString() });
-  const one = req.method === 'GET' && /^\/sessions\/([^/?]+)$/.exec(url);
-  const found = url.startsWith('/sessions?') ? sessionPage(url) : one ? sessions.find((s) => s.key === decodeURIComponent(one[1]!)) : reply[`${req.method} ${url}`];
+  const foreign = req.method === 'GET' && /^\/sessions\/[^/?]+(\/(artifacts|asks))?(\?|$)/.test(url);
+  const found = foreign ? undefined : url.startsWith('/sessions?') ? sessionPage(url) : /^\/(artifacts|asks)\?/.test(url) ? listing(url) : reply[`${req.method} ${url}`];
   const post = req.method === 'POST' ? { ok: true } : undefined;
   res.writeHead(found || post ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(found ?? post ?? { error: 'nope' }));
 });
@@ -92,17 +119,29 @@ test('find_sessions asks the server to drop home chats and keep one agent, and f
   assert.equal(calls.filter((c) => c.url.startsWith('/sessions?')).length, 2, 'three rows over two-row pages');
 });
 
-test('read_session returns a bounded read from the catalog: newest results, what waits on you, last messages', async () => {
+test('read_session reads another session through the listings the home grant allows: newest results, what waits on you, last messages', async () => {
   calls.length = 0;
-  const { text } = await run('read_session', { key: 'github:acme/widgets#7' });
-  assert.ok(text.length <= 4001);
+  const { text } = await run('read_session', { key: widgets });
+  const [overview] = text.split('\n--- ');
+  assert.ok(overview!.length <= 4001);
   assert.match(text, /state needs_you/);
   assert.match(text, /- review v2: Requests changes: a nil check is missing \(github https:/);
-  assert.match(text, /- notes v1: plain notes body/);
+  assert.match(text, /- notes v1\n- extra v1\n/);
   assert.doesNotMatch(text, /review v1/);
+  assert.doesNotMatch(text, /push/, 'resolved asks stay out');
   assert.match(text, /Waiting on you:\n- Merge\? \[yes \/ no\]\n- approve merge_pr\?/);
-  assert.match(text, /- user: Review it/);
+  assert.match(text, /Last messages:\n- user: Review it\n- assistant: x{400}…\n- user: and the tests\n- assistant: looked\n- user: thanks\n- assistant: done\n/);
+  assert.doesNotMatch(text, /too old|tool output/, 'the newest six person and assistant messages');
+  assert.ok(!calls.some((c) => c.url.includes('/messages')), 'the export serves the messages too');
+  assert.match(text, /\n--- review v2 ---\ny{6000}\n… \[1000 more characters; the whole review is at #\/s\/github%3Aacme%2Fwidgets%237\]\n--- notes v1 ---\nplain notes body\n--- extra v1 ---\ne$/);
+  assert.doesNotMatch(text, /old body/, 'only the newest version of a kind');
   assert.ok(!calls.some((c) => /\/(ping|questions|failures)$/.test(c.url)), 'no read wakes the session');
+});
+
+test("read_session returns a researcher session's report text", async () => {
+  const { text } = await run('read_session', { key: 'research:abc' });
+  assert.match(text, /^Why is the sky blue \(researcher\), state running[\s\S]*- report v1: Rayleigh scattering/);
+  assert.ok(text.endsWith(`--- report v1 ---\n${REPORT}`), text);
 });
 
 test("read_session shows a failed run's steps from the row", async () => {
@@ -117,7 +156,7 @@ test('a key the distributor does not list is refused before any session endpoint
     assert.match(out.text, /no session with key nope:1/);
   }
   assert.equal((await run('stop_session', { key: 'home:one' })).isError, true);
-  assert.ok(calls.every((c) => c.url === '/sessions/nope%3A1' || c.url === '/sessions/home%3Aone'));
+  assert.ok(calls.every((c) => c.url.startsWith('/sessions?')));
 });
 
 test('send_message queues behind the current step under the session\'s own agent', async () => {

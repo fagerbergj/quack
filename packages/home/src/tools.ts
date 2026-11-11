@@ -1,14 +1,15 @@
-import { validateToolArguments } from '@earendil-works/pi-ai';
+import { contentText, validateToolArguments } from '@earendil-works/pi-ai';
 import { int, lit, map, obj, opt, str, union, unknown } from '@earendil-works/pi-schema';
 import { defineTool, type ToolRegistration } from '@earendil-works/pi-durable';
 import { escapeTerm, gated, type Action, type ActionContext } from '@quack/sdk';
-import { type Distributor, type SessionRow } from './client.ts';
+import { type Distributor, type SessionExport, type SessionRow } from './client.ts';
 
 const STATES = ['running', 'needs_you', 'failed', 'done'] as const;
 type State = (typeof STATES)[number];
 const MAX_ARTIFACTS = 3;
 const MAX_MESSAGES = 6;
 const MAX_READ_CHARS = 4000;
+const MAX_BODY_CHARS = 6000;
 
 const text = (t: string) => ({ output: [{ type: 'text' as const, text: t }] });
 const failure = (t: string) => ({ output: [{ type: 'text' as const, text: t }], isError: true });
@@ -35,22 +36,40 @@ function artifactLines(newest: Awaited<ReturnType<Distributor['artifacts']>>): s
   if (!newest.length) return [];
   return ['Newest results:', ...newest.map((a) => {
     const delivered = a.deliveries?.length ? ` (${a.deliveries.map((d) => `${d.where} ${d.link}`).join('; ')})` : '';
-    return `- ${a.kind} v${a.version}: ${a.summary ? oneLine(a.summary) : clip(oneLine(a.content), 300)}${delivered}`;
+    return `- ${a.kind} v${a.version}${a.summary ? `: ${oneLine(a.summary)}` : ''}${delivered}`;
   })];
 }
+
+// The newest shown version of each kind, in full up to MAX_BODY_CHARS; the cut says where the rest is.
+function bodyLines(key: string, shown: Awaited<ReturnType<Distributor['artifacts']>>, sealed: SessionExport['artifacts']): string[] {
+  return shown.filter((a, i) => shown.findIndex((b) => b.kind === a.kind) === i).flatMap((a) => {
+    const body = sealed.find((s) => s.kind === a.kind && s.version === a.version)?.content;
+    if (body === undefined) return [];
+    const more = body.length - MAX_BODY_CHARS;
+    return [`--- ${a.kind} v${a.version} ---`, more > 0 ? `${body.slice(0, MAX_BODY_CHARS)}\n… [${more} more characters; the whole ${a.kind} is at ${sessionLink(key)}]` : body];
+  });
+}
+
+// The view the session's own GET /messages gives: the newest person and assistant entries with content, oldest first.
+const lastMessages = (transcript: SessionExport['transcript']) => transcript
+  .filter((e) => (e.kind === 'pi.user' || e.kind === 'pi.assistant') && e.model[0]?.content)
+  .slice(-MAX_MESSAGES)
+  .map((e) => ({ role: e.kind === 'pi.user' ? 'user' : 'assistant', text: contentText(e.model[0]!.content!) }));
 
 const askLine = (a: Awaited<ReturnType<Distributor['pendingAsks']>>[number]) =>
   a.type === 'question' && a.prompt ? `- ${oneLine(a.prompt.question)} [${a.prompt.options.join(' / ')}]` : `- approve ${a.toolCall?.tool ?? 'a tool call'}?`;
 
 export async function readSession(d: Distributor, row: SessionRow): Promise<string> {
-  const [artifacts, asks, messages] = await Promise.all([safely(() => d.artifacts(row.key), []), safely(() => d.pendingAsks(row.key), []), safely(() => d.messages(row.key, MAX_MESSAGES), [])]);
+  // The export, not GET /messages, so a read never starts a stopped session's process.
+  const [artifacts, asks, exported] = await Promise.all([safely(() => d.artifacts(row.key), []), safely(() => d.pendingAsks(row.key), []), safely(() => d.exported(row.key), { transcript: [], artifacts: [] })]);
+  const [shown, messages] = [artifacts.slice(0, MAX_ARTIFACTS), lastMessages(exported.transcript)];
   const failures = row.lastRun?.outcome === 'failed' ? row.lastRun.failedSteps : [];
   const out = [`${row.title || row.key} (${row.agent}), state ${stateOf(row)}`, `link ${sessionLink(row.key)}`];
-  out.push(...artifactLines(artifacts.slice(0, MAX_ARTIFACTS)));
+  out.push(...artifactLines(shown));
   if (asks.length) out.push('Waiting on you:', ...asks.map(askLine));
   if (failures.length) out.push('Failures:', ...failures.map((f) => `- ${f.step}: ${clip(oneLine(f.error), 200)}`));
   if (messages.length) out.push('Last messages:', ...messages.map((m) => `- ${m.role}: ${clip(oneLine(m.text), 400)}`));
-  return clip(out.join('\n'), MAX_READ_CHARS);
+  return [clip(out.join('\n'), MAX_READ_CHARS), ...bodyLines(row.key, shown, exported.artifacts)].join('\n');
 }
 
 const keyParam = str({ description: 'Session key from find_sessions' });
@@ -111,7 +130,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
     }),
     defineTool({
       name: 'read_session',
-      description: 'Read one session: its state, newest results with their summaries, open questions, failures and the last messages. Read it before answering anything about it.',
+      description: 'Read one session: its state, newest results with their summaries and full text, open questions, failures and the last messages. Read it before answering anything about it.',
       parameters: obj({ key: keyParam }, { open: true }),
       replay: 'safe',
       async execute(args) {
