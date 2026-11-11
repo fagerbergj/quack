@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -10,6 +10,16 @@ const packages = join(import.meta.dirname, '..', 'packages');
 
 test('no package imports upward or sideways', () => {
   assert.deepEqual(boundaryProblems(packageEdges(packages)), []);
+});
+
+// The SDK contract makes the primer the runtime's boot hand-off: an extension that primed could swap a session's app credential.
+test('only the runtime primes the session endpoint; no other package source names primeSessionEndpoint', () => {
+  const users = readdirSync(packages).flatMap((p) => {
+    const src = join(packages, p, 'src');
+    const files = readdirSync(src, { recursive: true, withFileTypes: true }).filter((e) => e.isFile() && /\.tsx?$/.test(e.name));
+    return files.some((e) => readFileSync(join(e.parentPath, e.name), 'utf8').includes('primeSessionEndpoint')) ? [p] : [];
+  });
+  assert.deepEqual(users.sort(), ['runtime', 'sdk'], 'sdk defines it; the runtime calls it at boot and in validate');
 });
 
 test('every package has a layer', () => {
