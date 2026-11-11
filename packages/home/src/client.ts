@@ -1,3 +1,5 @@
+import { escapeTerm } from '@quack/sdk';
+
 /** A Sessions API v9 row, as far as the home tools read it. */
 export type SessionRow = {
   key: string; agent: string; title?: string; state: 'running' | 'idle' | 'stopped' | 'archived'; createdAt: string; lastActivity: string; pendingAsks: number;
@@ -7,7 +9,7 @@ type Ask = { id: string; type: 'approval' | 'question'; toolCall?: { tool: strin
 
 export type Distributor = ReturnType<typeof distributor>;
 
-/** The distributor's HTTP, for the home tools. Callers check a key with `session()` first: reads of a key it does not know answer 404. */
+/** The distributor's HTTP, for the home tools. Callers check a key with `session()` first: process routes of a key it does not know answer 404. */
 export function distributor(url: string, doFetch: typeof fetch = fetch) {
   const path = (key: string, rest: string) => `${url}/sessions/${encodeURIComponent(key)}${rest}`;
   async function call<T>(target: string, init?: RequestInit): Promise<T> {
@@ -17,22 +19,25 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
     return body as T;
   }
   const post = (target: string, body?: unknown) => call<unknown>(target, { method: 'POST', ...(body !== undefined && { body: JSON.stringify(body) }) });
+  const list = (what: string, q: string) => `${url}/${what}?${new URLSearchParams({ q, pageSize: '1000' })}`;
+  /** Every session matching the Lucene `q`; pages are followed to the end. */
+  async function sessions(q?: string): Promise<SessionRow[]> {
+    const rows: SessionRow[] = [];
+    for (let token = ''; ;) {
+      const page = await call<{ sessions: SessionRow[]; nextPageToken?: string }>(`${url}/sessions?${new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) })}`);
+      rows.push(...page.sessions);
+      if (!page.nextPageToken) return rows;
+      token = page.nextPageToken;
+    }
+  }
   return {
-    /** Every session matching the Lucene `q`; pages are followed to the end. */
-    async sessions(q?: string): Promise<SessionRow[]> {
-      const rows: SessionRow[] = [];
-      for (let token = ''; ;) {
-        const page = await call<{ sessions: SessionRow[]; nextPageToken?: string }>(`${url}/sessions?${new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) })}`);
-        rows.push(...page.sessions);
-        if (!page.nextPageToken) return rows;
-        token = page.nextPageToken;
-      }
-    },
+    sessions,
     /** One session, or undefined when the distributor knows no such key. */
-    session: (key: string) => call<SessionRow>(path(key, '')).catch((err: Error & { status?: number }) => (err.status === 404 ? undefined : Promise.reject(err))),
-    // Catalog reads: none of them starts the session's process.
-    artifacts: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; content: string; summary?: string; deliveries?: Array<{ where: string; link: string }> }> }>(path(key, '/artifacts?pageSize=1000'))).artifacts,
-    pendingAsks: async (key: string) => (await call<{ asks: Ask[] }>(path(key, '/asks?q=state:pending&pageSize=1000'))).asks,
+    session: async (key: string): Promise<SessionRow | undefined> => (await sessions(`key:${escapeTerm(key)}`))[0],
+    // Catalog reads through the cross-session listings, since a session credential's single-key reads reach only its own key; none starts the session's process.
+    // The listing carries an artifact's summary, never its content.
+    artifacts: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; summary?: string; deliveries?: Array<{ where: string; link: string }> }> }>(list('artifacts', `session:${escapeTerm(key)}`))).artifacts,
+    pendingAsks: async (key: string) => (await call<{ asks: Ask[] }>(list('asks', `session:${escapeTerm(key)} AND state:pending`))).asks,
     messages: async (key: string, limit: number) => (await call<{ messages: Array<{ role: string; text: string }> }>(path(key, `/messages?limit=${limit}`))).messages,
     send: (key: string, agent: string, input: string, requestId: string) => post(`${path(key, '/invocations')}?agent=${encodeURIComponent(agent)}`, { input, requestId, whenBusy: 'followUp' }),
     abort: (key: string) => post(path(key, '/abort')),

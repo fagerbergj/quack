@@ -106,7 +106,9 @@ test('the home agent lists and reads other sessions; any other agent reaches onl
   for (const key of ['quack:home', 'github:o/r#3']) await catalog.publish(key, [{ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'a', createdAt: 0 } }]);
   const home = distributor(sessionBase, withCredential(held.get('quack:home')!));
   assert.deepEqual((await home.sessions()).map((s) => s.key).sort(), ['github:o/r#3', 'quack:home']);
-  assert.equal((await home.session('github:o/r#3'))?.key, undefined, 'the home grant covers the lists, not another key');
+  assert.equal((await asSession('quack:home', path('github:o/r#3'))).status, 404, 'the home grant covers the lists, not another key');
+  assert.equal((await home.session('github:o/r#3'))?.key, 'github:o/r#3', 'so the home client reads one session through them');
+  assert.deepEqual([await home.artifacts('github:o/r#3'), await home.pendingAsks('github:o/r#3')], [[], []]);
   const reviewer = 'github:o/r#3';
   for (const url of ['/sessions', '/asks', '/artifacts', path('quack:home')]) assert.equal((await asSession(reviewer, url)).status, 404, url);
   for (const url of [path('quack:home', '/messages'), '/index/approvals']) assert.equal((await asSession(reviewer, url)).status, 403, url);

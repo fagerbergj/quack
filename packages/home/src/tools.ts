@@ -35,7 +35,7 @@ function artifactLines(newest: Awaited<ReturnType<Distributor['artifacts']>>): s
   if (!newest.length) return [];
   return ['Newest results:', ...newest.map((a) => {
     const delivered = a.deliveries?.length ? ` (${a.deliveries.map((d) => `${d.where} ${d.link}`).join('; ')})` : '';
-    return `- ${a.kind} v${a.version}: ${a.summary ? oneLine(a.summary) : clip(oneLine(a.content), 300)}${delivered}`;
+    return `- ${a.kind} v${a.version}${a.summary ? `: ${oneLine(a.summary)}` : ''}${delivered}`;
   })];
 }
 
