@@ -3,8 +3,9 @@ import { unplaced } from './Info.tsx';
 import { Changes, Compatibility, download, Header, Purpose, type ViewProps } from './RestView.tsx';
 import type { Model } from './spec.ts';
 
-// The TypeScript compiler and the diagram layout load only when a full TypeScript contract opens.
-const CodeContract = lazy(() => import('./CodeContract.tsx').then((m) => ({ default: m.CodeContract })));
+// The parser and the diagram layout load only when a TypeScript contract opens, side by side rather than one after the other.
+const loadCode = () => import('./CodeContract.tsx');
+const CodeContract = lazy(() => loadCode().then((m) => ({ default: m.CodeContract })));
 
 // Undefined while the parser loads, null when it fails; both show the source as it stands.
 export function useModel(src: string) {
@@ -28,6 +29,7 @@ const code = 'm-0 overflow-x-auto rounded-xl border border-line bg-canvas p-3 fo
 export function TypeScriptView({ spec, verdict }: ViewProps) {
   const src = spec.document as string;
   const model = useModel(src);
+  useEffect(() => void loadCode(), []);
   const plain = <section aria-label="Declarations" className="min-w-0 rounded-[18px] border border-line bg-surface p-4"><pre className={code}>{src}</pre></section>;
   // Until the declarations are parsed, every decision sits on the title.
   const drawn = new Set(model ? model.decls.map((d) => `/${d.name}`) : []);
