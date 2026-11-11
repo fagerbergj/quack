@@ -1,0 +1,387 @@
+[
+ {
+  "item": "2235-v1 item-1",
+  "backed": true,
+  "text": "Read the full diff plus the surrounding code: `onEvent`'s watermark/idempotency semantics and the sibling writers it reuses (packages/catalog/src/sql-store.ts:73-81, :177-187), the rebuild/replay path that re-applies `turn.ended` (packages/catalog/src/core.ts:145-168), the sender's watch and `viewSignature` (packages/session/src/lifecycle-sender.ts:17, :173-188), and pi-durable's `afterTools` contract — `afterTools(assistant: EntryId, ...)` fires only in the tool-round finish path (pi-durable `harness/types.d.ts:914-915`, `generation.js:859`), so a final-answer round without tools correctly records nothing."
+ },
+ {
+  "item": "2235-v1 item-2",
+  "backed": true,
+  "text": "Ran: `npm ci`; `npm run typecheck` — clean; the full node test suite — 926 pass, 0 fail, 2 skipped (both Postgres-gated, no local database); `npm run sloplint -- diff origin/main` — ok."
+ },
+ {
+  "item": "2235-v1 item-3",
+  "backed": false,
+  "text": "Ran the new session lifecycle test 5 times on the head: 0 failures."
+ },
+ {
+  "item": "2235-v1 item-4",
+  "backed": true,
+  "text": "Copied the three new/changed test files into an `origin/main` worktree: the channel v10 case, the malformed-batch `index: 0` case and conformance (3)'s `recordTurn` block all fail on main, and the new session mid-run test fails there too (the row keeps `lastActivity` at `createdAt` 09:00). The \"fails on main, passes here\" claims hold."
+ },
+ {
+  "item": "2235-v1 item-5",
+  "backed": true,
+  "text": "`packages/contracts/test/fixtures-specs/sdk-v3b.d.ts.txt:253` already declares `turn.ended` as a core event with `data: { run: Run; index: number }`; the implementation matches it, and `packages/sdk` needed no change, as the description says."
+ },
+ {
+  "item": "2236-v1 item-1",
+  "backed": true,
+  "text": "Read the full diff (8 files) plus the surrounding code: `app.ts` (`keyOf`, `versionsOf`/`decided`, the `GET /contracts/{key}` route and its 404s), `manifest.ts` (`PAGE` regex), `Studio.tsx` (`useStatus`, `approvalState`, `waiting`, `LABEL`), `status.ts` (`contractVersions`), the route test, the studio tests, the QA scenario, and the seed fix."
+ },
+ {
+  "item": "2236-v1 item-2",
+  "backed": true,
+  "text": "Installed deps (`npm ci`) and ran the suites: `packages/contracts/test/app.test.ts` 3/3 pass (including the new \"never from a verdict\" route test); contracts + distributor node tests 176 pass / 0 fail / 1 skip; full `@quack/web` 305/305 pass; `typecheck` exit 0; `sloplint diff origin/main` ok."
+ },
+ {
+  "item": "2236-v1 item-3",
+  "backed": true,
+  "text": "Reproduced the racy TS test: `npm test -w @quack/web -- studio.test.tsx` fails 1/12 (the TS test), repeatable across single-test and whole-file runs (5×); the full `npm test -w @quack/web` passes 305/305; rewriting the two assertions to `findByRole` makes the isolated run pass. The pass/fail flips purely with the `typescript`-import cache state, i.e. test order — non-deterministic."
+ },
+ {
+  "item": "2232-v1 item-1",
+  "backed": false,
+  "text": "Read the full diff against `origin/main`, and the surrounding judge/contracts/eval source (declaration.ts, fold.ts, library.ts, resolve.ts, index.ts, rubric.ts, contracts rubric.ts/index.ts/manifest.ts, eval adapters.ts/judge-replay.ts, sdk manifest.ts)."
+ },
+ {
+  "item": "2232-v1 item-2",
+  "backed": true,
+  "text": "Installed deps (`npm ci`) in-sandbox and ran the affected suites: `packages/judge`, `packages/contracts`, `packages/eval` — 109 pass, 0 fail, including all 14 new `declaration.test.ts` cases (folds for every aggregate, the fallback→llm span drop + sweep, escalation-skip-once-decided, the share-pitfall \"asks every unsure item even after a flag\" and its `(4 − 3/3)/4 = 0.75` score, the llm-split memo, coverageUnion-by-related asking no model, and the declaration/rubric mismatch refusal)."
+ },
+ {
+  "item": "2232-v1 item-3",
+  "backed": true,
+  "text": "`npx tsc -p tsconfig.json --noEmit` clean; `node tools/sloplint.ts diff origin/main` → ok."
+ },
+ {
+  "item": "2232-v1 item-4",
+  "backed": true,
+  "text": "Traced the pitfall math by hand: `contradicts_guide`/`adds_unasked` are `share` pitfalls with `pass:['no']`, so a \"yes\" (departure present) is tri=false and `metOf` returns the flagged share; `score` subtracts `weight × share` — consistent with the replay table in the description."
+ },
+ {
+  "item": "2232-v1 item-5",
+  "backed": true,
+  "text": "Confirmed research, github and Sleeper still build their judge with `evidence` (deprecated path) and that the legacy `finalize` branch (`legacyFinal`) preserves the old numeric-`met` behavior and whole-unit note prefixing."
+ },
+ {
+  "item": "2230-v1 item-1",
+  "backed": true,
+  "text": "Read the full `sessionsApi` (packages/catalog/src/http.ts): paged reads following `nextPageToken`, PATCH/DELETE with 404/400/409/415/422/401, session-credential refusal of writes and cross-session lists without the home grant, and `resolutionOf` bounds (choice required, text ≤2048, reason ≤512)."
+ },
+ {
+  "item": "2230-v1 item-2",
+  "backed": true,
+  "text": "Traced the answer path end to end: web `{ choice, text?, reason? }` → `resolutionOf` → distributor `answer` (server.ts:405) → session `/questions`|`/approvals` → SDK `answerQuestion` (packages/sdk/src/questions.ts:56-59); the session then emits `ask.resolved` and the journaled `resolve` converge on an idempotent `store.resolveAsk`, so the double path cannot double-count."
+ },
+ {
+  "item": "2230-v1 item-3",
+  "backed": true,
+  "text": "Read the distributor `deleteSession`/`removeChecked` (now `catalog.getSession(key)?.pendingAsks`), the once-only backfill guarded by the `BACKFILLED` marker, and the moved `notifications.ts` (6-hour staleness, once-per-key `sent` table, fire-and-forget `void … .catch()`)."
+ },
+ {
+  "item": "2230-v1 item-4",
+  "backed": false,
+  "text": "Confirmed no `@quack/index` imports remain, `packages/index/` is deleted, and `tools/boundary.ts` swaps the `index` slot for `catalog`."
+ },
+ {
+  "item": "2230-v1 item-5",
+  "backed": true,
+  "text": "CI green (check=success, isolation=success); the description reports 902+298 tests passing, typecheck clean, and QA rig 29/29 and 21/21."
+ },
+ {
+  "item": "2224-v6 item-1",
+  "backed": true,
+  "text": "Diff since the approved head e9d2554 is exactly two commits (6e19d82, 4d0da2f): port v5 (`Money.amountMicros`, `RunOutcome` gains `denied`, `ArtifactRow` slimmed to the core deliverable with `sealedAt` + `deliveries` at port.ts:80, new `advanceWatermark` and `recordArtifactDelivery`, verdict/link actions and `passedOf`/`mergeLinks` removed), the core event union gains `artifact.delivered` and namespaced `ExtensionEvent` (stored as nothing, watermark advanced), the v5 state machine (`nextState`: idle from stopped, running from archived; `createSession` starts idle), the switch replaced by a per-type `apply` table in core.ts, and the new HTTP adapter with seven tests."
+ },
+ {
+  "item": "2224-v6 item-2",
+  "backed": true,
+  "text": "Read every changed file at this head, including the full `http.ts`, `http.test.ts`, the `sql-store.ts` v5 paths (delivery dedupe on `(session, event_id)`, `sealed_at` DDL and index, `catalog_deliveries` in `removeRows`), `conformance.ts` and `reference.ts` alignment (sealedAt ordering, summary-only full text, the echo/extension publish check, the transition table's `stopped → idle` row)."
+ },
+ {
+  "item": "2224-v6 item-3",
+  "backed": true,
+  "text": "Ran locally after `npm ci` (patched liqe in place, four `uq_escape` grammar refs): 28/28 pass across `catalog.test.ts` (ten conformance checks), `query.test.ts` (incl. `denied`, sealedAt, the new unknown-field refusals), `core.test.ts` and `http.test.ts` (wire shapes, keyset token binding, the session-credential authz matrix, PATCH/DELETE/resolve 409/404/401/415/422 paths); `npx tsc -p tsconfig.json` clean; `node tools/sloplint.ts diff origin/main` ok; `tools/boundary.test.ts` 7/7."
+ },
+ {
+  "item": "2224-v6 item-4",
+  "backed": true,
+  "text": "The loopback-server pattern in `http.test.ts` matches established repo precedent (traces, github and distributor tests all listen on 127.0.0.1:0), so it fits the no-external-network rule; the test uses the fake clock seam."
+ },
+ {
+  "item": "2224-v6 item-5",
+  "backed": false,
+  "text": "`sessionsApi` and `@quack/catalog` are referenced nowhere outside the package, so nothing is mounted and the description's \"the distributor still serves the index\" remains true; the old distributor sessions API tests are untouched."
+ },
+ {
+  "item": "2224-v6 item-6",
+  "backed": true,
+  "text": "CI at this head: `check` and `isolation` in progress, none failing; the Postgres half of the conformance suite runs in the check job and could not be run in this sandbox (no docker)."
+ },
+ {
+  "item": "2224-v5 item-1",
+  "backed": true,
+  "text": "Diff since the approved head e9d2554 is exactly two commits (6e19d82, 4d0da2f): port v5 (`Money.amountMicros`, `RunOutcome` gains `denied`, `ArtifactRow` slimmed to the core deliverable with `sealedAt` + `deliveries`, new `advanceWatermark` and `recordArtifactDelivery`, verdict/link actions and `passedOf`/`mergeLinks` removed), the core event union gains `artifact.delivered` and namespaced `ExtensionEvent` (stored as nothing, watermark advanced), the v5 state machine (`nextState`: idle from stopped, running from archived; `createSession` starts idle), the switch replaced by a per-type `apply` table in core.ts, and the new HTTP adapter with seven tests."
+ },
+ {
+  "item": "2224-v5 item-2",
+  "backed": true,
+  "text": "Read every changed file at this head, including the full `http.ts`, `http.test.ts`, the `sql-store.ts` v5 paths (delivery dedupe on `(session, event_id)`, `sealed_at` DDL and index, `catalog_deliveries` in `removeRows`), `conformance.ts` and `reference.ts` alignment (sealedAt ordering, summary-only full text, the echo/extension publish check, the transition table's `stopped → idle` row)."
+ },
+ {
+  "item": "2224-v5 item-3",
+  "backed": true,
+  "text": "Ran locally after `npm ci` (patched liqe in place, four `uq_escape` grammar refs): 28/28 pass across `catalog.test.ts` (ten conformance checks), `query.test.ts` (incl. `denied`, sealedAt, the new unknown-field refusals), `core.test.ts` and `http.test.ts` (wire shapes, keyset token binding, the session-credential authz matrix, PATCH/DELETE/resolve 409/404/401/415/422 paths); `npx tsc -p tsconfig.json` clean; `node tools/sloplint.ts diff origin/main` ok; `tools/boundary.test.ts` 7/7."
+ },
+ {
+  "item": "2224-v5 item-4",
+  "backed": true,
+  "text": "The loopback-server pattern in `http.test.ts` matches established repo precedent (traces, github, distributor tests all listen on 127.0.0.1:0), so it fits the no-external-network rule; the test uses the fake clock seam."
+ },
+ {
+  "item": "2224-v5 item-5",
+  "backed": false,
+  "text": "`sessionsApi` and `@quack/catalog` are referenced nowhere outside the package, so nothing is mounted and the description's \"the distributor still serves the index\" remains true; the old distributor sessions API tests are untouched."
+ },
+ {
+  "item": "2224-v5 item-6",
+  "backed": true,
+  "text": "CI at this head: `check` and `isolation` in progress, none failing; the Postgres half of the conformance suite runs in the check job and could not be run in this sandbox (no docker)."
+ },
+ {
+  "item": "2216-v1 item-1",
+  "backed": true,
+  "text": "Read the full diff (21 files) plus the surrounding code in `service.ts`, `app.ts`, `queue.ts`, `waiting-store.ts`, `redeliver.ts`, `webhook.ts`, `notice.ts`, and the sdk's `submitToSession`/`storeFor`/`extensions.ts`."
+ },
+ {
+  "item": "2216-v1 item-2",
+  "backed": true,
+  "text": "Ran the github package test suite at the head: 134 pass, 0 fail, 1 skipped (postgres conformance without `QUACK_TEST_DATABASE_URL`). `npm run typecheck` exits 0. CI check is green."
+ },
+ {
+  "item": "2216-v1 item-3",
+  "backed": true,
+  "text": "Verified the rubric claim (#6) against the base: the head's new `verdict must match the findings labels` assertions, run against `origin/v1` sources, fail with \"stale is a failed check\"; they pass at the head."
+ },
+ {
+  "item": "2216-v1 item-4",
+  "backed": true,
+  "text": "The new service/app/waiting-store tests import files that do not exist on the base, so they cannot run there directly; I confirmed the base behavior they claim to fix by reading `origin/v1`'s webhook (reviewer 409 → 502 → `neverReached` → dropped after three redeliveries)."
+ },
+ {
+  "item": "2216-v1 item-5",
+  "backed": true,
+  "text": "Checked `git ls-files -- ':(glob)**/package.json'` in a scratch repo: it matches a root `package.json` as well as nested ones, so `dependencyDirs` does not miss the top level."
+ },
+ {
+  "item": "2216-v1 item-6",
+  "backed": false,
+  "text": "The head-route, 410-linked-issue, and idempotent-post tests all pass at the head; the fake-service retry model in fixtures.ts mirrors the service's delivery-mark lookup."
+ },
+ {
+  "item": "2215-v1 item-1",
+  "backed": true,
+  "text": "`npm ci` + `npm test` in v1: 807 tests, 802 pass, 0 fail, 5 skipped; web 281 passed — matches the description. `packages/schedules/test/service.test.ts` printed its known-leak line (names `TCPServerWrap`) and exited 0; `open.length = 0` is indeed at line 126."
+ },
+ {
+  "item": "2215-v1 item-2",
+  "backed": true,
+  "text": "`node tools/sloplint.ts diff origin/v1` → `sloplint: ok`; `repo` mode lists 31 existing clones and exits 0, as claimed."
+ },
+ {
+  "item": "2215-v1 item-3",
+  "backed": true,
+  "text": "Ran `packageEdges` over the real tree: 131 src edges, only 2 undeclared — the runtime's computed extension load (exempt) and `workflows -> session` (the allow-listed entry, matching the type-only import at packages/workflows/src/index.ts:4). The real-tree boundary test passes, so the tightening is not vacuous."
+ },
+ {
+  "item": "2215-v1 item-4",
+  "backed": false,
+  "text": "Ran the targeted suites (boundary, dupl, sloplint, leak-check, cli): 46/46 pass."
+ },
+ {
+  "item": "2215-v1 item-5",
+  "backed": false,
+  "text": "Reproduced the dupl false positive with a scratch script (see Findings); it is not caught by any of the 46 tests."
+ },
+ {
+  "item": "2215-v1 item-6",
+  "backed": true,
+  "text": "CI as reported by the checkout: check=success, isolation=success, image=skipped. I could not run the docker-live isolation test locally (no Docker daemon in this sandbox); the runsc path is runner-only by design."
+ },
+ {
+  "item": "2227-v1 item-1",
+  "backed": true,
+  "text": "Ran the new suite on the head: 5/5 pass (`node --test packages/session/test/abort-queue.test.ts`). Full node suite: 873 pass / 7 skip / 0 fail; web suite: 305 pass; `npm run typecheck` clean; `node tools/sloplint.ts diff origin/main` ok."
+ },
+ {
+  "item": "2227-v1 item-2",
+  "backed": true,
+  "text": "Confirmed the pi-durable 1.5.0 mechanics by reading its dist source: `abortConversation` (scheduler.js:449-473) marks tasks *and* calls `withdrawQueuedInputs` (inbox.js:113-122) — the withdrawal this PR avoids; `#reconcile`'s withdrawal (scheduler.js:857) fires only below a cancelled *task owner* (`#belowCancelled`, :1543), so per-task aborts leave the root inbox intact while subagent inboxes still cascade; the abort handler ends the run without touching the inbox (generation.js:263-288); `continue` places queued items first only when the conversation is idle and throws `ConversationBusy` otherwise (submissions.js:204-213), which is why `startQueued` checks `LiveDoc.run` in the same commit; `afterFailedRun` defaults to `\"keep\"` (agent.js:60) and quack does not override it, so a failed next run would still park its inputs."
+ },
+ {
+  "item": "2227-v1 item-3",
+  "backed": true,
+  "text": "Checked the distributor's invariant holds on the new path: `NOT_FORWARDED` already strips a client-sent `x-quack-principal` on main (packages/distributor/src/server.ts:90), so forwarding the proxy's own copy on the upgrade is consistent with HTTP; session-listener callers reach the route with `who === undefined` (server.ts:570), so their aborts log as `service` as described."
+ },
+ {
+  "item": "2229-v1 item-1",
+  "backed": true,
+  "text": "Read the full diff (29 files) plus the surrounding code: `createCatalog`/`publish`/`rebuild` and the SQL store's watermark rules from #2224, the distributor's session listener and delete/PATCH routes, the journal, `storeFor`, and the existing index publisher this PR shares helpers with (`spendOf`, `viewSignature`, `runsIn` moved without changing behaviour)."
+ },
+ {
+  "item": "2229-v1 item-2",
+  "backed": true,
+  "text": "Checked each answer the description promises against `packages/catalog/src/channel.ts`: 401 comes from the listener, 404 on a foreign key, 400 with the reason via `Bad`, 409 with `acked`, 413 via the 1 MiB `serviceHttp` body cap, 503 from a failing `publish`, 200 `{acked}` otherwise."
+ },
+ {
+  "item": "2229-v1 item-3",
+  "backed": true,
+  "text": "Traced the sender's resume logic against the store's semantics: a 409's lower `acked` is committed and the batch re-sent from there, which is contiguous because the stream is append-only; the no-progress case (a refused spend holding the watermark) waits instead of looping. Both paths have tests (`a reset catalog is refilled from the log`, and the store's `holds` rule for spend)."
+ },
+ {
+  "item": "2229-v1 item-4",
+  "backed": true,
+  "text": "Checked the size caps end to end: the gate measures the exact `ask.opened` event the sender will record, the seal refuses via `assertSealFits` (including on verdict and link attach), and `fitted` cuts with the ` … [truncated]` marker before anything over the cap is appended. The spend floor (`reportedMicros`) keeps a price cut from reporting less than before, matching the store's `regressed` refusal."
+ },
+ {
+  "item": "2229-v1 item-5",
+  "backed": true,
+  "text": "Read the new tests (catalog 7, session 9, sdk 2, distributor 4) and the CI result: check and isolation green, image skipped; the suite the PR cites (939 pass) is the same one CI ran."
+ },
+ {
+  "item": "2211-v1 item-1",
+  "backed": false,
+  "text": "Read the full diff against origin/v1 (109 files): every deleted doc matches the description (docs/history, docs/design/judging.md, docs/v1 prd/srs/decisions/rfc/extensions/audits/proposals/mockups); the trimmed `docs/v1/README.md` and `docs/v1/cli.md` keep the evidence sections and drop planning prose; the two log-string ID drops are at v1/packages/session/src/definition.ts (maxTurns) and v1/packages/eval/src/main.ts (promotion note)."
+ },
+ {
+  "item": "2211-v1 item-2",
+  "backed": true,
+  "text": "Grepped the tree at the head for references to the deleted paths: the only survivor is the trust-gate.md:53 link; no other doc, code, or test references `docs/v1/{prd,srs,decisions,rfc,extensions,audits,proposals,mockups}`, `docs/history/`, or `docs/design/`."
+ },
+ {
+  "item": "2211-v1 item-3",
+  "backed": true,
+  "text": "Grepped v1/ for surviving decision/requirement IDs (`D*`, `A*`, `ART-*`, `OBS-*`, `HAR-*`, `SL-*`, ...): the occurrences listed in the delivery finding above."
+ },
+ {
+  "item": "2211-v1 item-4",
+  "backed": true,
+  "text": "CI reports check=success, image=skipped; the diff is comments and docs only, so no behavior claim needed re-running. I did not run the suites myself."
+ },
+ {
+  "item": "2219-v1 item-1",
+  "backed": false,
+  "text": "Read the full 62-file diff file-by-file against origin/v1, plus the surrounding code it relies on."
+ },
+ {
+  "item": "2219-v1 item-2",
+  "backed": true,
+  "text": "Traced every deleted rubric gate to the builder guarantee it duplicated: lineup `buildCard` (one player per slot, figures copied from facts, links validated, summary written by `summaryOf`), trades `buildTradeCard`/`buildFinderCard` (`pick()` throws on wrong side, duplicate or missing id; verdict from the schema enum; counter enforced exactly for a counter verdict; max three suggestions, ranked i+1), waivers `buildWaiversCard` (context and `sizeOf` copied from facts, a bid throws in a non-FAAB league, `drop.role` from the roster), history `buildHistoryCard` (`citedPicks` throws on an unknown pick or a no-draft season and carries the full `DraftFigure` rows), report `buildDigestCard`/`buildRetroCard` (scores, top scorers and knowable signals from the facts). The gates that stay in the rubrics are the ones that can fail on model output."
+ },
+ {
+  "item": "2219-v1 item-3",
+  "backed": true,
+  "text": "Ran `node --test 'packages/sleeper/test/*.test.ts' 'packages/schedules/test/*.test.ts'` in the sandbox: 153 pass, 0 fail, covering the 429/Retry-After/backoff/give-up path, the timeout-abort, the concurrency cap and per-path dedupe, the day-long players dump with one client per session process, the live-not-snapshot waivers decision, the spent-one-shot deletion with refire prevention, and the fixed waivers registration."
+ },
+ {
+  "item": "2219-v1 item-4",
+  "backed": true,
+  "text": "Ran `npm run typecheck`: clean."
+ },
+ {
+  "item": "2219-v1 item-5",
+  "backed": false,
+  "text": "Confirmed no surviving references to `removeLegacyUntilDone`, `removeLegacySnapshotSchedule`, `firedSince`, `fetchNews`, `FAAB_WORDS`, `misquotedPicks` or the other deleted checks; `buildSnapshot` is exported only for the trends path."
+ },
+ {
+  "item": "2219-v1 item-6",
+  "backed": true,
+  "text": "CI `check` is green on this head; image check skipped."
+ },
+ {
+  "item": "2202-v2 item-1",
+  "backed": true,
+  "text": "Read the diff and the surrounding code: `teamNeeds` (facts.ts:75-89), the full rubric (rubric.ts), `buildWaiversCard` (card.ts), the judge's scoring of negative-weight checks (judge/src/rubric.ts:53-71, index.ts:33-41), the eval adapter (waivers/adapter.ts), the workflow (waivers/workflow.ts) and the agent prompt."
+ },
+ {
+  "item": "2202-v2 item-2",
+  "backed": true,
+  "text": "Ran the whole sleeper suite locally: `node --test packages/sleeper/test/*.test.ts` → 141/141 pass, matching the PR's claim; the new `bye_coverage` test and the `sleeper.waivers@6` verdict strings pass."
+ },
+ {
+  "item": "2202-v2 item-3",
+  "backed": true,
+  "text": "Ran the stale-facts experiment (script built on the test fixtures) to settle how `byeCoverage` behaves on pre-`short` facts, and confirmed the `\\b11\\b`-in-`4.11` match."
+ },
+ {
+  "item": "2202-v2 item-4",
+  "backed": true,
+  "text": "The repo's CI check was `queued` when I reviewed; I did not rerun the other suites (the author's `rmc` Python-module caveat is outside the diff's scope)."
+ },
+ {
+  "item": "2206-v4 item-1",
+  "backed": true,
+  "text": "Same head (a8d8946e) and same four-file web diff as my previous round, which I reviewed line by line: `Needs.tsx` in full, `week.ts` in full, the consumer in `Sleeper.tsx` (line 286 looks results up by current session key, so merged-but-not-wanted entries never render), and both tests in context."
+ },
+ {
+  "item": "2206-v4 item-2",
+  "backed": true,
+  "text": "Re-ran the web suite in this worktree: 274/274. Previously at this same head: `npm run typecheck` clean, `node tools/sloplint.ts diff origin/v1` ok."
+ },
+ {
+  "item": "2206-v4 item-3",
+  "backed": true,
+  "text": "The new Sleeper test fails against the origin/v1 `week.ts` (Promise.all held back every card) and passes with the merge-in loader, so it guards the streaming behavior."
+ },
+ {
+  "item": "2206-v4 item-4",
+  "backed": true,
+  "text": "CI reports `check=success` (image build skipped), which also covers the full v1 suite the author's laptop could not (the 3 reMarkable `rmc` tests)."
+ },
+ {
+  "item": "2206-v4 item-5",
+  "backed": false,
+  "text": "The previously open items are settled by the description: the session-list cache is explicitly dropped and replaced by the REST Sessions API in Contract Studio (no unkept promise), and the Checked section now states the UI paths exercised — headless Chromium at 390px with controlled fetches, measuring the card render timings and the in-flight button state."
+ },
+ {
+  "item": "synthetic-rereview item-1",
+  "backed": true,
+  "text": "Resolved the earlier question on `RETRIED`: the author's reply says Sleeper returns only 429, 500, 502, 503 and 504, and the code at v1/packages/sleeper/src/client.ts:29 matches."
+ },
+ {
+  "item": "synthetic-rereview item-2",
+  "backed": true,
+  "text": "Resolved the earlier nit on the late-registration comment: the author's reply points to the rewritten comment, and v1/packages/sleeper/test/waivers.test.ts:429 now says the schedules service fires it late."
+ },
+ {
+  "item": "synthetic-rereview item-3",
+  "backed": true,
+  "text": "Superseded: commit 4d0da2f deletes `removeLegacyUntilDone`, the helper my earlier comment was about."
+ },
+ {
+  "item": "synthetic-rereview item-4",
+  "backed": false,
+  "text": "Resolved."
+ },
+ {
+  "item": "synthetic-rereview item-5",
+  "backed": false,
+  "text": "The earlier question is resolved."
+ },
+ {
+  "item": "synthetic-rereview item-6",
+  "backed": false,
+  "text": "Both earlier findings are settled now."
+ },
+ {
+  "item": "synthetic-rereview item-7",
+  "backed": false,
+  "text": "Nothing references `firedSince` any more."
+ },
+ {
+  "item": "synthetic-rereview item-8",
+  "backed": true,
+  "text": "`git grep firedSince` at this head finds no match."
+ }
+]

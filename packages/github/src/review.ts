@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import type { Evidence, Unit } from '@quack/judge';
+import type { Inputs } from '@quack/judge';
 import type { ArtifactKind, SealedArtifact } from '@quack/sdk';
 import { PullRequestDoc } from './checkout.ts';
 
@@ -66,7 +66,6 @@ export function summarizeReview(text: string): string {
 export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', validate: validateReview, outcome: (text) => parseReview(text).verdict, summarize: summarizeReview, basis: async (api, ctx) => (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr?.headSha };
 
 const EXCERPT_LINES = 20;
-const MAX_DIFF_CHARS = 120_000;
 
 /** Maps a cited path to a tracked one: as given, minus the checkout dir name, or a unique tail at a `/` boundary. */
 export function resolveCitedPath(files: string[], repoName: string, cited: string): string | undefined {
@@ -91,7 +90,7 @@ export async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: 
 }
 
 async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context, tracked: Tracked = {}) {
-  const none = { exists: false, excerpt: '', path: f.path };
+  const none = { exists: false, excerpt: '', file: '', path: f.path };
   if (!f.path || !f.line) return none;
   let path = f.path;
   let read = await api.env!.readTextFile(`${repoDir}/${path}`, ctx);
@@ -104,40 +103,40 @@ async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: 
     if (!read.ok) return none;
   }
   const lines = read.value.split('\n');
-  if (f.line < 1 || f.line > lines.length) return { ...none, path };
+  if (f.line < 1 || f.line > lines.length) return { ...none, file: read.value, path };
   const from = Math.max(1, f.line - EXCERPT_LINES);
   const text = lines.slice(from - 1, f.line + EXCERPT_LINES).map((l, i) => `${from + i}: ${l}`).join('\n');
-  return { exists: true, excerpt: text, path };
+  return { exists: true, excerpt: text, file: read.value, path };
 }
 
 export const diffOf = (api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context) => gitRead(api, repoDir, ['diff', `origin/${baseRef}...HEAD`], ctx);
 
-const truncated = (diff: string) => (diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… diff truncated at ${MAX_DIFF_CHARS} characters` : diff);
+export type ReviewFacts = { ci: string; findings: Array<{ id: string; cited: boolean }> };
 
-// Evidence scopes: the review alone (small), the review with its change (large), and each finding with its cited code.
-export function reviewEvidence(repoDir = 'repo') {
-  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Evidence> => {
+// The named texts the declaration reads: the review, the change it reviewed, each finding with its cited code, and the facts code found.
+export function reviewInputs(repoDir = 'repo') {
+  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
     const r = parseReview(sealed.content);
     const pr = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr;
-    const change = pr
-      ? { description: `${pr.title}\n\n${pr.body}`, ci: pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', '), linkedIssues: pr.linkedIssues.map((i) => `#${i.number} ${i.title}\n${i.body}`).join('\n\n'), diff: await diffOf(api, repoDir, pr.baseRef, ctx) }
-      : { description: '(unknown)', ci: '(unknown)', linkedIssues: '', diff: '' };
-    change.diff = pr ? truncated(change.diff) || '(empty diff)' : '(no checkout)';
+    const diff = pr ? await diffOf(api, repoDir, pr.baseRef, ctx) : '';
     const tracked: Tracked = {};
-    const findings: Array<Unit & { blocking: boolean; cited: boolean }> = [];
+    const facts: ReviewFacts = { ci: pr ? pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', ') : '(unknown)', findings: [] };
+    const findings = [];
     for (const f of r.findings) {
       const e = await excerpt(api, repoDir, f, ctx, tracked);
-      findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
+      const id = String(f.index);
+      facts.findings.push({ id, cited: e.exists });
+      findings.push({ id, blocking: f.label === 'blocking', text: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' });
     }
-    const changeUnit = { id: 'change', state: { review: sealed.content, ...change } };
     return {
-      review: [{ id: 'review', whole: true, state: { review: sealed.content } }],
-      change: [changeUnit],
-      // Judged on the review alone: whether an approve says why the change is safe, not whether the diff is defect-free.
-      approve: r.verdict === 'approve' ? [{ id: 'approve', state: { review: sealed.content } }] : [],
-      finding: findings,
-      blocking: findings.filter((f) => f.blocking),
-      lower: findings.filter((f) => !f.blocking),
+      review: sealed.content,
+      // Only an approve is asked whether it says why the change is safe; any other verdict leaves this empty, so it has no item.
+      approve: r.verdict === 'approve' ? sealed.content : '',
+      description: pr ? `${pr.title}\n\n${pr.body}` : '(unknown)',
+      issues: pr ? pr.linkedIssues.map((i) => `## Linked issue #${i.number}: ${i.title}\n${i.body}`).join('\n\n') : '',
+      diff,
+      findings: JSON.stringify(findings),
+      facts: JSON.stringify(facts),
     };
   };
 }

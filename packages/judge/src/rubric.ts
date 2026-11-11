@@ -1,7 +1,7 @@
 import type { JsonObject } from '@earendil-works/pi-durable';
 
 /** A focused piece of evidence a check is judged on; `whole` marks the entire artifact, so its notes carry no unit prefix.
- * `shared` is context common to many units (an intent, a guide), sent once per decision-model request that packs them. */
+ * `shared` is context common to many units (an intent, a guide), sent once per packed decision-model or judge-model request. */
 export type Unit = {
   id: string;
   state: JsonObject;

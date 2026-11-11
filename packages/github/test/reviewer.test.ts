@@ -24,8 +24,8 @@ Posted inline on the diff:
 ## Verified
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
-// Pitfalls by their question, as Clef reads it; the request numbers its questions, so a check id never reaches Clef.
-const PITFALLS = /toolchain or network failure|contradict this finding|only assert that something is wrong|rest only on preference|fail to name something that goes wrong|though not labelled blocking/;
+// The questions asked as the defect, which a good review answers "no", by their text: a check id never reaches Clef.
+const PITFALLS = /toolchain or network failure|contradict this finding|only assert that something is wrong|rest only on preference|fail to name something that goes wrong|though not labelled blocking|claim a result/;
 const clefUnits: string[] = [];
 async function fakeClef() {
   return `${await listen(
@@ -68,8 +68,9 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   faux.setResponses(responses(seen, advance));
   const models = buildModels(parseDeployment({ defaultModel: 'clef/clef', providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
+  models.setProvider(fauxJudge().provider);
   const m = faux.getModel();
-  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];
+  const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
   return { done, seen, service, head, session, live };
@@ -77,6 +78,19 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
 
 // An open question calls for `comment`, so approving it fails the verdict gate; `n` makes each draft a new version.
 const asksButApproves = (n: number) => review.replace('- nit: app.ts:1 — a named constant would say why the value is 2.', `- question: app.ts:1 — why is the value 2 (draft ${n})?`);
+
+// The judge model answers the questions that skip Clef as a sound review earns: "no" to a defect, "yes" otherwise.
+function fauxJudge() {
+  const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  const decide = (question: string) => ({ choice: PITFALLS.test(question) ? 'no' : 'yes', confidence: 0.9, reason: 'as the review says' });
+  const answer: FauxResponseStep = (c) => {
+    const text = (c.messages.at(-1) as { content: string }).content;
+    const batch = [...text.matchAll(/^- q(\d+): (.*)$/gm)].map((m) => [`q${m[1]}`, decide(m[2])]);
+    return fauxAssistantMessage(JSON.stringify(batch.length ? Object.fromEntries(batch) : decide(text)));
+  };
+  judge.setResponses(Array.from({ length: 200 }, () => answer));
+  return judge;
+}
 
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const recorder = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
@@ -91,7 +105,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@7\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@8\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
@@ -104,9 +118,9 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.equal(verdict.passed, true);
   assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: URL7 }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
-  assert.deepEqual([...resolvers].sort(), ['clef', 'code']);
-  assert.ok(clefUnits.includes('review+description+ci+linkedIssues+diff'), 'the change unit carries the diff and PR context');
-  assert.ok(clefUnits.includes('finding+citedCode'), 'each finding is judged with its cited code');
+  assert.deepEqual([...resolvers].sort(), ['clef', 'code', 'judge-model'], 'contradicted skips Clef for the judge model');
+  assert.ok(clefUnits.includes('context+items'), 'findings are packed with the CI result they share');
+  assert.ok(clefUnits.includes('review'), 'the takeaway is judged on the review whole');
   await session.close();
 });
 
