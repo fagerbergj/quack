@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
-import { observeGeneration, serveApp, whileWaiting } from '@quack/sdk';
+import { observeGeneration, primeSessionEndpoint, serveApp, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type SlotCall, type SlotClient } from '../src/index.ts';
@@ -295,10 +295,12 @@ test('the service serves acquire, heartbeat and release relative to its mount', 
 
 test('an agent that selects no slots entry is gated when the session has a distributor and credential, and ungated when it does not', async () => {
   const def = { name: 'plain', version: 1, model: 'swap/m', extensions: {} };
-  const names = async (env: Record<string, string>) => (await agentSpec(def, {}, [() => slotsFromEnv(env)])).extensions!.map((e) => e.name);
-  assert.deepEqual(await names({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), ['slots']);
-  assert.deepEqual(await names({}), []);
-  assert.deepEqual(await names({ QUACK_INDEX_URL: 'http://d' }), []);
+  const names = async (endpoint: { url: string; token: string } | undefined) => {
+    primeSessionEndpoint(endpoint);
+    return (await agentSpec(def, {}, [() => slotsFromEnv({})])).extensions!.map((e) => e.name);
+  };
+  assert.deepEqual(await names({ url: 'http://d', token: 't' }), ['slots']);
+  assert.deepEqual(await names(undefined), []);
 });
 
 test('the real clock\'s sleep rejects at once on an already-aborted signal', async () => {

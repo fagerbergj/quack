@@ -109,7 +109,8 @@ test('the container gets no secrets: keyed services are proxied, the distributor
   const env: string[] = [...docker.containers.values()][0].body.Env;
   const text = env.join('\n');
   for (const leaked of ['long-lived-gh', 'exa-secret', 'pk-real', 'sk-real', 'stray-secret']) assert.ok(!text.includes(leaked), `${leaked} must not reach the container`);
-  assert.ok(env.includes('QUACK_INDEX_URL=http://quack-v1:8080') && env.some((e) => /^QUACK_INDEX_TOKEN=[0-9a-f]{64}$/.test(e)));
+  assert.ok(env.includes('QUACK_SESSION_LISTENER_URL=http://quack-v1:8080') && env.includes('QUACK_LAUNCH_TOKEN_FILE=/session/.listener-token'));
+  assert.ok(!text.includes('QUACK_INDEX'), 'the launch credential is a file, never an env value');
   assert.ok(!text.includes('QUACK_GH_SERVICE'), 'an inherited service pair is no longer registered');
   assert.ok(env.includes('PATH=/usr/bin'));
   assert.ok(env.includes('QUACK_EXA_URL=http://quack-v1:8080/proxy/QUACK_EXA') && env.includes('LANGFUSE_BASE_URL=http://quack-v1:8080/proxy/LANGFUSE'));

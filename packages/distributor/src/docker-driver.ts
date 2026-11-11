@@ -6,7 +6,7 @@ import { shellEnv } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import type { DockerCall } from './docker-api.ts';
 import { proxyKeyedServices, proxyProviders } from './keyed-services.ts';
-import { LAUNCH_TOKEN_FILE, writeLaunchToken, type Launch } from './process-driver.ts';
+import { LAUNCH_TOKEN_FILE, LISTENER_TOKEN_FILE, writeLaunchToken, writeListenerToken, type Launch } from './process-driver.ts';
 
 const SESSION_MOUNT = '/session';
 const SESSION_PORT = 8080;
@@ -36,7 +36,7 @@ export type DockerLauncherOptions = {
 
 /** The environment a session container gets: toolchain basics, the distributor and its launch credential, session paths, and nothing else unless passed through. */
 export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; token: string; broker: CredentialBroker; distributorUrl: string; passthrough: string[]; agentPath?: string; dir: string }): { env: Record<string, string>; dropped: string[] } {
-  const env: Record<string, string> = { ...shellEnv(inherited), QUACK_INDEX_URL: o.distributorUrl, QUACK_INDEX_TOKEN: o.token };
+  const env: Record<string, string> = { ...shellEnv(inherited), QUACK_SESSION_LISTENER_URL: o.distributorUrl, QUACK_LAUNCH_TOKEN_FILE: `${SESSION_MOUNT}/${LISTENER_TOKEN_FILE}` };
   Object.assign(env, proxyKeyedServices(inherited, { broker: o.broker, distributorUrl: o.distributorUrl, token: o.token }));
   for (const name of o.passthrough) if (inherited[name] !== undefined) env[name] = inherited[name]!;
   const dropped = Object.keys(inherited).filter((n) => !(n in env) && !n.startsWith('QUACK_CONFIG'));
@@ -101,6 +101,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
       await api('DELETE', `/containers/${name}?force=1`);
       // Written once any old container is gone, so only this launch can read it.
       const serverToken = await writeLaunchToken(dir);
+      await writeListenerToken(dir, token);
       await call('POST', `/containers/create?name=${name}`, {
         Image: opts.image,
         Cmd: opts.command ?? ['node', 'packages/runtime/src/main.ts'],

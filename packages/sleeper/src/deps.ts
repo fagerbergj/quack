@@ -6,9 +6,9 @@ import type { NewsSearch, SleeperClient } from './ports.ts';
 
 type Env = Record<string, string | undefined>;
 
-/** A GET on the Sleeper app (QUACK_INDEX_URL, QUACK_INDEX_TOKEN), read when called. */
-export function appGet(env: Env) {
-  const { url, token } = appEndpoint('sleeper', env);
+/** A GET on the Sleeper app through the session's primed endpoint, read when called. */
+export function appGet() {
+  const { url, token } = appEndpoint('sleeper');
   return async (path: string) => {
     const res = await fetch(`${url}${path}`, { headers: { authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`sleeper service: ${path} returned ${res.status}`);
@@ -19,10 +19,10 @@ export function appGet(env: Env) {
 const clients = new Map<string, SleeperClient>();
 
 /** One client per session process, whose players dump is the app's day-long copy: Sleeper asks for that fetch at most daily. */
-export function sessionClient(env: Env = process.env): SleeperClient {
-  const { url, token } = appEndpoint('sleeper', env);
+export function sessionClient(): SleeperClient {
+  const { url, token } = appEndpoint('sleeper');
   const key = `${url}\n${token}`;
-  const get = appGet(env);
+  const get = appGet();
   if (!clients.has(key)) clients.set(key, createSleeperClient({ players: () => get('/players') }));
   return clients.get(key)!;
 }
@@ -41,5 +41,5 @@ export function sessionNews(env: Env = process.env): NewsSearch | undefined {
 /** A job's wiring from the environment: the Sleeper API, with the players dump from the Sleeper app, and, when QUACK_EXA_API_KEY is set, news. */
 export function depsFromEnv(env: Env = process.env): LineupDeps {
   // Without the Exa key the news checks are simply not scored, and the verdict says so.
-  return { client: sessionClient(env), news: sessionNews(env) };
+  return { client: sessionClient(), news: sessionNews(env) };
 }

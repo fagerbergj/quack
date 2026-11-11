@@ -135,7 +135,7 @@ test('the Sessions API writes a person\'s rename, archive and delete through the
 
 test('the root catalog section names the catalog store; the loader checks it and refuses an index extension', async () => {
   const { catalogStore } = await import('@quack/catalog');
-  const { launchEnv, parseDeployment } = await import('@quack/session');
+  const { parseDeployment } = await import('@quack/session');
   const stores = { cat: { kind: 'postgres' as const, urlEnv: 'CAT_URL' } };
   assert.deepEqual(catalogStore({ stores, catalog: { store: 'cat' } }, { CAT_URL: 'postgres://x' }), { kind: 'postgres', url: 'postgres://x' }, 'a named store');
   assert.deepEqual(catalogStore({}, {}), { kind: 'sqlite' }, 'no section is sqlite in the data dir');
@@ -148,8 +148,6 @@ test('the root catalog section names the catalog store; the loader checks it and
   assert.throws(() => parseDeployment({ ...base, catalog: { store: 'nope' } }), /catalog\.store nope is not in stores/);
   assert.throws(() => parseDeployment({ ...base, catalog: { store: 'cat', path: 'x' } }), /catalog\.path is not a catalog key/);
   assert.throws(() => parseDeployment({ ...base, extensions: { index: {} } }), /extensions\.index is refused: the catalog is core, so name its store at catalog\.store/);
-  assert.deepEqual(launchEnv({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), { url: 'http://d', token: 't' });
-  assert.equal(launchEnv({ QUACK_INDEX_URL: 'http://d' }), undefined);
 });
 
 test('no /index route answers on either listener: the index is retired', async () => {

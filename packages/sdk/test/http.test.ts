@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Agent, createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { inProcessFetch, invocationRequest, safeEqual, serviceHttp, submitToSession } from '../src/index.ts';
+import { appEndpoint, inProcessFetch, invocationRequest, primeSessionEndpoint, safeEqual, serviceHttp, submitToSession } from '../src/index.ts';
 
 async function serve(opts: Parameters<typeof serviceHttp>[0]) {
   const http = serviceHttp(opts);
@@ -92,4 +92,12 @@ test('a handler that answers after the abort neither resolves the call nor throw
   ctl.abort();
   await assert.rejects(call, { name: 'AbortError' });
   await done;
+});
+
+test('appEndpoint serves the primed pair, an explicit env as-is, and names the launch variables when unprimed', () => {
+  primeSessionEndpoint({ url: 'http://d/', token: 't' });
+  assert.deepEqual(appEndpoint('sleeper'), { url: 'http://d/apps/sleeper', token: 't' });
+  assert.deepEqual(appEndpoint('sleeper', { QUACK_INDEX_URL: 'http://e', QUACK_INDEX_TOKEN: 'u' }), { url: 'http://e/apps/sleeper', token: 'u' });
+  primeSessionEndpoint(undefined);
+  assert.throws(() => appEndpoint('sleeper'), /QUACK_SESSION_LISTENER_URL and QUACK_LAUNCH_TOKEN_FILE/);
 });

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadAgent, parseDeployment } from '@quack/session';
 import { catalog } from '../src/catalog.ts';
+import { primeSessionEndpoint } from '@quack/sdk';
 import { slotsFromEnv } from '@quack/slots';
 import { sessionEnv } from '../src/session-env.ts';
 
@@ -17,9 +18,9 @@ const deployment = parseDeployment({
   },
 });
 
-// Extensions reach their apps through the distributor, so loading an agent needs its url and credential; each test sets them afresh.
-beforeEach(() => Object.assign(process.env, { QUACK_INDEX_URL: 'http://127.0.0.1:8080', QUACK_INDEX_TOKEN: 'x' }));
-afterEach(() => { delete process.env.QUACK_INDEX_URL; delete process.env.QUACK_INDEX_TOKEN; });
+// Extensions reach their apps through the distributor, so loading an agent needs the endpoint the runtime primes at boot.
+beforeEach(() => primeSessionEndpoint({ url: 'http://127.0.0.1:8080', token: 'x' }));
+afterEach(() => primeSessionEndpoint(undefined));
 
 test('the shipped reviewer definition loads with its prompt, and the GitHub tools', async () => {
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), deployment, catalog);
@@ -93,8 +94,9 @@ test('a session process gets no per-service url or token: only what the host lis
 });
 
 test('the gate is on for a session that was handed the distributor and its launch credential, and off otherwise', () => {
-  assert.equal(slotsFromEnv({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }).length, 1);
-  assert.equal(slotsFromEnv(sessionEnv(undefined, { PATH: '/bin' })).length, 0);
+  assert.equal(slotsFromEnv({}).length, 1);
+  primeSessionEndpoint(undefined);
+  assert.equal(slotsFromEnv({}).length, 0);
 });
 
 test('the shipped quack definition loads with the home tools, offering every extension\'s actions', async () => {
