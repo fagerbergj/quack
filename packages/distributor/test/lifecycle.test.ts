@@ -118,17 +118,3 @@ test('a new session checks its agent version against the hash recorded at first 
   assert.deepEqual(await readdir(dataDir), ['agent-versions']);
 });
 
-test('a version pinned before hashes were recorded is checked once against its snapshots, then recorded', async () => {
-  const { driver, dataDir, agentsDir } = await host(['reviewer']);
-  const old = join(dataDir, sessionDirName('github:old'));
-  await mkdir(join(old, 'agent-def'), { recursive: true });
-  await writeFile(join(old, 'session-key'), 'github:old');
-  await writeFile(join(old, 'agent'), 'reviewer');
-  await writeFile(join(old, 'agent-def', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 1, prompt: 'prompt.md' }));
-  await writeFile(join(old, 'agent-def', 'prompt.md'), 'the prompt it first ran');
-  await assert.rejects(driver.ensure('github:new', 'reviewer'), /changed since it was first used/);
-  await writeFile(join(agentsDir, 'reviewer', 'prompt.md'), 'the prompt it first ran');
-  await rm(old, { recursive: true });
-  assert.equal(await driver.ensure('github:new', 'reviewer'), 'http://launch-1', 'the recorded hash is the snapshot it first ran');
-});
-

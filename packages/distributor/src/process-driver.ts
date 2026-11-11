@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { SESSION_KEY } from '@quack/catalog';
-import { childPort, lastActivity, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
+import { childPort, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -45,8 +45,6 @@ export type HostDriver = {
   remove(key: string): Promise<boolean>;
   /** Records when a stopped session next needs a process (its earliest sleep); undefined clears it. */
   setWake(key: string, at: number | undefined): Promise<void>;
-  /** Records that the session was active at `at` (a run completed or is working); the stored value only moves forward. */
-  touch(key: string, at: number): Promise<void>;
   /** Every session with a recorded wake time. */
   wakes(): Promise<Array<{ key: string; at: number }>>;
   running(): string[];
@@ -184,23 +182,15 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     if (typeof version !== 'number') return;
     const want = await digest(dirname(source));
     const record = join(versionDir(opts.dataDir, name, version), 'digest');
-    const known = (await readText(record)) ?? (await recordDigest(record, name, version, want));
+    const known = (await readText(record)) ?? (await recordDigest(record, want));
     if (known !== want) throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
   }
 
-  // Versions pinned before the record existed are scanned once; `wx` keeps the first writer's hash when two sessions race.
-  async function recordDigest(record: string, name: string, version: number, want: string): Promise<string> {
-    let first = want;
-    for (const d of await readdir(opts.dataDir).catch(() => [])) {
-      const snap = join(opts.dataDir, d, SNAPSHOT);
-      const def = await readJson(join(snap, 'agent.json')).catch(() => null);
-      if (def?.name !== name || def.version !== version) continue;
-      first = await digest(snap);
-      if (first !== want) break;
-    }
+  // `wx` keeps the first writer's hash when two sessions race.
+  async function recordDigest(record: string, want: string): Promise<string> {
     await mkdir(dirname(record), { recursive: true });
-    await writeFile(record, first, { flag: 'wx' }).catch(() => undefined);
-    return (await readText(record)) ?? first;
+    await writeFile(record, want, { flag: 'wx' }).catch(() => undefined);
+    return (await readText(record)) ?? want;
   }
 
   // Copies the agent's bundle into the session dir; every later start loads that copy, never the agents dir (DEP-3).
@@ -237,7 +227,6 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       await writeFile(join(dir, 'agent'), name);
       const born = String(Date.now());
       await writeFile(join(dir, 'created'), born);
-      await writeFile(join(dir, 'activity'), born);
     }
     return { name, path: from && join(snapshotDir, 'agent.json') };
   }
@@ -317,10 +306,6 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return { ...(typeof def?.version === 'number' && { version: def.version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }) };
   }
 
-  // Touches of one session run in turn, so an older read can never be written over a newer one.
-  const touching = new Map<string, Promise<unknown>>();
-  const touch = (key: string, at: number) => inTurn(touching, key, async () => writeFile(join(sessionDir(key), 'activity'), String(Math.max(at, await lastActivity(sessionDir(key))))));
-
   async function setWake(key: string, at: number | undefined) {
     if (at === undefined) await rm(join(sessionDir(key), 'wake'), { force: true });
     else await writeFile(join(sessionDir(key), 'wake'), String(at));
@@ -355,7 +340,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   }
   const stop = (key: string) => inTurn(lifecycle, key, () => stopNow(key));
 
-  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), stop, remove, setWake, touch, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
+  return { ensure, agentOf, rebind, agents, agent, promote, pinned, exported: (key) => readExport(sessionDir(key)), stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.launched.pid, credential: (key) => children.get(key)?.launched.token };
 }
 
 /** Development host driver: one child process per session on this machine. Container drivers replace it in deployment. */

@@ -1,7 +1,7 @@
 // A session's lifecycle event stream for the distributor's catalog, derived from its log and kept in it: the log is the outbox.
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
-import { approvalOpenedData, Approvals, artifactDeliveredData, artifactSealedData, Artifacts, eventBytes, EVENT_MAX_BYTES, Failures, failedRows, Questions, type Approval, type Principal, type Question, type SealedArtifact } from '@quack/sdk';
+import { approvalOpenedData, Approvals, artifactDeliveredData, artifactSealedData, Artifacts, eventBytes, EVENT_MAX_BYTES, Questions, type Approval, type Principal, type Question, type SealedArtifact } from '@quack/sdk';
 
 /** One channel event as the lifecycle channel carries it. */
 export type WireEvent = { seq: number; id: string; at: string; type: string; data: JsonObject };
@@ -25,15 +25,8 @@ export const LifecycleStream = defineDoc<StreamDoc>({
   initial: () => ({ events: [], signatures: {}, acked: 0, runs: [] }), checkpointWhen: () => false,
 });
 
-// The index's outbox, read once for the workflow spend it held, so a session that predates the stream keeps it.
-type LegacyOutbox = { acked: Record<string, number>; status: { state: 'idle' | 'running'; seq: number; at: number }; direct?: Spend };
-export const LegacyIndexOutbox = defineDoc<LegacyOutbox>({
-  kind: 'quack.index-outbox', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
-  initial: () => ({ acked: {}, status: { state: 'idle', seq: 0, at: 0 } }), checkpointWhen: () => false,
-});
-
 /** What the session knows about itself beyond its documents; read the same way by the session and by the distributor's backfill. */
-export type SessionFacts = { agent: string; version: number | null; createdAt: number; title?: string; lastActivity?: number };
+export type SessionFacts = { agent: string; version: number | null; createdAt: number; title?: string };
 
 /** Per-million price of a `provider/modelId` key as the deployment configures it; omitted parts are free. */
 export type PriceOf = (modelKey: string) => { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
@@ -47,12 +40,7 @@ const principal = (by: Principal | string): JsonObject => {
   return by === 'tailnet' ? { kind: 'tailnet' } : { kind: 'person', id: by };
 };
 
-function runEvents(runs: RunRecord[], facts: SessionFacts, failures: Array<{ step: string; error: string }>): Logical[] {
-  // A session from before the stream has no runs; its last activity stands in as one ended run.
-  if (!runs.length) {
-    return facts.lastActivity && facts.lastActivity > facts.createdAt
-      ? [ev('run:legacy:ended', 'run.ended', facts.lastActivity, { run: 1, outcome: failures.length ? 'failed' : 'succeeded', failedSteps: failures })] : [];
-  }
+function runEvents(runs: RunRecord[]): Logical[] {
   return runs.flatMap((r) => [
     ev(`run:${r.n}:started`, 'run.started', r.startedAt, { run: r.n }),
     ...(r.turns ?? []).map((t, i) => ev(`run:${r.n}:turn:${i + 1}:ended`, 'turn.ended', t.at, { run: r.n, index: i + 1 })),
@@ -135,14 +123,14 @@ const spendEvent = (s: Spend, createdAt: number, floor: bigint): Logical => {
 /** The session's events at their latest revision, in a fixed order: a pure function of its documents and facts. */
 export function currentEvents(rootId: string, facts: SessionFacts, docs: {
   approvals?: Readonly<{ items: Record<string, Approval> }> | null; questions?: Readonly<{ items: Record<string, Question> }> | null;
-  artifacts?: Readonly<{ kinds: Record<string, { versions: SealedArtifact[] }> }> | null; failures?: Parameters<typeof failedRows>[0]; runs: RunRecord[]; boots?: number[]; spend: Spend; spentMicros: bigint;
+  artifacts?: Readonly<{ kinds: Record<string, { versions: SealedArtifact[] }> }> | null; runs: RunRecord[]; boots?: number[]; spend: Spend; spentMicros: bigint;
 }): Logical[] {
   const cancelledBy = new Map(docs.runs.flatMap((r) => r.cancelled.map((id) => [id, r.n] as const)));
   const lastRun = docs.runs.at(-1)?.n ?? 1;
   return [
     ev(`session:${rootId}`, 'session.created', facts.createdAt, { agent: facts.agent, version: facts.version, createdAt: iso(facts.createdAt) }),
     ...(facts.title ? [ev('title', 'title.set', facts.createdAt, { title: facts.title.slice(0, 120) })] : []),
-    ...runEvents(docs.runs, facts, failedRows(docs.failures)),
+    ...runEvents(docs.runs),
     // A process that comes up without a run is idle, whatever the catalog last held.
     ...(docs.boots ?? []).map((at, i) => ev(`state:boot:${i + 1}`, 'state.changed', at, { state: 'idle' })),
     ...Object.entries(docs.approvals?.items ?? {}).flatMap(([id, a]) => approvalEvents(id, a, cancelledBy)),
@@ -198,15 +186,12 @@ export function reportedMicros(stream: Readonly<StreamDoc>): bigint {
 export async function readStream(harness: Harness, root: Conversation, facts: SessionFacts, priceOf: PriceOf, ctx: Context) {
   const id = root.id;
   const stream = await harness.snapshot(LifecycleStream, id, ctx);
-  const legacy = await harness.snapshot(LegacyIndexOutbox, id, ctx);
-  const [approvals, questions, artifacts, failures] = await Promise.all([harness.snapshot(Approvals, id, ctx), harness.snapshot(Questions, id, ctx), harness.snapshot(Artifacts, id, ctx), harness.snapshot(Failures, id, ctx)]);
+  const [approvals, questions, artifacts] = await Promise.all([harness.snapshot(Approvals, id, ctx), harness.snapshot(Questions, id, ctx), harness.snapshot(Artifacts, id, ctx)]);
   // A document never written reads as its initial value, so a stream is recorded once it holds its session.created.
   const recorded = (stream?.events.length ?? 0) > 0;
-  const legacyDirect = !recorded && !stream?.direct && legacy?.direct ? legacy.direct : undefined;
-  const doc: StreamDoc = recorded ? stream! : { events: [], signatures: {}, acked: 0, runs: stream?.runs ?? [], ...((stream?.direct ?? legacyDirect) && { direct: stream?.direct ?? legacyDirect }) };
+  const doc: StreamDoc = recorded ? stream! : { events: [], signatures: {}, acked: 0, runs: stream?.runs ?? [], ...(stream?.direct && { direct: stream.direct }) };
   const spend = spendOf(await harness.usage(ctx), doc.direct, priceOf);
-  // Last activity stands in for runs only in the first derivation; once the stream exists its runs are recorded.
-  const current = currentEvents(String(root.id), recorded ? { ...facts, lastActivity: undefined } : facts, { approvals, questions, artifacts, failures, runs: doc.runs, boots: doc.boots, spend, spentMicros: reportedMicros(doc) });
-  return { doc, recorded, fresh: revisions(doc, current), legacyDirect };
+  const current = currentEvents(String(root.id), facts, { approvals, questions, artifacts, runs: doc.runs, boots: doc.boots, spend, spentMicros: reportedMicros(doc) });
+  return { doc, recorded, fresh: revisions(doc, current) };
 }
 

@@ -4,10 +4,8 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { openCatalog, type CatalogEvent } from '@quack/catalog';
-import { lastActivity } from '@quack/session';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 const servers: Array<() => void> = [];
 after(() => servers.forEach((close) => close()));
@@ -28,7 +26,7 @@ async function start(opts: { running?: string[]; sleeping?: string[]; waiting?: 
   const catalog = await catalogOf([...existing], opts.waiting);
   const driver = {
     running: () => opts.running ?? [], wakes: async () => (opts.sleeping ?? []).map((key) => ({ key, at: 1 })),
-    remove: async (key: string) => existing.delete(key), stop: async () => {}, setWake: async () => {}, touch: async () => {},
+    remove: async (key: string) => existing.delete(key), stop: async () => {}, setWake: async () => {},
   } as unknown as HostDriver;
   const server = createDistributor(driver, { catalog }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -75,7 +73,7 @@ test('an invocation racing a delete waits for it and then starts a fresh session
   servers.push(() => upstream.close());
   await new Promise((r) => upstream.once('listening', r));
   const driver = {
-    running: () => [], wakes: async () => [], stop: async () => {}, setWake: async () => {}, touch: async () => {}, credential: () => undefined,
+    running: () => [], wakes: async () => [], stop: async () => {}, setWake: async () => {}, credential: () => undefined,
     remove: async () => { await gate; log.push('remove'); return true; },
     ensure: async () => { log.push('ensure'); return `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`; },
   } as unknown as HostDriver;
@@ -97,26 +95,3 @@ test('an invocation racing a delete waits for it and then starts a fresh session
   assert.deepEqual(log, ['remove', 'ensure']);
 });
 
-test('a touch moves the stored last activity forward and never back', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'quack-touch-'));
-  servers.push(() => void rm(root, { recursive: true, force: true }));
-  const dataDir = join(root, 'data');
-  const dir = join(dataDir, sessionDirName('job'));
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, 'session-key'), 'job');
-  // A legacy log message: the first touch backfills from it, so an older touch cannot move the value behind it.
-  const db = new DatabaseSync(join(dir, 'session.sqlite'));
-  db.exec('CREATE TABLE entries (record TEXT)');
-  db.prepare('INSERT INTO entries VALUES (?)').run(JSON.stringify({ model: [{ timestamp: Date.parse('2026-11-01T12:00:00Z') }] }));
-  db.close();
-  const driver = processDriver({ command: [], dataDir, agentsDir: join(root, 'agents') });
-  const stored = async () => new Date(await lastActivity(dir)).toISOString();
-  await driver.touch('job', Date.parse('2026-10-31T12:00:00Z'));
-  assert.equal(await stored(), '2026-11-01T12:00:00.000Z');
-  await driver.touch('job', Date.parse('2026-11-02T12:00:00Z'));
-  assert.equal(await stored(), '2026-11-02T12:00:00.000Z');
-  await driver.touch('job', Date.parse('2026-11-01T18:00:00Z'));
-  assert.equal(await stored(), '2026-11-02T12:00:00.000Z');  // Overlapping touches, newer first: the older one must not land over it.
-  await Promise.all([driver.touch('job', Date.parse('2026-11-04T12:00:00Z')), driver.touch('job', Date.parse('2026-11-03T12:00:00Z'))]);
-  assert.equal(await stored(), '2026-11-04T12:00:00.000Z');
-});

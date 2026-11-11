@@ -31,7 +31,6 @@ async function legacySession(dataDir: string, key: string) {
   await writeFile(join(dir, 'session-key'), key);
   await writeFile(join(dir, 'agent'), 'quack');
   await writeFile(join(dir, 'created'), String(Date.parse('2026-10-01T00:00:00Z')));
-  await writeFile(join(dir, 'activity'), String(Date.parse('2026-10-02T00:00:00Z')));
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses([fauxAssistantMessage('Answered.')]);
   const models = createModels();
@@ -51,8 +50,9 @@ test('the first boot backfills existing sessions from their logs, seeds each str
   cleanups.push(() => catalog.close());
   assert.equal(await backfillCatalog(catalog, dataDir, () => undefined), 1);
   const row = await catalog.getSession('sleeper:platinum:2:lineup');
-  assert.deepEqual([row?.agent, row?.title, row?.state, row?.createdAt, row?.lastActivity, row?.lastRun?.outcome],
-    ['quack', 'Check the lineup for matchday 2', 'stopped', Date.parse('2026-10-01T00:00:00Z'), Date.parse('2026-10-02T00:00:00Z'), 'succeeded']);
+  // Its log recorded no runs, so the backfill reports none; no run is made up from file times.
+  assert.deepEqual([row?.agent, row?.title, row?.state, row?.createdAt, row?.lastRun],
+    ['quack', 'Check the lineup for matchday 2', 'stopped', Date.parse('2026-10-01T00:00:00Z'), undefined]);
   assert.equal(await backfillCatalog(catalog, dataDir, () => undefined), undefined, 'a later boot skips it');
   const journal = await readdir(join(dataDir, 'catalog-journal'));
   assert.equal(journal.length, 1, 'the data dir holds the journal');
@@ -92,7 +92,7 @@ async function distributor() {
   const real = processDriver({ command: [], dataDir, onExit: (key) => void catalog.stopped(key) });
   const upstream = createServer((_req, res) => res.end(JSON.stringify({ status: 'Healthy' }))).listen(0);
   cleanups.push(() => void upstream.close());
-  const driver: HostDriver = { ...real, running: () => [], ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, touch: async () => {}, setWake: async () => {} };
+  const driver: HostDriver = { ...real, running: () => [], ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, setWake: async () => {} };
   const tokens = new Map([['tok-idle', 'idle']]);
   const sessions = { sessionOf: (t: string) => tokens.get(t), crossSession: async () => false, events: eventsRoute(catalog) };
   const server = createDistributor(driver, { proxySecret: PROXY_SECRET, sessions, catalog, setTimer: () => () => {} });

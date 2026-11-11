@@ -24,7 +24,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
   const upstream = createServer((req, res) => res.end(JSON.stringify(req.url === '/export' ? { transcript: [], artifacts: [] } : { status: 'HealthyBusy' }))).listen(0);
   cleanups.push(() => upstream.close());
   const real = processDriver({ command: [], dataDir });
-  const driver: HostDriver = { ...real, running: () => (opts.busy ? [opts.busy] : []), ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, touch: async () => {}, setWake: async () => {} };
+  const driver: HostDriver = { ...real, running: () => (opts.busy ? [opts.busy] : []), ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, setWake: async () => {} };
   // The catalog the session channels would have filled: each key known, `busy` running, `waiting` with a pending ask.
   const catalog = openCatalog({ dataDir: await mkdtemp(join(tmpdir(), 'quack-house-catalog-')) });
   cleanups.push(() => void catalog.close());

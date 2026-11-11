@@ -5,5 +5,5 @@ export { agentSpec, buildModels, declaredEnv, deploymentEnv, providerEnv, loadAg
 export { DEFAULT_EXEC_LIMITS, DEFAULT_EXEC_TIMEOUT_SECONDS, PolicyExecutionEnv, sessionPolicy, shellEnv, type ExecPolicy } from './exec.ts';
 export { append, currentEvents, LifecycleStream, readStream, revisions, spendOf, CURRENCY, type PriceOf, type RunRecord, type SessionFacts, type WireEvent } from './lifecycle.ts';
 export { batchOf, MAX_BATCH_EVENTS, MAX_BODY_BYTES, runsIn, startLifecycleSender, unrefTimer, viewSignature, type SenderOptions, type SetTimer } from './lifecycle-sender.ts';
-export { createdAt, firstInput, lastActivity, recordedTitle, sessionFacts, TITLE_MAX } from './facts.ts';
+export { createdAt, firstInput, recordedTitle, sessionFacts, TITLE_MAX } from './facts.ts';
 export { readExport, type SessionExport } from './export.ts';
