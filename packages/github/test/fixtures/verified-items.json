@@ -16,7 +16,7 @@
  },
  {
   "item": "2235-v1 item-4",
-  "backed": false,
+  "backed": true,
   "text": "Copied the three new/changed test files into an `origin/main` worktree: the channel v10 case, the malformed-batch `index: 0` case and conformance (3)'s `recordTurn` block all fail on main, and the new session mid-run test fails there too (the row keeps `lastActivity` at `createdAt` 09:00). The \"fails on main, passes here\" claims hold."
  },
  {
@@ -26,7 +26,7 @@
  },
  {
   "item": "2236-v1 item-1",
-  "backed": false,
+  "backed": true,
   "text": "Read the full diff (8 files) plus the surrounding code: `app.ts` (`keyOf`, `versionsOf`/`decided`, the `GET /contracts/{key}` route and its 404s), `manifest.ts` (`PAGE` regex), `Studio.tsx` (`useStatus`, `approvalState`, `waiting`, `LABEL`), `status.ts` (`contractVersions`), the route test, the studio tests, the QA scenario, and the seed fix."
  },
  {
@@ -56,17 +56,17 @@
  },
  {
   "item": "2232-v1 item-4",
-  "backed": false,
+  "backed": true,
   "text": "Traced the pitfall math by hand: `contradicts_guide`/`adds_unasked` are `share` pitfalls with `pass:['no']`, so a \"yes\" (departure present) is tri=false and `metOf` returns the flagged share; `score` subtracts `weight × share` — consistent with the replay table in the description."
  },
  {
   "item": "2232-v1 item-5",
-  "backed": false,
+  "backed": true,
   "text": "Confirmed research, github and Sleeper still build their judge with `evidence` (deprecated path) and that the legacy `finalize` branch (`legacyFinal`) preserves the old numeric-`met` behavior and whole-unit note prefixing."
  },
  {
   "item": "2230-v1 item-1",
-  "backed": false,
+  "backed": true,
   "text": "Read the full `sessionsApi` (packages/catalog/src/http.ts): paged reads following `nextPageToken`, PATCH/DELETE with 404/400/409/415/422/401, session-credential refusal of writes and cross-session lists without the home grant, and `resolutionOf` bounds (choice required, text ≤2048, reason ≤512)."
  },
  {
@@ -76,7 +76,7 @@
  },
  {
   "item": "2230-v1 item-3",
-  "backed": false,
+  "backed": true,
   "text": "Read the distributor `deleteSession`/`removeChecked` (now `catalog.getSession(key)?.pendingAsks`), the once-only backfill guarded by the `BACKFILLED` marker, and the moved `notifications.ts` (6-hour staleness, once-per-key `sent` table, fire-and-forget `void … .catch()`)."
  },
  {
@@ -96,7 +96,7 @@
  },
  {
   "item": "2224-v6 item-2",
-  "backed": false,
+  "backed": true,
   "text": "Read every changed file at this head, including the full `http.ts`, `http.test.ts`, the `sql-store.ts` v5 paths (delivery dedupe on `(session, event_id)`, `sealed_at` DDL and index, `catalog_deliveries` in `removeRows`), `conformance.ts` and `reference.ts` alignment (sealedAt ordering, summary-only full text, the echo/extension publish check, the transition table's `stopped → idle` row)."
  },
  {
@@ -106,7 +106,7 @@
  },
  {
   "item": "2224-v6 item-4",
-  "backed": false,
+  "backed": true,
   "text": "The loopback-server pattern in `http.test.ts` matches established repo precedent (traces, github and distributor tests all listen on 127.0.0.1:0), so it fits the no-external-network rule; the test uses the fake clock seam."
  },
  {
@@ -126,7 +126,7 @@
  },
  {
   "item": "2224-v5 item-2",
-  "backed": false,
+  "backed": true,
   "text": "Read every changed file at this head, including the full `http.ts`, `http.test.ts`, the `sql-store.ts` v5 paths (delivery dedupe on `(session, event_id)`, `sealed_at` DDL and index, `catalog_deliveries` in `removeRows`), `conformance.ts` and `reference.ts` alignment (sealedAt ordering, summary-only full text, the echo/extension publish check, the transition table's `stopped → idle` row)."
  },
  {
@@ -136,7 +136,7 @@
  },
  {
   "item": "2224-v5 item-4",
-  "backed": false,
+  "backed": true,
   "text": "The loopback-server pattern in `http.test.ts` matches established repo precedent (traces, github, distributor tests all listen on 127.0.0.1:0), so it fits the no-external-network rule; the test uses the fake clock seam."
  },
  {
@@ -151,7 +151,7 @@
  },
  {
   "item": "2216-v1 item-1",
-  "backed": false,
+  "backed": true,
   "text": "Read the full diff (21 files) plus the surrounding code in `service.ts`, `app.ts`, `queue.ts`, `waiting-store.ts`, `redeliver.ts`, `webhook.ts`, `notice.ts`, and the sdk's `submitToSession`/`storeFor`/`extensions.ts`."
  },
  {
@@ -166,7 +166,7 @@
  },
  {
   "item": "2216-v1 item-4",
-  "backed": false,
+  "backed": true,
   "text": "The new service/app/waiting-store tests import files that do not exist on the base, so they cannot run there directly; I confirmed the base behavior they claim to fix by reading `origin/v1`'s webhook (reviewer 409 → 502 → `neverReached` → dropped after three redeliveries)."
  },
  {
@@ -226,12 +226,12 @@
  },
  {
   "item": "2229-v1 item-1",
-  "backed": false,
+  "backed": true,
   "text": "Read the full diff (29 files) plus the surrounding code: `createCatalog`/`publish`/`rebuild` and the SQL store's watermark rules from #2224, the distributor's session listener and delete/PATCH routes, the journal, `storeFor`, and the existing index publisher this PR shares helpers with (`spendOf`, `viewSignature`, `runsIn` moved without changing behaviour)."
  },
  {
   "item": "2229-v1 item-2",
-  "backed": false,
+  "backed": true,
   "text": "Checked each answer the description promises against `packages/catalog/src/channel.ts`: 401 comes from the listener, 404 on a foreign key, 400 with the reason via `Bad`, 409 with `acked`, 413 via the 1 MiB `serviceHttp` body cap, 503 from a failing `publish`, 200 `{acked}` otherwise."
  },
  {
@@ -241,7 +241,7 @@
  },
  {
   "item": "2229-v1 item-4",
-  "backed": false,
+  "backed": true,
   "text": "Checked the size caps end to end: the gate measures the exact `ask.opened` event the sender will record, the seal refuses via `assertSealFits` (including on verdict and link attach), and `fitted` cuts with the ` … [truncated]` marker before anything over the cap is appended. The spend floor (`reportedMicros`) keeps a price cut from reporting less than before, matching the store's `regressed` refusal."
  },
  {
@@ -276,7 +276,7 @@
  },
  {
   "item": "2219-v1 item-2",
-  "backed": false,
+  "backed": true,
   "text": "Traced every deleted rubric gate to the builder guarantee it duplicated: lineup `buildCard` (one player per slot, figures copied from facts, links validated, summary written by `summaryOf`), trades `buildTradeCard`/`buildFinderCard` (`pick()` throws on wrong side, duplicate or missing id; verdict from the schema enum; counter enforced exactly for a counter verdict; max three suggestions, ranked i+1), waivers `buildWaiversCard` (context and `sizeOf` copied from facts, a bid throws in a non-FAAB league, `drop.role` from the roster), history `buildHistoryCard` (`citedPicks` throws on an unknown pick or a no-draft season and carries the full `DraftFigure` rows), report `buildDigestCard`/`buildRetroCard` (scores, top scorers and knowable signals from the facts). The gates that stay in the rubrics are the ones that can fail on model output."
  },
  {
@@ -311,7 +311,7 @@
  },
  {
   "item": "2202-v2 item-3",
-  "backed": false,
+  "backed": true,
   "text": "Ran the stale-facts experiment (script built on the test fixtures) to settle how `byeCoverage` behaves on pre-`short` facts, and confirmed the `\\b11\\b`-in-`4.11` match."
  },
  {
@@ -331,7 +331,7 @@
  },
  {
   "item": "2206-v4 item-3",
-  "backed": false,
+  "backed": true,
   "text": "The new Sleeper test fails against the origin/v1 `week.ts` (Promise.all held back every card) and passes with the merge-in loader, so it guards the streaming behavior."
  },
  {

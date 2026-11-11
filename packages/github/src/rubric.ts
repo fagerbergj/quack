@@ -101,8 +101,8 @@ registerSplitter('github.descriptionParts', descriptionParts);
 const ARG = String.raw`(?:'[^'\`]*'|"[^"\`]*"|-{1,2}[\w-]*(?:=[^\s\`]+)?|[\w./:@*=+-]+)`;
 const COMMAND = new RegExp(String.raw`\`(?:[A-Z_]+=[^\s\`]+\s+)*[a-z][a-z0-9._-]*(?:\s+${ARG})+\``, 'g');
 // The sources a Verified item can name, found in code so Clef is asked only about items naming none: a backticked
-// command, a file:line, a commit sha, a URL, CI (by that word, or one of the PR's own checks), or a search it ran.
-const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/, /https?:\/\/\S+/, /\bCI\b/];
+// command or code it read, a file:line, a commit, a URL, CI (the word, or the PR's own checks), or a search it ran.
+const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/, /https?:\/\/\S+/, /\bCI\b/, /`[A-Za-z_$][\w$.]*(?:\(\))?`/];
 // A claim that something is absent (a negation, then a reference, import, use or caller) is backed only by a named search.
 const ABSENCE = /\b(?:no|not|nothing|none|nowhere|zero)\b\W+(?:\w+\W+){0,3}?(?:referenc\w*|import\w*|us(?:e|es|ed|age)|call(?:s|ed|ers?)?|remain\w*|left)\b|\b(?:referenc\w*|import\w*|used|called)\s+nowhere\b/i;
 const SEARCH_TOOL = /\b(?:grep|rg|ag|ack|find|search)\b/;
