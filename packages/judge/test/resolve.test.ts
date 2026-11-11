@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord/context';
 import { limiter } from '../src/limit.ts';
-import { answerItems, classifierTokens, pack, type ClassifierRef } from '../src/resolve.ts';
+import { answerItems, classifierTokens, MAX_BATCH_QUESTIONS, pack, type ClassifierRef } from '../src/resolve.ts';
 
 const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
 const unit = { id: 'f1', state: { finding: '- nit: rename' } };
@@ -167,6 +167,31 @@ test('a question the packed reply leaves unanswered escalates on its own; a reru
     assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.note]), [['p0', true, 'in the diff'], ['p1', false, 'missing']]);
   }
   assert.equal(packedCalls, 1);
+});
+
+test('eight unsure questions of one group go to the judge model as two requests of four, side by side', async () => {
+  const shared = { diff: 'd' };
+  const units = Array.from({ length: 8 }, (_, n) => ({ id: `p${n}`, shared, state: { part: `p${n}` } }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: {} }));
+  const prompts: string[] = [];
+  let [active, peak] = [0, 0];
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      prompts.push(r.messages[0].content);
+      peak = Math.max(peak, ++active);
+      await new Promise((done) => setImmediate(done));
+      active--;
+      const ids = [...r.messages[0].content.matchAll(/^- (q\d+):/gm)].map((m) => m[1]);
+      return { stopReason: 'stop', content: [{ type: 'text', text: JSON.stringify(Object.fromEntries(ids.map((q) => [q, { choice: 'yes', confidence: 0.9, reason: 'kept' }]))) }] };
+    },
+  });
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(2) };
+  const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+  assert.deepEqual(prompts.map((p) => (p.match(/^- q\d+:/gm) ?? []).length), [MAX_BATCH_QUESTIONS, MAX_BATCH_QUESTIONS]);
+  assert.equal(peak, 2, 'the two sub-batches run in parallel within the escalation limit');
+  assert.ok(answered.every((a) => a.answer!.met === true && a.answer!.resolver === 'judge-model'));
 });
 
 test('a batch over the judge model window splits into sub-batches that each fit; a question a reply leaves out escalates alone', async () => {

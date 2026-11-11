@@ -145,12 +145,16 @@ type JudgeModel = ReturnType<ToolExecutionApi['models']['getModel']>;
 /** The judge model's input window: its context less the reply it may write; undefined when the deployment gives none. */
 const windowOf = (m: JudgeModel) => (m?.contextWindow ? m.contextWindow - (m.maxTokens ?? 0) : undefined);
 
-/** Unsure questions in order, cut into sub-batches whose prompt (the shared context once in each) fits the judge model's window. */
+// The judge model reasons through every question of a request in one generation, so a long batch is cut to run in parallel.
+export const MAX_BATCH_QUESTIONS = 4;
+
+/** Unsure questions in order, cut into sub-batches of at most MAX_BATCH_QUESTIONS whose prompt (the shared context once in each) fits the judge model's window. */
 export function subBatches(pending: Pending[], window: number | undefined): Pending[][] {
   const out: Pending[][] = [];
   for (const p of pending) {
     const last = out.at(-1);
-    if (last && (window === undefined || packedPrompt([...last, p]).length / BYTES_PER_TOKEN <= window)) last.push(p);
+    const fits = (batch: Pending[]) => batch.length <= MAX_BATCH_QUESTIONS && (window === undefined || packedPrompt(batch).length / BYTES_PER_TOKEN <= window);
+    if (last && fits([...last, p])) last.push(p);
     else out.push([p]);
   }
   return out;
