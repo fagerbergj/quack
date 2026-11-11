@@ -1,11 +1,12 @@
 import { arr, obj, str } from '@earendil-works/pi-schema';
+import type { DecisionModelRef } from '@quack/judge';
 import { defineWorkflow } from '@quack/workflows';
 import { newsLink } from './news.ts';
 import type { SleeperClient } from '../client.ts';
 import { liveLeague } from '../snapshot.ts';
 import { buildCard, type Decision } from './card.ts';
 import { buildFacts, type Facts, type FactsDeps, type PlayerFact } from './facts.ts';
-import { LINEUP_NEWS, lineupEvidence, lineupRubric } from './rubric.ts';
+import { lineupDeclaration, lineupInputs, lineupRubric } from './rubric.ts';
 import { cardSteps } from '../job.ts';
 
 export const LINEUP_WORKFLOW = 'sleeper.lineup';
@@ -14,6 +15,8 @@ export type LineupDeps = {
   client: SleeperClient;
   news?: FactsDeps['news'];
   now?: () => number;
+  /** A decision model such as Clef, asked the judge's local questions first. */
+  decisionModel?: DecisionModelRef;
 };
 
 const decisionSchema = obj({
@@ -46,7 +49,8 @@ export function lineupWorkflow(deps: LineupDeps) {
     name: LINEUP_WORKFLOW,
     steps: cardSteps<Facts, Decision>(deps, {
       facts: async (_c, i, at) => buildFacts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at),
-      schema: decisionSchema, prompt: factsPrompt, card: buildCard, rubric: lineupRubric, news: LINEUP_NEWS, evidence: lineupEvidence,
+      // Without a news source no row carries news, so the news check has no item and is not scored.
+      schema: decisionSchema, prompt: factsPrompt, card: buildCard, rubric: lineupRubric, declaration: lineupDeclaration, inputs: lineupInputs,
     }),
   });
 }

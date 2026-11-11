@@ -55,7 +55,7 @@ export function finderWorkflow(deps: TradeJobDeps) {
     },
   };
   const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(deps.news, dealable(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
-  const judgeOf = cardJudge(deps, tradeRubric, TRADE_NEWS, tradeEvidence);
+  const judgeOf = cardJudge(deps, tradeRubric, TRADE_NEWS, { evidence: tradeEvidence });
   const card: Step = {
     name: 'card',
     kind: 'judged',

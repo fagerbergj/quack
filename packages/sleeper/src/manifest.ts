@@ -25,7 +25,7 @@ export const manifest: ExtensionManifest = {
   evalAdapters: cardAdapters,
   actions: [runJob],
   workflows: {
-    [LINEUP_WORKFLOW]: { build: () => withChat(lineupFromEnv()), env },
+    [LINEUP_WORKFLOW]: { build: (config) => withChat(lineupFromEnv(process.env, config as Parameters<typeof lineupFromEnv>[1])), env },
     [WAIVERS_WORKFLOW]: { build: () => withChat(waiversFromEnv()), env },
     [FINDER_WORKFLOW]: { build: () => withChat(finderFromEnv()), env },
     [TRENDS_WORKFLOW]: { build: () => withChat(trendsFromEnv()), env },

@@ -8,6 +8,7 @@ import { createServer, type Server } from 'node:http';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { buildEvidence } from '@quack/judge';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
 import { readSession } from '@quack/eval';
@@ -15,7 +16,7 @@ import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildCard, buildFacts, createSleeperClient, liveLeague, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, newsLink, registerLineupSchedules,
+  buildCard, buildFacts, createSleeperClient, liveLeague, createSleeperService, exaNews, lineupDeclaration, lineupInputsOf, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, newsLink, registerLineupSchedules,
   type Facts, type LineupCard, type LineupDeps,
 } from '../src/index.ts';
 import { closeCalls } from '../src/lineup/facts.ts';
@@ -59,7 +60,7 @@ async function goodCard(): Promise<{ f: Facts; card: LineupCard }> {
 const gate = async (id: string, f: Facts, card: unknown) => {
   const check = lineupRubric.criteria.flatMap((c) => c.checks).find((c) => c.id === id)!;
   const content = JSON.stringify(card);
-  return check.code!(content, await lineupEvidence(f)(null, { content }));
+  return check.code!(content, (await buildEvidence(lineupDeclaration, lineupInputsOf(f, content))).evidence);
 };
 const GATES = ['every_slot_decided', 'no_locked_swap'];
 
@@ -142,13 +143,13 @@ test('every_slot_decided fails a card with no FLEX', async () => {
   assert.match(r.detail!, /FLEX/);
 });
 
-test('no_locked_swap fails a card that benches the locked kicker', async () => {
+test('no_locked_swap fails a card that starts a player whose game has locked', async () => {
   const { f, card } = await goodCard();
-  const k = f.players['109'];
-  const swapped = card.starters.map((r) => (r.slot === 'K' ? { ...r, player: { ...r.player, id: k.id, name: k.name }, proj: k.proj, game: k.game, locked: false, action: 'start' as const } : r));
-  const r = await gate('no_locked_swap', f, { ...card, starters: swapped });
+  // The model may pick any rostered player for an open slot; one whose game has locked is caught here, not by the card builder.
+  const dash = f.players['103'];
+  const r = await gate('no_locked_swap', { ...f, players: { ...f.players, '103': { ...dash, game: { ...dash.game!, locked: true } } } }, card);
   assert.ok(r.met < 1);
-  assert.match(r.detail!, /K/);
+  assert.match(r.detail!, /RB2/);
 });
 
 // One run per world, in one session; the model decides when asked for the lineup and answers the judge's questions otherwise.
@@ -158,7 +159,7 @@ async function runLineup(news?: LineupDeps['news'], worlds = [fixtures]) {
     const asked = String(c.messages.at(-1)!.content);
     if (!asked.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(decision));
     judged.push(asked);
-    return fauxAssistantMessage(JSON.stringify({ choice: /bench a clearly better|mention weather/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+    return fauxAssistantMessage(JSON.stringify({ choice: /bench a clearly better/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
   });
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(responses);
@@ -180,24 +181,24 @@ async function runLineup(news?: LineupDeps['news'], worlds = [fixtures]) {
     const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions;
     const sealed = versions[0];
     await s.close();
-    return { record: await readSession(dir), sealed, versions, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    return { record: await readSession(dir), sealed, versions, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string; units: number; met: unknown }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-test('the workflow seals a lineup card from the recorded week and the judge passes it, saying close-call news was not checked', async () => {
+test('the workflow seals a lineup card from the recorded week and the judge passes it, with no news to score close calls on', async () => {
   const { sealed, judged, verdict, record } = await runLineup();
-  assert.deepEqual(await replayed(record, sealed), await lineupEvidence(await facts())(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), lineupInputsOf(await facts(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const card = JSON.parse(sealed.content) as LineupCard;
   assert.equal(card.kind, 'lineup');
   assert.equal(card.starters.length, 9);
   assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
   assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@5', [], true]);
-  assert.deepEqual(verdict.notes, ['close-call news not checked: no news source']);
-  assert.ok(!verdict.checks.some((c) => c.id === 'close_call_news'));
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@6', [], true]);
+  assert.deepEqual(verdict.notes, []);
+  assert.deepEqual(verdict.checks.filter((c) => c.id === 'close_call_news').map((c) => [c.units, c.met]), [[0, null]]);
   assert.ok(!judged.some((q) => /Questionable starter/.test(q)));
 });
 
@@ -206,8 +207,8 @@ test('a session that ran the job twice replays each card on the facts of the run
   assert.equal(versions.length, 2);
   const [first, second] = [await facts(), await facts(updated)];
   assert.notDeepEqual(first, second, 'the runs decided from different facts');
-  assert.deepEqual(await replayed(record, versions[0]), await lineupEvidence(first)(null, versions[0]));
-  assert.deepEqual(await replayed(record, versions[1]), await lineupEvidence(second)(null, versions[1]));
+  assert.deepEqual(await replayed(record, versions[0]), lineupInputsOf(first, versions[0].content));
+  assert.deepEqual(await replayed(record, versions[1]), lineupInputsOf(second, versions[1].content));
 });
 
 test('with a news source wired the close calls are scored for news', async () => {
@@ -362,7 +363,7 @@ test('a failing search leaves a close call with no news rather than failing the 
 test('with Exa news wired the card is judged on close_call_news', async () => {
   const exa = await fakeExa();
   const { verdict, judged } = await runLineup(exaNews({ apiKey: 'k', url: exa.url }));
-  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@5', []]);
+  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@6', []]);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(judged.some((q) => /Questionable starter/.test(q)));
 });
@@ -379,13 +380,32 @@ test('a row carries the news of its starter and of the player replaced, attached
 test('a row\'s judge evidence carries its news and each player\'s designation, and baseline-named is asked of changed rows only', async () => {
   const f = { ...(await facts()), news: { '103': [item] } };
   const card = buildCard(f, decision);
-  const ev = await lineupEvidence(f)(null, { content: JSON.stringify(card) });
-  const rb2 = ev.row.find((u) => u.id === 'RB2')!.state as unknown as { news: Array<{ url: string }>; designations: Record<string, string> };
+  const ev = (await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(card)))).evidence;
+  const rb2 = ev.news.find((u) => u.id === 'news RB2')!.state.row as unknown as { news: Array<{ url: string }>; designations: Record<string, string> };
   assert.deepEqual(rb2.news.map((n) => n.url), [item.url]);
   assert.deepEqual(rb2.designations, { 'Dan Dash': 'none', 'Rob Rowe': 'Questionable' });
-  assert.deepEqual(ev.close.map((u) => u.id), ['RB2']);
-  // The card agrees with the baseline everywhere, so no row is asked to name the baseline it beats.
+  assert.deepEqual(ev.news.map((u) => u.id), ['news RB2']);
+  // The locked kicker is asked nothing, and the card agrees with the baseline everywhere, so no row is asked to name the baseline it beats.
+  assert.ok(!Object.values(ev).flat().some((u) => / K$/.test(u.id)));
   assert.deepEqual(ev.differs, []);
   const other = buildCard(f, { ...decision, slots: decision.slots.map((s) => (s.slot === 'RB2' ? { ...s, playerId: '101' } : s.slot === 'RB1' ? { ...s, playerId: '103' } : s)) });
-  assert.deepEqual((await lineupEvidence(f)(null, { content: JSON.stringify(other) })).differs, []);
+  assert.deepEqual((await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(other)))).evidence.differs, []);
+});
+
+test('a start the baseline does not make is asked to name the baseline player, with the incumbent it benches', async () => {
+  const real = await facts();
+  // A baseline that keeps Rowe at RB2, so the card's Dash swap goes against it.
+  const f = { ...real, baseline: real.baseline.map((b) => (b.slot === 'RB2' ? { ...b, id: '102', name: real.players['102'].name, proj: real.players['102'].proj } : b)) };
+  const card = buildCard(f, decision);
+  const ev = (await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(card)))).evidence;
+  const rows = ev.differs.map((u) => ({ id: u.id, ...(u.state.row as { incumbent: { name: string }; baseline: { name: string } }) }));
+  assert.deepEqual(rows.map((r) => [r.id, r.incumbent.name, r.baseline.name]), [['differs RB2', 'Rob Rowe', 'Rob Rowe']]);
+});
+
+test('the lineup judge asks the configured decision model', () => {
+  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const step = lineupWorkflow({ client: client(), decisionModel: ref }).steps.find((s) => s.name === 'card')!;
+  assert.equal(step.kind, 'judged');
+  const { options } = (step as Extract<typeof step, { kind: 'judged' }>).judge({ prior: { facts: {} } } as never);
+  assert.deepEqual(options.decisionModel, ref);
 });
