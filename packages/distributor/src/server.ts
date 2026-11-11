@@ -25,6 +25,25 @@ const TYPES: Record<string, string> = {
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json','.map': 'application/json',
 };
 
+/** Whether an Accept-Encoding header allows a coding: named without q=0. */
+function accepts(header: string | undefined, coding: string): boolean {
+  return (header ?? '').split(',').some((part) => {
+    const [name, ...params] = part.split(';').map((s) => s.trim());
+    return name.toLowerCase() === coding && !params.some((p) => /^q=0(\.0*)?$/.test(p));
+  });
+}
+
+// The web build writes .br and .gz beside each text asset; the best one the client accepts wins, else the file itself.
+async function variant(file: string, acceptEncoding: string | undefined): Promise<{ data: Buffer; encoding?: string }> {
+  for (const [encoding, ext] of [['br', '.br'], ['gzip', '.gz']]) {
+    if (accepts(acceptEncoding, encoding)) {
+      const data = await readFile(file + ext).catch(() => undefined);
+      if (data) return { data, encoding };
+    }
+  }
+  return { data: await readFile(file) };
+}
+
 // Serves a file under root for a GET path; false when the path escapes root or names no file.
 async function serveStatic(root: string, pathname: string, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const rel = safeDecode(pathname);
@@ -32,13 +51,13 @@ async function serveStatic(root: string, pathname: string, req: IncomingMessage,
   const file = resolve(root, '.' + (rel.endsWith('/') ? rel + 'index.html' : rel));
   if (!file.startsWith(resolve(root) + sep)) return false;
   try {
-    const data = await readFile(file);
+    const { data, encoding } = await variant(file, req.headers['accept-encoding']);
     // Only assets/ is content-hashed; everything else (index.html, manifest, icons) must revalidate.
     const hashed = file.startsWith(resolve(root, 'assets') + sep);
     const etag = `"${createHash('sha1').update(data).digest('base64url')}"`;
-    const headers = { etag, 'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache' };
+    const headers = { etag, vary: 'Accept-Encoding', 'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache', ...(encoding && { 'content-encoding': encoding }) };
     if (req.headers['if-none-match'] === etag) res.writeHead(304, headers).end();
-    else res.writeHead(200, { ...headers, 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(data);
+    else res.writeHead(200, { ...headers, 'content-length': data.length, 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(data);
     return true;
   } catch {
     return false;
