@@ -7,7 +7,7 @@ export type SessionRow = {
   lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Array<{ step: string; error: string }> };
 };
 /** The distributor's export of a session: its transcript entries (pi-durable models) and every sealed version. */
-export type SessionExport = { transcript: Array<{ kind: string; model: Array<{ content?: Parameters<typeof contentText>[0] }> }>; artifacts: Array<{ kind: string; version: number; content: string }> };
+export type SessionExport = { transcript: Array<{ kind: string; model: Array<{ content?: Parameters<typeof contentText>[0] }> }>; artifacts: Array<{ kind: string; version: number; content: string; sealedAt: number }> };
 type Ask = { id: string; type: 'approval' | 'question'; toolCall?: { tool: string }; prompt?: { question: string; options: string[] } };
 
 export type Distributor = ReturnType<typeof distributor>;
@@ -37,11 +37,9 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
     sessions,
     /** One session, or undefined when the distributor knows no such key. */
     session: async (key: string): Promise<SessionRow | undefined> => (await sessions(`key:${escapeTerm(key)}`))[0],
-    // Catalog reads through the cross-session listings, since a session credential's single-key reads reach only its own key; none starts the session's process.
-    // The listing carries an artifact's summary, never its content.
-    artifacts: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; summary?: string; deliveries?: Array<{ where: string; link: string }> }> }>(list('artifacts', `session:${escapeTerm(key)}`))).artifacts,
+    // A session credential's single-key reads reach only its own key, so asks come from the cross-session listing.
     pendingAsks: async (key: string) => (await call<{ asks: Ask[] }>(list('asks', `session:${escapeTerm(key)} AND state:pending`))).asks,
-    // The export reads a stopped session's store without booting it, and is the one route to another session's artifact bodies.
+    // The export reads a stopped session's store without booting it, and is the one route to another session's artifact content.
     exported: (key: string) => call<SessionExport>(path(key, '/export')),
     send: (key: string, agent: string, input: string, requestId: string) => post(`${path(key, '/invocations')}?agent=${encodeURIComponent(agent)}`, { input, requestId, whenBusy: 'followUp' }),
     abort: (key: string) => post(path(key, '/abort')),

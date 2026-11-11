@@ -113,7 +113,7 @@ test('the home agent lists and reads other sessions; any other agent reaches onl
   assert.deepEqual((await home.sessions()).map((s) => s.key).sort(), ['github:o/r#3', 'quack:home']);
   assert.equal((await asSession('quack:home', path('github:o/r#3'))).status, 404, 'the home grant covers the lists, not another key');
   assert.equal((await home.session('github:o/r#3'))?.key, 'github:o/r#3', 'so the home client reads one session through them');
-  assert.deepEqual([await home.artifacts('github:o/r#3'), await home.pendingAsks('github:o/r#3')], [[], []]);
+  assert.deepEqual(await home.pendingAsks('github:o/r#3'), []);
   const reviewer = 'github:o/r#3';
   for (const url of ['/sessions', '/asks', '/artifacts', path('quack:home')]) assert.equal((await asSession(reviewer, url)).status, 404, url);
   for (const url of [path('quack:home', '/messages'), '/index/approvals']) assert.equal((await asSession(reviewer, url)).status, 403, url);
@@ -132,7 +132,7 @@ async function sealInto(dir: string, kind: string, content: string) {
   await session.close();
 }
 
-test("the home agent reads a stopped session's messages and newest result in full through its export, without booting it", async () => {
+test("the home agent reads a stopped session's newest result in full first, and its messages on request, through its export without booting it", async () => {
   const { driver, invoke, pending, held, catalog, sessionBase, dataDir } = await start();
   const key = 'research:q1';
   const report = '## Summary\nAir scatters blue most.\n\n## Findings\n- Rayleigh scattering goes as 1/λ⁴. [s1]';
@@ -142,16 +142,14 @@ test("the home agent reads a stopped session's messages and newest result in ful
   await driver.stop(key);
   await sealInto(join(dataDir, sessionDirName(key)), 'research.report', report);
   await catalog.publish('quack:home', [{ seq: 1, id: 'session:quack:home', at: 0, type: 'session.created', data: { agent: 'quack', createdAt: 0 } }]);
-  await catalog.publish(key, [
-    { seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'reviewer', createdAt: 0 } },
-    { seq: 2, id: `artifact:${key}:1`, at: 1, type: 'artifact.sealed', data: { kind: 'research.report', version: 1, hash: 'h', content: report, summary: 'Air scatters blue most.' } },
-  ]);
+  await catalog.publish(key, [{ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'reviewer', createdAt: 0 } }]);
   const home = distributor(sessionBase, withCredential(held.get('quack:home')!));
-  const text = await readSession(home, (await home.session(key))!);
-  assert.match(text, /- research\.report v1: Air scatters blue most\./);
-  assert.ok(text.endsWith(`--- research.report v1 ---\n${report}`), text);
-  assert.match(text, /Last messages:\n- user: post it\n/);
-  assert.ok(!driver.running().includes(key), 'the read started no process');
+  const row = (await home.session(key))!;
+  const text = await readSession(home, row);
+  assert.ok(text.startsWith(`--- research.report v1 ---\n${report}\n${key} (reviewer), state `), text);
+  assert.doesNotMatch(text, /Last messages/, 'messages only on request');
+  assert.match(await readSession(home, row, true), /\nLast messages:\n- user: post it(\n|$)/);
+  assert.ok(!driver.running().includes(key), 'neither read started a process');
 });
 
 test('the public listener drops a peer it is told to refuse, such as a session container', async () => {
