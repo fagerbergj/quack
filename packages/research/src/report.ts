@@ -263,7 +263,7 @@ export const reportDeclaration: Declaration = {
     claim: {
       split: { name: 'research.findings', from: 'report' },
       piece: 'finding',
-      context: { request: { name: 'whole', from: 'request' }, sources: { name: 'research.excerpts', from: 'sources', maxChars: UNIT_CHARS } },
+      context: { sources: { name: 'research.excerpts', from: 'sources', maxChars: UNIT_CHARS } },
     },
     request: { split: { name: 'whole', from: 'request' }, piece: 'request', context: { report: { name: 'whole', from: 'report' } } },
     // Every sentence sees every finding, once per request, rather than the few that share its words.
