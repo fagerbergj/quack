@@ -132,7 +132,7 @@ async function sealInto(dir: string, kind: string, content: string) {
   await session.close();
 }
 
-test("the home agent reads another session's newest result in full through the export", async () => {
+test("the home agent reads a stopped session's messages and newest result in full through its export, without booting it", async () => {
   const { driver, invoke, pending, held, catalog, sessionBase, dataDir } = await start();
   const key = 'research:q1';
   const report = '## Summary\nAir scatters blue most.\n\n## Findings\n- Rayleigh scattering goes as 1/λ⁴. [s1]';
@@ -150,6 +150,8 @@ test("the home agent reads another session's newest result in full through the e
   const text = await readSession(home, (await home.session(key))!);
   assert.match(text, /- research\.report v1: Air scatters blue most\./);
   assert.ok(text.endsWith(`--- research.report v1 ---\n${report}`), text);
+  assert.match(text, /Last messages:\n- user: post it\n/);
+  assert.ok(!driver.running().includes(key), 'the read started no process');
 });
 
 test('the public listener drops a peer it is told to refuse, such as a session container', async () => {

@@ -1,3 +1,4 @@
+import type { contentText } from '@earendil-works/pi-ai';
 import { escapeTerm } from '@quack/sdk';
 
 /** A Sessions API v9 row, as far as the home tools read it. */
@@ -5,6 +6,8 @@ export type SessionRow = {
   key: string; agent: string; title?: string; state: 'running' | 'idle' | 'stopped' | 'archived'; createdAt: string; lastActivity: string; pendingAsks: number;
   lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Array<{ step: string; error: string }> };
 };
+/** The distributor's export of a session: its transcript entries (pi-durable models) and every sealed version. */
+export type SessionExport = { transcript: Array<{ kind: string; model: Array<{ content?: Parameters<typeof contentText>[0] }> }>; artifacts: Array<{ kind: string; version: number; content: string }> };
 type Ask = { id: string; type: 'approval' | 'question'; toolCall?: { tool: string }; prompt?: { question: string; options: string[] } };
 
 export type Distributor = ReturnType<typeof distributor>;
@@ -39,8 +42,7 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
     artifacts: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; summary?: string; deliveries?: Array<{ where: string; link: string }> }> }>(list('artifacts', `session:${escapeTerm(key)}`))).artifacts,
     pendingAsks: async (key: string) => (await call<{ asks: Ask[] }>(list('asks', `session:${escapeTerm(key)} AND state:pending`))).asks,
     // The export reads a stopped session's store without booting it, and is the one route to another session's artifact bodies.
-    sealed: async (key: string) => (await call<{ artifacts: Array<{ kind: string; version: number; content: string }> }>(path(key, '/export'))).artifacts,
-    messages: async (key: string, limit: number) => (await call<{ messages: Array<{ role: string; text: string }> }>(path(key, `/messages?limit=${limit}`))).messages,
+    exported: (key: string) => call<SessionExport>(path(key, '/export')),
     send: (key: string, agent: string, input: string, requestId: string) => post(`${path(key, '/invocations')}?agent=${encodeURIComponent(agent)}`, { input, requestId, whenBusy: 'followUp' }),
     abort: (key: string) => post(path(key, '/abort')),
     resume: (key: string) => post(path(key, '/resume')),

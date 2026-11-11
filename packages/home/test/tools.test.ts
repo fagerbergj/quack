@@ -51,10 +51,13 @@ const listing = (url: string) => {
   return url.startsWith('/artifacts?') ? { artifacts: mine(artifacts) } : { asks: mine(asks) };
 };
 const REPORT = '## Summary\nRayleigh scattering.\n\n## Findings\n- Air scatters blue light about 5.5 times more than red. [s1]';
-// The export carries every version with its content, beside the transcript.
+// The export carries every version with its content, beside the transcript entries GET /messages would have read.
+const entry = (kind: string, text: string) => ({ kind, model: [{ role: kind === 'pi.user' ? 'user' : 'assistant', content: [{ type: 'text', text }] }] });
 const reply: Record<string, unknown> = {
-  'GET /sessions/github%3Aacme%2Fwidgets%237/messages?limit=6': { messages: [{ role: 'user', text: 'Review it' }, { role: 'assistant', text: long }] },
-  'GET /sessions/github%3Aacme%2Fwidgets%237/export': { transcript: [], artifacts: [
+  'GET /sessions/github%3Aacme%2Fwidgets%237/export': { transcript: [
+    entry('pi.user', 'too old'), { kind: 'pi.tool-result', model: [{ role: 'toolResult', content: [{ type: 'text', text: 'tool output' }] }] },
+    entry('pi.user', 'Review it'), entry('pi.assistant', long), entry('pi.user', 'and the tests'), entry('pi.assistant', 'looked'), entry('pi.user', 'thanks'), entry('pi.assistant', 'done'),
+  ], artifacts: [
     { kind: 'review', version: 1, content: 'old body' }, { kind: 'review', version: 2, content: 'y'.repeat(7000) }, { kind: 'notes', version: 1, content: 'plain notes body' }, { kind: 'extra', version: 1, content: 'e' },
   ] },
   'GET /sessions/research%3Aabc/export': { transcript: [], artifacts: [{ kind: 'report', version: 1, content: REPORT }] },
@@ -127,7 +130,9 @@ test('read_session reads another session through the listings the home grant all
   assert.doesNotMatch(text, /review v1/);
   assert.doesNotMatch(text, /push/, 'resolved asks stay out');
   assert.match(text, /Waiting on you:\n- Merge\? \[yes \/ no\]\n- approve merge_pr\?/);
-  assert.match(text, /- user: Review it/);
+  assert.match(text, /Last messages:\n- user: Review it\n- assistant: x{400}…\n- user: and the tests\n- assistant: looked\n- user: thanks\n- assistant: done\n/);
+  assert.doesNotMatch(text, /too old|tool output/, 'the newest six person and assistant messages');
+  assert.ok(!calls.some((c) => c.url.includes('/messages')), 'the export serves the messages too');
   assert.match(text, /\n--- review v2 ---\ny{6000}\n… \[1000 more characters; the whole review is at #\/s\/github%3Aacme%2Fwidgets%237\]\n--- notes v1 ---\nplain notes body\n--- extra v1 ---\ne$/);
   assert.doesNotMatch(text, /old body/, 'only the newest version of a kind');
   assert.ok(!calls.some((c) => /\/(ping|questions|failures)$/.test(c.url)), 'no read wakes the session');
@@ -139,10 +144,8 @@ test("read_session returns a researcher session's report text", async () => {
   assert.ok(text.endsWith(`--- report v1 ---\n${REPORT}`), text);
 });
 
-test("read_session shows a failed run's steps from the row, and skips the export when nothing is sealed", async () => {
-  calls.length = 0;
+test("read_session shows a failed run's steps from the row", async () => {
   assert.match((await run('read_session', { key: 'sleeper:L1:9:waivers' })).text, /state failed[\s\S]*Failures:\n- submit: deadline passed/);
-  assert.ok(!calls.some((c) => c.url.endsWith('/export')));
 });
 
 test('a key the distributor does not list is refused before any session endpoint is touched', async () => {
