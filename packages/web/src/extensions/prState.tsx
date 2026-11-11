@@ -1,10 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
 import type { Row } from '../sessions.ts';
 import { eventKey, prOf, pullKey, readPull, type Pull, type PullEvent } from './pulls.ts';
 
 type Shown = { pulls: { [key: string]: Pull }; error: string };
-type Live = Shown & { want: (key: string) => () => void; listed: ReadonlySet<string> };
-const PrStateContext = createContext<Live>({ pulls: {}, error: '', want: () => () => {}, listed: new Set() });
+type Live = Shown & { hold: () => () => void; want: (key: string) => () => void; listed: ReadonlySet<string> };
+const PrStateContext = createContext<Live>({ pulls: {}, error: '', hold: () => () => {}, want: () => () => {}, listed: new Set() });
 // The app's Retry-After past its stream cap.
 const REOPEN_MS = 30_000;
 
@@ -12,22 +12,39 @@ const REOPEN_MS = 30_000;
 function pullStream(set: Dispatch<SetStateAction<Shown>>) {
   const wanted = new Map<string, number>();
   const loaded = new Set<string>();
+  // Keys read or streamed during this open stream, which keeps them current, so a chip scrolled back into view is not read again.
+  const synced = new Set<string>();
+  // The stream's epoch, moved by every open and drop: a read is current only if it was sent while open and answered in the same epoch.
+  let epoch = 0;
+  const reading = new Map<string, number>();
   let es: EventSource | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   const put = (key: string, pull: Pull) => (loaded.add(key), set((s) => ({ pulls: { ...s.pulls, [key]: pull }, error: '' })));
-  const read = (key: string) => void readPull(key).then((pull) => pull && put(key, pull), (e: unknown) => set((s) => ({ ...s, error: e instanceof Error ? e.message : String(e) })));
+  const fail = (e: unknown) => set((s) => ({ ...s, error: e instanceof Error ? e.message : String(e) }));
+  function read(key: string) {
+    if (reading.get(key) === epoch) return;
+    const at = epoch, live = es?.readyState === EventSource.OPEN;
+    reading.set(key, at);
+    void readPull(key).then((pull) => {
+      if (live && at === epoch) synced.add(key);
+      if (pull) put(key, pull);
+    }, fail).finally(() => reading.get(key) === at && reading.delete(key));
+  }
   function open() {
     retry = undefined;
     es = new EventSource('apps/github/events');
     // Read after subscribing, so a change between the two is not lost; an event and a read are both absolute states, so applying both is harmless.
-    es.onopen = () => wanted.forEach((_n, key) => read(key));
+    es.onopen = () => (epoch++, wanted.forEach((_n, key) => read(key)));
     es.addEventListener('pull_request', (m) => {
       const e = JSON.parse(m.data) as PullEvent;
+      synced.add(eventKey(e));
       put(eventKey(e), e.pull_request);
     });
     es.onerror = failed;
   }
   function failed() {
+    epoch++;
+    synced.clear();
     // Chips that waited for an open that has not come are read now; the rest keep their last state.
     wanted.forEach((_n, key) => loaded.has(key) || read(key));
     if (es?.readyState !== EventSource.CLOSED) return;
@@ -36,22 +53,29 @@ function pullStream(set: Dispatch<SetStateAction<Shown>>) {
     retry = setTimeout(open, REOPEN_MS);
   }
   function close() {
+    epoch++;
+    synced.clear();
     es?.close();
     clearTimeout(retry);
     es = retry = undefined;
   }
+  // Every mounted badge holds the stream open, so scrolling past rows without one does not drop it and its cache.
+  let holders = 0;
+  function hold() {
+    if (!holders++ && !es && !retry) open();
+    return () => void (--holders || close());
+  }
+  // Badges on screen want their state: read now, or once the stream opens if it is still connecting.
   function want(key: string) {
     wanted.set(key, (wanted.get(key) ?? 0) + 1);
-    if (wanted.get(key) === 1 && !es && !retry) open();
-    else if (wanted.get(key) === 1 && es?.readyState !== EventSource.CONNECTING) read(key);
+    if (wanted.get(key) === 1 && es?.readyState !== EventSource.CONNECTING && !synced.has(key)) read(key);
     return () => {
       const n = wanted.get(key)! - 1;
       if (n) wanted.set(key, n);
       else wanted.delete(key);
-      if (!wanted.size) close();
     };
   }
-  return { want, close };
+  return { hold, want, close };
 }
 
 /** Live states for the PR badges on screen: each is read from the github app's GitHub mirror and kept current by one shared stream of its pull_request events. Archived sessions are not read. */
@@ -61,7 +85,7 @@ export function PrStates({ rows, children }: { rows: Row[] | undefined; children
   live.current ??= pullStream(setShown);
   useEffect(() => () => live.current?.close(), []);
   const listed = useMemo(() => new Set((rows ?? []).filter((r) => r.state !== 'archived').map((r) => r.key)), [rows]);
-  return <PrStateContext value={{ ...shown, want: live.current.want, listed }}>{children}</PrStateContext>;
+  return <PrStateContext value={{ ...shown, hold: live.current.hold, want: live.current.want, listed }}>{children}</PrStateContext>;
 }
 
 /** Says so above the list when PR states could not be read, instead of leaving rows without a badge. */
@@ -86,14 +110,28 @@ const BADGE = {
   unknown: { cls: 'border-line-strong text-muted', icon: PR },
 };
 
+// Only chips on screen are read: a sidebar of hundreds of reviews would otherwise queue a mirror read per row behind every page.
+function useOnScreen(ref: RefObject<Element | null>) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const io = new IntersectionObserver(([e]) => setOn(Boolean(e?.isIntersecting)), { rootMargin: '200px' });
+    if (ref.current) io.observe(ref.current);
+    return () => io.disconnect();
+  }, [ref]);
+  return on;
+}
+
 const stateOf = (pr: Pull | undefined) => (!pr ? 'unknown' : pr.merged ? 'merged' : pr.state);
 
 /** One badge per pull request, GitHub-style: its state's icon and colour beside "#n", linking to the PR; neutral until its state is known. */
 export function PrChip({ sessionKey }: { sessionKey: string }) {
-  const { pulls, want, listed } = useContext(PrStateContext);
+  const { pulls, hold, want, listed } = useContext(PrStateContext);
   const key = pullKey(sessionKey);
-  const read = Boolean(key && listed.has(sessionKey));
-  useEffect(() => (read ? want(key!) : undefined), [read, key, want]);
+  const ref = useRef<HTMLAnchorElement>(null);
+  const onScreen = useOnScreen(ref);
+  const live = Boolean(key && listed.has(sessionKey));
+  useEffect(() => (live ? hold() : undefined), [live, hold]);
+  useEffect(() => (live && onScreen ? want(key!) : undefined), [live, onScreen, key, want]);
   const pr = key ? pulls[key] : undefined;
   const url = pr?.html_url ?? prUrl(sessionKey);
   if (!url) return null;
@@ -103,7 +141,7 @@ export function PrChip({ sessionKey }: { sessionKey: string }) {
   return (
     // relative lifts it over the row link's overlay; the after: box takes the 18 px badge to a 30 px tap target. The border keeps every state one size.
     // The focus outline is drawn inside the pill: the session header's line 2 clips sideways (overflow-x), though not above or below.
-    <a href={url} target="_blank" rel="noopener noreferrer" aria-label={pr ? `Pull request ${n}, ${state}, on GitHub` : `Pull request ${n} on GitHub`} title={pr ? `Pull request ${state}${at ? ` ${new Date(at).toLocaleDateString()}` : ''}` : undefined} className={`relative flex flex-none items-center gap-1 rounded-full border px-1.5 text-[11px] leading-4 font-medium tabular-nums whitespace-nowrap no-underline after:absolute after:-inset-x-1 after:-inset-y-1.5 hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-link ${BADGE[state].cls}`}>
+    <a ref={ref} href={url} target="_blank" rel="noopener noreferrer" aria-label={pr ? `Pull request ${n}, ${state}, on GitHub` : `Pull request ${n} on GitHub`} title={pr ? `Pull request ${state}${at ? ` ${new Date(at).toLocaleDateString()}` : ''}` : undefined} className={`relative flex flex-none items-center gap-1 rounded-full border px-1.5 text-[11px] leading-4 font-medium tabular-nums whitespace-nowrap no-underline after:absolute after:-inset-x-1 after:-inset-y-1.5 hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-link ${BADGE[state].cls}`}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={BADGE[state].icon} /></svg>
       {n}
       <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M8 4h12v12M20 4L5 19" /></svg>

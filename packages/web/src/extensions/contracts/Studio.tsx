@@ -59,7 +59,7 @@ export function approvalState(newest: Version | undefined, proposal: Approval | 
 const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
 const nameOf = (v: Version, all: Version[]) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}`;
 
-// A TypeScript spec is compared through its parsed declarations, which load with the compiler; until then there is no comparison.
+// A TypeScript spec is compared through its parsed declarations, which load with the parser; until then there is no comparison.
 function useDiff(from: Version | undefined, to: Version) {
   const was = useModel(from?.spec.kind === 'typescript' ? (from.spec.document as string) : '');
   const now = useModel(to.spec.kind === 'typescript' ? (to.spec.document as string) : '');

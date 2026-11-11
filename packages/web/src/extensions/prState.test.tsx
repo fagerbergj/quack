@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { App } from '../App.tsx';
-import { Fail, FakeEventSource, fetchMock, routes, sess, stubViewport, useHarness } from '../test-harness.ts';
+import { Fail, FakeEventSource, FakeIntersectionObserver, fetchMock, routes, sess, stubViewport, useHarness } from '../test-harness.ts';
 
 useHarness(() => ({ 'GET /agents': { agents: [] } }));
 
@@ -38,6 +38,25 @@ test('the PRs the list shows are read from the mirror once the stream opens, eac
   expect(chip.closest('a[href^="#/s/"]')).toBeNull();
   expect(badge(1, 'open')).toHaveTextContent(/^#1$/);
   expect(reads().sort(), 'one read per PR, in GitHub\'s case-insensitive form').toEqual(['apps/github/repos/a/one/pulls/1', 'apps/github/repos/a/one/pulls/2']);
+});
+
+test('only badges on screen are read; the stream updates the rest, and a badge scrolled back into view is not read again', async () => {
+  const below = (el: Element) => /#[34]$/.test(el.textContent ?? '');
+  FakeIntersectionObserver.offScreen = below;
+  for (const n of [1, 2, 3, 4]) routes[mirror(n)] = pull(n);
+  list(['github:a/one#1', 'github:a/one#2', 'github:a/one#3', 'github:a/one#4']);
+  (await stream()).open();
+  await findBadge(2, 'open');
+  expect(reads().sort(), 'rows below the fold are not read').toEqual(['apps/github/repos/a/one/pulls/1', 'apps/github/repos/a/one/pulls/2']);
+  FakeEventSource.all[0].emit('pull_request', { action: 'closed', repository: { full_name: 'a/one' }, pull_request: pull(3, merged) });
+  expect(badge(3, 'merged'), 'an event needs no read').toBeInTheDocument();
+  FakeIntersectionObserver.offScreen = (el) => !below(el);
+  FakeIntersectionObserver.scroll();
+  await findBadge(4, 'open');
+  FakeIntersectionObserver.offScreen = () => false;
+  FakeIntersectionObserver.scroll();
+  expect(reads().sort(), 'the streamed and the already read are not read again').toEqual([1, 2, 4].map((n) => `apps/github/repos/a/one/pulls/${n}`));
+  expect(badge(3, 'merged')).toBeInTheDocument();
 });
 
 test('an archived review row is not read; its badge stays neutral and links by number', async () => {

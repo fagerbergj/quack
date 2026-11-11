@@ -104,11 +104,35 @@ export class FakeEventSource {
   }
 }
 
+/** An IntersectionObserver a test drives: an observed element is on screen unless `offScreen` says otherwise; `scroll()` reports each one again. */
+export class FakeIntersectionObserver {
+  static all: FakeIntersectionObserver[] = [];
+  static offScreen = (_el: Element) => false;
+  private els = new Set<Element>();
+  private fn: (entries: Array<{ target: Element; isIntersecting: boolean }>) => void;
+  constructor(fn: FakeIntersectionObserver['fn']) {
+    this.fn = fn;
+    FakeIntersectionObserver.all.push(this);
+  }
+  observe(el: Element) {
+    this.els.add(el);
+    this.fn([{ target: el, isIntersecting: !FakeIntersectionObserver.offScreen(el) }]);
+  }
+  disconnect() {
+    this.els.clear();
+  }
+  static scroll() {
+    act(() => FakeIntersectionObserver.all.forEach((o) => o.els.forEach((el) => o.fn([{ target: el, isIntersecting: !FakeIntersectionObserver.offScreen(el) }]))));
+  }
+}
+
 /** Stubs fetch, WebSocket and the viewport for each test, and fails a test that made a request it did not route. */
 export function useHarness(base: () => Routes) {
   beforeEach(() => {
     FakeSocket.all = [];
     FakeEventSource.all = [];
+    FakeIntersectionObserver.all = [];
+    FakeIntersectionObserver.offScreen = () => false;
     for (const k of Object.keys(routes)) delete routes[k];
     Object.assign(routes, base());
     for (const k of Object.keys(live)) delete live[k];
@@ -117,6 +141,7 @@ export function useHarness(base: () => Routes) {
     forgetVersion();
     vi.stubGlobal('WebSocket', FakeSocket);
     vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
     stubViewport(true);
