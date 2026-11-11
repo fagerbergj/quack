@@ -12,20 +12,16 @@ import { append, LifecycleStream, readStream, sessionFacts, type PriceOf, type W
 const ctx = BACKGROUND_CONTEXT;
 const BACKFILLED = 'catalog-backfilled';
 
-/** A session's recorded stream; one from before the stream is derived from its documents once and recorded in its log,
+/** A session's recorded stream; one its process never recorded is derived from its documents once and recorded in its log,
  * so the session continues the same numbering. A log has one owner: call this only while the session has no process. */
 export async function recordedStream(dir: string, priceOf: PriceOf): Promise<WireEvent[] | undefined> {
   if (!existsSync(join(dir, 'session.sqlite'))) return undefined;
   const harness = await Harness.open(await openNodeSqliteStorage(join(dir, 'session.sqlite')), { models: createModels(), registry: createRegistry() }, ctx);
   try {
     const root = await harness.root(ctx);
-    const { doc, recorded, fresh, legacyDirect } = await readStream(harness, root, await sessionFacts(dir), priceOf, ctx);
+    const { doc, recorded, fresh } = await readStream(harness, root, await sessionFacts(dir), priceOf, ctx);
     if (recorded) return doc.events;
-    await root.commit(async (tx) => {
-      const d = await tx.doc(LifecycleStream, root.id);
-      if (legacyDirect) d.direct = legacyDirect;
-      append(d, fresh);
-    }, ctx);
+    await root.commit(async (tx) => append(await tx.doc(LifecycleStream, root.id), fresh), ctx);
     return fresh;
   } finally {
     await harness.close(ctx);

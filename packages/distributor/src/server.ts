@@ -243,8 +243,6 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
         const { status, wake, waitingOnHuman, note } = await ping(key);
         notes.set(key, note ?? '');
         active.set(key, status === 'HealthyBusy' || Boolean(waitingOnHuman));
-        // A run with no log messages (a workflow) still counts as activity while it works.
-        if (status === 'HealthyBusy') await driver.touch(key, now());
         await mark(key, status === 'HealthyBusy', wake?.at);
         if (!idle(key)) continue;
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.

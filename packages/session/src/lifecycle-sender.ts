@@ -84,13 +84,9 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
   const commit = (fn: (doc: Parameters<Parameters<Conversation['commit']>[0]>[0]) => Promise<void>) => root.commit(fn, ctx);
 
   async function record() {
-    const { fresh, legacyDirect } = await readStream(harness, root, await opts.facts(), opts.priceOf ?? (() => undefined), ctx);
-    if (!fresh.length && !legacyDirect) return;
-    await commit(async (tx) => {
-      const doc = await tx.doc(LifecycleStream, root.id);
-      if (legacyDirect && !doc.direct) doc.direct = legacyDirect;
-      append(doc, fresh);
-    });
+    const { fresh } = await readStream(harness, root, await opts.facts(), opts.priceOf ?? (() => undefined), ctx);
+    if (!fresh.length) return;
+    await commit(async (tx) => append(await tx.doc(LifecycleStream, root.id), fresh));
   }
 
   function retryLater() {

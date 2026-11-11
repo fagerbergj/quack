@@ -23,7 +23,7 @@ test('the stream is the documents at their latest revision, and only a change ap
     approvals: { items: { a1: { tool: 'merge', args: { pr: 1 }, requestedAt: 10, verdict: { decision: 'approve' as const, reason: null, by: { kind: 'person' as const, name: 'jason' }, at: 20 }, executing: false, done: true } } },
     questions: { items: { q1: { question: 'Which?', options: ['x'], evidence: null, askedAt: 30, answer: null, closed: true } } },
     artifacts: { kinds: { review: { versions: [{ kind: 'review', version: 1, hash: 'h', content: 'c', sealedAt: 40, verdict: null }] } } },
-    failures: { items: {} }, runs: [{ n: 1, startedAt: 5, endedAt: 50, failedSteps: [], lastMessage: 'bye', cancelled: [] }], spend: { ...none, input: 3, cost: 0.5, at: 45 }, spentMicros: 0n,
+    runs: [{ n: 1, startedAt: 5, endedAt: 50, failedSteps: [], lastMessage: 'bye', cancelled: [] }], spend: { ...none, input: 3, cost: 0.5, at: 45 }, spentMicros: 0n,
   };
   const events = currentEvents('root-1', { ...facts, title: 'Hello' }, docs);
   assert.deepEqual(events.map((e) => `${e.type} ${e.id}`), [

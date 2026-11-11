@@ -125,7 +125,7 @@ export async function openSeed(dataDir: string, key: string, title: string, faux
   const dir = join(dataDir, sessionDirName(key));
   await mkdir(dir, { recursive: true });
   const now = String(Date.now());
-  await Promise.all([['session-key', key], ['agent', agent], ['title', title], ['created', now], ['activity', now]].filter(([, v]) => v).map(([f, v]) => writeFile(join(dir, f), v!)));
+  await Promise.all([['session-key', key], ['agent', agent], ['title', title], ['created', now]].filter(([, v]) => v).map(([f, v]) => writeFile(join(dir, f), v!)));
   await cp(join(ROOT, 'agents', agent), join(dir, 'agent-def'), { recursive: true });
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:9/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
