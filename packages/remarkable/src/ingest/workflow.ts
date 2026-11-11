@@ -1,10 +1,10 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { contentText } from '@earendil-works/pi-ai';
-import type { ClassifierRef, ModelRef } from '@quack/judge';
+import type { DecisionModelRef, ModelRef } from '@quack/judge';
 import { agentModel, observeGeneration, seal, type Decision } from '@quack/sdk';
 import { defineDoc } from '@earendil-works/pi-durable';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
-import { classifierChoice, parseTopic } from './classify.ts';
+import { decisionModelChoice, parseTopic } from './classify.ts';
 import { renderNotebook, renderPages } from './render.ts';
 import { transcriptKind, type Transcript } from './transcript.ts';
 
@@ -25,7 +25,7 @@ export type IngestDeps = {
   /** The vision-capable model named in the agent definition; the agent's own model when unset. */
   visionModel?: ModelRef;
   /** A decision model such as Clef, asked first for the topic. */
-  classifier?: ClassifierRef;
+  decisionModel?: DecisionModelRef;
 };
 
 /** Prefix of a failure to reach the remarkable service at all, as opposed to rmfakecloud failing behind it. */
@@ -142,7 +142,7 @@ async function propose(c: StepContext): Promise<string> {
 /** Ingest (RMK-2, RMK-3): render pages, transcribe each, classify by topic, then seal the transcript. */
 export function ingestWorkflow(deps: IngestDeps) {
   const doc = (c: StepContext) => JSON.parse(String(c.input)) as Doc;
-  const resolvers = (describe: (o: string) => string) => [...(deps.classifier ? [classifierChoice(deps.classifier, describe)] : []), agentModel];
+  const resolvers = (describe: (o: string) => string) => [...(deps.decisionModel ? [decisionModelChoice(deps.decisionModel, describe)] : []), agentModel];
   return defineWorkflow({
     name: INGEST_WORKFLOW,
     steps: [

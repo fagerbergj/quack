@@ -7,8 +7,8 @@ import type { ModelSplit, Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
 
-/** A decision model such as Clef, reached through pi-ai's classifier API. */
-export type ClassifierRef = { provider: string; modelId: string; maxInputTokens: number; act?: number };
+/** A decision model such as Clef, reached through pi-ai's models.classify. */
+export type DecisionModelRef = { provider: string; modelId: string; maxInputTokens: number; act?: number };
 
 export type Answer = { met: boolean | null; resolver: string; note?: string };
 
@@ -16,7 +16,7 @@ export type Answer = { met: boolean | null; resolver: string; note?: string };
 const BYTES_PER_TOKEN = 3;
 
 /** One question asked of a unit: `id` is the check's key; a choice question holds when the answer is one of `pass` (its first option by default). */
-export type Ask = { id: string; question: Question; pass?: string[]; /** false: never asked of the decision model, only escalated. */ classifier?: false };
+export type Ask = { id: string; question: Question; pass?: string[]; /** false: never asked of the decision model, only escalated. */ decisionModel?: false };
 
 /** A unit with the questions asked of it. */
 export type Item = { unit: Unit; checks: Ask[] };
@@ -33,7 +33,7 @@ function asked(ask: Ask, instructions: string): ClassifierQuestion {
 }
 
 /** Each question of a request with the id the judge reads its answer by, in the order the request numbers them. */
-const questionsOf = (items: Item[]) => items.flatMap((it, i) => it.checks.filter((c) => c.classifier !== false).map((c) => ({ id: qid(c, i, !!items[0].unit.shared), i, it, c })));
+const questionsOf = (items: Item[]) => items.flatMap((it, i) => it.checks.filter((c) => c.decisionModel !== false).map((c) => ({ id: qid(c, i, !!items[0].unit.shared), i, it, c })));
 
 // Clef reads a question's id as part of the question, and a check id's words can reverse its meaning;
 // the request numbers its questions instead.
@@ -48,7 +48,7 @@ function request(items: Item[]) {
 }
 
 /** The decision model's input tokens for one request (one unit, or units packed with their shared context), as the cap is judged. */
-export const classifierTokens = (unit: Unit | Unit[], checks: Ask[]) =>
+export const decisionModelTokens = (unit: Unit | Unit[], checks: Ask[]) =>
   JSON.stringify(request((Array.isArray(unit) ? unit : [unit]).map((u) => ({ unit: u, checks })))).length / BYTES_PER_TOKEN;
 const tokensOf = (items: Item[]) => JSON.stringify(request(items)).length / BYTES_PER_TOKEN;
 
@@ -84,7 +84,7 @@ function massOf(ask: Ask, a: { type: string; probability?: number; probabilities
 }
 
 // null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
-async function classify(api: ToolExecutionApi, ref: ClassifierRef, items: Item[], s: Settings, ctx: Context): Promise<Record<string, number> | null | undefined> {
+async function classify(api: ToolExecutionApi, ref: DecisionModelRef, items: Item[], s: Settings, ctx: Context): Promise<Record<string, number> | null | undefined> {
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
   if (tokensOf(items) > ref.maxInputTokens) return null;
   // A group whose checks all skip the decision model sends it nothing.
@@ -187,13 +187,14 @@ async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask
 }
 
 /** `retry` is the model calls' retry test seam. */
-export type Settings = { ref?: ClassifierRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams };
+export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams };
 /** `answer` is absent when the item was not escalated because its check had already decided. */
 export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 /** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
 export type Need = (unit: Unit, check: Ask) => boolean;
 
 async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context) {
+  // The suffix predates the decision-model name; recorded memos are keyed by it, so renaming it would re-ask them.
   const key = items.length === 1 ? `${s.memo}:${items[0].unit.id}:classifier` : `${s.memo}:${items[0].unit.id}+${items.length}:classifier`;
   const stored = await api.memo<Record<string, number> | null>(key, ctx);
   if (stored !== undefined) return stored;

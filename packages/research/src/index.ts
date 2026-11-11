@@ -14,7 +14,7 @@ export function researchSessionExtensions(config: ResearchConfig = {}, deps: { i
   return [
     defineExtension({ name: 'research', tools: [webSearchTool(config), webFetchTool(config, deps.isPublic), readSourceTool()] }),
     artifactsExtension([reportKind]),
-    judge({ kind: reportKind, rubric: researchRubric, evidence: deps.evidence ?? reportEvidence(), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_report' }),
+    judge({ kind: reportKind, rubric: researchRubric, evidence: deps.evidence ?? reportEvidence(), maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, toolName: 'submit_report' }),
   ];
 }
 export { manifest } from './manifest.ts';

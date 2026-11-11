@@ -84,7 +84,7 @@ export type CheckDecl = {
   question: Question;
   aggregate: AggregateDecl;
   /** false: the check's questions skip the decision model and go to the judge model, packed with the group's other escalations. */
-  classifier?: false;
+  decisionModel?: false;
 };
 
 /** The named scopes, and, keyed by rubric check id, how each model check is judged. */
@@ -200,7 +200,7 @@ export function checkDeclaration(decl: Declaration, modelChecks: string[]): void
   const missing = modelChecks.filter((id) => !decl.checks[id]);
   const extra = Object.keys(decl.checks).filter((id) => !modelChecks.includes(id));
   const unscoped = Object.entries(decl.checks).filter(([, c]) => !decl.scopes[c.scope]).map(([id, c]) => `${id} (${c.scope})`);
-  const routed = Object.entries(decl.checks).filter(([, c]) => c.classifier !== undefined && c.classifier !== false).map(([id]) => id);
-  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `classifier may only be false: ${routed.join(', ')}`].filter(Boolean);
+  const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false).map(([id]) => id);
+  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false: ${routed.join(', ')}`].filter(Boolean);
   if (problems.length) throw new Error(`the judge declaration does not match its rubric: ${problems.join('; ')}`);
 }

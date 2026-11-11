@@ -72,8 +72,8 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
     models.setProvider(createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clefModel] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
   }
   const m = faux.getModel();
-  const classifier = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
-  const extensions = [CodingTools, artifactsExtension([review]), judge({ kind: review, rubric, evidence: evidence as never, maxRevisions: 2, classifier, toolName: 'submit_review' })];
+  const decisionModel = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
+  const extensions = [CodingTools, artifactsExtension([review]), judge({ kind: review, rubric, evidence: evidence as never, maxRevisions: 2, decisionModel, toolName: 'submit_review' })];
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review the PR.', 'review-1', true);
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);

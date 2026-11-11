@@ -6,15 +6,15 @@ import type { MutableModels } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import type { Context } from '@earendil-works/chord/context';
 import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { rejudge, type ClassifierRef, type Declaration, type Evidence, type Inputs, type JudgeOptions, type ModelRef, type Rubric } from '@quack/judge';
+import { rejudge, type DecisionModelRef, type Declaration, type Evidence, type Inputs, type JudgeOptions, type ModelRef, type Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { driveTool } from './driver.ts';
 import { asJudged, readSession } from './record.ts';
 
 /** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them; `units` keeps only those evidence units. */
 export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
-/** An arm judges with its adapters' rubrics and evidence and, when it has one, a per-unit classifier before the judge model. */
-export type Arm = { label: string; adapters: EvalAdapter[]; classifier?: ClassifierRef };
+/** An arm judges with its adapters' rubrics and evidence and, when it has one, a per-unit decision model before the judge model. */
+export type Arm = { label: string; adapters: EvalAdapter[]; decisionModel?: DecisionModelRef };
 
 /** A tar of `packages/` as it stood at ref in the repo at `top`; a ref from before the repo-root layout keeps it under v1/. */
 export function packagesTar(top: string, ref: string): Buffer {
@@ -31,7 +31,7 @@ export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency:
 const ESCALATED = ['judge-model', 'agent-model'];
 /** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
 type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
-type Job = { arm: string; classifier?: ClassifierRef; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
+type Job = { arm: string; decisionModel?: DecisionModelRef; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
 /** The rubric cut to the watched checks (by id or criterion.id), so only those are judged; a name that matches nothing is an error. */
 function watch(rubric: Rubric, names: string[] | undefined): Rubric {
@@ -56,7 +56,7 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
     const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
     if (!judged) continue;
     const rubric = watch(a.judge!.rubric as Rubric, c.checks);
-    return { arm: arm.label, classifier: arm.classifier, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric) } };
+    return { arm: arm.label, decisionModel: arm.decisionModel, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
@@ -78,14 +78,14 @@ function declared(d: Declaration, rubric: Rubric): Declaration {
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const base = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, maxRevisions: 0, classifier: j.classifier, judgeModel: o.judgeModel, escalations: o.escalations };
+  const base = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations };
   const judged = j.judged;
   const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
   const t = Date.now();
   const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
-  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.classifier ? k.resolvers[j.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms, notes: k.notes }));
+  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms, notes: k.notes }));
 }
 
 /** Judges every case under every arm `repeat` times and returns one row per check, and the cases an arm declined. */
@@ -155,7 +155,7 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
   return out.length ? ['', 'disagreements (case check: met per repeat by arm, then the notes each arm gave):', ...out] : [];
 }
 
-/** The replay table: per case and check, met per repeat and classifier/escalation counts for each arm; then judge seconds per arm, the disagreements and the declined cases. */
+/** The replay table: per case and check, met per repeat and decision-model/escalation counts for each arm; then judge seconds per arm, the disagreements and the declined cases. */
 export function table({ rows, declined }: Replayed, arms: string[]): string {
   const keys = [...new Set(rows.map(keyOf))].sort();
   const cell = (arm: string, key: string) => {

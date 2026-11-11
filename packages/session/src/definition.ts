@@ -12,7 +12,7 @@ import type { AgentSpec } from './runtime.ts';
 export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };
 type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
 const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
-/** `systemone` providers are decision models such as Clef: classifiers with an input cap and no generation. */
+/** `systemone` providers are decision models such as Clef: an input cap and no generation. */
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
@@ -146,7 +146,7 @@ function listed(body: unknown): Record<string, ModelLimits> {
 }
 
 async function discover(id: string, p: ProviderConfig, fetchFn: typeof fetch): Promise<Record<string, ModelLimits>> {
-  // Classifier endpoints such as Clef list no models; their limits are always hand-written.
+  // Decision-model endpoints such as Clef list no models; their limits are always hand-written.
   if (p.api === 'systemone') return {};
   const key = process.env[providerEnv({ providers: { [id]: p } })[0]];
   try {
@@ -232,6 +232,17 @@ function withoutRemoved(raw: Record<string, unknown>): Record<string, unknown> {
   return gone.length ? { ...raw, extensions: Object.fromEntries(Object.entries(raw.extensions).filter(([name]) => !gone.includes(name))) } : raw;
 }
 
+// shortcut: pinned snapshots from before judge contract v10 name the decision model `classifier`; remove one release after it ships.
+function withDecisionModel(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!isObject(raw.extensions)) return raw;
+  const extensions = Object.fromEntries(Object.entries(raw.extensions).map(([name, c]) => {
+    if (!isObject(c) || !('classifier' in c) || 'decisionModel' in c) return [name, c];
+    const { classifier, ...rest } = c;
+    return [name, { ...rest, decisionModel: classifier }];
+  }));
+  return { ...raw, extensions };
+}
+
 function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
   if (!isObject(extensions)) return ['extensions must be an object of name to config'];
   const problems = Object.entries(extensions).flatMap(([name, config]) => catalog[name]
@@ -243,7 +254,7 @@ function extensionProblems(extensions: unknown, deployment: DeploymentConfig, ca
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
 export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
-  const raw = withoutRemoved(input);
+  const raw = withDecisionModel(withoutRemoved(input));
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');

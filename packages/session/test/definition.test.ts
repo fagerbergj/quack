@@ -66,6 +66,13 @@ test('a pinned snapshot that selects a removed extension loads without it, with 
   }
 });
 
+test('a pinned snapshot that names its decision model classifier keeps it: the extension gets it as decisionModel', async () => {
+  const clef = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const def = parseDefinition({ name: 'reviewer', version: 13, model: 'local/qwen3.8-27b', extensions: { coding: {}, github: { maxRevisions: 2, classifier: clef } } }, parseDeployment(deployment), catalog);
+  const spec = await agentSpec(def, catalog);
+  assert.deepEqual(spec.extensions!.map((e) => e.name), [`github:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`]);
+});
+
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-def-'));
   try {
@@ -237,7 +244,7 @@ test('an endpoint that is missing or down leaves the hand-written models as the 
   warn.mock.restore();
 });
 
-test('a classifier provider is not asked for /models', async () => {
+test('a decision-model provider is not asked for /models', async () => {
   let asked = 0;
   const counting = (async () => ((asked += 1), { ok: true, json: async () => ({ data: [] }) })) as unknown as typeof fetch;
   await resolveDeployment(parseDeployment({ ...thin, providers: { ...thin.providers, clef: { baseUrl: 'http://clef/v1', api: 'systemone', models: { clef: { contextWindow: 8192 } } } } }), counting);

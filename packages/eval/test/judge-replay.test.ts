@@ -44,7 +44,7 @@ test('two cases, two arms and repeat 2 give the met values of each repeat for th
   assert.deepEqual(out.slice(7), ['disagreements (case check: met per repeat by arm, then the notes each arm gave):', '- b helpful: base 0 0; cand 1 1', '  - base: b: because'], 'a, where the arms agree, is not listed');
 });
 
-// A stand-in for Clef on its wire format, so an arm's classifier is really asked.
+// A stand-in for Clef on its wire format, so an arm's decision model is really asked.
 async function fakeClef(t: TestContext, probability: number) {
   const server = createServer(async (req, res) => {
     for await (const _ of req);
@@ -59,11 +59,11 @@ async function fakeClef(t: TestContext, probability: number) {
   return createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clef] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } });
 }
 
-test('arms that differ only in classifier: the classifier arm answers from Clef, the other escalates, and the disagreement is listed', async (t) => {
+test('arms that differ only in decision model: the decision-model arm answers from Clef, the other escalates, and the disagreement is listed', async (t) => {
   const models = judgeModels([true]);
   models.setProvider(await fakeClef(t, 0.05));
   const same = adapter('Is it helpful?');
-  const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [same] }, { label: 'clef', adapters: [same], classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }], repeat: 1, concurrency: 1, models, judgeModel });
+  const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [same] }, { label: 'clef', adapters: [same], decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }], repeat: 1, concurrency: 1, models, judgeModel });
   const out = table(result, ['base', 'clef']).split('\n');
   assert.equal(out[2], '| a | helpful | 1 | 0 | 0/1 | 1/0 |');
   assert.equal(out[7], '- a helpful: base 1; clef 0');

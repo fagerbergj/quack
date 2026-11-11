@@ -1,6 +1,6 @@
 {
   "name": "reviewer",
-  "version": 13,
+  "version": 14,
   "status": "promoted",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -8,7 +8,7 @@
     "coding": {},
     "github": {
       "maxRevisions": 2,
-      "classifier": {
+      "decisionModel": {
         "provider": "clef",
         "modelId": "clef",
         "maxInputTokens": 8192
