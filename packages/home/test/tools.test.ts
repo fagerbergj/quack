@@ -32,14 +32,6 @@ function sessionPage(url: string) {
   return { sessions: rows.slice(from, from + 2), ...(from + 2 < rows.length && { nextPageToken: String(from + 2) }) };
 }
 const widgets = 'github:acme/widgets#7';
-// The cross-session listings carry no artifact content.
-const artifacts = [
-  { session: widgets, kind: 'review', version: 2, summary: 'Requests changes: a nil check is missing', deliveries: [{ where: 'github', link: 'https://github.com/acme/widgets/pull/7#r1' }] },
-  { session: widgets, kind: 'notes', version: 1 },
-  { session: widgets, kind: 'extra', version: 1 },
-  { session: widgets, kind: 'review', version: 1, summary: 'old' },
-  { session: 'research:abc', kind: 'report', version: 1, summary: 'Rayleigh scattering' },
-];
 const asks = [
   { session: widgets, id: 'q1', state: 'pending', type: 'question', prompt: { question: 'Merge?', options: ['yes', 'no'] } },
   { session: widgets, id: 'a1', state: 'pending', type: 'approval', toolCall: { tool: 'merge_pr' } },
@@ -48,7 +40,7 @@ const asks = [
 const listing = (url: string) => {
   const q = new URL(url, 'http://x').searchParams.get('q') ?? '';
   const mine = <T extends { session: string; state?: string }>(rows: T[]) => rows.filter((r) => r.session === termOf(q, 'session') && (!termOf(q, 'state') || r.state === termOf(q, 'state')));
-  return url.startsWith('/artifacts?') ? { artifacts: mine(artifacts) } : { asks: mine(asks) };
+  return { asks: mine(asks) };
 };
 const REPORT = '## Summary\nRayleigh scattering.\n\n## Findings\n- Air scatters blue light about 5.5 times more than red. [s1]';
 // The export carries every version with its content, beside the transcript entries GET /messages would have read.
@@ -58,9 +50,10 @@ const reply: Record<string, unknown> = {
     entry('pi.user', 'too old'), { kind: 'pi.tool-result', model: [{ role: 'toolResult', content: [{ type: 'text', text: 'tool output' }] }] },
     entry('pi.user', 'Review it'), entry('pi.assistant', long), entry('pi.user', 'and the tests'), entry('pi.assistant', 'looked'), entry('pi.user', 'thanks'), entry('pi.assistant', 'done'),
   ], artifacts: [
-    { kind: 'review', version: 1, content: 'old body' }, { kind: 'review', version: 2, content: 'y'.repeat(7000) }, { kind: 'notes', version: 1, content: 'plain notes body' }, { kind: 'extra', version: 1, content: 'e' },
+    { kind: 'stale', version: 1, content: 'stale body', sealedAt: 0 }, { kind: 'review', version: 1, content: 'old body', sealedAt: 1 }, { kind: 'notes', version: 1, content: 'plain notes body', sealedAt: 2 },
+    { kind: 'extra', version: 1, content: 'e', sealedAt: 3 }, { kind: 'review', version: 2, content: 'y'.repeat(7000), sealedAt: 4 },
   ] },
-  'GET /sessions/research%3Aabc/export': { transcript: [], artifacts: [{ kind: 'report', version: 1, content: REPORT }] },
+  'GET /sessions/research%3Aabc/export': { transcript: [entry('pi.user', 'Why is the sky blue?')], artifacts: [{ kind: 'report', version: 1, content: REPORT, sealedAt: 1 }] },
 };
 
 // The home agent's credential as the distributor holds it: listings and process routes reach any session, but the
@@ -71,7 +64,7 @@ const server = createServer(async (req, res) => {
   const url = req.url ?? '';
   calls.push({ method: req.method ?? '', url, body: Buffer.concat(chunks).toString() });
   const foreign = req.method === 'GET' && /^\/sessions\/[^/?]+(\/(artifacts|asks))?(\?|$)/.test(url);
-  const found = foreign ? undefined : url.startsWith('/sessions?') ? sessionPage(url) : /^\/(artifacts|asks)\?/.test(url) ? listing(url) : reply[`${req.method} ${url}`];
+  const found = foreign ? undefined : url.startsWith('/sessions?') ? sessionPage(url) : url.startsWith('/asks?') ? listing(url) : reply[`${req.method} ${url}`];
   const post = req.method === 'POST' ? { ok: true } : undefined;
   res.writeHead(found || post ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(found ?? post ?? { error: 'nope' }));
 });
@@ -119,33 +112,31 @@ test('find_sessions asks the server to drop home chats and keep one agent, and f
   assert.equal(calls.filter((c) => c.url.startsWith('/sessions?')).length, 2, 'three rows over two-row pages');
 });
 
-test('read_session reads another session through the listings the home grant allows: newest results, what waits on you, last messages', async () => {
+test('read_session leads with the newest version of each kind in full, then one status line and what waits on you', async () => {
   calls.length = 0;
   const { text } = await run('read_session', { key: widgets });
-  const [overview] = text.split('\n--- ');
-  assert.ok(overview!.length <= 4001);
-  assert.match(text, /state needs_you/);
-  assert.match(text, /- review v2: Requests changes: a nil check is missing \(github https:/);
-  assert.match(text, /- notes v1\n- extra v1\n/);
-  assert.doesNotMatch(text, /review v1/);
-  assert.doesNotMatch(text, /push/, 'resolved asks stay out');
-  assert.match(text, /Waiting on you:\n- Merge\? \[yes \/ no\]\n- approve merge_pr\?/);
-  assert.match(text, /Last messages:\n- user: Review it\n- assistant: x{400}…\n- user: and the tests\n- assistant: looked\n- user: thanks\n- assistant: done\n/);
-  assert.doesNotMatch(text, /too old|tool output/, 'the newest six person and assistant messages');
-  assert.ok(!calls.some((c) => c.url.includes('/messages')), 'the export serves the messages too');
-  assert.match(text, /\n--- review v2 ---\ny{6000}\n… \[1000 more characters; the whole review is at #\/s\/github%3Aacme%2Fwidgets%237\]\n--- notes v1 ---\nplain notes body\n--- extra v1 ---\ne$/);
-  assert.doesNotMatch(text, /old body/, 'only the newest version of a kind');
-  assert.ok(!calls.some((c) => /\/(ping|questions|failures)$/.test(c.url)), 'no read wakes the session');
+  const link = '#/s/github%3Aacme%2Fwidgets%237';
+  assert.equal(text, [
+    '--- review v2 ---', `${'y'.repeat(6000)}\n… [1000 more characters; the whole review is at ${link}]`, '--- extra v1 ---', 'e', '--- notes v1 ---', 'plain notes body',
+    `Review acme/widgets#7 (reviewer), state needs_you, link ${link}`, 'Waiting on you:', '- Merge? [yes / no]', '- approve merge_pr?',
+  ].join('\n'), 'three kinds, newest first; older versions, resolved asks and messages stay out');
+  assert.deepEqual(calls.map((c) => c.url.split('?')[0]).filter((u) => u !== '/sessions'), ['/asks', `/sessions/${encodeURIComponent(widgets)}/export`], 'one export call, and nothing that wakes the session');
 });
 
-test("read_session returns a researcher session's report text", async () => {
-  const { text } = await run('read_session', { key: 'research:abc' });
-  assert.match(text, /^Why is the sky blue \(researcher\), state running[\s\S]*- report v1: Rayleigh scattering/);
-  assert.ok(text.endsWith(`--- report v1 ---\n${REPORT}`), text);
+test('read_session adds the last messages only when asked, from the same export', async () => {
+  calls.length = 0;
+  const { text } = await run('read_session', { key: widgets, messages: true });
+  assert.ok(text.endsWith('\nLast messages:\n- user: Review it\n- assistant: ' + 'x'.repeat(400) + '…\n- user: and the tests\n- assistant: looked\n- user: thanks\n- assistant: done'), text);
+  assert.doesNotMatch(text, /too old|tool output/, 'the newest six person and assistant messages');
+  assert.equal(calls.filter((c) => c.url.includes('/export')).length, 1);
+});
+
+test("read_session returns a researcher session's report text first", async () => {
+  assert.equal((await run('read_session', { key: 'research:abc' })).text, `--- report v1 ---\n${REPORT}\nWhy is the sky blue (researcher), state running, link #/s/research%3Aabc`);
 });
 
 test("read_session shows a failed run's steps from the row", async () => {
-  assert.match((await run('read_session', { key: 'sleeper:L1:9:waivers' })).text, /state failed[\s\S]*Failures:\n- submit: deadline passed/);
+  assert.match((await run('read_session', { key: 'sleeper:L1:9:waivers' })).text, /^Waivers week 9 \(sleeper-waivers\), state failed, link \S+, no results yet\nFailures:\n- submit: deadline passed$/);
 });
 
 test('a key the distributor does not list is refused before any session endpoint is touched', async () => {
