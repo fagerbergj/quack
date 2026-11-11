@@ -10,9 +10,8 @@ export { trendsWorkflow, TRENDS_WORKFLOW, type TrendsDeps } from './workflow.ts'
 
 /** The trends workflow wired to the Sleeper API and the service half named in the environment. */
 export function trendsFromEnv(env: Record<string, string | undefined> = process.env) {
-  // Read now: the session process deletes these from process.env once its agent has loaded.
-  const { url, token } = appEndpoint('sleeper', env);
-  const get = appGet(env);
+  const { url, token } = appEndpoint('sleeper');
+  const get = appGet();
   const path = (league: string) => `/leagues/${encodeURIComponent(league)}/snapshots`;
   const deps: TrendsDeps = {
     ...depsFromEnv(env),

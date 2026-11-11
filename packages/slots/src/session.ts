@@ -5,10 +5,19 @@ import { httpClient, SlotGate, type GateOptions, type SlotCall } from './gate.ts
 
 export type SlotsConfig = Partial<Pick<GateOptions, 'graceMs' | 'capMs' | 'leaseTtlMs' | 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
 
-/** The deployment's gate: installed for every session that has a distributor to reach (QUACK_INDEX_URL and QUACK_INDEX_TOKEN), otherwise nothing. */
+/** The deployment's gate: installed for every session the runtime primed with a distributor to reach, otherwise nothing. */
 export function slotsFromEnv(env: Record<string, string | undefined> = process.env) {
-  const app = env.QUACK_INDEX_URL && env.QUACK_INDEX_TOKEN ? appEndpoint('slots', env) : undefined;
+  const app = reachable();
   return slotsSessionExtensions({ serviceUrl: app?.url, serviceToken: app?.token, holder: env.QUACK_SESSION_KEY });
+}
+
+// An unprimed endpoint is a session launched without a distributor, which runs ungated.
+function reachable() {
+  try {
+    return appEndpoint('slots');
+  } catch {
+    return undefined;
+  }
 }
 
 /** The session half: a model slot per run, taken before a request and kept between the run's turns. Without a service it installs nothing. */

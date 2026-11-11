@@ -6,7 +6,7 @@ import { MIRROR_PATH } from './pulls.ts';
 import { settingsProblems } from './settings.ts';
 import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 
-// The launch credential comes from the environment, never the definition file.
+// The launch credential comes from the endpoint the runtime primed, never the definition file.
 export const manifest: ExtensionManifest = {
   name: 'github',
   optional: ['judge'],
@@ -14,7 +14,6 @@ export const manifest: ExtensionManifest = {
   app: mountGithub,
   // The pull requests the page's badges read and their live events, and the webhook GitHub signs (the app verifies the signature).
   pages: [{ method: 'GET', path: MIRROR_PATH }, { method: 'GET', path: '/events' }, { method: 'POST', path: '/webhook' }],
-  env: ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'],
   evalAdapters: [evalAdapter],
   actions: [reviewPullRequest],
   session: (config) => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { evalService, manifest, type PullRequestRecord } from '../src/index.ts';
 
@@ -14,8 +15,8 @@ const pr: PullRequestRecord = { owner: 'acme', repo: 'widgets', number: 7, title
 
 test('a replay is served the pinned pull request, and its reviews are captured, never posted', async () => {
   const svc = await evalService({ pr });
-  const url = svc.env.QUACK_INDEX_URL;
-  const auth = { authorization: `Bearer ${svc.env.QUACK_INDEX_TOKEN}` };
+  const url = svc.env.QUACK_SESSION_LISTENER_URL;
+  const auth = { authorization: `Bearer ${await readFile(svc.env.QUACK_LAUNCH_TOKEN_FILE, 'utf8')}` };
   try {
     assert.deepEqual(await (await fetch(`${url}/apps/github/pulls/acme/widgets/7`, { headers: auth })).json(), pr);
     assert.deepEqual(await (await fetch(`${url}/apps/github/pulls/acme/widgets/7/head`, { headers: auth })).json(), { headSha: 'abc', body: '' }, 'the head submit_review checks before posting');
@@ -36,7 +37,7 @@ test('a replay is served the pinned pull request, and its reviews are captured, 
 test('a pin recorded after its PR merged is still served open, so the replay reviews it', async () => {
   const svc = await evalService({ pr: { ...pr, state: 'closed' } });
   try {
-    const served = await (await fetch(`${svc.env.QUACK_INDEX_URL}/apps/github/pulls/acme/widgets/7`, { headers: { authorization: `Bearer ${svc.env.QUACK_INDEX_TOKEN}` } })).json();
+    const served = await (await fetch(`${svc.env.QUACK_SESSION_LISTENER_URL}/apps/github/pulls/acme/widgets/7`, { headers: { authorization: `Bearer ${await readFile(svc.env.QUACK_LAUNCH_TOKEN_FILE, 'utf8')}` } })).json();
     assert.equal(served.state, 'open');
   } finally {
     await svc.close();

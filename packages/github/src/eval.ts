@@ -1,6 +1,9 @@
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { EvalAdapter } from '@quack/sdk';
 import type { PullRequestRecord } from './checkout.ts';
 import { reviewerRubric } from './rubric.ts';
@@ -34,7 +37,12 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
   }).listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { env: { QUACK_INDEX_URL: url, QUACK_INDEX_TOKEN: token }, captured, close: () => new Promise<void>((r) => server.close(() => r())) };
+  // The replayed runtime reads its launch credential from a 0600 file and removes it, as under a driver.
+  const dir = await mkdtemp(join(tmpdir(), 'quack-eval-github-'));
+  const tokenFile = join(dir, 'listener-token');
+  await writeFile(tokenFile, token, { mode: 0o600 });
+  const close = async () => (await new Promise<void>((r) => server.close(() => r())), await rm(dir, { recursive: true, force: true }));
+  return { env: { QUACK_SESSION_LISTENER_URL: url, QUACK_LAUNCH_TOKEN_FILE: tokenFile }, captured, close };
 }
 
 // shortcut: no judge evidence, since reviewEvidence reads a live checkout a recording does not keep (judge replay takes inline evidence); add one with a pinned diff.

@@ -23,7 +23,7 @@ export async function sessionDriver(env: NodeJS.ProcessEnv, o: Options, seams: S
     // shortcut: process sessions share this host, its secrets and its loopback, so one can still dial the public port as the tailnet; the docker driver fences it off.
     // Processes a previous run left are stopped before anything starts or the backfill opens a log they own.
     const reaped = reapOrphans(o.dataDir, { entry: o.runtime }).then((dirs) => void (dirs.length && console.warn(`stopped ${dirs.length} session processes a previous run left`)), (err) => console.error('could not stop old session processes:', err.message));
-    return { listenAddress: LOOPBACK, ready: reaped, driver: processDriver({ ...base, command: [process.execPath, o.runtime], startTimeoutMs: 60_000, env: { QUACK_INDEX_URL: `http://${LOOPBACK}:${sessionPort}` }, broker, inherit: (agentPath) => sessionEnv(agentPath) }) };
+    return { listenAddress: LOOPBACK, ready: reaped, driver: processDriver({ ...base, command: [process.execPath, o.runtime], startTimeoutMs: 60_000, env: { QUACK_SESSION_LISTENER_URL: `http://${LOOPBACK}:${sessionPort}` }, broker, inherit: (agentPath) => sessionEnv(agentPath) }) };
   }
   if (Number(new URL(config.distributorUrl).port) !== sessionPort) throw new Error(`QUACK_SESSION_DISTRIBUTOR_URL must name the session port ${sessionPort}, never the public one`);
   const api = seams.api ?? dockerApi(parseDockerHost(config.dockerHost));

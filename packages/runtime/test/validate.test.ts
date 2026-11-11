@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { appEndpoint, primeSessionEndpoint } from '@quack/sdk';
 import { validate } from '../src/validate.ts';
 
 const config = {
@@ -47,13 +48,11 @@ test('the repo agents load without their service env set', async () => {
   assert.ok(r.loaded > 0);
 });
 
-test('deployment-level extension env gets a placeholder too, so the slots gate is built', async () => {
-  delete process.env.QUACK_INDEX_URL;
-  delete process.env.QUACK_INDEX_TOKEN;
+test('a placeholder session endpoint is primed, so the slots gate is built', async () => {
+  primeSessionEndpoint(undefined);
   const r = await validate({ ...layout({ 'deployment.json': config }), fetch: noList });
   assert.deepEqual(r.failures, []);
-  assert.equal(process.env.QUACK_INDEX_URL, 'placeholder');
-  assert.equal(process.env.QUACK_INDEX_TOKEN, 'placeholder');
+  assert.deepEqual(appEndpoint('slots'), { url: 'http://placeholder/apps/slots', token: 'placeholder' });
 });
 
 test('a defaultModel no provider can serve fails validation before any agent loads', async () => {

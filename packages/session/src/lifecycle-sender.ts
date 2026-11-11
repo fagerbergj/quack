@@ -16,11 +16,6 @@ export const runsIn = (v: ConversationView) => v.docs['pi.live']?.run !== undefi
 /** What a flush depends on in the conversation view: its last entry, run state, usage and tool states, never streamed deltas. */
 export const viewSignature = (v: ConversationView) => JSON.stringify([v.entries.at(-1)?.id, runsIn(v), v.docs['pi.usage'], (v.docs['pi.live']?.tools as { status: string }[] | undefined)?.map((t) => t.status)]);
 
-/** The variables that carry the session listener's URL and this launch's credential; the one place their names live. */
-export const LAUNCH_ENV = ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'] as const;
-/** The session listener and the launch credential the distributor handed this process, when it has both. */
-export const launchEnv = (env: NodeJS.ProcessEnv = process.env) => (env.QUACK_INDEX_URL && env.QUACK_INDEX_TOKEN ? { url: env.QUACK_INDEX_URL, token: env.QUACK_INDEX_TOKEN } : undefined);
-
 export type SetTimer = (fn: () => void, ms: number) => () => void;
 /** A timer that never holds the process open; returns its cancel. */
 export const unrefTimer: SetTimer = (fn, ms) => {

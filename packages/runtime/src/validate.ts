@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { declaredEnv, deploymentEnv, loadAgent, parseDeployment, resolveDeployment, type DeploymentConfig } from '@quack/session';
-import type { ExtensionManifest } from '@quack/sdk';
+import { primeSessionEndpoint, type ExtensionManifest } from '@quack/sdk';
 import { catalog, deploymentExtensions, manifests } from './catalog.ts';
 
 export interface Validation { loaded: number; failures: string[] }
@@ -26,6 +26,8 @@ export async function validate(opts: { config: string; agentsDir: string; dataDi
   const paths = [...subdirs(opts.agentsDir).map((d) => join(d, 'agent.json')), ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
   const result: Validation = { loaded: 0, failures: [] };
   for (const name of deploymentEnv(deploymentExtensions)) process.env[name] ??= 'placeholder';
+  // Extensions reach their apps through the endpoint a launch primes; a placeholder one is never called here.
+  primeSessionEndpoint({ url: 'http://placeholder', token: 'placeholder' });
   for (const path of paths) {
     try {
       // Factories throw on unset service env; a placeholder lets them build without contacting anything.

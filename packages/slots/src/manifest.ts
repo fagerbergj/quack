@@ -3,4 +3,4 @@ import { slotLimits } from './limits.ts';
 import { createSlotsService } from './service.ts';
 import { slotsFromEnv } from './session.ts';
 
-export const manifest: ExtensionManifest = { name: 'slots', deployment: true, env: ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'], session: () => slotsFromEnv(), app: ({ dbPath, deployment }) => createSlotsService({ dbPath, limits: slotLimits({ providers: deployment.providers ?? {} }) }) };
+export const manifest: ExtensionManifest = { name: 'slots', deployment: true, session: () => slotsFromEnv(), app: ({ dbPath, deployment }) => createSlotsService({ dbPath, limits: slotLimits({ providers: deployment.providers ?? {} }) }) };

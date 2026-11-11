@@ -86,10 +86,17 @@ export function inProcessFetch(dispatch: (req: IncomingMessage, res: ServerRespo
   };
 }
 
-/** Where a session reaches an app, with the launch credential it presents: the distributor that started the session. */
-export function appEndpoint(name: string, env: Record<string, string | undefined> = process.env): { url: string; token: string } {
-  const { QUACK_INDEX_URL: base, QUACK_INDEX_TOKEN: token } = env;
-  if (!base || !token) throw new Error(`QUACK_INDEX_URL and QUACK_INDEX_TOKEN are required to reach the ${name} app`);
+let primed: { url: string; token: string } | undefined;
+
+/** Core only: the session runtime hands over, once at boot, the listener URL and launch token it read; undefined clears them. Extensions never call it. */
+export function primeSessionEndpoint(e: { url: string; token: string } | undefined): void {
+  primed = e;
+}
+
+/** Where a session reaches an app, with the launch credential it presents: the distributor that started the session, as the runtime primed it. `env` is a test and development seam, read as-is in place of the primed pair. */
+export function appEndpoint(name: string, env?: Record<string, string | undefined>): { url: string; token: string } {
+  const { url: base, token } = env ? { url: env.QUACK_INDEX_URL, token: env.QUACK_INDEX_TOKEN } : primed ?? {};
+  if (!base || !token) throw new Error(env ? `QUACK_INDEX_URL and QUACK_INDEX_TOKEN are required to reach the ${name} app` : `the ${name} app is reached through the session listener, and this session was launched without QUACK_SESSION_LISTENER_URL and QUACK_LAUNCH_TOKEN_FILE`);
   return { url: `${base.replace(/\/$/, '')}/apps/${name}`, token };
 }
 

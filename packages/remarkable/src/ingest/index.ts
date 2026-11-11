@@ -27,8 +27,8 @@ export function createIngestService(url: string, token: string, doFetch: typeof 
   };
 }
 
-/** The workflow wired to the service half named in the environment (QUACK_INDEX_URL, QUACK_INDEX_TOKEN); the models come from the agent definition. */
-export function ingestFromEnv(config: { visionModel?: ModelRef; classifier?: ClassifierRef } = {}, env: Record<string, string | undefined> = process.env) {
-  const { url, token } = appEndpoint('remarkable', env);
+/** The workflow wired to the remarkable app through the session's primed endpoint; the models come from the agent definition. */
+export function ingestFromEnv(config: { visionModel?: ModelRef; classifier?: ClassifierRef } = {}) {
+  const { url, token } = appEndpoint('remarkable');
   return ingestWorkflow({ service: createIngestService(url, token), visionModel: config.visionModel, classifier: config.classifier });
 }

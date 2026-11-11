@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { createSchedulesService } from '@quack/schedules';
-import { Artifacts, serveApp } from '@quack/sdk';
+import { Artifacts, primeSessionEndpoint, serveApp } from '@quack/sdk';
 import { readSession } from '@quack/eval';
 import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
@@ -263,8 +263,8 @@ test('the trends job starts on demand under the week session key, and a snapshot
   }
 });
 
-test('the trends workflow keeps reading the service after the session process drops its env vars', async (t) => {
-  const env: Record<string, string | undefined> = { QUACK_INDEX_URL: 'http://service', QUACK_INDEX_TOKEN: 'tok' };
+test('the trends workflow reads the service through the endpoint primed when it was built', async (t) => {
+  primeSessionEndpoint({ url: 'http://service', token: 'tok' });
   const seen: string[] = [];
   const api = createSleeperClient({ fetch: (async (u: string) => new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[new URL(u).pathname] ?? null))) as unknown as typeof fetch, now: () => AT });
   const snap = { date: TODAY, data: await buildSnapshot(api, 'L1') };
@@ -276,9 +276,8 @@ test('the trends workflow keeps reading the service after the session process dr
     return new Response(JSON.stringify(init?.method === 'POST' ? snap : { snapshots: [] }));
   });
   // The client binds global fetch when built, so build the workflow after the mock or it reaches the real API.
-  const workflow = trendsFromEnv(env);
-  delete env.QUACK_INDEX_URL;
-  delete env.QUACK_INDEX_TOKEN;
+  const workflow = trendsFromEnv();
+  primeSessionEndpoint(undefined);
   const facts = await (workflow.steps[0] as { run(c: never): unknown }).run({ input: JSON.stringify(INPUT), api: { now: () => AT } } as never);
   assert.equal((facts as { date: string }).date, TODAY);
   // The players dump comes from the Sleeper app's day-long copy, not from Sleeper.

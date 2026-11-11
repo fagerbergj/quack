@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, launchEnv, sessionFacts, startLifecycleSender, takeLaunchToken } from '@quack/session';
+import { buildModels, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, sessionFacts, startLifecycleSender, takeLaunchEndpoint, takeLaunchToken } from '@quack/session';
+import { primeSessionEndpoint } from '@quack/sdk';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -15,8 +16,10 @@ function readJson(path: string) {
     throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
-// Taken first, before a resumed run can start a shell.
+// Taken first, before a resumed run can start a shell; extensions reach their apps through the primed endpoint as the agent loads.
 const token = await takeLaunchToken();
+const launch = await takeLaunchEndpoint();
+primeSessionEndpoint(launch);
 const config = parseDeployment(readJson(env('QUACK_CONFIG')));
 const definition = readJson(env('QUACK_AGENT'));
 // Only the providers this agent names are asked for their models, so one that is down cannot slow an agent that never uses it.
@@ -25,7 +28,6 @@ const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymen
 const { extensions } = definition;
 
 const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, key: env('QUACK_SESSION_KEY') });
-const launch = launchEnv();
 // The lifecycle channel feeds the session catalog.
 const sender = launch
   ? await startLifecycleSender(session, {

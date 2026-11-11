@@ -811,6 +811,16 @@ test('a session process gets an allowlisted environment, not the host\'s', async
   }
 });
 
+test('a launch hands the session its outbound credential as a 0600 file beside the listener URL, never as an env value', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  // The child comes up only when what it was handed checks out, so a wrong launch fails the start.
+  const check = "const fs = require('fs'); const f = process.env.QUACK_LAUNCH_TOKEN_FILE; const ok = process.env.QUACK_SESSION_LISTENER_URL === 'http://listener' && (fs.statSync(f).mode & 0o777) === 0o600 && fs.readFileSync(f, 'utf8') === 'minted' && !Object.keys(process.env).some((k) => k.startsWith('QUACK_INDEX')); if (!ok) process.exit(3); process.send({ port: 1 }); setInterval(() => {}, 1000);";
+  const driver = processDriver({ command: [process.execPath, '-e', check], dataDir, defaultAgent: '', env: { QUACK_SESSION_LISTENER_URL: 'http://listener' }, broker: { mint: () => 'minted', revoke: () => {} } });
+  await driver.ensure('research:handed');
+  await driver.stop('research:handed');
+});
+
 test('a session process that never reports a port fails with its output', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);

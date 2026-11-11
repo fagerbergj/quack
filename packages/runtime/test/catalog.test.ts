@@ -5,17 +5,16 @@ import { fileURLToPath } from 'node:url';
 import { declaredEnv, deploymentEnv } from '@quack/session';
 import { catalog, declaredApps, deploymentExtensions, loadManifests, buildCatalog, manifests } from '../src/catalog.ts';
 
-// The hard-coded catalog this one replaced: its entry names, per-extension env, and the workflow env table.
-const INDEX = ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'];
-const SLEEPER = [...INDEX, 'QUACK_EXA_API_KEY'];
+// The hard-coded catalog this one replaced: its entry names, per-extension env, and the workflow env table; app endpoints come primed, never declared.
+const SLEEPER = ['QUACK_EXA_API_KEY'];
 const WORKFLOW_ENV: Record<string, string[]> = {
   ...Object.fromEntries(['lineup', 'waivers', 'trade-finder', 'trade', 'trends', 'history', 'digest', 'retro'].map((w) => [`sleeper.${w}`, SLEEPER])),
-  'remarkable.ingest': INDEX,
+  'remarkable.ingest': [],
 };
 const OLD_ENV: Record<string, string[] | ((config: unknown) => string[])> = {
-  github: INDEX,
+  github: [],
   research: ['QUACK_EXA_API_KEY'],
-  home: INDEX,
+  home: [],
   workflows: (config) => WORKFLOW_ENV[(config as { workflow?: string })?.workflow ?? ''] ?? [],
 };
 
@@ -23,7 +22,7 @@ const agentsDir = new URL('../../../agents/', import.meta.url);
 
 test('the manifest-built catalog has the old entry names and deployment env', () => {
   assert.deepEqual(Object.keys(catalog).sort(), ['codemode', 'coding', 'contracts', 'github', 'home', 'research', 'subagent', 'workflows']);
-  assert.deepEqual(deploymentEnv(deploymentExtensions), [...INDEX, 'LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
+  assert.deepEqual(deploymentEnv(deploymentExtensions), ['LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
 });
 
 for (const dir of readdirSync(agentsDir)) {

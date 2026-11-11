@@ -70,6 +70,10 @@ export async function writeLaunchToken(dir: string): Promise<string> {
   return token;
 }
 
+/** Where a session finds the outbound credential it presents to the session listener (QUACK_LAUNCH_TOKEN_FILE); also read and removed at boot. */
+export const LISTENER_TOKEN_FILE = '.listener-token';
+export const writeListenerToken = (dir: string, token: string) => writeFile(join(dir, LISTENER_TOKEN_FILE), token, { mode: 0o600 });
+
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
 /** The agent definition a session was pinned to; the file does not exist for a session with no agent. */
@@ -359,7 +363,7 @@ export function processDriver(opts: LauncherOptions & { dataDir: string; agentsD
   return sessionHost(opts, processLauncher(opts));
 }
 
-type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's QUACK_INDEX_TOKEN and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: SetTimer };
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's outbound credential (QUACK_LAUNCH_TOKEN_FILE) and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: SetTimer };
 
 // Below the distributor's 20 s drain, so a drain still finishes after a kill.
 const STOP_TIMEOUT_MS = 10_000;
@@ -371,7 +375,8 @@ function processLauncher(opts: LauncherOptions): Launch {
     const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
     const serverToken = await writeLaunchToken(dir);
     const token = opts.broker?.mint(key);
-    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(token && { QUACK_INDEX_TOKEN: token }), ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_HOST: '127.0.0.1', QUACK_SESSION_TOKEN_FILE: join(dir, LAUNCH_TOKEN_FILE), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
+    if (token) await writeListenerToken(dir, token);
+    const env: NodeJS.ProcessEnv = { ...inherited, ...opts.env, ...(token && { QUACK_LAUNCH_TOKEN_FILE: join(dir, LISTENER_TOKEN_FILE) }), ...(agentPath && { QUACK_AGENT: agentPath }), PORT: '0', QUACK_SESSION_HOST: '127.0.0.1', QUACK_SESSION_TOKEN_FILE: join(dir, LAUNCH_TOKEN_FILE), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key };
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     if (token) proc.once('exit', () => opts.broker!.revoke(token));
     // Recorded so a later distributor finds and stops it if this one dies first.

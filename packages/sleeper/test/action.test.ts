@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { afterEach, beforeEach, test } from 'node:test';
+import { primeSessionEndpoint } from '@quack/sdk';
 import { runJob } from '../src/action.ts';
 
-const env = { QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 'secret' };
+const env = {};
+beforeEach(() => primeSessionEndpoint({ url: 'http://d', token: 'secret' }));
+afterEach(() => primeSessionEndpoint(undefined));
 
 test('run_job posts to the app\'s on-demand endpoint with the launch credential and returns its session', async () => {
   const seen: Array<{ url: string; method?: string; auth: string }> = [];
@@ -20,5 +23,6 @@ test('run_job posts to the app\'s on-demand endpoint with the launch credential 
 test('run_job surfaces the service\'s refusal and a missing configuration', async () => {
   const refusing = (async () => new Response(JSON.stringify({ error: 'on-demand jobs are not configured' }), { status: 501 })) as unknown as typeof fetch;
   await assert.rejects(runJob.start({ job: 'digest' }, { distributorUrl: 'http://d', fetch: refusing, env }), /not configured/);
-  await assert.rejects(runJob.start({ job: 'digest' }, { distributorUrl: 'http://d', fetch: refusing, env: {} }), /QUACK_INDEX_URL and QUACK_INDEX_TOKEN are required/);
+  primeSessionEndpoint(undefined);
+  await assert.rejects(runJob.start({ job: 'digest' }, { distributorUrl: 'http://d', fetch: refusing, env }), /launched without QUACK_SESSION_LISTENER_URL and QUACK_LAUNCH_TOKEN_FILE/);
 });

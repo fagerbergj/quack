@@ -11,7 +11,7 @@ import { TRENDS_WORKFLOW, trendsFromEnv } from './trends/index.ts';
 import { WAIVERS_WORKFLOW, waiversFromEnv } from './waivers/index.ts';
 import { cardAdapters } from './adapters.ts';
 
-const env = ['QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN', 'QUACK_EXA_API_KEY'];
+const env = ['QUACK_EXA_API_KEY'];
 
 /** Sleeper contributes workflows and an eval adapter per judged card; an agent binds one through the workflows extension. */
 export const manifest: ExtensionManifest = {

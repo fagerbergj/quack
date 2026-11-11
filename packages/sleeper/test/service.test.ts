@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { createSchedulesService } from '@quack/schedules';
-import { serveApp } from '@quack/sdk';
+import { primeSessionEndpoint, serveApp } from '@quack/sdk';
 import { NotFound, createSleeperClient, createSleeperService, leagueDate, sessionClient } from '../src/index.ts';
 import { ATTEMPTS, CONCURRENCY, TIMEOUT_MS } from '../src/client.ts';
 
@@ -183,9 +183,11 @@ test('the app serves its players dump from its day-long copy, and a session clie
   }
   const seen: string[] = [];
   t.mock.method(globalThis, 'fetch', async (u: string, init?: RequestInit) => (seen.push(`${u} ${new Headers(init?.headers).get('authorization')}`), reply(200, { '1': { first_name: 'A' } })));
-  const client = sessionClient({ QUACK_INDEX_URL: 'http://index', QUACK_INDEX_TOKEN: 'tok' });
+  primeSessionEndpoint({ url: 'http://index', token: 'tok' });
+  t.after(() => primeSessionEndpoint(undefined));
+  const client = sessionClient();
   assert.deepEqual(await client.players(), { '1': { first_name: 'A' } });
   await client.players();
   assert.deepEqual(seen, ['http://index/apps/sleeper/players Bearer tok']);
-  assert.equal(sessionClient({ QUACK_INDEX_URL: 'http://index', QUACK_INDEX_TOKEN: 'tok' }), client, 'one client, and one cache, per session process');
+  assert.equal(sessionClient(), client, 'one client, and one cache, per session process');
 });

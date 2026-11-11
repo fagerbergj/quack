@@ -66,7 +66,7 @@ export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegis
   return [result, facts, player];
 }
 
-const chatDepsFromEnv = (env: Record<string, string | undefined> = process.env): ChatDeps => ({ client: sessionClient(env), news: sessionNews(env) });
+const chatDepsFromEnv = (env: Record<string, string | undefined> = process.env): ChatDeps => ({ client: sessionClient(), news: sessionNews(env) });
 
 /** A sleeper job's workflow with the follow-up chat added; the Sleeper API and news come from the environment. */
 export function withChat(workflow: Workflow, deps: ChatDeps = chatDepsFromEnv()): Workflow {
