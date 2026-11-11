@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { defaultFocus, focusView, HUB } from './class-model.ts';
@@ -118,6 +118,24 @@ test('a TypeScript contract opens as a diagram and a card per declaration, with 
   await userEvent.click(within(manifest).getAllByRole('button', { name: 'Store' })[0]!);
   expect(store).toHaveFocus();
   expect(within(manifest).getByText(/Used by/)).toHaveTextContent('Used by Running, start');
+});
+
+test('a doc runs until its first @tag; a line starting with a bare @ is prose', () => {
+  const [d] = declarations('/**\n * Pings the channel.\n * @ mentions go to ops.\n * @deprecated Use pingAll.\n */\nexport declare function ping(): void;').decls;
+  expect(d!.doc).toBe('Pings the channel.\n@ mentions go to ops.');
+});
+
+test('a source the parser rejects keeps the view on its plain source, with no diagram or cards', async () => {
+  // Not valid TypeScript: tsc answers TS1005 ':' expected, so such a contract cannot pass its compile check.
+  const src = 'export interface K { () => void }';
+  expect(() => declarations(src)).toThrow();
+  const { contracts } = await import('./index.ts');
+  const spec = { kind: 'typescript', title: 'Broken', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: src, choices: [] };
+  render(<>{contracts.card!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
+  await act(async () => { await import('./typescript-model.ts'); });
+  expect(within(screen.getByRole('region', { name: 'Declarations' })).getByText(src).tagName).toBe('PRE');
+  expect(screen.queryByRole('region', { name: 'Class diagram' })).toBeNull();
+  expect(screen.queryByRole('article')).toBeNull();
 });
 
 test('an enum lists its members with their values, implicit ones numbered as the compiler does, and its box uses =', () => {

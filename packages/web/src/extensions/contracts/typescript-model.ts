@@ -19,13 +19,13 @@ function jsdocLines(c: t.Comment) {
 }
 const jsdocs = (n: t.Node) => (n.leadingComments ?? []).filter((c) => c.type === 'CommentBlock' && c.value.startsWith('*')).map(jsdocLines);
 function description(lines: string[]) {
-  const end = lines.findIndex((l) => l.startsWith('@'));
+  const end = lines.findIndex((l) => /^@\w/.test(l));
   return lines.slice(0, end < 0 ? undefined : end).join('\n').trim();
 }
 const docOf = (n: t.Node) => jsdocs(n).map(description).filter(Boolean).join('\n\n') || undefined;
 // `@param {T} [name=x] text`, whose text runs on to the next tag.
 function paramDoc(owner: t.Node, name: string) {
-  const tags = jsdocs(owner).flatMap((lines) => lines.join('\n').split(/\n(?=@)/));
+  const tags = jsdocs(owner).flatMap((lines) => lines.join('\n').split(/\n(?=@\w)/));
   return tags.map((tag) => /^@param\s+(?:\{[^}]*\}\s*)?\[?([\w$]+)\S*\s*([\s\S]*)$/.exec(tag)).find((m) => m?.[1] === name)?.[2]!.trim() || undefined;
 }
 const row = (name: string, type: string, required: boolean, depth: number, ptr: string, desc?: string): Field => ({ name, type, required, desc, depth, ptr, facts: [] });
