@@ -30,7 +30,7 @@ export const manifest: ExtensionManifest = {
     [FINDER_WORKFLOW]: { build: (config) => withChat(finderFromEnv(process.env, config as Parameters<typeof finderFromEnv>[1])), env },
     [TRENDS_WORKFLOW]: { build: () => withChat(trendsFromEnv()), env },
     [HISTORY_WORKFLOW]: { build: () => withChat(historyFromEnv()), env },
-    [DIGEST_WORKFLOW]: { build: () => withChat(digestFromEnv()), env },
-    [RETRO_WORKFLOW]: { build: () => withChat(retroFromEnv()), env },
+    [DIGEST_WORKFLOW]: { build: (config) => withChat(digestFromEnv(process.env, config as Parameters<typeof digestFromEnv>[1])), env },
+    [RETRO_WORKFLOW]: { build: (config) => withChat(retroFromEnv(process.env, config as Parameters<typeof retroFromEnv>[1])), env },
   },
 };
