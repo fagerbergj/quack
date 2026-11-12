@@ -6,11 +6,13 @@ import { manifest } from '../src/index.ts';
 
 const ids = (checks: Array<{ id: string }>) => checks.map((k) => k.id).sort();
 
-/** The evidence the manifest's adapters rebuild for a recorded card, seen as its judge saw it; exactly one adapter judges it, with the checks the live judge ran. */
+/** The evidence (or a declared rubric's inputs) the manifest's adapters rebuild for a recorded card, seen as its judge saw it; exactly one adapter judges it, with the checks the live judge ran. */
 export async function replayed(record: SessionRecord, sealed: SealedArtifact) {
   const view = asJudged(record, sealed.kind, sealed.version);
   const adapters = manifest.evalAdapters!.filter((a) => a.kind === sealed.kind);
-  const all = await Promise.all(adapters.map(async (a) => ({ a, ev: await a.judge!.evidence!(view, sealed.content) })));
+  // A declared adapter declines another card by throwing, as judge replay reads it.
+  const rebuilt = (a: (typeof adapters)[number]) => (a.judge!.declaration ? a.judge!.inputs!(view, sealed.content).catch(() => undefined) : a.judge!.evidence!(view, sealed.content));
+  const all = await Promise.all(adapters.map(async (a) => ({ a, ev: await rebuilt(a) })));
   const hits = all.filter((h) => h.ev !== undefined);
   assert.equal(hits.length, 1, `${hits.length} adapters judge this card`);
   const rubric = hits[0].a.judge!.rubric as Rubric;

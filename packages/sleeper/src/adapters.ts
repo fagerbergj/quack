@@ -2,7 +2,8 @@ import type { Evidence, Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { historyEvidence, historyRubric } from './history/rubric.ts';
 import { cardsKind } from './lineup/card.ts';
-import { LINEUP_NEWS, lineupEvidence, lineupRubric } from './lineup/rubric.ts';
+import type { Facts } from './lineup/facts.ts';
+import { lineupDeclaration, lineupInputsOf, lineupRubric } from './lineup/rubric.ts';
 import { DIGEST_NEWS, digestEvidence, digestRubric, RETRO_NEWS, retroEvidence, retroRubric } from './report/rubric.ts';
 import { newsGated, type NewsGate } from './rubric-kit.ts';
 import { TRADE_NEWS, tradeEvidence, tradeRubric } from './trades/rubric.ts';
@@ -30,13 +31,24 @@ function adaptersFor(card: string, rubric: Rubric, evidence: Build, gate?: NewsG
       async evidence(session, content) {
         if (JSON.parse(content).kind !== card) return undefined;
         if (gate && hadNews(session, content, rubric, gate) !== v.news) return undefined;
-        const facts = session.results?.facts;
-        if (!facts) throw new Error(`the recording keeps no facts for this ${card} card: no workflow run that sealed it left step results`);
-        return evidence(facts as never)(null, { content });
+        return evidence(recordedFacts(session, content, card) as never)(null, { content });
       },
     },
   }));
 }
+
+/** The facts of the run that sealed a recorded card of this kind; throws, declining the recording, for another kind or a run that kept none. */
+function recordedFacts(session: RecordedSession, content: string, card: string) {
+  if (JSON.parse(content).kind !== card) throw new Error(`not a ${card} card`);
+  const facts = session.results?.facts;
+  if (!facts) throw new Error(`the recording keeps no facts for this ${card} card: no workflow run that sealed it left step results`);
+  return facts;
+}
+
+const lineupAdapter: EvalAdapter = {
+  kind: cardsKind.kind,
+  judge: { rubric: lineupRubric, declaration: lineupDeclaration, inputs: async (session, content) => lineupInputsOf(recordedFacts(session, content, 'lineup') as unknown as Facts, content) },
+};
 
 // The waivers facts pin only keeps a replay of an older dataset from refusing the recorded doc; the workflow rebuilds the facts live.
 const [waivers, ...waiversRest] = adaptersFor('waivers', waiversRubric, waiversEvidence, WAIVERS_NEWS);
@@ -45,7 +57,7 @@ const [waivers, ...waiversRest] = adaptersFor('waivers', waiversRubric, waiversE
 export const cardAdapters: EvalAdapter[] = [
   { ...waivers, services: { [WAIVERS_FACTS_KIND]: async () => ({ env: {}, captured: [], close: async () => {} }) } },
   ...waiversRest,
-  ...adaptersFor('lineup', lineupRubric, lineupEvidence, LINEUP_NEWS),
+  lineupAdapter,
   ...adaptersFor('trade-finder', tradeRubric, tradeEvidence, TRADE_NEWS),
   ...adaptersFor('trends', trendsRubric, trendsEvidence, TRENDS_NEWS),
   ...adaptersFor('history', historyRubric, historyEvidence),
