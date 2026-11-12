@@ -4,18 +4,16 @@ import type { Declaration, DecisionModelRef, JudgeOptions, Rubric } from '@quack
 import type { Step, StepContext } from '@quack/workflows';
 import { cardsKind } from './lineup/card.ts';
 import type { LineupInput } from './lineup/facts.ts';
-import { newsGated, type NewsGate } from './rubric-kit.ts';
 
-type JudgeDeps = { news?: unknown; now?: () => number; decisionModel?: DecisionModelRef };
+type JudgeDeps = { now?: () => number; decisionModel?: DecisionModelRef };
 
 /** How a card is judged from the facts it was built on: by a declaration over named inputs, or (a job not yet declared) by evidence it builds. */
 export type CardJudging<F> = { declaration: Declaration; inputs: (f: F) => unknown; evidence?: never } | { evidence: (f: F) => unknown; declaration?: never };
 
-/** A job's card judge: its rubric gated on the news source by newsGated, and its evidence or inputs from the facts its card was built on. */
-export function cardJudge<F>(deps: JudgeDeps, rubric: Rubric, gate: NewsGate | undefined, how: CardJudging<F>) {
-  const { rubric: gated, notes } = gate ? newsGated(rubric, gate, !!deps.news) : { rubric, notes: [] };
+/** A job's card judge: its rubric, and its evidence or inputs from the facts its card was built on. */
+export function cardJudge<F>(deps: JudgeDeps, rubric: Rubric, how: CardJudging<F>) {
   const judged = (facts: F) => (how.declaration ? { declaration: how.declaration, inputs: how.inputs(facts) as JudgeOptions['inputs'] & {} } : { evidence: how.evidence(facts) as NonNullable<JudgeOptions['evidence']> });
-  return (facts: F): { options: JudgeOptions; notes: string[] } => ({ options: { kind: cardsKind, rubric: gated, ...judged(facts), decisionModel: deps.decisionModel, maxRevisions: 1 }, notes });
+  return (facts: F): { options: JudgeOptions } => ({ options: { kind: cardsKind, rubric, ...judged(facts), decisionModel: deps.decisionModel, maxRevisions: 1 } });
 }
 
 /** What a card job is: how it gathers facts, asks for a decision, builds the card and judges it. */
@@ -25,12 +23,11 @@ export type CardJob<F, D> = {
   prompt: (f: F) => string;
   card: (f: F, d: D) => object;
   rubric: Rubric;
-  news?: NewsGate;
 } & CardJudging<F>;
 
 /** The facts step (code) and the judged card step every card job ends with. */
 export function cardSteps<F, D>(deps: JudgeDeps, job: CardJob<F, D>): Step[] {
-  const judgeOf = cardJudge(deps, job.rubric, job.news, job);
+  const judgeOf = cardJudge(deps, job.rubric, job);
   const facts = (c: StepContext) => c.prior.facts as unknown as F;
   return [
     { name: 'facts', kind: 'code', run: async (c) => (await job.facts(c, JSON.parse(String(c.input)) as LineupInput, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue },
