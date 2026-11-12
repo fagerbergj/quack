@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
+import { loadArm, packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
 
 const rubric = (question: string): Rubric => ({
   name: 'acme', version: 1, threshold: 0.5,
@@ -139,4 +140,33 @@ test('an arm ref unpacks packages/ whether that commit kept them at the root or 
   git('commit', '-qm', 'root');
   assert.deepEqual(files('HEAD~1'), ['packages/x/a.ts']);
   assert.deepEqual(files('HEAD'), ['packages/x/a.ts']);
+});
+
+test('an arm from another tree judges with that tree\'s judge and SDK, so each arm\'s requests come from its own engine', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-arm-engine-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  cpSync(fileURLToPath(new URL('../../', import.meta.url)), join(dir, 'packages'), { recursive: true, filter: (src) => !src.includes('node_modules') });
+  const patch = (file: string, from: string, to: string) => {
+    const s = readFileSync(join(dir, 'packages', file), 'utf8');
+    assert.ok(s.includes(from), `${file} no longer has ${from}`);
+    writeFileSync(join(dir, 'packages', file), s.replace(from, to));
+  };
+  // The other tree's judge marks the question and its SDK sets a temperature, both on the judge model's request.
+  patch('judge/src/resolve.ts', ': q.instructions;', ': `${q.instructions} (other judge)`;');
+  patch('sdk/src/decide.ts', '{ signal: ctx.abortSignal, fetch })), ctx.abortSignal, seams)', '{ signal: ctx.abortSignal, fetch, temperature: 0.25 })), ctx.abortSignal, seams)');
+  const there = await loadArm(dir);
+  const seen: [string, boolean, number | undefined][] = [];
+  const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  const record = (context: { messages: unknown[] }, options?: { temperature?: number }) => {
+    const sent = JSON.stringify(context.messages);
+    seen.push([sent.includes('arm here') ? 'here' : 'there', sent.includes('(other judge)'), options?.temperature]);
+    return answer(true);
+  };
+  faux.setResponses([record, record]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const arms: Arm[] = [{ label: 'here', adapters: [adapter('Is it helpful, arm here?')] }, { label: 'there', adapters: [adapter('Is it helpful, arm there?')], rejudge: there.rejudge }];
+  await replayJudge({ cases: [cases[0]], arms, repeat: 1, concurrency: 1, models, judgeModel });
+  assert.deepEqual(seen.sort(), [['here', false, undefined], ['there', true, 0.25]]);
+  assert.ok(there.adapters.length, 'the other tree\'s extensions load beside its engine');
 });

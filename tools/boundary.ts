@@ -79,8 +79,8 @@ export function packageEdges(packagesDir: string): Edge[] {
 }
 
 function edgeProblem(e: Edge): string | undefined {
-  // The runtime loads the deployment's extensions by computed specifier; that is its job, as assembling every package is.
-  if (e.to.startsWith('<computed')) return e.from === 'runtime' ? undefined : `${e.from} imports ${e.to}, which the boundary cannot check`;
+  // The runtime loads the deployment's extensions by computed specifier, and eval a replay arm's packages from another tree; that is their job.
+  if (e.to.startsWith('<computed')) return e.from === 'runtime' || e.from === 'eval' ? undefined : `${e.from} imports ${e.to}, which the boundary cannot check`;
   if (e.to === '<outside packages>') return `${e.from} imports a file outside packages/`;
   // Workspaces hoist every package, so an undeclared import resolves here and breaks only where the package ships alone.
   return arrowProblem(e.from, e.to) ?? (e.declared ? undefined : `${e.from} imports @quack/${e.to} without declaring it in package.json`);
