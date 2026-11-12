@@ -25,6 +25,16 @@ function noLockedSwap(artifact: string, ev: Evidence): CodeResult {
 const designations = (r: Row, f: Facts) => Object.fromEntries([r.player, ...(f.current[r.slot] ? [f.players[f.current[r.slot]!]] : [])].map((p) => [p.name, p.inj ?? 'none']));
 const player = (p: PlayerFact | undefined) => p && { name: p.name, pos: p.pos, proj: p.proj, inj: p.inj, game: p.game };
 
+// A why names a player in full or by surname ("Hubbard"); a generational suffix is not a surname.
+const surname = (name: string) => name.replace(/\s+(Jr\.?|Sr\.?|II|III|IV|V)$/, '').split(' ').at(-1)!;
+const names = (text: string, name: string) => [name, surname(name)].some((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(text));
+
+/** The row's own reports and those of every rostered player its why names, each once: a why may cite another player's report from the card. */
+function newsFor(r: Row, f: Facts) {
+  const cited = Object.values(f.players).filter((p) => names(r.why, p.name)).flatMap((p) => (f.news[p.id] ?? []).map((n) => ({ ...n, player: p.name })));
+  return [...new Map([...(r.news ?? []), ...cited].map((n) => [`${n.player}\n${n.url}`, n])).values()];
+}
+
 /** Each unlocked row as one record: what a check reads, and the flags its scope keeps it by. Locked rows keep their player and are asked nothing. */
 export function lineupRows(f: Facts, card: LineupCard) {
   const inBaseline = new Set(f.baseline.map((b) => b.id));
@@ -33,7 +43,7 @@ export function lineupRows(f: Facts, card: LineupCard) {
     const b = f.baseline.find((x) => x.slot === r.slot);
     return {
       id: r.slot, slot: r.slot, start: player(f.players[r.player.id]), action: r.action, why: r.why,
-      incumbent: player(incumbent) ?? null, baseline: b ? { name: b.name, proj: b.proj } : null, news: r.news ?? [], designations: designations(r, f),
+      incumbent: player(incumbent) ?? null, baseline: b ? { name: b.name, proj: b.proj } : null, news: newsFor(r, f), designations: designations(r, f),
       // By membership, not slot: the baseline may seat the same player in RB2 that the card keeps in RB1.
       differs: changed(r, f) && !inBaseline.has(r.player.id),
       // News is fetched only for close calls, so a row with news is a close call.

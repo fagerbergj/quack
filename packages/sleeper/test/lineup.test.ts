@@ -392,6 +392,32 @@ test('a row\'s judge evidence carries its news and each player\'s designation, a
   assert.deepEqual((await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(other)))).evidence.differs, []);
 });
 
+// Week 9's FLEX row, as prod sealed it: its why cites Hubbard's trade-candidate report, which the card attaches to RB2.
+test('a row\'s news check sees the reports of every player its why names, each once', async () => {
+  const game = { opponent: 'DEN', home: true, kickoff: '2026-11-08T18:00:00.000Z', locked: false, status: 'pre_game' };
+  const hubbard = { id: '7594', name: 'Chuba Hubbard', pos: 'RB', team: 'CAR', inj: null, proj: 16.8, game };
+  const irving = { id: '11584', name: 'Bucky Irving', pos: 'RB', team: 'TB', inj: null, proj: 17.56, game: { ...game, opponent: 'CHI', home: false } };
+  const report = (title: string, url: string) => ({ title, url, date: '2026-11-05T02:00:00.000Z' });
+  const trade = report('Chuba Hubbard Floated as Possible Trade Candidate For Panthers - Yahoo Sports', 'https://sports.yahoo.com/articles/chuba-hubbard-floated-possible-trade-193509466.html');
+  const volume = report("Chuba Hubbard's bankable volume makes him matchup-proof in fantasy - Yahoo Sports", 'https://sports.yahoo.com/video/chuba-hubbards-bankable-volume-makes-him-matchup-proof-in-fantasy-024709520.html');
+  const ap = report("Irving and the Buccaneers visit Swift and the Bears in a matchup of the NFL's top rushing teams", 'https://apnews.com/article/buccaneers-bears-nfl-caleb-williams-6a273030b470edec89611a313def9122');
+  const f: Facts = {
+    league: 'L1', week: 9, team: 't', record: '', opponent: null, slots: ['RB2', 'FLEX'], current: { RB2: hubbard.id, FLEX: irving.id }, open: ['RB2', 'FLEX'],
+    players: { [hubbard.id]: hubbard, [irving.id]: irving }, candidates: { RB2: [irving.id, hubbard.id], FLEX: [irving.id, hubbard.id] },
+    baseline: [{ slot: 'RB2', id: hubbard.id, name: hubbard.name, pos: 'RB', proj: 16.8 }, { slot: 'FLEX', id: irving.id, name: irving.name, pos: 'RB', proj: 17.56 }],
+    oppProj: null, news: { [hubbard.id]: [volume, trade], [irving.id]: [ap] },
+  };
+  const card = buildCard(f, { slots: [
+    { slot: 'RB2', playerId: hubbard.id, why: "16.8 proj, best remaining RB/WR/TE after dedicated slots filled; 'bankable volume' (Yahoo); no designation; vs DEN." },
+    { slot: 'FLEX', playerId: irving.id, why: '17.56 proj over Hubbard 16.8; Bucs top NFL rushing (168.6 yd/g, AP); Irving primary RB, Hubbard trade-candidate news (Yahoo); matches baseline.' },
+  ] });
+  const ev = (await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(card)))).evidence;
+  const shown = (slot: string) => (ev.news.find((u) => u.id === `news ${slot}`)!.state.row as { news: Array<{ player: string; url: string }> }).news.map((n) => [n.player, n.url]);
+  assert.deepEqual(shown('FLEX'), [['Bucky Irving', ap.url], ['Chuba Hubbard', volume.url], ['Chuba Hubbard', trade.url]]);
+  // RB2's why names only Hubbard, whose reports the row already carries.
+  assert.deepEqual(shown('RB2'), [['Chuba Hubbard', volume.url], ['Chuba Hubbard', trade.url]]);
+});
+
 test('a start the baseline does not make is asked to name the baseline player, with the incumbent it benches', async () => {
   const real = await facts();
   // A baseline that keeps Rowe at RB2, so the card's Dash swap goes against it.
