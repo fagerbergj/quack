@@ -1,32 +1,9 @@
 // Judges recorded cases under one or more arms, N times, and prints the met table; an arm is label=ref[:decision-model] (docs/README.md).
 // Usage: node packages/eval/src/replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model]]... [--repeat N] [--concurrency N] [--escalations N]
-import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import { extensionList, loadManifests } from '@quack/runtime/catalog';
 import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
-import { adaptersOf } from './adapters.ts';
-import { packagesTar, replayJudge, table, type Arm } from './judge-replay.ts';
-
-/** The adapters of the extensions as they stood at ref: their tree is unpacked beside this one's node_modules and imported from there. */
-async function adaptersAt(ref: string) {
-  if (ref === '.') return adaptersOf(await loadManifests());
-  const dir = mkdtempSync(join(tmpdir(), 'quack-arm-'));
-  try {
-    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-    execFileSync('tar', ['-x', '-C', dir], { input: packagesTar(top, ref) });
-    symlinkSync(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(dir, 'node_modules'));
-    // A package the ref leaves as it is here stays this tree's module: a second copy would register its splitters twice.
-    const changed = (pkg: string) => spawnSync('git', ['diff', '--quiet', ref, '--', `packages/${pkg}`], { cwd: top }).status !== 0;
-    const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => (changed(s.slice(7)) ? pathToFileURL(join(dir, 'packages', s.slice(7), 'src/index.ts')).href : s));
-    return adaptersOf(await loadManifests(specs));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
+import { armAt, replayJudge, table, type Arm } from './judge-replay.ts';
 
 const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model]]... [--repeat N] [--concurrency N] [--escalations N]';
 const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, 'decision-model': { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' }, escalations: { type: 'string', default: '4' } } });
@@ -48,7 +25,7 @@ const arms: Arm[] = [];
 for (const spec of values.arm ?? ['current=.']) {
   const [label, rest = '.'] = spec.split('=');
   const [at, cls = values['decision-model'] ?? 'none'] = rest.split(':');
-  arms.push({ label, adapters: await adaptersAt(at), decisionModel: cls === 'none' ? undefined : decisionModelOf(cls) });
+  arms.push({ label, ...(await armAt(at)), decisionModel: cls === 'none' ? undefined : decisionModelOf(cls) });
 }
 const result = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge), escalations });
 console.log(table(result, arms.map((a) => a.label)));

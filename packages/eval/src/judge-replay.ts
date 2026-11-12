@@ -1,25 +1,58 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { MutableModels } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import type { Context } from '@earendil-works/chord/context';
 import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { rejudge, type DecisionModelRef, type Declaration, type Evidence, type Inputs, type JudgeOptions, type ModelRef, type Rubric } from '@quack/judge';
+import { extensionList, loadManifests } from '@quack/runtime/catalog';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
+import { adaptersOf } from './adapters.ts';
 import { driveTool } from './driver.ts';
 import { asJudged, readSession } from './record.ts';
 
 /** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them; `units` keeps only those evidence units. */
 export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
-/** An arm judges with its adapters' rubrics and evidence and, when it has one, a per-unit decision model before the judge model. */
-export type Arm = { label: string; adapters: EvalAdapter[]; decisionModel?: DecisionModelRef };
+/** An arm judges with its adapters' rubrics and evidence, its judge engine (this tree's when unset) and, when it has one, a per-unit decision model before the judge model. */
+export type Arm = { label: string; adapters: EvalAdapter[]; rejudge?: typeof rejudge; decisionModel?: DecisionModelRef };
 
 /** A tar of `packages/` as it stood at ref in the repo at `top`; a ref from before the repo-root layout keeps it under v1/. */
 export function packagesTar(top: string, ref: string): Buffer {
   const base = spawnSync('git', ['cat-file', '-e', `${ref}:packages`], { cwd: top }).status === 0 ? '' : 'v1';
   return execFileSync('git', ['archive', '--format=tar', `${ref}:${base}`, 'packages'], { cwd: top, maxBuffer: 1 << 30 });
+}
+
+/** An arm's adapters and judge engine as they stood at ref (`.` is this tree). */
+export async function armAt(ref: string): Promise<Pick<Arm, 'adapters' | 'rejudge'>> {
+  if (ref === '.') return { adapters: adaptersOf(await loadManifests()) };
+  const dir = mkdtempSync(join(tmpdir(), 'quack-arm-'));
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+    execFileSync('tar', ['-x', '-C', dir], { input: packagesTar(top, ref) });
+    return await loadArm(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The adapters and engine of the `packages/` tree in dir, whose @quack/* imports resolve inside dir; third-party modules stay this tree's, shared with the harness. */
+export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'rejudge'>> {
+  const modules = fileURLToPath(new URL('../../../node_modules', import.meta.url));
+  mkdirSync(join(dir, 'node_modules/@quack'), { recursive: true });
+  for (const m of readdirSync(modules).filter((m) => m !== '@quack')) symlinkSync(join(modules, m), join(dir, 'node_modules', m));
+  for (const p of readdirSync(join(dir, 'packages'))) {
+    symlinkSync(join(dir, 'packages', p), join(dir, 'node_modules/@quack', p));
+    // npm nests a dependency under its workspace when the root holds a conflicting version.
+    const nested = join(modules, '../packages', p, 'node_modules');
+    if (existsSync(nested)) symlinkSync(nested, join(dir, 'packages', p, 'node_modules'));
+  }
+  const at = (pkg: string) => pathToFileURL(join(dir, 'packages', pkg, 'src/index.ts')).href;
+  const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => at(s.slice(7)));
+  const engine = (await import(at('judge'))) as typeof import('@quack/judge');
+  return { adapters: adaptersOf(await loadManifests(specs)), rejudge: engine.rejudge };
 }
 export type Row = { arm: string; rep: number; case: string; check: string; met: number | null; clef: number; esc: number; ms: number; notes: string[] };
 /** A case an arm could not judge, with what its recording lacks. */
@@ -29,9 +62,11 @@ export type Replayed = { rows: Row[]; declined: Declined[] };
 export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number };
 
 const ESCALATED = ['judge-model', 'agent-model'];
+/** The options that route a job's questions; every arm's engine must read them under these names. */
+const ROUTING = ['decisionModel', 'judgeModel', 'escalations'] as const;
 /** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
 type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
-type Job = { arm: string; decisionModel?: DecisionModelRef; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
+type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
 /** The rubric cut to the watched checks (by id or criterion.id), so only those are judged; a name that matches nothing is an error. */
 function watch(rubric: Rubric, names: string[] | undefined): Rubric {
@@ -56,7 +91,7 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
     const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
     if (!judged) continue;
     const rubric = watch(a.judge!.rubric as Rubric, c.checks);
-    return { arm: arm.label, decisionModel: arm.decisionModel, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
+    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
@@ -85,9 +120,14 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const base = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations };
   const judged = j.judged;
   const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
+  const read = new Set<PropertyKey>();
+  const watched = new Proxy(opts, { get: (target, key, receiver) => (read.add(key), Reflect.get(target, key, receiver)) });
   const t = Date.now();
-  const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
+  const v = await j.rejudge(api, watched, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;
+  // An engine that names a routing option otherwise (before #2290, `classifier`) would judge without it and say nothing.
+  const ignored = ROUTING.filter((k) => opts[k] !== undefined && !read.has(k));
+  if (ignored.length) throw new Error(`arm ${j.arm}: its judge engine never reads ${ignored.join(', ')}, so it would judge without them; run that arm from a ref whose judge takes these options, or from its own worktree`);
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
   return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms, notes: k.notes }));
 }

@@ -63,6 +63,9 @@ test('every import form is seen: quotes, side effects, re-exports, dynamic, type
   assert.match(github("import x from '../../../elsewhere.ts';").join('\n'), /outside packages/);
   const runtime = (to: string) => boundaryProblems([{ from: 'runtime', to, via: 'src/a.ts', declared: false }], {});
   assert.deepEqual(runtime('<computed spec>'), [], 'the runtime loads extensions by computed specifier');
+  const ev = (via: string) => boundaryProblems([{ from: 'eval', to: '<computed spec>', via, declared: false }], {});
+  assert.deepEqual(ev('src/judge-replay.ts'), [], 'judge replay loads an arm\'s packages by computed specifier');
+  assert.deepEqual(ev('src/a.ts'), ['eval imports <computed spec>, which the boundary cannot check (src/a.ts)'], 'no other eval file may');
   assert.match(runtime('<outside packages>').join('\n'), /runtime imports a file outside packages/);
 });
 
