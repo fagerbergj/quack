@@ -1,11 +1,13 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import type { CodeResult, Evidence, Rubric } from '@quack/judge';
+import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { citedIds } from './marks.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
-export { citedIds };
+const CITATION = /\[(s\d+)\]/g;
+
+/** The source ids a text cites, each once, in order of first citation. */
+export const citedIds = (text: string) => [...new Set([...text.matchAll(CITATION)].map((m) => m[1]))];
 
 const SECTIONS = ['summary', 'assumptions', 'findings'];
 
@@ -58,7 +60,7 @@ function readLine(p: Parse, line: string) {
   p.gap = !line.trim();
 }
 
-/** Every bullet under a "## Findings…" heading, with its first line (what a mark points at) and as text its own lines after its context:
+/** Every bullet under a "## Findings…" heading, with its first line (which names it in feedback) and as text its own lines after its context:
  *  the bullets it sits in and the paragraph above its list, whose marks cite it too. */
 export function findingItems(report: string): Array<{ first: string; text: string }> {
   const p: Parse = { items: [], open: [], para: [], intro: [], gap: false, fence: false };
@@ -71,11 +73,53 @@ export function findingItems(report: string): Array<{ first: string; text: strin
 const words = (s: string) => ` ${(s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ')} `;
 const MIN_QUOTE = 12;
 
-/** Quoted spans of a finding, split at elisions and [bracketed] insertions; shorter ones are scare quotes or names, not evidence. Edge punctuation is dropped: American style puts the sentence's comma or period inside the marks. */
+type Quote = { start: number; end: number; inner: string };
+
+/** The quotes of a text, paired within a line. A straight double quote right after a digit with no quote open is an inch mark (19" rails), not
+ *  an opening; with one open it closes it ("…in 2024"). */
+function quotesOf(text: string): Quote[] {
+  const out: Quote[] = [];
+  let open = -1;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const closes = open >= 0 && (ch === '"' || ch === '”');
+    if (ch === '\n') open = -1;
+    else if (closes && i > open + 1) out.push({ start: open, end: i + 1, inner: text.slice(open + 1, i) });
+    if (closes) open = -1;
+    else if (open < 0 && (ch === '“' || (ch === '"' && !/\d/.test(text[i - 1] ?? '')))) open = i;
+  }
+  return out;
+}
+
+// A line break, or a sentence end before a capital or a figure; a period inside a quote is masked out first, so it ends nothing.
+const BOUNDARY = /\n|[.!?][”’)]?\s+(?=["“(*_]?[\p{Lu}\p{N}])/gu;
+const CITES = /\[s\d+\]/;
+
+/** Whether the sentence a quote sits in cites a source; `masked` is the text with every quote's inside blanked, so only real sentence ends count. */
+function citedSentence(text: string, masked: string, q: Quote): boolean {
+  let from = 0;
+  let to = text.length;
+  for (const m of masked.matchAll(BOUNDARY)) {
+    if (m.index + m[0].length <= q.start) from = m.index + m[0].length;
+    else if (m.index >= q.end) {
+      to = m.index + 1;
+      break;
+    }
+  }
+  return CITES.test(text.slice(from, to));
+}
+
+/** Quoted spans, split at elisions and [bracketed] insertions, edge punctuation dropped; short ones are scare quotes or names. Only a quote whose
+ *  sentence cites a source is checked: a quote is attributed by marking its sentence, so one in an uncited sentence is the writer's wording. */
 export function quotedSpans(text: string): string[] {
-  return [...text.matchAll(/["“]([^"”\n]+)["”]/g)]
-    .filter((m) => m[1].length >= MIN_QUOTE)
-    .flatMap((m) => m[1].split(/\.\.\.|…|\[[^\]]*\]/).map((p) => p.replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, '')).filter((p) => p.length >= 6));
+  const quotes = quotesOf(text);
+  const masked = quotes.reduce((t, q) => `${t.slice(0, q.start + 1)}${'x'.repeat(q.inner.length)}${t.slice(q.end - 1)}`, text);
+  // A bullet with no mark of its own is cited by its lead-in, so every quote in it is that source's.
+  const own = text.slice(Math.max(0, text.search(/(^|\n)\s*([-*]|\d+\.)\s(?![\s\S]*\n\s*([-*]|\d+\.)\s)/)));
+  const attributed = (q: Quote) => !CITES.test(own) || citedSentence(text, masked, q);
+  return quotes
+    .filter((q) => q.inner.length >= MIN_QUOTE && attributed(q))
+    .flatMap((q) => q.inner.split(/\.\.\.|…|\[[^\]]*\]/).map((p) => p.replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, '')).filter((p) => p.length >= 6));
 }
 
 /** The finding's quoted spans that none of the cited source texts contain, word for word. */
@@ -148,80 +192,86 @@ export async function requestText(api: ToolExecutionApi, ctx: Context): Promise<
   return textOf(first?.model?.[0]?.content).trim() || undefined;
 }
 
-/** All the judge's evidence from what the session kept: per finding its cited flag and misquotes (code gates) and, when a cited source's text was kept, its windows (claim checks, which would fail a finding with no text for nothing); the report and request whole. */
-export function evidenceOf(report: string, request: string | undefined, texts: Map<string, string>, fetchedIds: string[]): Evidence {
-  const finding: Evidence[string] = [];
-  const claim: Evidence[string] = [];
-  for (const [i, f] of findingItems(report).entries()) {
-    const ids = citedIds(f.text);
-    const kept = ids.filter((id) => texts.has(id));
-    // A source whose text was not kept (a failed write, a fork) cannot disprove a quote, so it is skipped.
-    const misquotes = kept.length ? missingQuotes(f.text, kept.map((id) => texts.get(id)!)) : [];
-    finding.push({ id: `finding-${i + 1}`, state: { finding: f.text, cited: ids.length > 0, first: f.first, misquotes } });
-    if (kept.length) claim.push({ id: `finding-${i + 1}`, state: { finding: f.text, sources: kept.map((id) => ({ id, text: excerpt(texts.get(id)!, f.text) })) } });
-  }
-  return {
-    review: [{ id: 'report', state: { report } }],
-    sources: [{ id: 'fetched', state: { ids: fetchedIds } }],
-    finding,
-    claim,
-    request: request ? [{ id: 'request', whole: true, state: { request, report } }] : [],
-  };
+/** The judge's named texts: the report and the request whole, the kept text of each cited source by id, and the ids this session fetched. */
+export function inputsOf(report: string, request: string | undefined, texts: Map<string, string>, fetchedIds: string[]): Inputs {
+  return { report, request: request ?? '', sources: JSON.stringify(Object.fromEntries(texts)), fetched: JSON.stringify(fetchedIds) };
 }
 
-/** The evidence from the fetch log, a reader of the kept source files and the request, wherever those come from. */
-async function evidenceFrom(report: string, sources: SourceRecord[], read: (path: string) => Promise<string | undefined>, request: string | undefined): Promise<Evidence> {
+/** The inputs from the fetch log, a reader of the kept source files and the request, wherever those come from. */
+async function inputsFrom(report: string, sources: SourceRecord[], read: (path: string) => Promise<string | undefined>, request: string | undefined): Promise<Inputs> {
   const texts = new Map<string, string>();
   for (const id of citedIds(report)) {
     const rec = sources.find((s) => s.id === id);
     const t = rec && (await read(sourcePath(rec.hash)));
     if (t !== undefined) texts.set(id, t);
   }
-  return evidenceOf(report, request, texts, sources.map((s) => s.id));
+  return inputsOf(report, request, texts, sources.map((s) => s.id));
 }
 
-export function reportEvidence() {
-  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Evidence> => {
+export function reportInputs() {
+  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
     const fetched = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources ?? [];
     const read = async (path: string) => {
       const r = await api.env?.readTextFile(path, ctx);
       return r?.ok ? r.value : undefined;
     };
-    return evidenceFrom(sealed.content, fetched, read, await requestText(api, ctx));
+    return inputsFrom(sealed.content, fetched, read, await requestText(api, ctx));
   };
 }
 
-/** The same evidence from a recording, as it stood when the report was sealed: sources fetched later were not in the log yet. */
-export async function recordedReportEvidence(session: RecordedSession, content: string): Promise<Evidence> {
+/** The same inputs from a recording, as they stood when the report was sealed: sources fetched later were not in the log yet. */
+export async function recordedReportInputs(session: RecordedSession, content: string): Promise<Inputs> {
   const sealed = session.artifacts[reportKind.kind]?.findLast((v) => v.content === content);
   if (!sealed) throw new Error('the report is not a version this session sealed, so what it had fetched by then is unknown');
   if (!session.readFile || !session.inputs) throw new Error('the recording keeps no workspace or no messages, so the fetched sources or the request are missing');
   const sources = ((session.docs['research.sources']?.sources ?? []) as unknown as SourceRecord[]).filter((s) => s.fetchedAt <= sealed.sealedAt);
-  return evidenceFrom(content, sources, session.readFile, session.inputs[0]?.trim() || undefined);
+  return inputsFrom(content, sources, session.readFile, session.inputs[0]?.trim() || undefined);
 }
 
-type FindingState = { cited: boolean; first: string; misquotes: string[] };
-const findings = (ev: Evidence) => (ev.finding ?? []).map((u) => ({ id: u.id, ...(u.state as unknown as FindingState) }));
+// Each finding is an item named by its place in the report, so a replay case can name one.
+const findingChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => findingItems(inputs[String(o.from)]).map((f, i) => ({ id: `finding-${i + 1}`, text: f.text }));
+registerSplitter('research.findings', findingChunks);
 
-function findingsCited(_artifact: string, ev: Evidence): CodeResult {
-  const all = findings(ev);
+/** The passages of each cited source whose text was kept that say what the finding says; undefined, dropping the finding, when none was kept. */
+function sourceExcerpts(inputs: Inputs, chunk: Chunk, o: SelectorDecl): string | undefined {
+  const texts = JSON.parse(inputs[(o as { from: string }).from]) as Record<string, string>;
+  const ids = citedIds(chunk.text).filter((id) => Object.hasOwn(texts, id));
+  if (!ids.length) return undefined;
+  return JSON.stringify(ids.map((id) => ({ id, text: excerpt(texts[id], chunk.text) })));
+}
+registerSelector('research.excerpts', sourceExcerpts);
+
+const sourceTexts = (ev: Evidence) => (ev.sources?.[0]?.state.texts ?? {}) as Record<string, string>;
+
+/** Per finding: its first line, whether it cites a source, and the quotes no kept cited source contains (one whose text was not kept, a failed write or a fork, cannot disprove a quote). */
+function findingFacts(report: string, ev: Evidence) {
+  const texts = sourceTexts(ev);
+  return findingItems(report).map((f) => {
+    const ids = citedIds(f.text);
+    const kept = ids.filter((id) => Object.hasOwn(texts, id));
+    return { first: f.first, cited: ids.length > 0, misquotes: kept.length ? missingQuotes(f.text, kept.map((id) => texts[id])) : [] };
+  });
+}
+
+function findingsCited(artifact: string, ev: Evidence): CodeResult {
+  const all = findingFacts(artifact, ev);
   const bare = all.filter((f) => !f.cited);
   if (!all.length) return { met: 0, detail: 'the Findings section has no bullets; list each finding as "- claim [s1]"' };
-  return { met: (all.length - bare.length) / all.length, marks: bare.map((f) => f.first), detail: bare.length ? `${bare.map((f) => `${opening(f.first)} cites no source`).join('; ')}. Add the [sN] of the page that supports each, or drop it.` : undefined };
+  return { met: (all.length - bare.length) / all.length, detail: bare.length ? `${bare.map((f) => `${opening(f.first)} cites no source`).join('; ')}. Add the [sN] of the page that supports each, or drop it.` : undefined };
 }
 
-function quotesExist(_artifact: string, ev: Evidence): CodeResult {
-  const all = findings(ev);
+function quotesExist(artifact: string, ev: Evidence): CodeResult {
+  const all = findingFacts(artifact, ev);
   const wrong = all.filter((f) => f.misquotes.length);
   const listed = wrong.map((f) => `${opening(f.first)} quotes ${f.misquotes.slice(0, 3).map((q) => `"${q}"`).join(', ')}, which isn't on the cited page`).join('; ');
-  return { met: all.length ? (all.length - wrong.length) / all.length : 1, marks: wrong.flatMap((f) => f.misquotes), detail: wrong.length ? `${listed}. Quote the page as written, or paraphrase without quotation marks.` : undefined };
+  return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? `${listed}. Quote the page as written, or paraphrase without quotation marks.` : undefined };
 }
 
 function citesFetchedSources(artifact: string, ev: Evidence): CodeResult {
-  const fetched = new Set((ev.sources?.[0]?.state.ids ?? []) as string[]);
+  const fetched = new Set((ev.fetched?.[0]?.state.ids ?? []) as string[]);
   const cited = citedIds(artifact);
   const unfetched = cited.filter((id) => !fetched.has(id));
-  return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, marks: unfetched, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
+  return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
 }
 
 const SUPPORTED_WEIGHT = 4;
@@ -233,26 +283,58 @@ const SELF_WEIGHT = -4;
 
 // The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
+const CITE = '\\s*\\[s\\d+\\]';
+const bool = (instructions: string): Question => ({ type: 'bool', instructions: `${instructions}${FAIR}` });
+// A pitfall is asked as the defect itself, its item holding on "no" (the fold's `pass`). Its options say what each answer means:
+// a generic "Yes, this holds." beside a question about a defect can be read as the item holding or as the defect being there.
+const defect = (instructions: string, yes: string, no: string): Question => ({ type: 'choice', instructions: `${instructions}${FAIR}`, options: { yes, no } });
+
+/** How each model check of researchRubric is asked: per finding with its sources' excerpts, per Summary sentence with every bullet outside
+ *  the Summary and Assumptions, and of the request and of the report once each, with the whole report. */
+export const reportDeclaration: Declaration = {
+  scopes: {
+    fetched: { split: { name: 'whole', from: 'fetched' }, piece: 'ids' },
+    sources: { split: { name: 'whole', from: 'sources' }, piece: 'texts' },
+    // Nothing is shared, so each finding is its own request: shown the request, or batched with others, the 27B passed more unsupported findings.
+    claim: { split: { name: 'research.findings', from: 'report' }, piece: 'finding', context: { sources: { name: 'research.excerpts', from: 'sources' } } },
+    request: { split: { name: 'whole', from: 'request' }, piece: 'request', context: { report: { name: 'whole', from: 'report' } } },
+    // Every sentence sees every finding, once per request, rather than the few that share its words.
+    summary: {
+      split: { name: 'sentences', from: 'report', sections: ['Summary'], strip: CITE },
+      piece: 'sentence',
+      context: { findings: { name: 'items', from: 'report', skip: ['Summary', 'Assumptions'], strip: CITE } },
+    },
+    report: { split: { name: 'whole', from: 'report' }, piece: 'report' },
+  },
+  checks: {
+    // Clef passes findings their source does not state or states differently (a ranking, a figure, an author), so the 27B decides both.
+    supported_by_source: { scope: 'claim', aggregate: { name: 'share' }, decisionModel: false, question: bool('Does the fetched text of the source this finding cites state what the finding claims?') },
+    contradicted_by_source: { scope: 'claim', aggregate: { name: 'share', pass: ['no'] }, decisionModel: false, question: defect('Does the fetched text of the source this finding cites contradict it?', 'Yes: the source says something different from the finding.', 'No: the source does not say otherwise.') },
+    answers_every_ask: { scope: 'request', aggregate: { name: 'all' }, question: bool("Is every distinct ask and constraint in the request (place, timeframe, budget, audience) answered in the report's Summary and Findings, or named under Assumptions as unsettled?") },
+    summary_follows_findings: { scope: 'summary', aggregate: { name: 'all' }, question: bool("Does this sentence of the report's Summary follow from the findings shown with it?") },
+    no_self_contradiction: { scope: 'report', aggregate: { name: 'all', pass: ['no'] }, question: defect('Does any figure, date or name in the report conflict with another passage of the report?', 'Yes: two passages give different figures, dates or names for the same thing.', 'No: they all agree.') },
+  },
+};
 
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 5,
+  version: 6,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
       { id: 'cites_fetched_sources', label: "Cites a source that wasn't opened", weight: 'gate', code: citesFetchedSources },
       { id: 'findings_cited', label: "A finding cites no source", weight: 'gate', code: findingsCited },
       { id: 'quotes_exist', label: "Quotes text that isn't in the source", weight: 'gate', code: quotesExist },
-      { id: 'supported_by_source', label: "A finding isn't stated by its source", weight: SUPPORTED_WEIGHT, scope: 'claim', question: `Does the fetched text of the source this finding cites state what the finding claims?${FAIR}` },
-      { id: 'contradicted_by_source', label: "A finding is contradicted by its source", weight: CONTRADICTED_WEIGHT, scope: 'claim', question: `Does the fetched text of the source this finding cites contradict it?${FAIR}` },
+      { id: 'supported_by_source', label: "A finding isn't stated by its source", weight: SUPPORTED_WEIGHT },
+      { id: 'contradicted_by_source', label: "A finding is contradicted by its source", weight: CONTRADICTED_WEIGHT },
     ] },
     { id: 'answers_question', checks: [
-      { id: 'answers_every_ask', label: "Leaves part of the question unanswered", weight: ASKS_WEIGHT, scope: 'request', question: `Is every distinct ask and constraint in the request (place, timeframe, budget, audience) answered in the report's Summary and Findings, or named under Assumptions as unsettled?${FAIR}` },
+      { id: 'answers_every_ask', label: "Leaves part of the question unanswered", weight: ASKS_WEIGHT },
     ] },
     { id: 'internally_consistent', checks: [
-      { id: 'summary_follows_findings', label: "Summary says more than the findings", weight: SUMMARY_WEIGHT, scope: 'review', question: `Does every claim in the Summary follow from a Finding?${FAIR}` },
-      { id: 'no_self_contradiction', label: "Report contradicts itself", weight: SELF_WEIGHT, scope: 'review', question: `Does any figure, date or name in the report conflict with another passage of the report?${FAIR}` },
+      { id: 'summary_follows_findings', label: "Summary says more than the findings", weight: SUMMARY_WEIGHT },
+      { id: 'no_self_contradiction', label: "Report contradicts itself", weight: SELF_WEIGHT },
     ] },
   ],
 };
