@@ -1,4 +1,4 @@
-import { registerSplitter, type Declaration, type Inputs, type Rubric } from '@quack/judge';
+import type { Declaration, Inputs, Rubric } from '@quack/judge';
 import { defect, metaFields, parseCard, SHARE, yes } from '../rubric-kit.ts';
 import type { DigestCard, DigestFacts } from './digest.ts';
 import type { RetroCard, RetroFacts } from './retro.ts';
@@ -22,16 +22,13 @@ export function digestInputsOf(f: DigestFacts, content: string): Inputs {
 }
 export const digestInputs = (f: DigestFacts) => async (_api: unknown, sealed: Sealed): Promise<Inputs> => digestInputsOf(f, sealed.content);
 
-// A check that stays on the 27B reads its legacy unit: the record's `legacy[path]` as the piece, the rest of `legacy` around it.
-registerSplitter('sleeper.reportLegacy', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as Array<{ id: string; legacy: Record<string, unknown> }>).map((r) => ({ id: r.id, text: JSON.stringify(r.legacy[String(o.path)]), meta: r.legacy })));
-
 /** How each model check of digestRubric is asked: of the card or per game, each item alone with nothing shared. */
 export const digestDeclaration: Declaration = {
   scopes: {
-    card: { split: { name: 'sleeper.reportLegacy', from: 'card', path: 'summary' }, piece: 'summary', context: metaFields(['mode', 'week', 'games', 'standings']) },
+    card: { split: { name: 'sleeper.legacy', from: 'card', path: 'summary' }, piece: 'summary', context: metaFields(['mode', 'week', 'games', 'standings']) },
     games: { split: { name: 'jsonItems', from: 'games', pick: ['home', 'away', 'margin', 'note'] }, piece: 'game' },
     // News is searched only for a preview, so with no source no game has any and the check is not scored.
-    preview: { split: { name: 'sleeper.reportLegacy', from: 'games', path: 'game', where: [{ path: 'news', op: 'truthy' }] }, piece: 'game', context: metaFields(['mode', 'news', 'designations']) },
+    preview: { split: { name: 'sleeper.legacy', from: 'games', path: 'game', where: [{ path: 'news', op: 'truthy' }] }, piece: 'game', context: metaFields(['mode', 'news', 'designations']) },
   },
   checks: {
     // Clef was unsure on every item of this on replay, so the 27B decides it on the evidence it had before the port.
@@ -78,7 +75,7 @@ export const retroDeclaration: Declaration = {
     known: { split: { name: 'jsonItems', from: 'rows', pick: ['signal', 'why'], where: [{ path: 'knowable', op: 'truthy' }] }, piece: 'row' },
     variance: { split: { name: 'jsonItems', from: 'rows', pick: ['why'], where: [{ path: 'knowable', op: 'falsy' }] }, piece: 'row' },
     lessons: { split: { name: 'jsonItems', from: 'lessons' }, piece: 'lesson' },
-    card: { split: { name: 'sleeper.reportLegacy', from: 'card', path: 'summary' }, piece: 'summary', context: metaFields(['lessons', 'won', 'left', 'swings']) },
+    card: { split: { name: 'sleeper.legacy', from: 'card', path: 'summary' }, piece: 'summary', context: metaFields(['lessons', 'won', 'left', 'swings']) },
   },
   checks: {
     signal_is_evidence: { scope: 'known', aggregate: SHARE, question: yes('Is `signal` a dated news item or usage trend, not the player\'s injury designation restated?') },

@@ -1,6 +1,6 @@
-import type { Evidence, Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
-import { historyEvidence, historyRubric } from './history/rubric.ts';
+import type { HistoryFacts } from './history/facts.ts';
+import { historyDeclaration, historyInputsOf, historyRubric } from './history/rubric.ts';
 import { cardsKind } from './lineup/card.ts';
 import type { Facts } from './lineup/facts.ts';
 import { lineupDeclaration, lineupInputsOf, lineupRubric } from './lineup/rubric.ts';
@@ -14,22 +14,6 @@ import { trendsDeclaration, trendsInputsOf, trendsRubric } from './trends/rubric
 import type { WaiverFacts } from './waivers/facts.ts';
 import { waiversDeclaration, waiversInputsOf, waiversRubric } from './waivers/rubric.ts';
 import { WAIVERS_FACTS_KIND } from './waivers/workflow.ts';
-
-type Build = (facts: never) => (api: unknown, sealed: { content: string }) => Promise<Evidence>;
-
-// Every job seals onto sleeper.cards, so an adapter judges only the card kind it names, on the facts of the run that sealed it.
-function adapterFor(card: string, rubric: Rubric, evidence: Build): EvalAdapter {
-  return {
-    kind: cardsKind.kind,
-    judge: {
-      rubric,
-      async evidence(session, content) {
-        if (JSON.parse(content).kind !== card) return undefined;
-        return evidence(recordedFacts(session, content, card) as never)(null, { content });
-      },
-    },
-  };
-}
 
 /** The facts of the run that sealed a recorded card of this kind; throws, declining the recording, for another kind or a run that kept none. */
 function recordedFacts(session: RecordedSession, content: string, card: string) {
@@ -57,7 +41,7 @@ export const cardAdapters: EvalAdapter[] = [
   lineupAdapter,
   { kind: cardsKind.kind, judge: { rubric: tradeRubric, declaration: tradeDeclaration, inputs: async (session, content) => tradeInputsOf(recordedFacts(session, content, 'trade-finder') as unknown as TradeFacts, content) } },
   { kind: cardsKind.kind, judge: { rubric: trendsRubric, declaration: trendsDeclaration, inputs: async (session, content) => trendsInputsOf(recordedFacts(session, content, 'trends') as unknown as TrendsFacts, content) } },
-  adapterFor('history', historyRubric, historyEvidence),
+  { kind: cardsKind.kind, judge: { rubric: historyRubric, declaration: historyDeclaration, inputs: async (session, content) => historyInputsOf(recordedFacts(session, content, 'history') as unknown as HistoryFacts, content) } },
   { kind: cardsKind.kind, judge: { rubric: digestRubric, declaration: digestDeclaration, inputs: async (session, content) => digestInputsOf(recordedFacts(session, content, 'digest') as unknown as DigestFacts, content) } },
   { kind: cardsKind.kind, judge: { rubric: retroRubric, declaration: retroDeclaration, inputs: async (session, content) => retroInputsOf(recordedFacts(session, content, 'retro') as unknown as RetroFacts, content) } },
 ];

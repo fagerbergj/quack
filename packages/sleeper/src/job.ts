@@ -7,13 +7,12 @@ import type { LineupInput } from './lineup/facts.ts';
 
 type JudgeDeps = { now?: () => number; decisionModel?: DecisionModelRef };
 
-/** How a card is judged from the facts it was built on: by a declaration over named inputs, or (a job not yet declared) by evidence it builds. */
-export type CardJudging<F> = { declaration: Declaration; inputs: (f: F) => unknown; evidence?: never } | { evidence: (f: F) => unknown; declaration?: never };
+/** How a card is judged from the facts it was built on: a declaration over the named inputs those facts give. */
+export type CardJudging<F> = { declaration: Declaration; inputs: (f: F) => unknown };
 
-/** A job's card judge: its rubric, and its evidence or inputs from the facts its card was built on. */
+/** A job's card judge: its rubric, and its inputs from the facts its card was built on. */
 export function cardJudge<F>(deps: JudgeDeps, rubric: Rubric, how: CardJudging<F>) {
-  const judged = (facts: F) => (how.declaration ? { declaration: how.declaration, inputs: how.inputs(facts) as JudgeOptions['inputs'] & {} } : { evidence: how.evidence(facts) as NonNullable<JudgeOptions['evidence']> });
-  return (facts: F): { options: JudgeOptions } => ({ options: { kind: cardsKind, rubric, ...judged(facts), decisionModel: deps.decisionModel, maxRevisions: 1 } });
+  return (facts: F): { options: JudgeOptions } => ({ options: { kind: cardsKind, rubric, declaration: how.declaration, inputs: how.inputs(facts) as JudgeOptions['inputs'] & {}, decisionModel: deps.decisionModel, maxRevisions: 1 } });
 }
 
 /** What a card job is: how it gathers facts, asks for a decision, builds the card and judges it. */

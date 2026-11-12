@@ -4,7 +4,7 @@ import { cardSteps } from '../job.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildHistoryCard, type HistoryDecision } from './card.ts';
 import { buildHistoryFacts, type HistoryFacts, type SeasonFigures } from './facts.ts';
-import { historyEvidence, historyRubric } from './rubric.ts';
+import { historyDeclaration, historyInputs, historyRubric } from './rubric.ts';
 
 export const HISTORY_WORKFLOW = 'sleeper.history';
 
@@ -40,7 +40,7 @@ export function historyWorkflow(deps: HistoryDeps) {
     name: HISTORY_WORKFLOW,
     steps: cardSteps<HistoryFacts, HistoryDecision>(deps, {
       facts: (_c, i) => buildHistoryFacts(deps.client, i),
-      schema: decisionSchema, prompt, card: buildHistoryCard, rubric: historyRubric, evidence: historyEvidence,
+      schema: decisionSchema, prompt, card: buildHistoryCard, rubric: historyRubric, declaration: historyDeclaration, inputs: historyInputs,
     }),
   });
 }
