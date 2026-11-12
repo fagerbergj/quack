@@ -1,5 +1,5 @@
-import { registerSelector, registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope } from '@quack/judge';
-import { parseCard, share } from '../rubric-kit.ts';
+import { registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric, type Scope } from '@quack/judge';
+import { defect, metaFields, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { Facts, PlayerFact } from './facts.ts';
 import type { LineupCard, Row } from './card.ts';
 
@@ -70,13 +70,8 @@ const rows = (flag: string, pick: string[]): Scope => ({ split: { name: 'jsonIte
 // A close call is its slot, with each field of its legacy evidence as context, so the unit reads { slot, week, row, incumbent, ... } at the top.
 type CloseRow = { slot: string; hasNews: boolean; close: Record<string, unknown> };
 registerSplitter('sleeper.closeCalls', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as CloseRow[]).filter((r) => r.hasNews).map((r) => ({ id: r.slot, text: r.slot, meta: r.close })));
-registerSelector('sleeper.closeCall', (_inputs, chunk, o) => JSON.stringify(chunk.meta?.[String((o as { field?: string }).field)] ?? null));
 const CLOSE_FIELDS = ['week', 'row', 'incumbent', 'baseline', 'news', 'designations'];
-const closeCalls: Scope = { split: { name: 'sleeper.closeCalls', from: 'rows' }, piece: 'slot', context: Object.fromEntries(CLOSE_FIELDS.map((field) => [field, { name: 'sleeper.closeCall', field }])) };
-const yes = (instructions: string): Question => ({ type: 'bool', instructions });
-// A pitfall is asked as the defect, so "yes" flags it and the item holds on "no".
-const defect = (instructions: string): Question => ({ type: 'bool', instructions, pass: ['no'] });
-const SHARE = { name: 'share' } as const;
+const closeCalls: Scope = { split: { name: 'sleeper.closeCalls', from: 'rows' }, piece: 'slot', context: metaFields(CLOSE_FIELDS) };
 
 /** How each model check of lineupRubric is asked: per unlocked row its scope keeps, alone. */
 export const lineupDeclaration: Declaration = {

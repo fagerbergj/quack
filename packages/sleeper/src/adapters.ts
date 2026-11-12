@@ -8,7 +8,8 @@ import { DIGEST_NEWS, digestEvidence, digestRubric, RETRO_NEWS, retroEvidence, r
 import { newsGated, type NewsGate } from './rubric-kit.ts';
 import { TRADE_NEWS, tradeEvidence, tradeRubric } from './trades/rubric.ts';
 import { TRENDS_NEWS, trendsEvidence, trendsRubric } from './trends/rubric.ts';
-import { WAIVERS_NEWS, waiversEvidence, waiversRubric } from './waivers/rubric.ts';
+import type { WaiverFacts } from './waivers/facts.ts';
+import { waiversDeclaration, waiversInputsOf, waiversRubric } from './waivers/rubric.ts';
 import { WAIVERS_FACTS_KIND } from './waivers/workflow.ts';
 
 type Build = (facts: never) => (api: unknown, sealed: { content: string }) => Promise<Evidence>;
@@ -51,12 +52,15 @@ const lineupAdapter: EvalAdapter = {
 };
 
 // The waivers facts pin only keeps a replay of an older dataset from refusing the recorded doc; the workflow rebuilds the facts live.
-const [waivers, ...waiversRest] = adaptersFor('waivers', waiversRubric, waiversEvidence, WAIVERS_NEWS);
+const waiversAdapter: EvalAdapter = {
+  kind: cardsKind.kind,
+  judge: { rubric: waiversRubric, declaration: waiversDeclaration, inputs: async (session, content) => waiversInputsOf(recordedFacts(session, content, 'waivers') as unknown as WaiverFacts, content) },
+  services: { [WAIVERS_FACTS_KIND]: async () => ({ env: {}, captured: [], close: async () => {} }) },
+};
 
 /** The adapters of every judged card; waivers comes first, as the rubric an agent shows. */
 export const cardAdapters: EvalAdapter[] = [
-  { ...waivers, services: { [WAIVERS_FACTS_KIND]: async () => ({ env: {}, captured: [], close: async () => {} }) } },
-  ...waiversRest,
+  waiversAdapter,
   lineupAdapter,
   ...adaptersFor('trade-finder', tradeRubric, tradeEvidence, TRADE_NEWS),
   ...adaptersFor('trends', trendsRubric, trendsEvidence, TRENDS_NEWS),

@@ -8,7 +8,7 @@ import type { LineupDeps } from '../lineup/workflow.ts';
 import type { LineupInput } from '../lineup/facts.ts';
 import { buildWaiversCard, type WaiverDecision } from './card.ts';
 import { buildWaiverFacts, type Valued, type WaiverFacts } from './facts.ts';
-import { WAIVERS_NEWS, waiversEvidence, waiversRubric } from './rubric.ts';
+import { waiversDeclaration, waiversInputs, waiversRubric } from './rubric.ts';
 import { cardSteps } from '../job.ts';
 
 export const WAIVERS_WORKFLOW = 'sleeper.waivers';
@@ -55,6 +55,6 @@ export function waiversWorkflow(deps: WaiversDeps) {
   };
   return defineWorkflow({
     name: WAIVERS_WORKFLOW,
-    steps: cardSteps<WaiverFacts, WaiverDecision>(deps, { facts, schema: decisionSchema, prompt: factsPrompt, card: buildWaiversCard, rubric: waiversRubric, news: WAIVERS_NEWS, evidence: waiversEvidence }),
+    steps: cardSteps<WaiverFacts, WaiverDecision>(deps, { facts, schema: decisionSchema, prompt: factsPrompt, card: buildWaiversCard, rubric: waiversRubric, declaration: waiversDeclaration, inputs: waiversInputs }),
   });
 }
