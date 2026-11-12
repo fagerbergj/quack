@@ -2,7 +2,7 @@ import type { Schema } from '@earendil-works/pi-schema';
 import { arr, bool, int, obj, opt, str } from '@earendil-works/pi-schema';
 import type { Declaration, Inputs, Rubric } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
-import { newsLink } from '../lineup/news.ts';
+import { newsLink, subjectNews } from '../lineup/news.ts';
 import { liveLeague } from '../snapshot.ts';
 import { kickoffTimes } from '../games.ts';
 import { cardSteps } from '../job.ts';
@@ -59,7 +59,7 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
           return new Wait(Math.min(now + RECHECK_MS, give));
         },
       },
-      ...cardSteps<F, D>(deps, { ...spec, facts: async (_c, i, at) => spec.facts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at) }),
+      ...cardSteps<F, D>(deps, { ...spec, facts: async (c, i, at) => spec.facts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel) }, await liveLeague(deps.client, i.league), i, at) }),
     ],
   });
 }

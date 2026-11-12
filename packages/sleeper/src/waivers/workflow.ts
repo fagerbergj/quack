@@ -2,7 +2,7 @@ import type { JsonValue } from '@earendil-works/chord';
 import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, type JsonObject } from '@earendil-works/pi-durable';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
-import { newsLink } from '../lineup/news.ts';
+import { newsLink, subjectNews } from '../lineup/news.ts';
 import { liveLeague } from '../snapshot.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import type { LineupInput } from '../lineup/facts.ts';
@@ -49,7 +49,7 @@ function factsPrompt(f: WaiverFacts): string {
 /** Waivers job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function waiversWorkflow(deps: WaiversDeps) {
   const facts = async (c: StepContext, i: LineupInput, at: number) => {
-    const f = (await buildWaiverFacts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at)) as unknown as JsonObject;
+    const f = (await buildWaiverFacts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel) }, await liveLeague(deps.client, i.league), i, at)) as unknown as JsonObject;
     await c.api.commit(async (tx) => { (await tx.doc(WaiversFactsDoc, c.api.conversationId)).facts = f; }, c.ctx);
     return f as unknown as WaiverFacts;
   };

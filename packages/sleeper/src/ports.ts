@@ -24,5 +24,8 @@ export type SleeperClient = {
 /** The slice of a player a news search needs. */
 export type Searchable = Pick<PlayerFact, 'name' | 'team' | 'pos'>;
 
-/** Dated news for one player up to `at`; the Exa adapter is `exaNews`. A failed search yields none. */
-export type NewsSearch = (p: Searchable, at: number) => Promise<NewsItem[]>;
+/** Whether a report is about the player rather than naming him in news about someone else; undefined when it cannot tell. */
+export type SubjectCheck = (p: Searchable, n: NewsItem) => Promise<boolean | undefined>;
+
+/** Dated news for one player up to `at`, kept only when it is about him (`about` decides past the title); the Exa adapter is `exaNews`. A failed search yields none. */
+export type NewsSearch = (p: Searchable, at: number, about?: SubjectCheck) => Promise<NewsItem[]>;

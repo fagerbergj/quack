@@ -20,6 +20,7 @@ import {
   type Facts, type LineupCard, type LineupDeps,
 } from '../src/index.ts';
 import { closeCalls } from '../src/lineup/facts.ts';
+import { clefSubject, subjectNews } from '../src/lineup/news.ts';
 import { bestLineup, numberSlots } from '../src/lineup/slots.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/lineup.json', import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -339,7 +340,8 @@ async function fakeExa() {
 
 test('close-call players get dated news inside 72 hours, and nobody else is searched', async () => {
   const exa = await fakeExa();
-  const f = await buildFacts({ client: client(), news: exaNews({ apiKey: 'k', url: exa.url }) }, await snapshot('L1'), INPUT, AT);
+  const search = exaNews({ apiKey: 'k', url: exa.url });
+  const f = await buildFacts({ client: client(), news: (p, at) => search(p, at, async () => true) }, await snapshot('L1'), INPUT, AT);
   const close = closeCalls(f).map((p) => p.id).sort();
   assert.ok(close.includes('102'));
   assert.deepEqual(Object.keys(f.news).sort(), close);
@@ -353,6 +355,96 @@ test('close-call players get dated news inside 72 hours, and nobody else is sear
   assert.deepEqual([depth.title, depth.url, depth.date], ['Depth chart notes', 'https://www.nfl.com/news/depth', hoursAgo(6)]);
   assert.ok(depth.excerpt!.endsWith('Rob Rowe takes first-team reps.') && depth.excerpt!.length <= 280 && !/[\n#]/.test(depth.excerpt!), depth.excerpt);
   assert.equal(newsLink(depth), `[Depth chart notes](https://www.nfl.com/news/depth), ${hoursAgo(6).slice(0, 16)}: "${depth.excerpt}"`);
+});
+
+// Reports the judges caught on the wrong player: each names him only inside another subject's news.
+const LOVELAND = { name: 'Colston Loveland', team: 'CHI', pos: 'TE' };
+const offSubject = [
+  { player: LOVELAND, title: 'Injury Update: T.J. Edwards set to return Monday night in Seattle', text: 'Edwards returns as Colston Loveland and the Bears face Seattle.' },
+  { player: LOVELAND, title: 'NFL Week 9 Injury Report: Jeremiyah Love hits IR, Lamar Jackson likely done for season, and more - NBC Sports', text: 'Bears: Colston Loveland is off the report.' },
+  { player: { name: 'TreVeyon Henderson', team: 'NE', pos: 'RB' }, title: 'Rhamondre (knee) could miss short period of time - NBC Sports', text: 'TreVeyon Henderson remains sidelined with an illness.' },
+  { player: { name: 'Malik Nabers', team: 'NYG', pos: 'WR' }, title: 'Fantasy Football Week 9 WR preview: Mike Evans eyes return with WR1 upside - CBS Sports', text: 'Malik Nabers and Mike Evans headline the week.' },
+];
+
+async function exaWith(results: Array<{ title: string; url: string; text?: string }>) {
+  const url = await serve((req, res) => req.resume().on('end', () => res.writeHead(200).end(JSON.stringify({
+    results: results.map((r) => ({ title: r.title, url: r.url, publishedDate: hoursAgo(5), highlights: r.text ? [r.text] : [] })),
+  }))));
+  return exaNews({ apiKey: 'k', url });
+}
+
+test('a report about someone else that names the player is dropped when the subject check says no, or gives no answer', async () => {
+  for (const [i, x] of offSubject.entries()) {
+    const search = await exaWith([{ title: x.title, url: `https://www.nbcsports.com/n${i}`, text: x.text }]);
+    const asked: Array<[string, string, string | undefined]> = [];
+    assert.deepEqual(await search(x.player, AT, async (p, n) => (asked.push([p.name, n.title, n.excerpt]), false)), [], x.title);
+    assert.deepEqual(asked, [[x.player.name, x.title, x.text]]);
+    assert.deepEqual(await search(x.player, AT), [], 'without a check, a title that does not name him drops the report');
+    assert.deepEqual(await search(x.player, AT, async () => undefined), []);
+  }
+});
+
+test('a title naming the player keeps the report unasked; the subject check decides the rest, once per report', async () => {
+  const search = await exaWith([
+    { title: 'Colston Loveland off injury report, to play SEA - NBC Sports', url: 'https://www.nbcsports.com/a' },
+    { title: 'Bears TE Colston Loveland active for MNF', url: 'https://sports.yahoo.com/b', text: 'Colston Loveland is active.' },
+    { title: 'Week 10 Injury Report: Bears at Giants', url: 'https://www.chicagobears.com/c', text: 'TE Colston Loveland (ankle) - LP' },
+  ]);
+  const asked: string[] = [];
+  const about = async (_p: unknown, n: { url: string }) => (asked.push(n.url), true);
+  const urls = async (at: number) => (await search(LOVELAND, at, about)).map((n) => n.url);
+  assert.deepEqual(await urls(AT), ['https://www.nbcsports.com/a', 'https://sports.yahoo.com/b', 'https://www.chicagobears.com/c']);
+  assert.deepEqual(await urls(AT + 1), ['https://www.nbcsports.com/a', 'https://sports.yahoo.com/b', 'https://www.chicagobears.com/c']);
+  assert.deepEqual(asked, ['https://www.chicagobears.com/c'], 'one question for the team report, and its answer is reused');
+});
+
+test('a surname alone never stands for the player: another Williams in the title is asked about, and an unknown answer is asked again', async () => {
+  const search = await exaWith([
+    { title: 'Kyren Williams Week 10 Outlook - Rams at Cardinals', url: 'https://www.fantasypros.com/k', text: 'Kyren Williams leads a run game; Javonte Williams faces the 49ers.' },
+    { title: "NOTEBOOK: Williams' dynamic play impacting Lions' offense", url: 'https://www.detroitlions.com/j', text: 'Jameson Williams has three catches of 40 yards.' },
+  ]);
+  const javonte = { name: 'Javonte Williams', team: 'DAL', pos: 'RB' };
+  const jameson = { name: 'Jameson Williams', team: 'DET', pos: 'WR' };
+  const asked: string[] = [];
+  const about = (yes: boolean | undefined) => async (p: { name: string }, n: { url: string }) => (asked.push(`${p.name} ${n.url}`), yes);
+  assert.deepEqual(await search(javonte, AT, about(false)), []);
+  assert.deepEqual(await search(jameson, AT, about(undefined)), []);
+  assert.deepEqual((await search(jameson, AT, about(true))).map((n) => n.url), ['https://www.detroitlions.com/j']);
+  assert.deepEqual(asked, ['Javonte Williams https://www.fantasypros.com/k', 'Jameson Williams https://www.detroitlions.com/j', 'Jameson Williams https://www.detroitlions.com/j']);
+});
+
+test('the decision model is asked one yes/no question per report, about the player by team and position, over its title and excerpt', async () => {
+  const seen: Array<{ state: unknown; questions: Record<string, { instructions: string }> }> = [];
+  const classifier = { id: 'clef', type: 'classifier' };
+  const api = (probability: number | Error, models = [classifier]) => ({
+    models: {
+      getAllModels: () => models,
+      classify: async (_m: unknown, req: (typeof seen)[number]) => {
+        seen.push(req);
+        if (probability instanceof Error) throw probability;
+        return { stopReason: 'stop', answers: { q0: { type: 'bool', probability } } };
+      },
+    },
+  }) as never;
+  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const report = { title: offSubject[0].title, url: 'https://www.chicagobears.com/e', date: hoursAgo(5), excerpt: offSubject[0].text };
+  assert.equal(await clefSubject(api(0.01), ref)(LOVELAND, report), false);
+  assert.equal(await clefSubject(api(0.92), ref)(LOVELAND, report), true);
+  assert.deepEqual(seen[0].state, { player: 'Colston Loveland (CHI TE)', report: { title: report.title, excerpt: report.excerpt } });
+  assert.match(seen[0].questions.q0.instructions, /about Colston Loveland \(CHI TE\) himself/);
+  assert.equal(await clefSubject(api(new Error('down')), ref)(LOVELAND, report), undefined);
+  assert.equal(await clefSubject(api(0.9, []), ref)(LOVELAND, report), undefined);
+  await clefSubject(api(0.9), ref)({ name: 'New Orleans Saints', team: 'NO', pos: 'DEF' }, report);
+  assert.equal((seen.at(-1)!.state as { player: string }).player, 'the New Orleans Saints defense');
+});
+
+test('a job binds its decision model as the subject check, and without one the title alone decides', async () => {
+  const got: unknown[] = [];
+  const search = async (_p: unknown, _at: number, about?: unknown) => (got.push(about), []);
+  await subjectNews(search, {} as never, { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 })!(LOVELAND, AT);
+  await subjectNews(search, {} as never, undefined)!(LOVELAND, AT);
+  assert.deepEqual(got.map((a) => typeof a), ['function', 'undefined']);
+  assert.equal(subjectNews(undefined, {} as never, undefined), undefined);
 });
 
 test('a failing search leaves a close call with no news rather than failing the lineup', async () => {
