@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '@quack/sdk';
+import type { Workflow } from '@quack/workflows';
 import { sleeperApp } from './app.ts';
 import { settingsProblems } from './settings.ts';
 import { runJob } from './action.ts';
@@ -12,6 +13,8 @@ import { WAIVERS_WORKFLOW, waiversFromEnv } from './waivers/index.ts';
 import { cardAdapters } from './adapters.ts';
 
 const env = ['QUACK_EXA_API_KEY'];
+/** A card job built from the environment, judged with the decision model its agent's workflows config names. */
+const job = (fromEnv: (env: NodeJS.ProcessEnv, config: never) => Workflow) => ({ build: (config: unknown) => withChat(fromEnv(process.env, config as never)), env });
 
 /** Sleeper contributes workflows and an eval adapter per judged card; an agent binds one through the workflows extension. */
 export const manifest: ExtensionManifest = {
@@ -25,12 +28,12 @@ export const manifest: ExtensionManifest = {
   evalAdapters: cardAdapters,
   actions: [runJob],
   workflows: {
-    [LINEUP_WORKFLOW]: { build: (config) => withChat(lineupFromEnv(process.env, config as Parameters<typeof lineupFromEnv>[1])), env },
-    [WAIVERS_WORKFLOW]: { build: (config) => withChat(waiversFromEnv(process.env, config as Parameters<typeof waiversFromEnv>[1])), env },
-    [FINDER_WORKFLOW]: { build: (config) => withChat(finderFromEnv(process.env, config as Parameters<typeof finderFromEnv>[1])), env },
-    [TRENDS_WORKFLOW]: { build: (config) => withChat(trendsFromEnv(process.env, config as Parameters<typeof trendsFromEnv>[1])), env },
-    [HISTORY_WORKFLOW]: { build: () => withChat(historyFromEnv()), env },
-    [DIGEST_WORKFLOW]: { build: (config) => withChat(digestFromEnv(process.env, config as Parameters<typeof digestFromEnv>[1])), env },
-    [RETRO_WORKFLOW]: { build: (config) => withChat(retroFromEnv(process.env, config as Parameters<typeof retroFromEnv>[1])), env },
+    [LINEUP_WORKFLOW]: job(lineupFromEnv),
+    [WAIVERS_WORKFLOW]: job(waiversFromEnv),
+    [FINDER_WORKFLOW]: job(finderFromEnv),
+    [TRENDS_WORKFLOW]: job(trendsFromEnv),
+    [HISTORY_WORKFLOW]: job(historyFromEnv),
+    [DIGEST_WORKFLOW]: job(digestFromEnv),
+    [RETRO_WORKFLOW]: job(retroFromEnv),
   },
 };

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { buildEvidence } from '@quack/judge';
 import { Artifacts, serveApp } from '@quack/sdk';
 import { readSession } from '@quack/eval';
 import { replayed } from './replayed.ts';
@@ -13,7 +14,7 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildHistoryCard, buildHistoryFacts, createSleeperClient, createSleeperService, DEFINITIONS, historyEvidence, historyKey, historyRubric, historyWorkflow, verdictOf,
+  buildHistoryCard, buildHistoryFacts, createSleeperClient, createSleeperService, DEFINITIONS, historyDeclaration, historyInputsOf, historyKey, historyRubric, historyWorkflow, verdictOf,
   type HistoryCard, type HistoryFacts,
 } from '../src/index.ts';
 import type { HistoryDecision } from '../src/history/card.ts';
@@ -84,12 +85,13 @@ test('a note names the picks it discusses and the card shows their figures from 
   assert.throws(() => buildHistoryCard(f, { ...decision, seasons: [{ season: '2026', text: 'x', picks: [1] }] }), /season 2026, which has no draft grade/);
 });
 
-test('a row\'s judge evidence carries that season\'s figures; a season with no note has no row', async () => {
+test('a row\'s judge evidence carries that season\'s figures and its note; a season with no note has no row', async () => {
   const f = await factsOf();
-  const ev = await historyEvidence(f)(null, { content: JSON.stringify(buildHistoryCard(f, decision)) });
-  assert.deepEqual(ev.row.map((u) => u.id), ['season2025']);
-  const row = ev.row[0].state as unknown as { season: { record: string; weeks: unknown[]; draft: Array<{ verdict: string }> } };
-  assert.deepEqual([row.season.record, row.season.weeks.length, row.season.draft.map((p) => p.verdict)], ['2-1', 3, ['as_expected', 'reach', 'steal']]);
+  const ev = (await buildEvidence(historyDeclaration, historyInputsOf(f, JSON.stringify(buildHistoryCard(f, decision))))).evidence;
+  assert.deepEqual([ev.row.map((u) => u.id), ev.notes.map((u) => u.id)], [['row season2025'], ['notes season2025']]);
+  const row = ev.row[0].state as unknown as { season: { record: string; weeks: unknown[]; draft: Array<{ verdict: string }> }; note: string };
+  assert.deepEqual([row.season.record, row.season.weeks.length, row.season.draft.map((p) => p.verdict), row.note], ['2-1', 3, ['as_expected', 'reach', 'steal'], decision.seasons[0].text]);
+  assert.deepEqual(ev.notes[0].state, { row: { season: '2025', note: decision.seasons[0].text } });
 });
 
 async function run(d: HistoryDecision) {
@@ -124,10 +126,10 @@ async function run(d: HistoryDecision) {
 
 test('the workflow seals a history card whose figures are the tools and the judge passes it', async () => {
   const { sealed, verdict, judged, record } = await run(decision);
-  assert.deepEqual(await replayed(record, sealed), await historyEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), historyInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const c = JSON.parse(sealed.content) as HistoryCard;
   assert.deepEqual([c.kind, c.seasons.map((s) => s.season), c.seasons[1].draft!.length], ['history', ['2026', '2025'], 3]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@4', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.history@5', [], true]);
   assert.ok(judged.some((q) => /schedule luck/.test(q)));
 });
 

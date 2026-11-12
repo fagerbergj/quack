@@ -1,12 +1,17 @@
 {
   "name": "sleeper-history",
-  "version": 5,
+  "version": 6,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
   "extensions": {
     "workflows": {
-      "workflow": "sleeper.history"
+      "workflow": "sleeper.history",
+      "decisionModel": {
+        "provider": "clef",
+        "modelId": "clef",
+        "maxInputTokens": 8192
+      }
     },
     "subagent": {}
   },
