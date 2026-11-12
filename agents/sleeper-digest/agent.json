@@ -1,12 +1,17 @@
 {
   "name": "sleeper-digest",
-  "version": 3,
+  "version": 4,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
   "extensions": {
     "workflows": {
-      "workflow": "sleeper.digest"
+      "workflow": "sleeper.digest",
+      "decisionModel": {
+        "provider": "clef",
+        "modelId": "clef",
+        "maxInputTokens": 8192
+      }
     },
     "subagent": {}
   },
