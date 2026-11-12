@@ -414,11 +414,12 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     return 'deleted';
   }
 
-  // A free answer arrives as text (its choice the same text, not an option); a reason is the session's note.
-  const questionAnswer = (ask: { prompt?: { options: string[] } }, r: { choice: string; text?: string; reason?: string }) => ({
-    ...(r.text === undefined || ask.prompt?.options.includes(r.choice) ? { choice: r.choice } : {}),
-    ...(r.text !== undefined && { text: r.text }), ...(r.reason !== undefined && { note: r.reason }),
-  });
+  // A free answer arrives as text (its choice the same text, not an option). Beside an option, text and reason are the session's note.
+  const questionAnswer = (ask: { prompt?: { options: string[] } }, r: { choice: string; text?: string; reason?: string }) => {
+    if (r.text !== undefined && !ask.prompt?.options.includes(r.choice)) return { text: r.text, ...(r.reason !== undefined && { note: r.reason }) };
+    const note = [r.text === r.choice ? undefined : r.text, r.reason].filter(Boolean).join('\n\n');
+    return { choice: r.choice, ...(note && { note }) };
+  };
 
   // A person's answer goes to the session's own gate or question, which is what the waiting run reads.
   async function answer(key: string, ask: { id: string; type: 'approval' | 'question'; prompt?: { options: string[] } }, r: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string }): Promise<boolean | string> {
