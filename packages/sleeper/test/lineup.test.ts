@@ -381,7 +381,10 @@ test('a row\'s judge evidence carries its news and each player\'s designation, a
   const f = { ...(await facts()), news: { '103': [item] } };
   const card = buildCard(f, decision);
   const ev = (await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(card)))).evidence;
-  const rb2 = ev.news.find((u) => u.id === 'news RB2')!.state.row as unknown as { news: Array<{ url: string }>; designations: Record<string, string> };
+  const rb2 = ev.news.find((u) => u.id === 'news RB2')!.state as unknown as { row: Record<string, unknown>; news: Array<{ url: string }>; designations: Record<string, string> };
+  // The news check keeps the evidence it had before the port: these fields at the top, the card's row whole, the news once.
+  assert.deepEqual(Object.keys(rb2), ['slot', 'week', 'row', 'incumbent', 'baseline', 'news', 'designations']);
+  assert.ok(!('news' in rb2.row) && rb2.row.why === card.starters.find((r) => r.slot === 'RB2')!.why);
   assert.deepEqual(rb2.news.map((n) => n.url), [item.url]);
   assert.deepEqual(rb2.designations, { 'Dan Dash': 'none', 'Rob Rowe': 'Questionable' });
   assert.deepEqual(ev.news.map((u) => u.id), ['news RB2']);
@@ -412,7 +415,7 @@ test('a row\'s news check sees the reports of every player its why names, each o
     { slot: 'FLEX', playerId: irving.id, why: '17.56 proj over Hubbard 16.8; Bucs top NFL rushing (168.6 yd/g, AP); Irving primary RB, Hubbard trade-candidate news (Yahoo); matches baseline.' },
   ] });
   const ev = (await buildEvidence(lineupDeclaration, lineupInputsOf(f, JSON.stringify(card)))).evidence;
-  const shown = (slot: string) => (ev.news.find((u) => u.id === `news ${slot}`)!.state.row as { news: Array<{ player: string; url: string }> }).news.map((n) => [n.player, n.url]);
+  const shown = (slot: string) => (ev.news.find((u) => u.id === `news ${slot}`)!.state as { news: Array<{ player: string; url: string }> }).news.map((n) => [n.player, n.url]);
   assert.deepEqual(shown('FLEX'), [['Bucky Irving', ap.url], ['Chuba Hubbard', volume.url], ['Chuba Hubbard', trade.url]]);
   // RB2's why names only Hubbard, whose reports the row already carries.
   assert.deepEqual(shown('RB2'), [['Chuba Hubbard', volume.url], ['Chuba Hubbard', trade.url]]);

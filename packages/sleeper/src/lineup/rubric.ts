@@ -1,4 +1,4 @@
-import type { CodeResult, Declaration, Evidence, Inputs, Question, Rubric, Scope } from '@quack/judge';
+import { registerSelector, registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope } from '@quack/judge';
 import { parseCard, share } from '../rubric-kit.ts';
 import type { Facts, PlayerFact } from './facts.ts';
 import type { LineupCard, Row } from './card.ts';
@@ -35,6 +35,13 @@ function newsFor(r: Row, f: Facts) {
   return [...new Map([...(r.news ?? []), ...cited].map((n) => [`${n.player}\n${n.url}`, n])).values()];
 }
 
+/** A close call shown as the 27B saw it before the port, so its evidence does not change: the card's row, the incumbent and the baseline whole,
+ *  and the news once, at the top (the row carried a second copy). */
+function closeCall(r: Row, f: Facts, incumbent: PlayerFact | undefined) {
+  const { news: _, ...row } = r;
+  return { week: f.week, row, incumbent: incumbent ?? null, baseline: f.baseline.find((x) => x.slot === r.slot) ?? null, news: newsFor(r, f), designations: designations(r, f) };
+}
+
 /** Each unlocked row as one record: what a check reads, and the flags its scope keeps it by. Locked rows keep their player and are asked nothing. */
 export function lineupRows(f: Facts, card: LineupCard) {
   const inBaseline = new Set(f.baseline.map((b) => b.id));
@@ -43,7 +50,7 @@ export function lineupRows(f: Facts, card: LineupCard) {
     const b = f.baseline.find((x) => x.slot === r.slot);
     return {
       id: r.slot, slot: r.slot, start: player(f.players[r.player.id]), action: r.action, why: r.why,
-      incumbent: player(incumbent) ?? null, baseline: b ? { name: b.name, proj: b.proj } : null, news: newsFor(r, f), designations: designations(r, f),
+      incumbent: player(incumbent) ?? null, baseline: b ? { name: b.name, proj: b.proj } : null, designations: designations(r, f), close: closeCall(r, f, incumbent),
       // By membership, not slot: the baseline may seat the same player in RB2 that the card keeps in RB1.
       differs: changed(r, f) && !inBaseline.has(r.player.id),
       // News is fetched only for close calls, so a row with news is a close call.
@@ -59,6 +66,13 @@ export const lineupInputs = (f: Facts) => async (_api: unknown, sealed: { conten
 
 // Every row is its own request with nothing shared: batched, the 27B passed more.
 const rows = (flag: string, pick: string[]): Scope => ({ split: { name: 'jsonItems', from: 'rows', pick, where: [{ path: flag, op: 'truthy' }] }, piece: 'row' });
+
+// A close call is its slot, with each field of its legacy evidence as context, so the unit reads { slot, week, row, incumbent, ... } at the top.
+type CloseRow = { slot: string; hasNews: boolean; close: Record<string, unknown> };
+registerSplitter('sleeper.closeCalls', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as CloseRow[]).filter((r) => r.hasNews).map((r) => ({ id: r.slot, text: r.slot, meta: r.close })));
+registerSelector('sleeper.closeCall', (_inputs, chunk, o) => JSON.stringify(chunk.meta?.[String((o as { field?: string }).field)] ?? null));
+const CLOSE_FIELDS = ['week', 'row', 'incumbent', 'baseline', 'news', 'designations'];
+const closeCalls: Scope = { split: { name: 'sleeper.closeCalls', from: 'rows' }, piece: 'slot', context: Object.fromEntries(CLOSE_FIELDS.map((field) => [field, { name: 'sleeper.closeCall', field }])) };
 const yes = (instructions: string): Question => ({ type: 'bool', instructions });
 // A pitfall is asked as the defect, so "yes" flags it and the item holds on "no".
 const defect = (instructions: string): Question => ({ type: 'bool', instructions, pass: ['no'] });
@@ -69,7 +83,7 @@ export const lineupDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     differs: rows('differs', ['slot', 'start', 'action', 'why', 'incumbent', 'baseline']),
-    news: rows('hasNews', ['slot', 'start', 'action', 'why', 'incumbent', 'news', 'designations']),
+    news: closeCalls,
     designated: rows('designated', ['slot', 'start', 'action', 'why', 'incumbent', 'designations']),
   },
   checks: {
