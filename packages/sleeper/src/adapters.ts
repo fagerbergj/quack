@@ -10,7 +10,8 @@ import { digestDeclaration, digestInputsOf, digestRubric, retroDeclaration, retr
 import { newsGated, type NewsGate } from './rubric-kit.ts';
 import type { TradeFacts } from './trades/facts.ts';
 import { tradeDeclaration, tradeInputsOf, tradeRubric } from './trades/rubric.ts';
-import { TRENDS_NEWS, trendsEvidence, trendsRubric } from './trends/rubric.ts';
+import type { TrendsFacts } from './trends/facts.ts';
+import { trendsDeclaration, trendsInputsOf, trendsRubric } from './trends/rubric.ts';
 import type { WaiverFacts } from './waivers/facts.ts';
 import { waiversDeclaration, waiversInputsOf, waiversRubric } from './waivers/rubric.ts';
 import { WAIVERS_FACTS_KIND } from './waivers/workflow.ts';
@@ -66,7 +67,7 @@ export const cardAdapters: EvalAdapter[] = [
   waiversAdapter,
   lineupAdapter,
   { kind: cardsKind.kind, judge: { rubric: tradeRubric, declaration: tradeDeclaration, inputs: async (session, content) => tradeInputsOf(recordedFacts(session, content, 'trade-finder') as unknown as TradeFacts, content) } },
-  ...adaptersFor('trends', trendsRubric, trendsEvidence, TRENDS_NEWS),
+  { kind: cardsKind.kind, judge: { rubric: trendsRubric, declaration: trendsDeclaration, inputs: async (session, content) => trendsInputsOf(recordedFacts(session, content, 'trends') as unknown as TrendsFacts, content) } },
   ...adaptersFor('history', historyRubric, historyEvidence),
   { kind: cardsKind.kind, judge: { rubric: digestRubric, declaration: digestDeclaration, inputs: async (session, content) => digestInputsOf(recordedFacts(session, content, 'digest') as unknown as DigestFacts, content) } },
   { kind: cardsKind.kind, judge: { rubric: retroRubric, declaration: retroDeclaration, inputs: async (session, content) => retroInputsOf(recordedFacts(session, content, 'retro') as unknown as RetroFacts, content) } },

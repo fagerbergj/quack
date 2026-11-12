@@ -5,16 +5,17 @@ import { trendsWorkflow, TRENDS_WORKFLOW, type TrendsDeps } from './workflow.ts'
 export { buildTrendsCard, type TrendsCard } from './card.ts';
 export { buildTrendsFacts, diffSnapshots, type TrendsFacts } from './facts.ts';
 export { registerTrendsSchedules, startTrends, trendsKey, TRENDS_AGENT } from './jobs.ts';
-export { trendsEvidence, trendsRubric } from './rubric.ts';
+export { trendsDeclaration, trendsInputs, trendsInputsOf, trendsRubric } from './rubric.ts';
 export { trendsWorkflow, TRENDS_WORKFLOW, type TrendsDeps } from './workflow.ts';
 
-/** The trends workflow wired to the Sleeper API and the service half named in the environment. */
-export function trendsFromEnv(env: Record<string, string | undefined> = process.env) {
+/** The trends workflow wired to the Sleeper API and the service half named in the environment, judged with the agent's decision model. */
+export function trendsFromEnv(env: Record<string, string | undefined> = process.env, config?: { decisionModel?: TrendsDeps['decisionModel'] }) {
   const { url, token } = appEndpoint('sleeper');
   const get = appGet();
   const path = (league: string) => `/leagues/${encodeURIComponent(league)}/snapshots`;
   const deps: TrendsDeps = {
     ...depsFromEnv(env),
+    decisionModel: config?.decisionModel,
     snapshot: async (league) => {
       const res = await fetch(`${url}${path(league)}`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`sleeper service: snapshot for ${league} returned ${res.status}`);

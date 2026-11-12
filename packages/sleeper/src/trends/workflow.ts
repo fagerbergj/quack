@@ -3,9 +3,9 @@ import { defineWorkflow } from '@quack/workflows';
 import { newsLink } from '../lineup/news.ts';
 import type { Json } from '../client.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
-import { buildTrendsCard, KINDS, when, type TrendsDecision } from './card.ts';
+import { buildTrendsCard, KINDS, TEXT_MAX, when, type TrendsDecision } from './card.ts';
 import { buildTrendsFacts, type SnapshotRef, type TrendsFacts } from './facts.ts';
-import { TEXT_MAX, TRENDS_NEWS, trendsEvidence, trendsRubric } from './rubric.ts';
+import { trendsDeclaration, trendsInputs, trendsRubric } from './rubric.ts';
 import { cardSteps } from '../job.ts';
 
 export const TRENDS_WORKFLOW = 'sleeper.trends';
@@ -24,7 +24,7 @@ const decisionSchema = obj({
       playerId: opt(str()),
       newsUrl: opt(str()),
       source: opt(str({ maxLength: 60 })),
-      text: str({ maxLength: TEXT_MAX }),
+      text: str({ minLength: 1, maxLength: TEXT_MAX }),
     }, { open: true }),
     { maxItems: 12 },
   ),
@@ -53,7 +53,7 @@ export function trendsWorkflow(deps: TrendsDeps) {
     name: TRENDS_WORKFLOW,
     steps: cardSteps<TrendsFacts, TrendsDecision>(deps, {
       facts: async (_c, i, at) => buildTrendsFacts(deps, await deps.snapshot(i.league), i, at),
-      schema: decisionSchema, prompt: factsPrompt, card: buildTrendsCard, rubric: trendsRubric, news: TRENDS_NEWS, evidence: trendsEvidence,
+      schema: decisionSchema, prompt: factsPrompt, card: buildTrendsCard, rubric: trendsRubric, declaration: trendsDeclaration, inputs: trendsInputs,
     }),
   });
 }
