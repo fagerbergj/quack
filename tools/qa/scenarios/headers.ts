@@ -10,6 +10,8 @@ const SESSIONS = [
   { name: 'chat', key: 'home:qa-chat', title: 'Plan the week', line1: 'quack' },
   { name: 'sleeper', key: `sleeper:${LEAGUE}:8:lineup`, title: undefined, line1: 'Week 8 lineup' },
 ];
+// The github app's mirror of the PR, as GitHub's pull request subset (Pull in packages/web/src/extensions/pulls.ts).
+const PULL = { number: 2243, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: 'https://github.com/fagerbergj/quack/pull/2243', title: SESSIONS[0]!.title };
 const SHOWN = ['review', 'research', 'chat', 'sleeper'];
 
 async function seed(url: string): Promise<void> {
@@ -25,10 +27,19 @@ async function seed(url: string): Promise<void> {
 
 // No github or sleeper service runs in the rig, so their page reads are answered here.
 async function fakeServices(page: Page): Promise<void> {
-  await page.route('**/apps/github/pulls**', (r) => r.fulfill({ json: { pulls: { 'fagerbergj/quack#2243': { state: 'open', at: '2026-11-08T12:00:00Z' } } } }));
+  await page.route('**/apps/github/repos/fagerbergj/quack/pulls/2243', (r) => r.fulfill({ json: PULL }));
   await page.route('**/apps/sleeper/schedule', (r) => r.fulfill({ json: { runs: [], week: 9 } }));
   await page.route('**/apps/sleeper', (r) => r.fulfill({ json: { league: LEAGUE } }));
   await page.route('**/apps/sleeper/waivers', (r) => r.fulfill({ json: { sessionKey: `sleeper:${LEAGUE}:9:waivers` } }));
+}
+
+// Without the mirror's answer the chip stays neutral and unnamed by state, so this fails if the fake stops matching.
+async function expectOpenChip(page: Page): Promise<void> {
+  const chip = page.locator('main').getByRole('link', { name: 'Pull request #2243, open, on GitHub' });
+  await visible(chip);
+  const [cls, href] = [await chip.getAttribute('class'), await chip.getAttribute('href')];
+  if (!cls?.includes('bg-success-bg') || !cls.includes('text-success')) throw new Error(`the open chip is not green: ${cls}`);
+  if (href !== PULL.html_url) throw new Error(`the chip links to ${href}`);
 }
 
 const scenario: Scenario = {
@@ -41,6 +52,7 @@ const scenario: Scenario = {
         await fakeServices(page);
         await page.goto(`${ctx.url}/#/s/${encodeURIComponent(s.key)}`);
         await visible(page.getByRole('heading', { level: 1 }).filter({ hasText: s.line1 }));
+        if (s.name === 'review') await expectOpenChip(page);
         await ctx.shot(page, `${s.name}-${label}`);
       });
     }
