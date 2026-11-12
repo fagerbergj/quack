@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer, request as httpRequest } from 'node:http';
-import { connect, type AddressInfo } from 'node:net';
+import { connect, createServer as createNetServer, type AddressInfo } from 'node:net';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
@@ -858,11 +858,10 @@ test('a broken output sink neither throws nor loses the tail', async () => {
   assert.deepEqual(seen, ['one', 'two']);
 });
 
-test('session output reaches the shared sink line by line under its key, and an ended session leaves no listener on the sink', async () => {
+test('session output reaches the shared sink line by line under its key', async () => {
   const dst = new PassThrough();
   const out: string[] = [];
   dst.on('data', (b) => out.push(String(b)));
-  const before = [dst.listenerCount('error'), dst.listenerCount('close')];
   const src = new PassThrough();
   forwardOutput(src, dst, () => {}, '[k1] ');
   const accent = Buffer.from('é');
@@ -871,7 +870,37 @@ test('session output reaches the shared sink line by line under its key, and an 
   src.end(Buffer.concat([accent.subarray(1), Buffer.from('\nlast')]));
   await new Promise((r) => src.once('close', r));
   assert.equal(out.join(''), '[k1] one\n[k1] two é\n[k1] last\n');
-  assert.deepEqual([dst.listenerCount('error'), dst.listenerCount('close')], before);
+});
+
+test('any number of live sessions add one error listener to the shared sink socket, and ended ones add none', async (t) => {
+  const server = createNetServer((s) => s.resume()).listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const sink = connect((server.address() as AddressInfo).port, '127.0.0.1');
+  await new Promise((r) => sink.once('connect', r));
+  const warnings: string[] = [];
+  const onWarning = (w: Error) => warnings.push(w.name);
+  process.on('warning', onWarning);
+  t.after(() => { process.off('warning', onWarning); sink.destroy(); server.close(); });
+  const launch = () => Array.from({ length: 12 }, () => { const src = new PassThrough(); forwardOutput(src, sink, () => {}, '[k] '); return src; });
+  const first = launch();
+  const live = ['error', 'close', 'drain'].map((e) => sink.listenerCount(e));
+  assert.equal(live[0], 1);
+  for (const src of first) src.end('done\n');
+  await Promise.all(first.map((src) => new Promise((r) => src.once('close', r))));
+  launch().forEach((src) => src.destroy());
+  assert.deepEqual(['error', 'close', 'drain'].map((e) => sink.listenerCount(e)), live);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(warnings, []);
+});
+
+test('sessions paused on a full sink all resume when it drains', async () => {
+  const out: string[] = [];
+  const dst = new Writable({ highWaterMark: 1, write: (b, _e, cb) => void setImmediate(() => (out.push(String(b)), cb())) });
+  const srcs = ['a', 'b'].map((k) => { const src = new PassThrough(); forwardOutput(src, dst, () => {}, `[${k}] `); return src; });
+  for (const src of srcs) { src.write('1\n'); src.end('2\n'); }
+  await Promise.all(srcs.map((src) => new Promise((r) => src.once('end', r))));
+  await new Promise((r) => dst.end(r));
+  assert.deepEqual(out.sort(), ['[a] 1\n', '[a] 2\n', '[b] 1\n', '[b] 2\n']);
 });
 
 test('the session hears the proxy\'s person or the tailnet as a principal beside its bearer, and an unproven identity is refused', async () => {

@@ -99,19 +99,25 @@ const SNAPSHOT = 'agent-def';
 const OUTPUT_TAIL = 4096;
 const LINE_MAX = 64 * 1024;
 
+// Each live session writes to the sink, so its listeners are added once per sink, not once per session, to stay under MaxListeners.
+const writersOf = new WeakMap<Writable, Set<Readable>>();
+function writers(dst: Writable): Set<Readable> {
+  let set = writersOf.get(dst);
+  if (set) return set;
+  writersOf.set(dst, (set = new Set()));
+  // A dead sink never drains, so on close the children's pipes are drained into the void rather than left to fill and block them.
+  const resume = () => { for (const src of set) src.resume(); };
+  dst.on('error', () => {}).on('close', resume).on('drain', resume);
+  return set;
+}
+
 // A broken sink (closed terminal, dead pipe) must never take the distributor down, so its errors are dropped.
 // Every session shares the sink, so each line carries `prefix` (the session key) to be attributable.
 export function forwardOutput(src: Readable, dst: Writable, tap: (b: Buffer) => void, prefix = '') {
-  // A dead sink never drains, so the child's pipe is drained into the void rather than left to fill and block it.
-  const ignore = () => {};
-  const drainVoid = () => src.resume();
-  dst.on('error', ignore).on('close', drainVoid);
-  src.once('close', () => dst.off('error', ignore).off('close', drainVoid));
+  const live = writers(dst).add(src);
+  src.once('close', () => live.delete(src));
   const write = (text: string) => {
-    if (dst.writable && !dst.write(text)) {
-      src.pause();
-      dst.once('drain', () => src.resume());
-    }
+    if (dst.writable && !dst.write(text)) src.pause();
   };
   const decoder = new StringDecoder('utf8');
   let partial = '';
