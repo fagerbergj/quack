@@ -34,11 +34,10 @@ export const digestDeclaration: Declaration = {
     preview: { split: { name: 'sleeper.reportLegacy', from: 'games', path: 'game', where: [{ path: 'news', op: 'truthy' }] }, piece: 'game', context: metaFields(['mode', 'news', 'designations']) },
   },
   checks: {
-    // Clef was unsure on every item of this and small_sample_labeled on replay, so the 27B decides them on the evidence it had before the port.
+    // Clef was unsure on every item of this on replay, so the 27B decides it on the evidence it had before the port.
     story_in_summary: { scope: 'card', aggregate: SHARE, decisionModel: false, question: yes('Does the summary name the week\'s real story (the margin that mattered, the high score, the blowout) rather than recite scores?') },
     // Weighing the note against the reports is a claim against evidence, which the decision model passes unread, so the 27B decides it.
     preview_news_decides: { scope: 'preview', aggregate: SHARE, decisionModel: false, question: yes('Does this game\'s note cite the attached `news` or an injury designation that swings it, naming the right player for each report?') },
-    small_sample_labeled: { scope: 'card', aggregate: SHARE, decisionModel: false, question: defect('Does a claim drawn from under three weeks of data go unlabeled as early?') },
     luck_without_margin: { scope: 'card', aggregate: SHARE, question: defect('Does `summary` or a game\'s `note` call a result lucky without its point margin, or from fewer than about eight close games?') },
     game_flow_from_score: { scope: 'games', aggregate: SHARE, question: defect('Does `note` describe how the game unfolded, such as a comeback, a collapse or a lead that changed hands, which the final score alone does not show?') },
   },
@@ -56,7 +55,6 @@ export const digestRubric: Rubric = {
       { id: 'preview_news_decides', label: "A preview ignores news that swings it", weight: 3 },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'small_sample_labeled', label: "Draws a trend from too few weeks", weight: -2 },
       { id: 'luck_without_margin', label: "Calls a result lucky without the margin", weight: -3 },
       { id: 'game_flow_from_score', label: "Invents how a game unfolded", weight: -3 },
     ] },

@@ -179,7 +179,7 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
       const asked = String(c.messages.at(-1)!.content);
       if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(decision));
       judged.push(asked);
-      const pitfall = /lucky without its point margin|go unlabeled as early|comeback, a collapse|blame the manager/.test(asked);
+      const pitfall = /lucky without its point margin|comeback, a collapse|blame the manager/.test(asked);
       return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
