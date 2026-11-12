@@ -115,7 +115,7 @@ async function run<D>(workflow: ReturnType<typeof finderWorkflow>, input: object
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
       judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /12-team value chart/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+      return fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
