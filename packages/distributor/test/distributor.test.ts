@@ -815,7 +815,14 @@ test('a session process that never reports a port fails with its output', async 
   const hang = "console.log('loading models'); setInterval(() => {}, 1000);";
   // Long enough that the first line has landed under a loaded runner before the start gives up.
   const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 2_000 });
-  await assert.rejects(driver.ensure('research:hung'), /did not report a port; output: loading models/);
+  await assert.rejects(driver.ensure('research:hung'), /did not report a port within 2000 ms; pid \d+ is still running; output: loading models/);
+});
+
+test('a session command that cannot be spawned fails the start instead of crashing the distributor', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const driver = processDriver({ command: ['/nonexistent-session'], dataDir, defaultAgent: '' });
+  await assert.rejects(driver.ensure('research:unspawnable'), /^Error: session process failed to start: spawn \/nonexistent-session ENOENT; output: \(none\)$/);
 });
 
 test('a session process that ignores SIGTERM is killed at the stop deadline', async () => {
