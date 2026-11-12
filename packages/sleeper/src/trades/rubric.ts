@@ -1,54 +1,65 @@
-import type { Evidence, Rubric } from '@quack/judge';
-import { parseCard, type NewsGate } from '../rubric-kit.ts';
-import type { FinderCard, TRef } from './card.ts';
+import { registerSplitter, type Declaration, type Inputs, type Rubric } from '@quack/judge';
+import { defect, metaFields, parseCard, SHARE, yes } from '../rubric-kit.ts';
+import type { FinderCard } from './card.ts';
 import type { TradeFacts } from './facts.ts';
 
-type Row = { id: string; partner: number; give: TRef[]; get: TRef[]; text: string; news: FinderCard['suggestions'][number]['news'] };
+type Suggestion = FinderCard['suggestions'][number];
 
-/** Each suggestion is judged on its note. */
-const rowsOf = (c: FinderCard): Row[] => c.suggestions.map((s) => ({ id: `suggestion${s.rank}`, partner: s.partner.rosterId, give: [s.give], get: [s.get], text: s.note, news: s.news }));
+const brief = (s: Suggestion) => ({ id: `suggestion${s.rank}`, give: [s.give.name], get: [s.get.name], text: s.note });
+const designations = (s: Suggestion) => Object.fromEntries([s.give, s.get].map((p) => [p.name, p.inj ?? 'none']));
 
-const names = (r: Row) => Object.fromEntries([...r.give, ...r.get].map((p) => [p.name, p.inj ?? 'none']));
-const brief = (r: Row) => ({ id: r.id, give: r.give.map((p) => p.name), get: r.get.map((p) => p.name), text: r.text });
-
-/** Row units carry the trade, both sides' designations, the partner's table row and the news attached by code. */
-export function tradeEvidence(f: TradeFacts) {
-  return async (_api: unknown, sealed: { content: string }): Promise<Evidence> => {
-    const card = parseCard<FinderCard>(sealed.content);
-    const rows = rowsOf(card);
-    const cardUnit = { id: 'card', whole: true as const, state: { summary: card.summary, league_teams: f.teams, rows: rows.map(brief) } as never };
-    const unit = (r: Row) => {
-      const partner = f.partners.find((p) => p.rosterId === r.partner);
-      return { id: r.id, state: { row: brief(r), news: r.news, designations: names(r), league_teams: f.teams, you: { stance: f.mine.stance, needs: f.mine.needs, surplus: f.mine.surplus }, partner: partner && { team: partner.team, record: partner.record, stance: partner.stance, needs: partner.needs, surplus: partner.surplus } } as never };
-    };
+/** Each suggestion as one record: what the partner check reads, and the legacy unit news_per_traded_player keeps. */
+function suggestions(f: TradeFacts, card: FinderCard) {
+  return card.suggestions.map((s) => {
+    const p = f.partners.find((x) => x.rosterId === s.partner.rosterId);
     return {
-      facts: [{ id: 'facts', whole: true as const, state: f as never }],
-      row: rows.map(unit),
-      card: [cardUnit],
-      // With no suggestions there is no call to decide, so the check has no unit.
-      suggested: rows.length ? [cardUnit] : [],
+      id: `suggestion${s.rank}`, rank: s.rank, partner_need: s.partner_need, give: s.give.name, get: s.get.name, note: s.note,
+      partner: p ? { team: p.team, record: p.record, stance: p.stance, needs: p.needs, bye_holes: p.byes } : s.partner,
+      legacy: { row: brief(s), news: s.news, designations: designations(s), league_teams: f.teams, you: { stance: f.mine.stance, needs: f.mine.needs, surplus: f.mine.surplus }, partner: p && { team: p.team, record: p.record, stance: p.stance, needs: p.needs, surplus: p.surplus } },
     };
-  };
+  });
 }
+
+/** The judge's named texts: the card's suggestions, and the card as the chart check reads it. */
+export function tradeInputsOf(f: TradeFacts, content: string): Inputs {
+  const card = parseCard<FinderCard>(content);
+  return { suggestions: JSON.stringify(suggestions(f, card)), card: JSON.stringify({ summary: card.summary, league_teams: f.teams, rows: card.suggestions.map(brief) }) };
+}
+export const tradeInputs = (f: TradeFacts) => async (_api: unknown, sealed: { content: string }): Promise<Inputs> => tradeInputsOf(f, sealed.content);
+
+// The news check stays on the 27B with its legacy unit: the card's row, then the other fields at the top.
+type Row = ReturnType<typeof suggestions>[number];
+registerSplitter('sleeper.tradeRows', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as Row[]).map((r) => ({ id: r.id, text: JSON.stringify(r.legacy.row), meta: r.legacy })));
+
+/** How each model check of tradeRubric is asked: per suggestion or of the card, each item alone with nothing shared. */
+export const tradeDeclaration: Declaration = {
+  scopes: {
+    suggestions: { split: { name: 'jsonItems', from: 'suggestions', pick: ['partner', 'partner_need', 'give', 'get', 'note'] }, piece: 'suggestion' },
+    // News is searched for every dealable player, so with no source no row has any and the check is not scored.
+    news: { split: { name: 'sleeper.tradeRows', from: 'suggestions', where: [{ path: 'news', op: 'truthy' }] }, piece: 'row', context: metaFields(['news', 'designations', 'league_teams', 'you', 'partner']) },
+    card: { split: { name: 'whole', from: 'card' }, piece: 'card' },
+  },
+  checks: {
+    partner_modeled: { scope: 'suggestions', aggregate: SHARE, question: yes('Does `note` give a reason this partner would say yes from its `partner` row (its needs, bye holes, record or stance), not chart value alone?') },
+    // Weighing the note against the reports is a claim against evidence, which the decision model passes unread, so the 27B decides it.
+    news_per_traded_player: { scope: 'news', aggregate: SHARE, decisionModel: false, question: yes('Does each traded player have news cited, from the attached `news` and the Sleeper `designations`, naming the right player for each report?') },
+    chart_without_mismatch: { scope: 'card', aggregate: SHARE, question: defect('Does it quote a 12-team value chart without saying the league has fewer teams (`league_teams`)?') },
+  },
+};
 
 // The card builder takes every player, side and projection from the rosters, so no code gate is left to fail.
 // Trade weights are unreplayed: replay them before any weight gates delivery.
 export const tradeRubric: Rubric = {
   name: 'sleeper.trade',
-  version: 5,
+  version: 6,
   threshold: 0.8,
   criteria: [
     { id: 'case_is_reasoned', checks: [
-      { id: 'partner_modeled', label: "Ignores the other team's needs", weight: 4, scope: 'card', question: 'Does the case rest on the partner\'s starting slots, record and surplus from the `partner` table, not on chart value alone?' },
-      { id: 'deciding_line_item', label: "Doesn't name what decides the trade", weight: 3, scope: 'suggested', question: 'Does it name the one line item that decides the call, with a condition that would flip it?' },
-      { id: 'news_per_traded_player', label: "A traded player has no news cited", weight: 3, scope: 'row', question: 'Does each traded player have news cited, from the attached `news` and the Sleeper `designations`, naming the right player for each report?' },
+      { id: 'partner_modeled', label: "Ignores the other team's needs", weight: 4 },
+      { id: 'news_per_traded_player', label: "A traded player has no news cited", weight: 3 },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'chart_without_mismatch', label: "Uses a 12-team chart in a smaller league", weight: -3, scope: 'card', question: 'Does it quote a 12-team value chart without saying the league has fewer teams (`league_teams`)?' },
-      { id: 'one_sided_as_collusion', label: "Calls a lopsided deal collusion", weight: -3, scope: 'card', question: 'Does it call a lopsided but voluntary deal collusion?' },
+      { id: 'chart_without_mismatch', label: "Uses a 12-team chart in a smaller league", weight: -3 },
     ] },
   ],
 };
-
-/** The trade finder's news checks, gated by the live judge and its replay alike. */
-export const TRADE_NEWS: NewsGate = { checks: ['news_per_traded_player'], what: 'news' };
