@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { adapterScores, readSession } from '@quack/eval';
+import { buildEvidence } from '@quack/judge';
 import { replayed } from './replayed.ts';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
@@ -14,7 +15,7 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  liveLeague, buildWaiverFacts, manifest, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
+  liveLeague, buildWaiverFacts, manifest, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversDeclaration, waiversInputsOf, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
   type WaiverFacts, type WaiversCard,
 } from '../src/index.ts';
 import { closeCalls, wideOwned, worth } from '../src/waivers/facts.ts';
@@ -55,7 +56,7 @@ const card = async (fixtures: Fixtures = base, d?: WaiverDecision) => {
 const gate = async (id: string, f: WaiverFacts, c: unknown) => {
   const check = waiversRubric.criteria.flatMap((k) => k.checks).find((k) => k.id === id)!;
   const content = JSON.stringify(c);
-  return check.code!(content, await waiversEvidence(f)(null, { content }));
+  return check.code!(content, (await buildEvidence(waiversDeclaration, waiversInputsOf(f, content))).evidence);
 };
 const GATES = ['drop_not_worth_more', 'widely_owned_accounted'];
 
@@ -220,14 +221,24 @@ test('news is searched for close calls only and each row carries the links of it
   assert.deepEqual(c.candidates[0].news.map((n) => [n.player, n.url]), [['Felix Free', item.url], ['Dan Dash', item.url]]);
 });
 
-test('a row\'s judge evidence carries its news, the designations of both players and the league currency', async () => {
+test('a claim\'s news check keeps the legacy unit: the card\'s row, then the league currency, its news and both players\' designations', async () => {
   const f = { ...(await factsOf()), news: { '300': [item] } };
   const c = buildWaiversCard(f, rollingDecision);
-  const ev = await waiversEvidence(f)(null, { content: JSON.stringify(c) });
-  const row = ev.row[0].state as unknown as { news: Array<{ url: string }>; designations: Record<string, string>; waiver_type: string };
-  assert.deepEqual([row.news.map((n) => n.url), row.designations, row.waiver_type], [[item.url], { 'Felix Free': 'none', 'Dan Dash': 'none' }, 'rolling']);
-  assert.deepEqual(ev.close.map((u) => u.id), ['claim1']);
-  assert.equal(ev.row.length, 2);
+  const ev = (await buildEvidence(waiversDeclaration, waiversInputsOf(f, JSON.stringify(c)))).evidence;
+  const close = ev.close[0].state as unknown as { row: { why: string }; news: Array<{ url: string }>; designations: Record<string, string>; waiver_type: string };
+  assert.deepEqual(Object.keys(close), ['row', 'week', 'waiver_type', 'my_priority', 'faab_left', 'teams', 'news', 'designations']);
+  assert.deepEqual([close.row.why, close.news.map((n) => n.url), close.designations, close.waiver_type], [c.candidates[0].why, [item.url], { 'Felix Free': 'none', 'Dan Dash': 'none' }, 'rolling']);
+  // News is fetched only for close calls, so only the claim with news is asked about it; every claim is asked the rest.
+  assert.deepEqual(ev.close.map((u) => u.id), ['close claim1']);
+  assert.deepEqual(ev.claims.map((u) => Object.keys(u.state.claim as object)), [['rank', 'add', 'why'], ['rank', 'add', 'why']]);
+});
+
+test('the waivers judge asks the configured decision model', () => {
+  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const step = waiversWorkflow({ client: clientOf(base), decisionModel: ref }).steps.find((s) => s.name === 'card')!;
+  assert.equal(step.kind, 'judged');
+  const { options } = (step as Extract<typeof step, { kind: 'judged' }>).judge({ prior: { facts: {} } } as never);
+  assert.deepEqual(options.decisionModel, ref);
 });
 
 async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Parameters<typeof buildWaiverFacts>[0]['news'], stale?: Fixtures) {
@@ -238,7 +249,7 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
       const asked = String(c.messages.at(-1)!.content);
       if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(d));
       judged.push(asked);
-      const pitfall = /trending or ownership number given|share a drop as a mistake/.test(asked);
+      const pitfall = /trending or ownership number given/.test(asked);
       return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
@@ -255,7 +266,7 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    const verdict = sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> };
+    const verdict = sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string; units: number; met: unknown }> };
     await s.close();
     return { sealed, judged, verdict, record: await readSession(dir) };
   } finally {
@@ -264,21 +275,21 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
   }
 }
 
-test('the workflow seals a rolling-league card and the judge passes it, sized in queue position and saying news was not checked', async () => {
+test('the workflow seals a rolling-league card and the judge passes it, with no news to score close calls on', async () => {
   const { sealed, judged, verdict, record } = await runWaivers(base, rollingDecision);
-  assert.deepEqual(await replayed(record, sealed), await waiversEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@7', [], true, ['close-call news not checked: no news source']]);
-  assert.ok(!verdict.checks.some((k) => k.id === 'close_call_news'));
-  assert.ok(judged.some((q) => /queue position spent/.test(q)));
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@8', [], true, []]);
+  assert.deepEqual(verdict.checks.filter((k) => k.id === 'close_call_news').map((k) => [k.units, k.met]), [[0, null]]);
+  assert.ok(judged.some((q) => /role and usage/.test(q)) && !judged.some((q) => /close top claim or drop/.test(q)));
 });
 
 test('the workflow seals a FAAB card with its bids, and with a news source the close calls are scored', async () => {
   const { sealed, verdict, judged, record } = await runWaivers(faab, decision, async () => [item]);
-  assert.deepEqual(await replayed(record, sealed), await waiversEvidence(await factsOf(faab, async () => [item]))(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(faab, async () => [item]), sealed.content), 'the recording rebuilds the inputs the judge read');
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@7', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@8', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });
