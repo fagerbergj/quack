@@ -1,27 +1,35 @@
 import type { ChildProcess } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import type { AddressInfo, Server } from 'node:net';
+import type { SetTimer } from './lifecycle-sender.ts';
 
 /** Listens, then tells a parent holding an IPC channel the bound port; a port the parent picked and released can be taken by another process first. */
 export function listenReporting<S extends Server>(server: S, port = 0, host = '127.0.0.1'): S {
   return server.listen(port, host, () => process.send?.({ port: (server.address() as AddressInfo).port }));
 }
 
-/** The port a child reports from listenReporting; rejects with `${name} exited with N` if it dies first, or when it stays silent past the timeout. */
-export function childPort(child: ChildProcess, name: string, timeoutMs: number): Promise<number> {
+/** The port a child reports from listenReporting; rejects if it cannot be spawned, dies first, or stays silent past the timeout. */
+export function childPort(child: ChildProcess, name: string, timeoutMs: number, setTimer: SetTimer = refTimer): Promise<number> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => done(() => reject(Object.assign(new Error(`${name} did not report a port`), { code: 'E_NO_PORT' }))), timeoutMs);
+    const cancel = setTimer(() => done(() => reject(Object.assign(new Error(`${name} did not report a port within ${timeoutMs} ms; pid ${child.pid} is still running`), { code: 'E_NO_PORT' }))), timeoutMs);
     const onMessage = (m: unknown) => typeof (m as { port?: unknown })?.port === 'number' && done(() => resolve((m as { port: number }).port));
     const onExit = () => done(() => reject(new Error(`${name} exited with ${child.exitCode ?? child.signalCode}`)));
+    // A failed spawn emits 'error' and never 'exit'; unheard, it would also throw in the parent.
+    const onError = (err: Error) => done(() => reject(new Error(`${name} failed to start: ${err.message}`)));
     const done = (settle: () => void) => {
-      clearTimeout(timer);
-      child.off('message', onMessage).off('exit', onExit);
+      cancel();
+      child.off('message', onMessage).off('exit', onExit).off('error', onError);
       settle();
     };
-    child.on('message', onMessage).once('exit', onExit);
+    child.on('message', onMessage).once('exit', onExit).once('error', onError);
     if (child.exitCode !== null || child.signalCode) onExit();
   });
 }
+
+const refTimer: SetTimer = (fn, ms) => {
+  const t = setTimeout(fn, ms);
+  return () => clearTimeout(t);
+};
 
 /** The launch's server token, from the file its host wrote (QUACK_SESSION_TOKEN_FILE); removed once read, as the session's later shells run as this user. */
 // Not an environment variable: those stay readable to such a shell in /proc/<pid>/environ.
