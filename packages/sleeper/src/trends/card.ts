@@ -2,6 +2,8 @@ import { etDate, etParts } from '../lineup/jobs.ts';
 import type { TrendsFacts, TrendPlayer } from './facts.ts';
 
 export const KINDS = ['injury', 'waiver', 'news', 'note'] as const;
+/** The model schema's cap on an item's sentence, so one sentence stays one line in the timeline. */
+export const TEXT_MAX = 160;
 export type Kind = (typeof KINDS)[number];
 export type TrendItem = { time: string; source: string; kind: Kind; player?: Omit<TrendPlayer, 'depth'>; text: string; link?: string };
 export type TrendsCard = { kind: 'trends'; league: string; week: number; date: string; since: string | null; summary: string; items: TrendItem[]; source_note: string };
