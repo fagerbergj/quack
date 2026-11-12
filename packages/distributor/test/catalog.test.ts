@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,8 +9,8 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { eventsRoute, openCatalog } from '@quack/catalog';
-import { inProcessFetch } from '@quack/sdk';
-import { LifecycleStream, openSession, sessionFacts, startLifecycleSender } from '@quack/session';
+import { inProcessFetch, Questions } from '@quack/sdk';
+import { createSessionServer, LifecycleStream, openSession, sessionFacts, startLifecycleSender } from '@quack/session';
 import { backfillCatalog } from '../src/catalog-sync.ts';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
@@ -79,7 +79,7 @@ test('the first boot backfills existing sessions from their logs, seeds each str
 });
 
 // A distributor over a real data dir whose sessions are directories only; `exited` plays a process ending.
-async function distributor() {
+async function distributor(upstream: Server = createServer((_req, res) => res.end(JSON.stringify({ status: 'Healthy' })))) {
   const dataDir = await temp();
   for (const key of ['idle', 'other']) {
     await mkdir(join(dataDir, sessionDirName(key)), { recursive: true });
@@ -90,7 +90,7 @@ async function distributor() {
   cleanups.push(() => catalog.close());
   for (const key of ['idle', 'other']) await catalog.publish(key, [{ seq: 1, id: `session:${key}`, at: 0, type: 'session.created', data: { agent: 'quack', createdAt: 0 } }]);
   const real = processDriver({ command: [], dataDir, onExit: (key) => void catalog.stopped(key) });
-  const upstream = createServer((_req, res) => res.end(JSON.stringify({ status: 'Healthy' }))).listen(0);
+  upstream.listen(0);
   cleanups.push(() => void upstream.close());
   const driver: HostDriver = { ...real, running: () => [], ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, setWake: async () => {} };
   const tokens = new Map([['tok-idle', 'idle']]);
@@ -131,6 +131,37 @@ test('the Sessions API writes a person\'s rename, archive and delete through the
   await catalog.publish('other', [{ seq: 2, id: 'run:1:started', at: 1, type: 'run.started', data: { run: 1 } }]);
   assert.equal((await catalog.getSession('other'))?.state, 'running');
   assert.deepEqual(await catalog.stopped('other'), { applied: true, state: 'stopped' });
+});
+
+test('a question resolves through PATCH with its choice, a free answer, or a choice whose text is its note; no choice is refused', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await temp(), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  cleanups.push(() => session.close());
+  const ids = ['choice', 'free', 'noted', 'none'];
+  const prompt = { question: 'Who starts?', options: ['Pollard', 'Stevenson'], freeText: true };
+  await session.root.commit(async (tx) => {
+    const doc = await tx.doc(Questions, session.root.id);
+    for (const id of ids) doc.items[id] = { ...prompt, evidence: null, askedAt: 1, answer: null, closed: false };
+  }, ctx);
+  const { catalog, base } = await distributor(createSessionServer(session));
+  await catalog.publish('idle', ids.map((id, i) => ({ seq: i + 2, id: `ask:${id}`, at: 1, type: 'ask.opened', data: { id, type: 'question', createdAt: 1, prompt } })));
+  const patch = (id: string, resolution: unknown) => fetch(`${base}/sessions/idle/asks/${id}`, { method: 'PATCH', headers: { ...PERSON, 'content-type': 'application/json' }, body: JSON.stringify({ resolution }) });
+  assert.equal((await patch('choice', { choice: 'Pollard' })).status, 200);
+  assert.equal((await patch('free', { choice: 'Rotate both', text: 'Rotate both' })).status, 200);
+  assert.equal((await patch('noted', { choice: 'Stevenson', text: 'fresher legs', reason: 'and it is wet' })).status, 200);
+  assert.equal((await patch('none', { text: 'Pollard' })).status, 400);
+  assert.equal((await patch('none', {})).status, 400);
+  const items = (await session.harness.snapshot(Questions, session.root.id, ctx))!.items;
+  assert.deepEqual(ids.map((id) => items[id]!.answer && { ...items[id]!.answer, by: undefined, at: undefined }), [
+    { choice: 'Pollard', by: undefined, at: undefined },
+    { choice: 'Rotate both', text: 'Rotate both', by: undefined, at: undefined },
+    { choice: 'Stevenson', note: 'fresher legs\n\nand it is wet', by: undefined, at: undefined },
+    null,
+  ]);
+  assert.deepEqual((await catalog.getAsk('idle', 'noted'))?.resolution, { by: { kind: 'person', id: PERSON['x-authentik-username'] }, choice: 'Stevenson', text: 'fresher legs', reason: 'and it is wet' });
 });
 
 test('the root catalog section names the catalog store; the loader checks it and refuses an index extension', async () => {

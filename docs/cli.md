@@ -11,7 +11,7 @@
 | `steer <key> <text>` | Send a message into the running turn instead of queueing it; with no run going it starts one, as `send` does. |
 | `withdraw <key> <id>` | Take back a queued follow-up by the id `send` printed; exits 2 when it is not queued. |
 | `asks [--session K] [--page-size N] [--page-token T] [q]` | One page of pending approvals and questions, across sessions oldest first or for one session. |
-| `answer <key> <askId> <choice> [--text T] [--reason R]` | Resolve an ask: an approval's choice is `approve` or `reject`, a question's is an option label, and `--text` carries a free answer. |
+| `answer <key> <askId> <choice> [--text T] [--reason R]` | Resolve an ask: an approval's choice is `approve` or `reject`, a question's is an option label, and `--text` carries a free answer, or a note beside an option label. |
 | `approvals`, `approve <key> <askId> [reason]`, `reject <key> <askId> [reason]` | `asks type:approval`, and `answer` with the choice filled in. |
 | `artifacts [--page-size N] [--page-token T] [<key>]` | One page of sealed artifact versions, across sessions or for one session, newest first. |
 | `artifact <key> <kind> [--version N]` | Print the newest version of a kind, or the one named. |

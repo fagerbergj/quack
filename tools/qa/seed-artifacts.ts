@@ -50,7 +50,7 @@ async function seedOne(dataDir: string, s: Seed) {
   await session.root.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, session.root.id);
     doc.kinds[s.kind] = { versions: s.versions.map((v, i) => ({ kind: s.kind, version: i + 1, hash: `qa${i}`, content: v.content, sealedAt: at + i, verdict: v.verdict as SealedArtifact['verdict'] })) };
-    if (s.question) (await tx.doc(Questions, session.root.id)).items['qa:scope'] = { question: s.question, options: ['Yes', 'No'], evidence: null, title: s.question, askedAt: at, answer: null, closed: false };
+    if (s.question) (await tx.doc(Questions, session.root.id)).items['qa:scope'] = { question: s.question, options: ['Yes', 'No'], evidence: null, title: s.question, freeText: true, askedAt: at, answer: null, closed: false };
   }, ctx);
   await session.close();
 }
