@@ -9,12 +9,13 @@ import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts, serveApp } from '@quack/sdk';
 import { readSession } from '@quack/eval';
+import { buildEvidence } from '@quack/judge';
 import { replayed } from './replayed.ts';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildFinderCard, liveLeague, buildTradeFacts, createSleeperClient, createSleeperService, finderKey, finderRun, finderWorkflow, registerFinderSchedules, tradeEvidence, tradeRubric,
+  buildFinderCard, liveLeague, buildTradeFacts, createSleeperClient, createSleeperService, finderKey, finderRun, finderWorkflow, registerFinderSchedules, tradeDeclaration, tradeInputsOf, tradeRubric,
   type FinderCard,
 } from '../src/index.ts';
 import type { FinderDecision } from '../src/trades/card.ts';
@@ -76,14 +77,25 @@ test('a bad finder decision fails the card step instead of reaching the judge', 
   assert.throws(() => build([{ ...s, give: '200' }]), /200, who is not on your team/);
 });
 
-test('a row\'s judge evidence carries news, designations of both sides and the partner table', async () => {
+test('the news check keeps the legacy row unit; the partner check reads each suggestion with its partner row', async () => {
   const f = await factsOf();
   const c = buildFinderCard(f, finderDecision, { '110': [item] });
-  const ev = await tradeEvidence(f)(null, { content: JSON.stringify(c) });
-  const row = ev.row[0].state as unknown as { news: unknown[]; designations: Record<string, string>; league_teams: number; partner: { stance: string; surplus: string[] } };
-  assert.deepEqual([row.news.length, Object.keys(row.designations), row.league_teams, row.partner.stance, row.partner.surplus], [1, ['Bo Bench', 'Tom Tail'], 3, 'rebuilder', ['411']]);
-  assert.deepEqual(ev.suggested, ev.card, 'a card with suggestions is asked for its deciding line item');
-  assert.deepEqual((await tradeEvidence(f)(null, { content: JSON.stringify({ ...c, suggestions: [] }) })).suggested, [], 'a card with no deals has no call to decide');
+  const ev = (await buildEvidence(tradeDeclaration, tradeInputsOf(f, JSON.stringify(c)))).evidence;
+  const row = ev.news[0].state as unknown as { news: unknown[]; designations: Record<string, string>; league_teams: string; partner: { stance: string; surplus: string[] } };
+  assert.deepEqual(Object.keys(row), ['row', 'news', 'designations', 'league_teams', 'you', 'partner']);
+  assert.deepEqual([row.news.length, Object.keys(row.designations), row.league_teams, row.partner.stance, row.partner.surplus], [1, ['Bo Bench', 'Tom Tail'], '3', 'rebuilder', ['411']]);
+  const s = ev.suggestions[0].state.suggestion as { partner: { team: string; needs: object }; note: string };
+  assert.deepEqual([s.partner.team, s.partner.needs, s.note], ['Pintail Pride', { RB: 3, WR: 2, K: 1, DEF: 1 }, finderDecision.suggestions[0].note]);
+  // News is searched for every dealable player, so a row without any is a job with no source; it is not asked about news.
+  assert.deepEqual((await buildEvidence(tradeDeclaration, tradeInputsOf(f, JSON.stringify(buildFinderCard(f, finderDecision, {}))))).evidence.news, []);
+});
+
+test('the finder judge asks the configured decision model', () => {
+  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const step = finderWorkflow({ client: clientOf(), decisionModel: ref }).steps.find((s) => s.name === 'card')!;
+  assert.equal(step.kind, 'judged');
+  const { options } = (step as Extract<typeof step, { kind: 'judged' }>).judge({ prior: { facts: {} } } as never);
+  assert.deepEqual(options.decisionModel, ref);
 });
 
 test('news is searched once per player and skipped when there is no source', async () => {
@@ -103,7 +115,7 @@ async function run<D>(workflow: ReturnType<typeof finderWorkflow>, input: object
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
       judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /collusion|12-team value chart/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+      return fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -118,7 +130,7 @@ async function run<D>(workflow: ReturnType<typeof finderWorkflow>, input: object
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
     await s.close();
-    return { record: await readSession(dir), sealed, judged, asked, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    return { record: await readSession(dir), sealed, judged, asked, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string; units: number; met: unknown }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -126,24 +138,24 @@ async function run<D>(workflow: ReturnType<typeof finderWorkflow>, input: object
 }
 const deps = (news?: (p: { name: string }) => Promise<unknown[]>) => ({ client: clientOf(), now: () => AT, news: news as never });
 
-test('without a news source the finder verdict says so and does not score news', async () => {
+test('without a news source the finder verdict has no news to score', async () => {
   const { verdict, record, sealed } = await run(finderWorkflow(deps()), FINDER, finderDecision);
-  await replayed(record, sealed);
-  assert.deepEqual([verdict.passed, verdict.notes], [true, ['news not checked: no news source']]);
-  assert.ok(!verdict.checks.some((k) => k.id === 'news_per_traded_player'));
+  assert.deepEqual(await replayed(record, sealed), tradeInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
+  assert.deepEqual([verdict.passed, verdict.notes], [true, []]);
+  assert.deepEqual(verdict.checks.filter((k) => k.id === 'news_per_traded_player').map((k) => [k.units, k.met]), [[0, null]]);
 });
 
 test('the finder searches news once for every player a deal may name, gives it to the model before it decides, and seals a ranked card', async () => {
   const searched: string[] = [];
   const { sealed, verdict, asked, record } = await run(finderWorkflow(deps(async (p) => (searched.push(p.name), [{ ...item, title: `${p.name} report` }]))), FINDER, finderDecision);
-  assert.deepEqual(await replayed(record, sealed), await tradeEvidence(await factsOf())(null, sealed), 'the recording rebuilds the evidence the judge read');
+  assert.deepEqual(await replayed(record, sealed), tradeInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const c = JSON.parse(sealed.content) as FinderCard;
   const dealt = dealable(await factsOf()).map((p) => p.name);
   assert.deepEqual([...searched].sort(), [...dealt].sort(), 'each dealable player once, before the decision');
   assert.ok(searched.includes('Bo Bench') && searched.includes('Tom Tail'));
   assert.match(asked[0], /\[Tom Tail report\]\(https:\/\/www\.nfl\.com/, 'the decision prompt carries the news');
   assert.deepEqual([c.kind, c.suggestions.map((s) => s.get.name), c.suggestions[0].news.map((n) => n.player)], ['trade-finder', ['Tom Tail'], ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@5', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@6', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'news_per_traded_player'));
 });
 

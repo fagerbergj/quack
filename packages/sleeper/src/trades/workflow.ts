@@ -7,7 +7,7 @@ import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildFinderCard, type FinderDecision } from './card.ts';
 import { buildTradeFacts, dealable, type FinderInput, type Side, type TPlayer, type TradeFacts } from './facts.ts';
-import { TRADE_NEWS, tradeEvidence, tradeRubric } from './rubric.ts';
+import { tradeDeclaration, tradeInputs, tradeRubric } from './rubric.ts';
 import { cardJudge } from '../job.ts';
 
 export const FINDER_WORKFLOW = 'sleeper.trade-finder';
@@ -55,7 +55,7 @@ export function finderWorkflow(deps: TradeJobDeps) {
     },
   };
   const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(deps.news, dealable(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
-  const judgeOf = cardJudge(deps, tradeRubric, TRADE_NEWS, { evidence: tradeEvidence });
+  const judgeOf = cardJudge(deps, tradeRubric, undefined, { declaration: tradeDeclaration, inputs: tradeInputs });
   const card: Step = {
     name: 'card',
     kind: 'judged',

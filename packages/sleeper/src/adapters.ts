@@ -6,7 +6,8 @@ import type { Facts } from './lineup/facts.ts';
 import { lineupDeclaration, lineupInputsOf, lineupRubric } from './lineup/rubric.ts';
 import { DIGEST_NEWS, digestEvidence, digestRubric, RETRO_NEWS, retroEvidence, retroRubric } from './report/rubric.ts';
 import { newsGated, type NewsGate } from './rubric-kit.ts';
-import { TRADE_NEWS, tradeEvidence, tradeRubric } from './trades/rubric.ts';
+import type { TradeFacts } from './trades/facts.ts';
+import { tradeDeclaration, tradeInputsOf, tradeRubric } from './trades/rubric.ts';
 import { TRENDS_NEWS, trendsEvidence, trendsRubric } from './trends/rubric.ts';
 import type { WaiverFacts } from './waivers/facts.ts';
 import { waiversDeclaration, waiversInputsOf, waiversRubric } from './waivers/rubric.ts';
@@ -62,7 +63,7 @@ const waiversAdapter: EvalAdapter = {
 export const cardAdapters: EvalAdapter[] = [
   waiversAdapter,
   lineupAdapter,
-  ...adaptersFor('trade-finder', tradeRubric, tradeEvidence, TRADE_NEWS),
+  { kind: cardsKind.kind, judge: { rubric: tradeRubric, declaration: tradeDeclaration, inputs: async (session, content) => tradeInputsOf(recordedFacts(session, content, 'trade-finder') as unknown as TradeFacts, content) } },
   ...adaptersFor('trends', trendsRubric, trendsEvidence, TRENDS_NEWS),
   ...adaptersFor('history', historyRubric, historyEvidence),
   ...adaptersFor('digest', digestRubric, digestEvidence, DIGEST_NEWS),

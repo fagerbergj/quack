@@ -27,7 +27,7 @@ export const manifest: ExtensionManifest = {
   workflows: {
     [LINEUP_WORKFLOW]: { build: (config) => withChat(lineupFromEnv(process.env, config as Parameters<typeof lineupFromEnv>[1])), env },
     [WAIVERS_WORKFLOW]: { build: (config) => withChat(waiversFromEnv(process.env, config as Parameters<typeof waiversFromEnv>[1])), env },
-    [FINDER_WORKFLOW]: { build: () => withChat(finderFromEnv()), env },
+    [FINDER_WORKFLOW]: { build: (config) => withChat(finderFromEnv(process.env, config as Parameters<typeof finderFromEnv>[1])), env },
     [TRENDS_WORKFLOW]: { build: () => withChat(trendsFromEnv()), env },
     [HISTORY_WORKFLOW]: { build: () => withChat(historyFromEnv()), env },
     [DIGEST_WORKFLOW]: { build: () => withChat(digestFromEnv()), env },
