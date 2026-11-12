@@ -43,7 +43,7 @@ export const trendsDeclaration: Declaration = {
   },
   checks: {
     // Weighing the item against the dated reports is a claim against evidence, which the decision model passes unread, so the 27B decides it.
-    conflict_stated: { scope: 'conflict', aggregate: SHARE, decisionModel: false, question: yes('Sleeper holds a `designations` entry for this player and `news` has dated reports. If they agree, answer yes. If they disagree, does the item say so and name the rule it followed: the newer dated report from a credible outlet beats Sleeper\'s lagging designation?') },
+    conflict_stated: { scope: 'conflict', aggregate: SHARE, decisionModel: false, question: yes('Sleeper holds a `designations` entry for this player and `news` has dated reports. If they agree, answer yes. If they disagree, does the item say so and which one it followed?') },
     original_source_named: { scope: 'sourced', aggregate: SHARE, question: yes('Does `source` name the original source: a reporter, outlet, team or league, not an aggregator?') },
   },
 };
