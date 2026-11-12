@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
-import type { Rubric } from '@quack/judge';
+import type { DecisionModelRef, Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
 import { loadArm, packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
 
@@ -142,19 +142,25 @@ test('an arm ref unpacks packages/ whether that commit kept them at the root or 
   assert.deepEqual(files('HEAD'), ['packages/x/a.ts']);
 });
 
-test('an arm from another tree judges with that tree\'s judge and SDK, so each arm\'s requests come from its own engine', async (t) => {
+/** This tree's packages copied to a temp dir, each patch a [file, from, to] replacing every occurrence, loaded as an arm. */
+async function otherTree(t: TestContext, patches: [string, string, string][]) {
   const dir = mkdtempSync(join(tmpdir(), 'quack-arm-engine-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   cpSync(fileURLToPath(new URL('../../', import.meta.url)), join(dir, 'packages'), { recursive: true, filter: (src) => !src.includes('node_modules') });
-  const patch = (file: string, from: string, to: string) => {
+  for (const [file, from, to] of patches) {
     const s = readFileSync(join(dir, 'packages', file), 'utf8');
     assert.ok(s.includes(from), `${file} no longer has ${from}`);
-    writeFileSync(join(dir, 'packages', file), s.replace(from, to));
-  };
+    writeFileSync(join(dir, 'packages', file), s.replaceAll(from, to));
+  }
+  return loadArm(dir);
+}
+
+test('an arm from another tree judges with that tree\'s judge and SDK, so each arm\'s requests come from its own engine', async (t) => {
   // The other tree's judge marks the question and its SDK sets a temperature, both on the judge model's request.
-  patch('judge/src/resolve.ts', ': q.instructions;', ': `${q.instructions} (other judge)`;');
-  patch('sdk/src/decide.ts', '{ signal: ctx.abortSignal, fetch })), ctx.abortSignal, seams)', '{ signal: ctx.abortSignal, fetch, temperature: 0.25 })), ctx.abortSignal, seams)');
-  const there = await loadArm(dir);
+  const there = await otherTree(t, [
+    ['judge/src/resolve.ts', ': q.instructions;', ': `${q.instructions} (other judge)`;'],
+    ['sdk/src/decide.ts', '{ signal: ctx.abortSignal, fetch })), ctx.abortSignal, seams)', '{ signal: ctx.abortSignal, fetch, temperature: 0.25 })), ctx.abortSignal, seams)'],
+  ]);
   const seen: [string, boolean, number | undefined][] = [];
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   const record = (context: { messages: unknown[] }, options?: { temperature?: number }) => {
@@ -169,4 +175,10 @@ test('an arm from another tree judges with that tree\'s judge and SDK, so each a
   await replayJudge({ cases: [cases[0]], arms, repeat: 1, concurrency: 1, models, judgeModel });
   assert.deepEqual(seen.sort(), [['here', false, undefined], ['there', true, 0.25]]);
   assert.ok(there.adapters.length, 'the other tree\'s extensions load beside its engine');
+});
+
+test('an arm whose judge names the decision model otherwise (before #2290, classifier) is refused, not run without it', async (t) => {
+  const there = await otherTree(t, [['judge/src/index.ts', 'opts.decisionModel', '(opts as { classifier?: DecisionModelRef }).classifier']]);
+  const arm: Arm = { label: 'old', adapters: [adapter('Is it helpful?')], rejudge: there.rejudge, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } };
+  await assert.rejects(replayJudge({ cases: [cases[0]], arms: [arm], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel }), /arm old: its judge engine never reads decisionModel, so it would judge without them/);
 });
