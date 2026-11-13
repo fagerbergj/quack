@@ -151,8 +151,15 @@ function sealTool(kind: ArtifactKind & { tool: string }): ToolRegistration {
   }) as ToolRegistration;
 }
 
+// One process owns one session (see signals.ts), so the kinds its extensions declare are module state; a later declaration wins.
+const declared = new Map<string, ArtifactKind>();
+
+/** The kind a session's artifactsExtension declared under this name, so other extensions (the judge) can read its path and tool. */
+export const artifactKind = (name: string): ArtifactKind | undefined => declared.get(name);
+
 // Writes to a declared artifact path report every schema problem at once, without blocking the write; a kind naming a tool gets its seal tool.
 export function artifactsExtension(kinds: ArtifactKind[]) {
+  for (const k of kinds) declared.set(k.kind, k);
   return defineExtension({
     name: 'quack.artifacts',
     tools: kinds.filter((k): k is ArtifactKind & { tool: string } => !!k.tool).map(sealTool),

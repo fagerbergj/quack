@@ -22,6 +22,7 @@ import type { FinderDecision } from '../src/trades/card.ts';
 import { dealable } from '../src/trades/facts.ts';
 import { newsFor } from '../src/lineup/news.ts';
 import { refusedRun } from './refused.ts';
+import { sleeperJudge } from './judge.ts';
 
 type Fixtures = Record<string, any>;
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/trades.json', import.meta.url), 'utf8')) as Fixtures;
@@ -90,14 +91,6 @@ test('the news check keeps the legacy row unit; the partner check reads each sug
   assert.deepEqual((await buildEvidence(tradeDeclaration, tradeInputsOf(f, JSON.stringify(buildFinderCard(f, finderDecision, {}))))).evidence.news, []);
 });
 
-test('the finder judge asks the configured decision model', () => {
-  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-  const step = finderWorkflow({ client: clientOf(), decisionModel: ref }).steps.find((s) => s.name === 'card')!;
-  assert.equal(step.kind, 'judged');
-  const { options } = (step as Extract<typeof step, { kind: 'judged' }>).judge({ prior: { facts: {} } } as never);
-  assert.deepEqual(options.decisionModel, ref);
-});
-
 test('news is searched once per player and skipped when there is no source', async () => {
   const f = await factsOf();
   const searched: string[] = [];
@@ -124,13 +117,13 @@ async function run<D>(workflow: ReturnType<typeof finderWorkflow>, input: object
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-trades-'));
   const m = faux.getModel();
-  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the trade finder.', extensions: [workflowExtension([workflow])] } });
+  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the trade finder.', extensions: [...(await sleeperJudge()), workflowExtension([workflow])] } });
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(input));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
     await s.close();
-    return { record: await readSession(dir), sealed, judged, asked, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string; units: number; met: unknown }> } };
+    return { record: await readSession(dir), sealed, judged, asked, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; checks: Array<{ id: string; units: number; met: unknown }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -141,7 +134,7 @@ const deps = (news?: (p: { name: string }) => Promise<unknown[]>) => ({ client: 
 test('without a news source the finder verdict has no news to score', async () => {
   const { verdict, record, sealed } = await run(finderWorkflow(deps()), FINDER, finderDecision);
   assert.deepEqual(await replayed(record, sealed), tradeInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
-  assert.deepEqual([verdict.passed, verdict.notes], [true, []]);
+  assert.equal(verdict.passed, true);
   assert.deepEqual(verdict.checks.filter((k) => k.id === 'news_per_traded_player').map((k) => [k.units, k.met]), [[0, null]]);
 });
 
@@ -155,7 +148,7 @@ test('the finder searches news once for every player a deal may name, gives it t
   assert.ok(searched.includes('Bo Bench') && searched.includes('Tom Tail'));
   assert.match(asked[0], /\[Tom Tail report\]\(https:\/\/www\.nfl\.com/, 'the decision prompt carries the news');
   assert.deepEqual([c.kind, c.suggestions.map((s) => s.get.name), c.suggestions[0].news.map((n) => n.player)], ['trade-finder', ['Tom Tail'], ['Bo Bench', 'Tom Tail']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trade@6', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.trade@6', [], true]);
   assert.ok(verdict.checks.some((k) => k.id === 'news_per_traded_player'));
 });
 

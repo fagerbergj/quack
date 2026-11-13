@@ -28,7 +28,7 @@ export function summarizeReport(text: string): string {
   return line ?? unmark(/^#+ .+$/m.exec(text)?.[0] ?? '');
 }
 
-export const reportKind: ArtifactKind = { kind: 'research.report', path: 'artifacts/report.md', validate: validateReport, summarize: summarizeReport };
+export const reportKind: ArtifactKind = { kind: 'research.report', path: 'artifacts/report.md', tool: 'submit_report', validate: validateReport, summarize: summarizeReport };
 
 const ITEM = /^(\s*)([-*]|\d+\.)\s/;
 type Item = { indent: number; lines: string[]; context: string[]; kids: number };
@@ -209,7 +209,7 @@ async function inputsFrom(report: string, sources: SourceRecord[], read: (path: 
 }
 
 export function reportInputs() {
-  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
+  return async (api: ToolExecutionApi, sealed: { content: string }, ctx: Context): Promise<Inputs> => {
     const fetched = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources ?? [];
     const read = async (path: string) => {
       const r = await api.env?.readTextFile(path, ctx);

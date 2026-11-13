@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { arr, int, obj, opt, str } from '@earendil-works/pi-schema';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import type { DecisionModelRef, ModelRef } from '@quack/judge';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { safeGet } from './net.ts';
 
@@ -10,9 +9,6 @@ export type ResearchConfig = {
   /** Exa's API origin; tests point it at a fake server. */
   exaUrl?: string;
   maxFetchBytes?: number;
-  maxRevisions?: number;
-  decisionModel?: DecisionModelRef;
-  judgeModel?: ModelRef;
 };
 
 /** `chars` is the extracted text's full length, which the stored copy may fall short of; absent on records written before it existed. */

@@ -19,6 +19,7 @@ import {
 } from '../src/index.ts';
 import type { HistoryDecision } from '../src/history/card.ts';
 import { refusedRun } from './refused.ts';
+import { sleeperJudge } from './judge.ts';
 
 type Fixtures = Record<string, any>;
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/history.json', import.meta.url), 'utf8')) as Fixtures;
@@ -111,7 +112,7 @@ async function run(d: HistoryDecision) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-history-'));
   const workflow = historyWorkflow({ client: clientOf(), now: () => 0 });
   const m = faux.getModel();
-  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the history analyst.', extensions: [workflowExtension([workflow])] } });
+  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the history analyst.', extensions: [...(await sleeperJudge()), workflowExtension([workflow])] } });
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));

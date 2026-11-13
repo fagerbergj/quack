@@ -28,6 +28,7 @@
       "./src/extensions/coding.ts",
       "./src/extensions/codemode.ts",
       "@quack/contracts",
+      "@quack/judge",
       "@quack/github",
       "@quack/home",
       "@quack/research",

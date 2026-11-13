@@ -167,7 +167,7 @@ function fakeApi(clef: (q: string) => unknown, judge: (name: string) => string) 
 const sealed = { kind: 'k', version: 1, hash: '', content: 'x', sealedAt: 0, verdict: null };
 const rows = JSON.stringify([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
 const opts = (rubric: Rubric, declaration: Declaration, more: Inputs = {}): JudgeOptions => ({
-  kind: { kind: 'k', path: 'x' }, rubric, declaration, inputs: async () => ({ rows, guide: '{"rule":"r"}', ...more }), maxRevisions: 0,
+  kind: 'k', rubric, declaration, inputs: async () => ({ rows, guide: '{"rule":"r"}', ...more }), maxRevisions: 0,
   decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' },
 });
 const yes = JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'fine' });

@@ -3,7 +3,7 @@ export { answerQuestion, closeQuestions, pendingQuestions, person, Questions, ty
 export { principalName, type Principal } from './principal.ts';
 export { failedRows, Failures, type FailureRow } from './failures.ts';
 export { agentModel, decide, modelResolver, parseDecision, prompt, sessionModel, type Decision, type DecisionPoint, type Resolver } from './decide.ts';
-export { Artifacts, artifactsExtension, attachLink, attachVerdict, seal, sealedVersion, SUMMARY_MAX, summaryOf, type ArtifactKind, type ArtifactLink, type SealedArtifact } from './artifacts.ts';
+export { artifactKind, Artifacts, artifactsExtension, attachLink, attachVerdict, seal, sealedVersion, SUMMARY_MAX, summaryOf, type ArtifactKind, type ArtifactLink, type SealedArtifact } from './artifacts.ts';
 export { gate, SealRefused, type GateEvent, type GatePoint, type GateVerdict, type ProcessorContext } from './gates.ts';
 export { inputTooLarge, MODEL_RETRY, retryModelCall, type RetrySeams } from './model-retry.ts';
 export { gateGenerations, observeGeneration, onGeneration, onWaiting, statusNote, whileWaiting, type Generation, type GenerationGate, type GenerationRequest } from './signals.ts';
