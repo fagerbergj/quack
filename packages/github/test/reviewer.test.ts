@@ -118,7 +118,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.equal(verdict.passed, true);
   assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: URL7 }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
-  assert.deepEqual([...resolvers].sort(), ['clef', 'code', 'judge-model'], 'contradicted skips Clef for the judge model');
+  assert.deepEqual([...resolvers].sort(), ['clef', 'code', 'judge-model'], 'contradicted and approval_grounded skip Clef for the judge model');
   assert.ok(clefUnits.includes('context+items'), 'findings are packed with the CI result they share');
   assert.ok(clefUnits.includes('review'), 'the takeaway is judged on the review whole');
   await session.close();
