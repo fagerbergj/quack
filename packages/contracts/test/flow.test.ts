@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { manifest as judgeManifest } from '@quack/judge';
 import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -36,7 +37,7 @@ async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof
   const m = faux.getModel();
   const dir = await mkdtemp(join(tmpdir(), 'quack-contracts-'));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...contractsSessionExtensions({ maxRevisions }, inputs)] } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...(await judgeManifest.session!({ maxRevisions }, {}, [])), ...contractsSessionExtensions(inputs)] } });
   for (const f of ['packages/sleeper/src/service.ts', 'packages/web/src/extensions/sleeper/api.ts']) {
     await mkdir(dirname(join(session.workspace, f)), { recursive: true });
     await cp(join(repo, f), join(session.workspace, f));

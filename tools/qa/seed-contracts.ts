@@ -10,6 +10,7 @@ import { sessionDirName } from '@quack/distributor';
 import { answerQuestion, Approvals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from '../../packages/contracts/test/fixtures.ts';
+import { manifest as judgeManifest } from '@quack/judge';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -59,12 +60,12 @@ export type ContributedWorkflow = { build(config: Json): Json; env: string[] };
 export interface ExtensionManifest { name: string; app?(ctx: AppContext): App | Promise<App>; pages?: PageRoute[]; actions?: Action[]; workflows?: Record<string, ContributedWorkflow>; evalAdapters?: EvalAdapter[]; validate?(config: Json, deployment: DeploymentFile): string[] }
 `;
 
-const SDK_V2 = SDK_V1
+export const SDK_V2 = SDK_V1
   .replace('export type ModelEntry = { contextWindow: number; images?: boolean };', 'export type ModelEntry = { contextWindow: number; maxTokens?: number; images?: boolean };')
   .replace('export interface App { handle(req: Request, res: Response): Promise<void>; pages?: PageRoute[] }', 'export interface App { handle(req: Request, res: Response): Promise<void>; stop?(): Promise<void>; pages?: PageRoute[] }');
 
 const why = [{ source: 'answer' as const, text: 'The request describes the manifest surface.', ref: 'request' }];
-const sdkSpec = (version: number, document: string): ContractSpec => ({
+export const sdkSpec = (version: number, document: string): ContractSpec => ({
   kind: 'typescript',
   title: 'Extension SDK manifest',
   version,
@@ -94,7 +95,7 @@ const CONTRACTS: Contract[] = [
 
 // A check whose aggregate names its passing answers (a pitfall passes on "no") gets that answer; every other judge question gets "yes".
 const PASSING = Object.values(contractDeclaration.checks).flatMap((c) => ('pass' in c.aggregate && c.aggregate.pass ? [[c.question.instructions, c.aggregate.pass[0]!] as const] : []));
-const answer = (asked: string) => PASSING.find(([q]) => asked.includes(q))?.[1] ?? 'yes';
+export const answer = (asked: string) => PASSING.find(([q]) => asked.includes(q))?.[1] ?? 'yes';
 
 // Judge questions get the passing answer; every other turn writes the next version and submits it.
 function scripted(versions: ContractSpec[]) {
@@ -130,7 +131,8 @@ export async function openSeed(dataDir: string, key: string, title: string, faux
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:9/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const extensions = agent === 'contracts' ? [CodingTools, ...contractsSessionExtensions({})] : [CodingTools];
+  // The contracts agent enables the judge, installed first as its resolved order puts it.
+  const extensions = agent === 'contracts' ? [CodingTools, ...(await judgeManifest.session!({}, {}, [])), ...contractsSessionExtensions()] : [CodingTools];
   return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
 }
 

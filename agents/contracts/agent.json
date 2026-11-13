@@ -1,12 +1,11 @@
 {
   "name": "contracts",
-  "version": 11,
+  "version": 12,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
   "extensions": {
-    "coding": {},
-    "contracts": {
+    "judge": {
       "maxRevisions": 2,
       "decisionModel": {
         "provider": "clef",
@@ -14,6 +13,8 @@
         "maxInputTokens": 8192
       }
     },
+    "coding": {},
+    "contracts": {},
     "subagent": {}
   }
 }

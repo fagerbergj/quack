@@ -20,7 +20,6 @@ const job = (fromEnv: (env: NodeJS.ProcessEnv, config: never) => Workflow) => ({
 export const manifest: ExtensionManifest = {
   name: 'sleeper',
   requires: ['workflows'],
-  optional: ['judge'],
   settings: settingsProblems,
   app: sleeperApp,
   peers: ['schedules'],

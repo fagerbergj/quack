@@ -63,7 +63,7 @@ export function summarizeReview(text: string): string {
   return [VERDICT_NAMES[r.verdict ?? ''] ?? 'Review', counts.join(', ') || 'no findings'].join(' · ');
 }
 
-export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', validate: validateReview, outcome: (text) => parseReview(text).verdict, summarize: summarizeReview, basis: async (api, ctx) => (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr?.headSha };
+export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', tool: 'submit_review', validate: validateReview, outcome: (text) => parseReview(text).verdict, summarize: summarizeReview, basis: async (api, ctx) => (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr?.headSha };
 
 const EXCERPT_LINES = 20;
 
@@ -115,7 +115,7 @@ export type ReviewFacts = { ci: string; findings: Array<{ id: string; cited: boo
 
 // The named texts the declaration reads: the review, the change it reviewed, each finding with its cited code, and the facts code found.
 export function reviewInputs(repoDir = 'repo') {
-  return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
+  return async (api: ToolExecutionApi, sealed: { content: string }, ctx: Context): Promise<Inputs> => {
     const r = parseReview(sealed.content);
     const pr = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr;
     const diff = pr ? await diffOf(api, repoDir, pr.baseRef, ctx) : '';

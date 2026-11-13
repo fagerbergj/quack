@@ -44,6 +44,7 @@ node tools/qa/stack.ts down
 | `pr-live` | A github review session in the Sessions list whose badge is open after a signed `reopened` webhook, then flips to merged on a signed `closed` webhook through the app's `pull_request` stream, with no re-read, at 1280 and 400 px, light and dark |
 | `home-read-session` | The home agent's `read_session`, called through the fake model with the home session's own credential: a seeded session's sealed report leads the read in full with no messages, and a researcher session read with `messages: true` returns its last messages (no browser steps) |
 | `judge-loop` | QA-only research agents enabling the judge (2 and 0 revisions), with the fake model writing and judging: a failing report comes back and its revision passes, a failing report at the limit goes out with its failures marked, and another seal past the limit ends the run; the passed report in its pane at 1280 px |
+| `contracts-gate` | A QA-only contracts agent enabling the judge, with the fake model writing and judging: the passed spec is put to the person through the contracts gate after the judge's, a rejection reaches the model as feedback, and the revised version is put up again and approved, ending the run |
 
 The demo session is a plain `quack` agent reply shaped like a review, not a GitHub review artifact; use `--seed artifacts`, or `--seed <dir>` with a copied session, to check a real artifact card.
 

@@ -1,8 +1,8 @@
 import type { Context } from '@earendil-works/chord/context';
-import { defineExtension, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { artifactKind, gate, type GateVerdict, type SealedArtifact } from '@quack/sdk';
-import type { Declaration, Inputs } from './declaration.ts';
-import { check, report, yieldHook, type JudgeOptions, type ToolKind } from './index.ts';
+import { defineExtension, GenerationTask, hook, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { artifactKind, Artifacts, gate, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
+import { check, report, type JudgeOptions, type Verdict } from './index.ts';
 import type { DecisionModelRef, ModelRef } from './resolve.ts';
 import type { Rubric } from './rubric.ts';
 
@@ -13,7 +13,7 @@ export type JudgeConfig = { maxRevisions?: number; decisionModel?: DecisionModel
 export type Judged = {
   rubric: Rubric;
   declaration: Declaration;
-  inputs: (api: ToolExecutionApi, sealed: { kind: string; version: number; content: string }, ctx: Context) => Promise<Inputs>;
+  inputs: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Inputs>;
   /** Text when this run has nothing to submit; the seal is then refused and the run ends. */
   refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
 };
@@ -21,8 +21,9 @@ export type Judged = {
 // One process owns one session, so registrations are module state; a workflow re-registers its kind before each judged seal.
 const registry = new Map<string, Judged>();
 
-/** Registers how a kind is judged, replacing any earlier entry for it. */
+/** Registers how a kind is judged, replacing any earlier entry for it; a declaration that does not fit its rubric throws here. */
 export function judged(kind: string, how: Judged): void {
+  checkDeclaration(how.declaration, how.rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code).map((k) => k.id)));
   registry.set(kind, how);
 }
 
@@ -43,6 +44,26 @@ async function verdictFor(api: ToolExecutionApi, ctx: Context, how: Judged, conf
   return out.verdict.passed || out.verdict.limitReached ? { kind: 'pass', note: text } : { kind: 'continue', feedback: text };
 }
 
+// A run may not finish before each sealed-by-tool kind's newest version passed or was released at the limit, unless the kind's refuse says there is nothing to submit.
+const yieldHook = () => hook(GenerationTask, {
+  async onYield(_answer, api, ctx) {
+    const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+    for (const [kind, how] of registry) {
+      const declared = artifactKind(kind);
+      if (!declared?.tool) continue;
+      const { path, tool } = declared;
+      // refuse reads committed state only, which the hook's api also serves.
+      if (await how.refuse?.(api as unknown as ToolExecutionApi, ctx)) continue;
+      const last = doc?.kinds[kind]?.versions.at(-1);
+      const v = last?.verdict as Verdict | null | undefined;
+      if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
+      if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
+      if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
+    }
+    return undefined;
+  },
+});
+
 let unregister: (() => void) | undefined;
 
 /** The judge's session half: its gate on artifact.sealed for registered kinds, and the yield hook for those with a seal tool. */
@@ -52,11 +73,7 @@ export function judgeSession(config: JudgeConfig): Extension[] {
     const how = registry.get(event.data.kind);
     return how && verdictFor(p.api!, p.ctx!, how, config, event.data);
   }, { timeoutMs: JUDGE_TIMEOUT_MS });
-  const toolKinds = (): ToolKind[] => [...registry.keys()].flatMap((kind) => {
-    const k = artifactKind(kind);
-    return k?.tool ? [{ kind, path: k.path, tool: k.tool }] : [];
-  });
-  return [defineExtension({ name: 'judge', hooks: [yieldHook(toolKinds)] })];
+  return [defineExtension({ name: 'judge', hooks: [yieldHook()] })];
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);

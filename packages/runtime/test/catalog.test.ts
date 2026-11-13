@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { declaredEnv, deploymentEnv } from '@quack/session';
+import { declaredEnv, deploymentEnv, resolveExtensions } from '@quack/session';
 import { catalog, declaredApps, deploymentExtensions, loadManifests, buildCatalog, manifests } from '../src/catalog.ts';
 
 // The hard-coded catalog this one replaced: its entry names, per-extension env, and the workflow env table; app endpoints come primed, never declared.
@@ -23,6 +23,19 @@ const agentsDir = new URL('../../../agents/', import.meta.url);
 test('the manifest-built catalog has the old entry names and deployment env', () => {
   assert.deepEqual(Object.keys(catalog).sort(), ['codemode', 'coding', 'contracts', 'github', 'home', 'judge', 'research', 'subagent', 'workflows']);
   assert.deepEqual(deploymentEnv(deploymentExtensions), ['LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
+});
+
+// Gates run in install order, so an agent whose judged work a later gate delivers must install the judge first.
+test('every shipped agent that enables the judge installs it before the extensions that deliver what it judges', () => {
+  const judged = readdirSync(agentsDir).filter((dir) => 'judge' in (JSON.parse(readFileSync(fileURLToPath(new URL(`${dir}/agent.json`, agentsDir)), 'utf8')).extensions ?? {}));
+  assert.ok(judged.includes('reviewer') && judged.includes('contracts'), `judged agents: ${judged.join(', ')}`);
+  for (const dir of judged) {
+    // Selected with the judge last, so only the manifests' optional entries can put it first.
+    const names = Object.keys(JSON.parse(readFileSync(fileURLToPath(new URL(`${dir}/agent.json`, agentsDir)), 'utf8')).extensions);
+    const selected = [...names.filter((n) => n !== 'judge'), 'judge'];
+    const order = resolveExtensions(selected, catalog).order;
+    for (const feature of ['github', 'contracts', 'research', 'workflows'].filter((f) => order.includes(f))) assert.ok(order.indexOf('judge') < order.indexOf(feature), `${dir}: ${order.join(' -> ')}`);
+  }
 });
 
 for (const dir of readdirSync(agentsDir)) {

@@ -1,7 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
-import { obj } from '@earendil-works/pi-schema';
-import { defineExtension, defineTool, GenerationTask, hook, LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
+import { LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { Artifacts, attachVerdict, type SealedArtifact } from '@quack/sdk';
 import { buildEvidence, checkDeclaration, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, metOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
@@ -205,8 +204,6 @@ async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): P
   return mine.length - 1 - mine.findLastIndex((v) => (v.verdict as { passed?: boolean }).passed);
 }
 
-const terminal = (text: string) => ({ output: [{ type: 'text' as const, text }], isError: true, control: { terminate: true } });
-
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
   await report?.(progressOf(opts.rubric, []));
   const stages = await evidenceFor(api, opts, sealed, memo, ctx);
@@ -256,69 +253,4 @@ export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   if (verdict.undecided.length) return { undecided: undecidedMessage(verdict.undecided, toolName) };
   await attachVerdict(api, sealed.kind, sealed.version, verdict as never, ctx);
   return { verdict };
-}
-
-/** A kind the run must not finish without: its path and the seal tool that checks it. */
-export type ToolKind = { kind: string; path: string; tool: string };
-
-/** Refuses to let a run finish before each kind's newest version has passed or been released at the limit. */
-export function yieldHook(kinds: () => ToolKind[]) {
-  return hook(GenerationTask, {
-    async onYield(_answer, api, ctx) {
-      const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-      for (const { kind, path, tool } of kinds()) {
-        const last = doc?.kinds[kind]?.versions.at(-1);
-        const v = last?.verdict as Verdict | null | undefined;
-        if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
-        if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
-        if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
-      }
-      return undefined;
-    },
-  });
-}
-
-/** The legacy factory's options: the kind as declared, plus what github and contracts still pass it. */
-type FactoryOptions = Omit<JudgeOptions, 'kind'> & {
-  kind: ArtifactKind;
-  refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
-  toolName?: string;
-  /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
-  onCleared?: (sealed: SealedArtifact, verdict: Verdict, api: ToolExecutionApi, ctx: Context) => Promise<{ text: string; isError?: boolean } | undefined>;
-};
-
-// shortcut: github and contracts still build their judge here; delete once they gate after the judge extension (#2060 PR 3).
-export function judge(factory: FactoryOptions) {
-  const { kind, refuse, toolName = 'submit_artifact', onCleared, ...rest } = factory;
-  const opts = { ...rest, kind: kind.kind } as JudgeOptions;
-  if (opts.declaration) checkDeclaration(opts.declaration, modelChecks(opts.rubric));
-  // A cleared version reaches onCleared on every submit, so a delivery that failed is retried; the hook must be idempotent.
-  async function finish(sealed: SealedArtifact, v: Verdict, api: ToolExecutionApi, ctx: Context) {
-    const cleared = v.passed || v.limitReached ? await onCleared?.(sealed, v, api, ctx) : undefined;
-    const text = [report(sealed, v, toolName, !!onCleared), cleared?.text].filter(Boolean).join('\n');
-    return { output: [{ type: 'text' as const, text }], ...(cleared?.isError ? { isError: true } : {}) };
-  }
-
-  const submit = defineTool({
-    name: toolName,
-    description: `Seal ${kind.path} and check it against its rubric. Call it when the ${kind.kind} is ready.`,
-    parameters: obj({}, { open: true }),
-    replay: 'safe',
-    async execute(_args, api, ctx) {
-      const refused = await refuse?.(api, ctx);
-      if (refused) return terminal(refused);
-      let sealed: SealedArtifact;
-      try {
-        ({ artifact: sealed } = await seal(api, kind, ctx));
-      } catch (err) {
-        return { output: [{ type: 'text', text: (err as Error).message }], isError: true };
-      }
-      const out = await check(api, opts, sealed, toolName, ctx);
-      if ('deny' in out) return terminal(out.deny);
-      if ('undecided' in out) return { output: [{ type: 'text', text: out.undecided }], isError: true };
-      return finish(sealed, out.verdict, api, ctx);
-    },
-  });
-
-  return defineExtension({ name: `judge:${kind.kind}`, tools: [submit], hooks: [yieldHook(() => [{ kind: kind.kind, path: kind.path, tool: toolName }])] });
 }
