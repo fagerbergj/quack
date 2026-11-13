@@ -1,12 +1,22 @@
+import { isIP } from 'node:net';
+
 export type HostConfig =
   | { driver: 'process' }
-  | { driver: 'docker'; image: string; runtime: string; network: string; data: { volume: string } | { hostDir: string }; distributorUrl: string; dockerHost: string; passthrough: string[] };
+  | { driver: 'docker'; image: string; runtime: string; network: string; data: { volume: string } | { hostDir: string }; distributorUrl: string; egressProxy: string; dockerHost: string; passthrough: string[] };
 
 const need = (env: NodeJS.ProcessEnv, name: string) => {
   const value = env[name];
   if (!value) throw new Error(`${name} is required when QUACK_SESSION_DRIVER=docker`);
   return value;
 };
+
+// Session containers have no DNS (gVisor cannot reach Docker's resolver, and the proxy resolves for them), so both of their hosts are IP literals.
+function byAddress(env: NodeJS.ProcessEnv, name: string) {
+  const value = need(env, name).replace(/\/$/, '');
+  if (!/^https?:\/\//.test(value)) throw new Error(`${name} must be an http(s) URL the session containers can reach`);
+  if (!isIP(new URL(value).hostname.replace(/^\[|\]$/g, ''))) throw new Error(`${name} must name its host by IP address: session containers have no DNS`);
+  return value;
+}
 
 // A named volume needs no migration (each session mounts its own subpath), but needs Docker Engine 26 or newer.
 function dataMount(env: NodeJS.ProcessEnv): { volume: string } | { hostDir: string } {
@@ -30,10 +40,10 @@ export function parseHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     console.warn('WARNING: session containers run under runc, not gVisor or Kata. Do not use this in production.');
   }
   const data = dataMount(env);
-  const distributorUrl = need(env, 'QUACK_SESSION_DISTRIBUTOR_URL').replace(/\/$/, '');
-  if (!/^https?:\/\//.test(distributorUrl)) throw new Error('QUACK_SESSION_DISTRIBUTOR_URL must be an http(s) URL the session containers can reach');
+  const distributorUrl = byAddress(env, 'QUACK_SESSION_DISTRIBUTOR_URL');
   return {
     driver, runtime, data, distributorUrl,
+    egressProxy: byAddress(env, 'QUACK_SESSION_EGRESS_PROXY'),
     image: need(env, 'QUACK_SESSION_IMAGE'),
     network: env.QUACK_SESSION_NETWORK ?? 'quack-sessions',
     dockerHost: env.QUACK_DOCKER_HOST ?? '/var/run/docker.sock',

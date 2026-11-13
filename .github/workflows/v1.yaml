@@ -74,8 +74,8 @@ jobs:
           load: true
           tags: quack:isolation
           cache-from: type=gha,scope=quack-v1
-      # Host networking lets the runner reach the session on 127.0.0.1:8080; the assertions are about env, files and tokens.
-      - run: set -o pipefail; node --test --test-reporter=spec packages/distributor/test/docker-live.test.ts | tee live.log; grep -q '^ℹ pass 1' live.log
+      # The isolation test runs on host networking so the runner reaches the session on 127.0.0.1:8080; the egress test builds its own internal network and proxy.
+      - run: set -o pipefail; node --test --test-reporter=spec packages/distributor/test/docker-live.test.ts | tee live.log; grep -q '^ℹ pass 2' live.log
         env:
           QUACK_LIVE_IMAGE: quack:isolation
           QUACK_LIVE_RUNTIME: ${{ steps.runtime.outputs.name }}

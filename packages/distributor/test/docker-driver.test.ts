@@ -59,13 +59,13 @@ function fakeDocker(sessionUrl: string) {
   return { api, containers, calls, sessionUrl };
 }
 
-async function setup(inheritedEnv: NodeJS.ProcessEnv = {}, defaultAgent?: string) {
+async function setup(inheritedEnv: NodeJS.ProcessEnv = {}, defaultAgent?: string, egressProxy?: string) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-docker-'));
   cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
   const sessionUrl = await listen((_req, res) => res.end('{}'));
   const docker = fakeDocker(sessionUrl);
   const broker = credentialBroker();
-  const launch = dockerLauncher({ api: docker.api, broker, image: 'quack:test', runtime: 'runsc', network: 'quack-sessions', data: { hostDir: '/srv/quack/data' }, distributorUrl: 'http://quack-v1:8080', inherit: () => inheritedEnv, urlFor: () => sessionUrl, sleep: async () => {}, startTimeoutMs: 1000 });
+  const launch = dockerLauncher({ api: docker.api, broker, image: 'quack:test', runtime: 'runsc', network: 'quack-sessions', data: { hostDir: '/srv/quack/data' }, distributorUrl: 'http://quack-v1:8080', egressProxy, inherit: () => inheritedEnv, urlFor: () => sessionUrl, sleep: async () => {}, startTimeoutMs: 1000 });
   const driver = sessionHost({ dataDir, defaultAgent }, launch);
   return { driver, docker, broker, dataDir };
 }
@@ -276,14 +276,36 @@ test('QUACK_SESSION_DRIVER defaults to process and docker needs its settings', (
   assert.deepEqual(parseHostConfig({}), { driver: 'process' });
   assert.throws(() => parseHostConfig({ QUACK_SESSION_DRIVER: 'kata' }), /process or docker/);
   assert.throws(() => parseHostConfig({ QUACK_SESSION_DRIVER: 'docker' }), /QUACK_DATA_VOLUME/);
-  const ok = { QUACK_SESSION_DRIVER: 'docker', QUACK_HOST_DATA_DIR: '/srv/d', QUACK_SESSION_DISTRIBUTOR_URL: 'http://quack-v1:8080/', QUACK_SESSION_IMAGE: 'quack:1' };
-  assert.deepEqual(parseHostConfig(ok), { driver: 'docker', runtime: 'runsc', data: { hostDir: '/srv/d' }, distributorUrl: 'http://quack-v1:8080', image: 'quack:1', network: 'quack-sessions', dockerHost: '/var/run/docker.sock', passthrough: [] });
+  const ok = { QUACK_SESSION_DRIVER: 'docker', QUACK_HOST_DATA_DIR: '/srv/d', QUACK_SESSION_DISTRIBUTOR_URL: 'http://172.30.0.2:8080/', QUACK_SESSION_EGRESS_PROXY: 'http://172.30.0.3:3128', QUACK_SESSION_IMAGE: 'quack:1' };
+  assert.deepEqual(parseHostConfig(ok), { driver: 'docker', runtime: 'runsc', data: { hostDir: '/srv/d' }, distributorUrl: 'http://172.30.0.2:8080', egressProxy: 'http://172.30.0.3:3128', image: 'quack:1', network: 'quack-sessions', dockerHost: '/var/run/docker.sock', passthrough: [] });
   assert.throws(() => parseHostConfig({ ...ok, QUACK_HOST_DATA_DIR: 'data' }), /absolute/);
   assert.throws(() => parseHostConfig({ ...ok, QUACK_DATA_VOLUME: 'v' }), /not both/);
   const { QUACK_HOST_DATA_DIR: _, ...noDir } = ok;
   assert.deepEqual((parseHostConfig({ ...noDir, QUACK_DATA_VOLUME: 'quack_quack-v1-data' }) as { data: unknown }).data, { volume: 'quack_quack-v1-data' });
   assert.throws(() => parseHostConfig({ ...ok, QUACK_SESSION_RUNTIME: 'runc' }), /QUACK_ALLOW_RUNC/);
   assert.equal((parseHostConfig({ ...ok, QUACK_SESSION_RUNTIME: 'runc', QUACK_ALLOW_RUNC: '1' }) as { runtime: string }).runtime, 'runc');
+});
+
+test('session containers name the distributor and the egress proxy by address, since they have no DNS', () => {
+  const ok = { QUACK_SESSION_DRIVER: 'docker', QUACK_HOST_DATA_DIR: '/srv/d', QUACK_SESSION_DISTRIBUTOR_URL: 'http://172.30.0.2:8081', QUACK_SESSION_EGRESS_PROXY: 'http://172.30.0.3:3128', QUACK_SESSION_IMAGE: 'quack:1' };
+  assert.throws(() => parseHostConfig({ ...ok, QUACK_SESSION_DISTRIBUTOR_URL: 'http://quack-v1:8081' }), /QUACK_SESSION_DISTRIBUTOR_URL must name its host by IP address/);
+  assert.throws(() => parseHostConfig({ ...ok, QUACK_SESSION_EGRESS_PROXY: 'http://egress:3128' }), /QUACK_SESSION_EGRESS_PROXY must name its host by IP address/);
+  const { QUACK_SESSION_EGRESS_PROXY: _, ...noProxy } = ok;
+  assert.throws(() => parseHostConfig(noProxy), /QUACK_SESSION_EGRESS_PROXY is required/);
+  assert.equal((parseHostConfig({ ...ok, QUACK_SESSION_DISTRIBUTOR_URL: 'http://[fd00:30::2]:8081' }) as { distributorUrl: string }).distributorUrl, 'http://[fd00:30::2]:8081');
+});
+
+test('a session reaches everything but the distributor through the egress proxy, Node included', async () => {
+  const broker = credentialBroker();
+  const { env } = containerEnv({}, { key: 'k', token: 't', broker, distributorUrl: 'http://172.30.0.2:8081', egressProxy: 'http://172.30.0.3:3128', passthrough: [], dir: '/data/x' });
+  for (const name of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']) assert.equal(env[name], 'http://172.30.0.3:3128', name);
+  assert.equal(env.NODE_USE_ENV_PROXY, '1');
+  for (const name of ['NO_PROXY', 'no_proxy']) assert.deepEqual(env[name].split(','), ['172.30.0.2', 'localhost', '127.0.0.1'], name);
+  const bare = containerEnv({ HTTPS_PROXY: 'http://host-proxy:1' }, { key: 'k', token: 't', broker, distributorUrl: 'http://d', passthrough: [], dir: '/data/x' }).env;
+  assert.ok(!Object.keys(bare).some((n) => /proxy/i.test(n)), 'the distributor\'s own proxy settings never reach a session');
+  const { driver, docker } = await setup({}, undefined, 'http://172.30.0.3:3128');
+  await driver.ensure('a');
+  assert.ok([...docker.containers.values()][0].body.Env.includes('HTTPS_PROXY=http://172.30.0.3:3128'), 'the launcher passes its proxy to the container');
 });
 
 test('dockerApi speaks JSON to a TCP host such as a socket proxy', async () => {
@@ -332,8 +354,9 @@ test('a container gets its server token as a file in its own mount, listens on i
   assert.deepEqual(probes, [`Bearer ${token}`]);
 });
 
+const fenced = { Internal: true, EnableIPv6: true, Options: { 'com.docker.network.bridge.gateway_mode_ipv4': 'isolated', 'com.docker.network.bridge.gateway_mode_ipv6': 'isolated' }, IPAM: { Config: [{ Subnet: '172.30.0.0/16' }, { Subnet: 'fd00:30::/64' }] } };
 const sessionNet: DockerCall = async (_m, path) => {
-  if (path === '/networks/quack-sessions') return { status: 200, body: { IPAM: { Config: [{ Subnet: '172.30.0.0/16' }, { Subnet: 'fd00:30::/64' }] } } };
+  if (path === '/networks/quack-sessions') return { status: 200, body: fenced };
   return path.startsWith('/containers/json') ? { status: 200, body: [] } : { status: 404, body: { message: 'no such network' } };
 };
 // This host as a container on the proxy network (eth0) and the session network (eth1).
@@ -346,10 +369,19 @@ test('the public listener can tell peers on the session network from everyone el
   await assert.rejects(onSessionNetwork(sessionNet, 'gone', attached), /no subnet/);
 });
 
+test('sessions do not boot on a network with a route out or a host address on its bridge', async () => {
+  const on = (net: object): DockerCall => async () => ({ status: 200, body: net });
+  const v4Only = { 'com.docker.network.bridge.gateway_mode_ipv4': 'isolated' };
+  for (const net of [{ ...fenced, Internal: false }, { ...fenced, Options: {} }, { ...fenced, Options: v4Only }]) {
+    await assert.rejects(onSessionNetwork(on(net), 'quack-sessions', attached), /must be internal with an isolated gateway/, JSON.stringify(net));
+  }
+  assert.equal((await onSessionNetwork(on({ ...fenced, EnableIPv6: false, Options: v4Only }), 'quack-sessions', attached)).address, '172.30.0.7', 'an IPv4-only network needs only its IPv4 gateway isolated');
+});
+
 test('the session listener binds loopback under the process driver and only the session-network address under docker, or the boot stops', async () => {
   const o = { dataDir: '/srv/quack', runtime: 'runtime.ts', sessionPort: 8081, broker: credentialBroker() };
   assert.equal((await sessionDriver({}, o)).listenAddress, '127.0.0.1');
-  const docker = { QUACK_SESSION_DRIVER: 'docker', QUACK_HOST_DATA_DIR: '/srv/d', QUACK_SESSION_DISTRIBUTOR_URL: 'http://quack-v1:8081', QUACK_SESSION_IMAGE: 'quack:1' };
+  const docker = { QUACK_SESSION_DRIVER: 'docker', QUACK_HOST_DATA_DIR: '/srv/d', QUACK_SESSION_DISTRIBUTOR_URL: 'http://172.30.0.7:8081', QUACK_SESSION_EGRESS_PROXY: 'http://172.30.0.3:3128', QUACK_SESSION_IMAGE: 'quack:1' };
   assert.equal((await sessionDriver(docker, o, { api: sessionNet, interfaces: attached })).listenAddress, '172.30.0.7');
   const detached = { lo: attached.lo, eth0: attached.eth0 };
   await assert.rejects(sessionDriver(docker, o, { api: sessionNet, interfaces: detached }), /no address on docker network quack-sessions/);

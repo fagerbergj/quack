@@ -31,3 +31,16 @@ Before `compose up` with a new image, run its validator against the prod config,
 ```
 docker run --rm -v <data>:/data:ro -v <config>:/config/deployment.json:ro -e QUACK_CONFIG=/config/deployment.json -e QUACK_AGENTS_DIR=/app/agents -e QUACK_DATA_DIR=/data <new-image> node packages/runtime/src/validate.ts
 ```
+
+## Session containers
+
+With `QUACK_SESSION_DRIVER=docker`, each session runs in its own container from `QUACK_SESSION_IMAGE` under `QUACK_SESSION_RUNTIME` (gVisor's `runsc` by default), with only its own directory of the data volume mounted. Two more containers join the sessions on their network:
+
+- **The session network** (`QUACK_SESSION_NETWORK`, default `quack-sessions`) is internal with an isolated gateway, so it has no route out and its bridge has no address on the host. The distributor refuses to start sessions on any other kind of network:
+  `docker network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated --subnet 10.213.0.0/24 quack-sessions`
+- **The distributor** joins it at a fixed address, which `QUACK_SESSION_DISTRIBUTOR_URL` names with the session port, e.g. `http://10.213.0.2:8081`. Sessions reach models, Exa, Langfuse and the extension apps only through its broker there.
+- **The egress proxy** joins it at a fixed address too (`QUACK_SESSION_EGRESS_PROXY`, e.g. `http://10.213.0.3:3128`) and joins an ordinary network for the way out. It runs `ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c` with [`packages/distributor/egress/squid.conf`](../packages/distributor/egress/squid.conf) mounted at `/etc/squid/squid.conf`. It passes any public host on ports 80 and 443, which git clones, dependency installs and the researcher's `web_fetch` need, and refuses private, loopback, link-local and tailnet (100.64.0.0/10) addresses, including names that resolve to them.
+
+Session containers get no DNS: gVisor cannot reach Docker's embedded resolver, so both URLs name their hosts by IP, and the proxy resolves every other name. The driver sets `HTTP_PROXY`, `HTTPS_PROXY`, their lower-case forms and `NODE_USE_ENV_PROXY=1` in each container, with `NO_PROXY` set to the distributor.
+
+The distributor talks to the Docker Engine at `QUACK_DOCKER_HOST` (default `/var/run/docker.sock`). It makes only these calls: `GET /networks/{name}`, `GET /containers/json`, `POST /containers/create`, `POST /containers/{name}/start`, `POST /containers/{name}/stop`, `POST /containers/{name}/wait` and `DELETE /containers/{name}`. Access to that socket is root on the host.
