@@ -4,7 +4,8 @@ import { asJudged, type SessionRecord } from './record.ts';
 import type { EvalServices } from './replay.ts';
 import type { Blocks } from './report.ts';
 
-export const adaptersOf = (manifests: ExtensionManifest[]): EvalAdapter[] => manifests.flatMap((m) => m.evalAdapters ?? []);
+// An older ref may lack an extension this tree lists (its module exports no manifest yet); it contributes no adapters.
+export const adaptersOf = (manifests: Array<ExtensionManifest | undefined>): EvalAdapter[] => manifests.flatMap((m) => m?.evalAdapters ?? []);
 
 /** The service stubs every adapter contributes, by the pinned document kind they serve. */
 export const servicesOf = (adapters: EvalAdapter[]): EvalServices => Object.assign({}, ...adapters.map((a) => a.services));
