@@ -182,11 +182,11 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       const waitingOnHuman = active && (await onlyAwaitingHumans());
       return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt, note: statusNote.get() };
     },
-    // The caller's name for the session (a PR title); the first one sticks, and the distributor lists it ahead of the first message.
+    // The caller's name for the session; the first one sticks, and the distributor lists it ahead of the first message.
     async recordTitle(title: string) {
       await writeFile(join(opts.dir, 'title'), title.replace(/\s+/g, ' ').trim().slice(0, 200), { flag: 'wx' }).catch(() => undefined);
     },
-    // Data the UI reads beside the transcript (a PR's files and checks); one record per `id`, a later one replacing the earlier.
+    // Data the UI reads beside the transcript; one record per `id`, a later one replacing the earlier.
     // Best effort, a failed write dropped; writes run in turn so records arriving together all land, and a renamed unique temp file survives a crash.
     recordMeta(record: Record<string, unknown>) {
       const write = metaWrites.then(async () => {
