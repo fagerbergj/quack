@@ -185,7 +185,7 @@ export function ingestWorkflow(deps: IngestDeps) {
             pages: step<string[]>(c, 'transcribe').map((t, i) => ({ page: i + 1, text: t })),
           };
           await must(c.api.env!.writeFile(transcriptKind.path, JSON.stringify(transcript, null, 1), c.ctx), transcriptKind.path);
-          const sealed = await seal(c.api, transcriptKind, c.ctx);
+          const { artifact: sealed } = await seal(c.api, transcriptKind, c.ctx);
           // Registered only once the transcript is sealed, so a failed ingest adds no topic; the service ignores a repeat.
           await deps.service.addTopic(topic);
           return sealed as unknown as JsonValue;

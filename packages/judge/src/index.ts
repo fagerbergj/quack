@@ -264,7 +264,7 @@ export function judge(opts: JudgeOptions) {
       if (refused) return terminal(refused);
       let sealed: SealedArtifact;
       try {
-        sealed = await seal(api, opts.kind, ctx);
+        ({ artifact: sealed } = await seal(api, opts.kind, ctx));
       } catch (err) {
         return { output: [{ type: 'text', text: (err as Error).message }], isError: true };
       }

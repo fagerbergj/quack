@@ -27,7 +27,7 @@ const submit = defineTool({
   parameters: obj({}, { open: true }),
   replay: 'safe',
   execute: async (_args, api, ctx) => {
-    const sealed = await seal(api, review, ctx);
+    const { artifact: sealed } = await seal(api, review, ctx);
     return { output: [{ type: 'text', text: `sealed ${sealed.kind} v${sealed.version}` }] };
   },
 });
