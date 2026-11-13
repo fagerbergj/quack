@@ -3,8 +3,8 @@ import { contentText, validateToolArguments, type Message } from '@earendil-work
 import type { Schema } from '@earendil-works/pi-schema';
 import type { JsonValue } from '@earendil-works/chord';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { feedback, rejudge, undecidedMessage, type JudgeOptions } from '@quack/judge';
-import { attachVerdict, decide, observeGeneration, person as sdkPerson, seal, sealedVersion, type DecisionPoint, type Resolver } from '@quack/sdk';
+import { feedback, judged, type Judged, type Verdict } from '@quack/judge';
+import { Artifacts, decide, observeGeneration, person as sdkPerson, seal, SealRefused, sealedVersion, type ArtifactKind, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
@@ -30,8 +30,8 @@ export type Step =
   | { name: string; kind: 'code'; run(c: StepContext): JsonValue | Wait | Promise<JsonValue | Wait> }
   /** The model's reply must be one JSON object matching `schema`; anything else fails the step. */
   | { name: string; kind: 'model'; prompt(c: StepContext): string; schema: Schema; model?: { provider: string; modelId: string } }
-  /** A model answer built into a sealed card and judged; a failing verdict goes back to the model for up to `maxRevisions` new versions, and the last version is kept with its verdict whatever it says. */
-  | { name: string; kind: 'judged'; prompt(c: StepContext): string; schema: Schema; model?: { provider: string; modelId: string }; card(c: StepContext, decision: JsonValue): object | Promise<object>; judge(c: StepContext): { options: JudgeOptions; notes?: string[] } }
+  /** A model answer built into a sealed `artifact`, judged on its seal when the agent enables the judge; a failing verdict goes back to the model until the judge passes or releases a version. */
+  | { name: string; kind: 'judged'; artifact: ArtifactKind; prompt(c: StepContext): string; schema: Schema; model?: { provider: string; modelId: string }; card(c: StepContext, decision: JsonValue): object | Promise<object>; judge(c: StepContext): Judged }
   /** Resolvers run in order; a person answers through the session's questions when they all escalate. */
   | { name: string; kind: 'decision'; point(c: StepContext): Omit<DecisionPoint, 'name'>; resolvers?: Resolver[] };
 
@@ -97,34 +97,47 @@ async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext)
   return { result, cost };
 }
 
-type Revision = { version: number; reply: JsonValue; cost: number };
+/** `failed`: the judge sent the version back with this feedback. */
+type Revision = { version: number; reply: JsonValue; cost: number; failed?: string };
 
-// A revision's answer and sealed version are memoized on the task, so a rerun after a crash continues the step instead of asking again.
-async function revise(step: Extract<Step, { kind: 'judged' }>, c: StepContext, messages: Message[], kind: JudgeOptions['kind'], n: number): Promise<Revision> {
+type Answer = { built: JsonValue; reply: JsonValue; cost: number };
+
+// The answer is memoized before its seal and the finished round after, so a crash while judging reseals the same answer, as the same version.
+// An undecided judge or a deny fails the step without finishing the round, so a retry judges that version again.
+async function revise(step: Extract<Step, { kind: 'judged' }>, c: StepContext, messages: Message[], n: number): Promise<Revision> {
   const key = `judged:${step.name}:${n}`;
   const done = await c.api.memo<Revision>(key, c.ctx);
   if (done) return done;
-  const { built, reply, cost } = await converse(step, c, messages, (d) => step.card(c, d));
-  await c.api.env!.writeFile(kind.path, JSON.stringify(built, null, 1), c.ctx);
-  const { artifact: sealed } = await seal(c.api, kind, c.ctx);
-  return c.api.memo<Revision>(key, { version: sealed.version, reply: JSON.parse(JSON.stringify(reply)), cost }, c.ctx);
+  const asked = async (): Promise<Answer> => {
+    const { built, reply, cost } = await converse(step, c, messages, (d) => step.card(c, d));
+    return JSON.parse(JSON.stringify({ built, reply, cost }));
+  };
+  const answer = (await c.api.memo<Answer>(`${key}:answer`, c.ctx)) ?? (await c.api.memo<Answer>(`${key}:answer`, await asked(), c.ctx));
+  await c.api.env!.writeFile(step.artifact.path, JSON.stringify(answer.built, null, 1), c.ctx);
+  judged(step.artifact.kind, step.judge(c));
+  const refused = await seal(c.api, step.artifact, c.ctx).then(() => undefined, (err) => {
+    if (err instanceof SealRefused) return err;
+    throw err;
+  });
+  const sealed = (await c.api.snapshot(Artifacts, c.api.conversationId, c.ctx))!.kinds[step.artifact.kind].versions.at(-1)!;
+  if (refused && (refused.verdict.kind === 'deny' || !sealed.verdict)) throw new Error(refused.message);
+  return c.api.memo<Revision>(key, { version: sealed.version, reply: answer.reply, cost: answer.cost, ...(refused && { failed: refused.message }) }, c.ctx);
 }
 
 // A failed version's notes go back like a rejected answer would: the model's own reply, then what was wrong with it.
 async function judgedStep(step: Extract<Step, { kind: 'judged' }>, c: StepContext): Promise<StepOutcome> {
-  const { options, notes = [] } = step.judge(c);
   const messages = askOf(step, c);
   let cost = 0;
+  let last = 0;
   for (let revisions = 0; ; revisions++) {
-    const r = await revise(step, c, messages, options.kind, revisions);
+    const r = await revise(step, c, messages, revisions);
     cost += r.cost;
-    const sealed = (await sealedVersion(c.api, options.kind.kind, r.version, c.ctx))!;
-    const verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-    if (verdict.undecided.length) throw new Error(undecidedMessage(verdict.undecided, 'the judge'));
-    await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
-    if (verdict.passed || revisions >= options.maxRevisions) return { result: { version: sealed.version, revisions, passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes }, cost };
-    const lines = feedback(verdict.checks).map((l) => `- ${l}`).join('\n');
-    messages.push(r.reply as unknown as Message, { role: 'user', content: `The ${sealed.kind} built from that answer failed its checks:\n${lines}\nAnswer again with one JSON object that fixes each point and nothing else.`, timestamp: c.api.now() });
+    const verdict = (await sealedVersion(c.api, step.artifact.kind, r.version, c.ctx))!.verdict as Verdict | null;
+    // An unchanged answer reseals the same version, whose verdict cannot change: the step ends with it.
+    if (!r.failed || r.version === last) return { result: { version: r.version, revisions, passed: verdict?.passed ?? null, score: verdict?.score ?? null, gatesFailed: verdict?.gatesFailed ?? [] }, cost };
+    last = r.version;
+    const lines = feedback(verdict!.checks).map((l) => `- ${l}`).join('\n');
+    messages.push(r.reply as unknown as Message, { role: 'user', content: `The ${step.artifact.kind} built from that answer failed its checks:\n${lines}\nAnswer again with one JSON object that fixes each point and nothing else.`, timestamp: c.api.now() });
   }
 }
 

@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
 import { num, obj, str } from '@earendil-works/pi-schema';
 import { answerQuestion, Artifacts, Failures, pendingQuestions, Questions, seal, type ArtifactKind } from '@quack/sdk';
+import { manifest as judgeManifest, type JudgeConfig, type Judged } from '@quack/judge';
 import { openSession } from '@quack/session';
 import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
@@ -15,12 +16,18 @@ after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))
 const tmp = async () => { const d = await mkdtemp(join(tmpdir(), 'quack-wf-')); dirs.push(d); return d; };
 
 function open(dir: string, workflow: Workflow, ...replies: (string | FauxResponseFactory)[]) {
+  return openWith(dir, workflow, undefined, ...replies);
+}
+
+// `judge` installs the judge extension first, as an agent enabling it would.
+async function openWith(dir: string, workflow: Workflow, judge: JudgeConfig | undefined, ...replies: (string | FauxResponseFactory)[]) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(replies.map((r) => (typeof r === 'string' ? fauxAssistantMessage(r) : r)));
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [workflowExtension([workflow])] } });
+  const judged = judge ? await judgeManifest.session!(judge, {}, []) : [];
+  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [...judged, workflowExtension([workflow])] } });
 }
 
 type Open = Awaited<ReturnType<typeof open>>;
@@ -249,29 +256,25 @@ test('a decision step waits for a person across a restart and resumes on the ans
 });
 
 const sayOk = { name: 'says-ok', version: 1, threshold: 1, criteria: [{ id: 'tone', checks: [{ id: 'says_ok', label: 'Does not say ok', weight: 'gate' as const, code: (a: string) => ({ met: a.includes('ok') ? 1 : 0, detail: 'the text must say ok' }) }] }] };
+// Its own kind, so the judge's registration never reaches the other tests' test.note seals.
+const card: ArtifactKind = { kind: 'test.card', path: 'card.md' };
+const codeOnly = (inputs: Judged['inputs'] = async () => ({})): Judged => ({ rubric: sayOk, declaration: { scopes: {}, checks: {} }, inputs });
 const judgedFlow = defineWorkflow({
   name: 'judged',
-  steps: [{
-    name: 'card',
-    kind: 'judged',
-    schema: obj({ text: str() }, { open: true }),
-    prompt: () => 'write the text',
-    card: (_c, d) => d as object,
-    judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 }, notes: ['n'] }),
-  }],
+  steps: [{ name: 'card', kind: 'judged', artifact: card, schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object, judge: () => codeOnly() }],
 });
 
-async function runJudged(...replies: FauxResponseFactory[]) {
-  const s = await open(await tmp(), judgedFlow, ...replies);
+async function runJudged(judge: JudgeConfig | undefined, ...replies: FauxResponseFactory[]) {
+  const s = await openWith(await tmp(), judgedFlow, judge, ...replies);
   const outcome = await runWorkflow(s.harness, s.root, judgedFlow, null);
-  const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.note'].versions;
+  const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.card'].versions;
   await s.close();
   return { outcome, versions };
 }
 
 test('a judged card that fails is revised once with its own answer and the judge\'s notes, and sealed as v2', async () => {
   const seen: Message[][] = [];
-  const { outcome, versions } = await runJudged(reply('{"text": "fine"}', seen), reply('{"text": "ok"}', seen));
+  const { outcome, versions } = await runJudged({ maxRevisions: 1 }, reply('{"text": "fine"}', seen), reply('{"text": "ok"}', seen));
 
   assert.equal(outcome.status, 'completed');
   assert.deepEqual(versions.map((v) => [v.version, (v.verdict as { passed: boolean }).passed]), [[1, false], [2, true]]);
@@ -282,9 +285,17 @@ test('a judged card that fails is revised once with its own answer and the judge
 
 test('a judged card that passes is not revised', async () => {
   const seen: Message[][] = [];
-  const { versions } = await runJudged(reply('{"text": "ok"}', seen));
+  const { versions } = await runJudged({ maxRevisions: 1 }, reply('{"text": "ok"}', seen));
   assert.equal(seen.length, 1);
   assert.equal(versions.length, 1);
+});
+
+test('an answer the model repeats unchanged ends the step with the verdict its version already has', async () => {
+  const seen: Message[][] = [];
+  const { outcome, versions } = await runJudged({ maxRevisions: 3 }, reply('{"text": "no"}', seen), reply('{"text": "no"}', seen));
+  assert.equal(seen.length, 2);
+  assert.equal(versions.length, 1);
+  assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: { passed: boolean } }).card.passed, false);
 });
 
 test('a crash while judging a revision resumes that revision: no answer is asked again and the count holds', async () => {
@@ -293,28 +304,28 @@ test('a crash while judging a revision resumes that revision: no answer is asked
   const build = (hang: boolean) => defineWorkflow({
     name: 'judged',
     steps: [{
-      name: 'card', kind: 'judged', schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object,
-      judge: () => ({ options: { kind: note, rubric: sayOk, maxRevisions: 1, evidence: async (_api, sealed, c) => {
+      name: 'card', kind: 'judged', artifact: card, schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object,
+      judge: () => codeOnly(async (_api, sealed, c) => {
         if (hang && sealed.version === 2) {
           entered();
           await new Promise((_, reject) => c.abortSignal!.addEventListener('abort', () => reject(c.abortSignal!.reason)));
         }
         return {};
-      } } }),
+      }),
     }],
   });
   const dir = await tmp();
   const before: Message[][] = [];
-  const a = await open(dir, build(true), reply('{"text": "fine"}', before), reply('{"text": "ok"}', before));
+  const a = await openWith(dir, build(true), { maxRevisions: 1 }, reply('{"text": "fine"}', before), reply('{"text": "ok"}', before));
   const running = runWorkflow(a.harness, a.root, build(true), null).catch(() => undefined);
   await inJudge;
   await a.close();
   await running;
 
   const after: Message[][] = [];
-  const b = await open(dir, build(false), reply('{"text": "fine"}', after), reply('{"text": "ok"}', after));
+  const b = await openWith(dir, build(false), { maxRevisions: 1 }, reply('{"text": "fine"}', after), reply('{"text": "ok"}', after));
   const outcome = await runWorkflow(b.harness, b.root, build(false), null);
-  const versions = (await b.harness.snapshot(Artifacts, b.root.id, ctx))!.kinds['test.note'].versions;
+  const versions = (await b.harness.snapshot(Artifacts, b.root.id, ctx))!.kinds['test.card'].versions;
   await b.close();
   assert.equal(after.length, 0, 'both answers were already given');
   assert.deepEqual(versions.map((v) => (v.verdict as { passed: boolean }).passed), [false, true]);
@@ -323,25 +334,26 @@ test('a crash while judging a revision resumes that revision: no answer is asked
 
 test('a judged card still failing after the last revision is delivered with its failing verdict', async () => {
   const seen: Message[][] = [];
-  const { outcome, versions } = await runJudged(reply('{"text": "no"}', seen), reply('{"text": "nope"}', seen), reply('{"text": "never"}', seen));
+  const { outcome, versions } = await runJudged({ maxRevisions: 1 }, reply('{"text": "no"}', seen), reply('{"text": "nope"}', seen), reply('{"text": "never"}', seen));
 
   assert.equal(seen.length, 2);
   assert.deepEqual(versions.map((v) => (v.verdict as { passed: boolean }).passed), [false, false]);
   assert.equal((versions[1].verdict as { limitReached: boolean }).limitReached, true);
-  assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: unknown }).card, { version: 2, revisions: 1, passed: false, score: 1, gatesFailed: ['tone.says_ok'], notes: ['n'] });
+  assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: unknown }).card, { version: 2, revisions: 1, passed: false, score: 1, gatesFailed: ['tone.says_ok'] });
 });
 
 test('a judged step whose judge model gives no answer fails the step and attaches no verdict', async () => {
-  const asked = { name: 'asks', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'q', label: 'q', weight: 1, scope: 'review', question: 'Is it fine?' }] }] };
+  const asked = { name: 'asks', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'q', label: 'q', weight: 1 }] }] };
+  const declaration = { scopes: { review: { split: { name: 'whole', from: 'text' } } }, checks: { q: { scope: 'review', question: { type: 'bool' as const, instructions: 'Is it fine?' }, aggregate: { name: 'all' as const } } } };
   const flow = defineWorkflow({
     name: 'judged-outage',
-    steps: [{ name: 'card', kind: 'judged', schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object,
-      judge: () => ({ options: { kind: note, rubric: asked, evidence: async () => ({ review: [{ id: 'r', state: { text: 'x' } }] }), maxRevisions: 1 } }) }],
+    steps: [{ name: 'card', kind: 'judged', artifact: card, schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object,
+      judge: () => ({ rubric: asked, declaration, inputs: async () => ({ text: 'x' }) }) }],
   });
   const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });
-  const s = await open(await tmp(), flow, reply('{"text": "ok"}', []), () => busy);
+  const s = await openWith(await tmp(), flow, { maxRevisions: 1 }, reply('{"text": "ok"}', []), () => busy);
   const outcome = await runWorkflow(s.harness, s.root, flow, null);
-  const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.note'].versions;
+  const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.card'].versions;
   await s.close();
   assert.equal(outcome.status, 'failed');
   assert.equal(versions[0].verdict ?? null, null, 'an outage is not a verdict');
@@ -359,7 +371,8 @@ function throwingFlow(builds: { n: number }, failures: number) {
         if (builds.n++ < failures) throw new Error('the card builder rejects this');
         return d as object;
       },
-      judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 0 } }),
+      artifact: card,
+      judge: () => codeOnly(),
     }],
   });
 }

@@ -8,6 +8,7 @@ import { after, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { num, obj, str } from '@earendil-works/pi-schema';
 import { observeGeneration, onGeneration } from '@quack/sdk';
+import { manifest as judgeManifest } from '@quack/judge';
 import { defineWorkflow, runWorkflow, workflowExtension } from '@quack/workflows';
 import { agentSpec } from '@quack/session';
 import { openSession } from '@quack/session';
@@ -174,7 +175,7 @@ const flow = defineWorkflow({
   name: 'traced',
   steps: [
     { name: 'decide', kind: 'model', schema: obj({ n: num() }, { open: true }), prompt: () => 'pick a number' },
-    { name: 'card', kind: 'judged', schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object, judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 } }) },
+    { name: 'card', kind: 'judged', artifact: note, schema: obj({ text: str() }, { open: true }), prompt: () => 'write the text', card: (_c, d) => d as object, judge: () => ({ rubric: sayOk, declaration: { scopes: {}, checks: {} }, inputs: async () => ({}) }) },
   ],
 });
 
@@ -185,7 +186,7 @@ test('workflow model and judged steps each send their generations through the sd
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const extensions = [workflowExtension([flow]), ...tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'wf-1', agentName: 'sleeper' })];
+  const extensions = [...(await judgeManifest.session!({ maxRevisions: 1 }, {}, [])), workflowExtension([flow]), ...tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'wf-1', agentName: 'sleeper' })];
   const s = await openSession({ dir: await mkdtemp(join(dir, 's-')), models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'be terse', extensions } });
   assert.equal((await runWorkflow(s.harness, s.root, flow, null)).status, 'completed');
   await s.close();

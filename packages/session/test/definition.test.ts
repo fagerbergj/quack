@@ -74,6 +74,20 @@ test('a pinned snapshot that names its decision model classifier keeps it: the e
   assert.deepEqual(spec.extensions!.map((e) => e.name), [`github:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`]);
 });
 
+test('a definition pinned before the judge was an extension is judged with the settings it carried', async () => {
+  const clef = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  // As in the manifests, the features list the judge as optional, so it installs first.
+  const withJudge: Catalog = { ...catalog, github: Object.assign((config: unknown) => catalog.github(config), { optional: ['judge'] }), research: () => [], workflows: () => [], judge: (config) => [{ name: `judge:${JSON.stringify(config)}` } as never] };
+  const judgeOf = (extensions: Record<string, unknown>) => parseDefinition({ name: 'a', version: 1, model: 'local/qwen3.8-27b', extensions }, parseDeployment(deployment), withJudge).extensions.judge;
+  assert.deepEqual(judgeOf({ coding: {}, github: { maxRevisions: 2, classifier: clef } }), { maxRevisions: 2, decisionModel: clef }, 'a pinned reviewer');
+  assert.deepEqual(judgeOf({ research: { maxRevisions: 2, decisionModel: clef } }), { maxRevisions: 2, decisionModel: clef }, 'a pinned researcher');
+  assert.deepEqual(judgeOf({ workflows: { workflow: 'sleeper.lineup', decisionModel: clef } }), { maxRevisions: 1, decisionModel: clef }, 'a pinned card job: one revision, as its judged step ran');
+  assert.equal(judgeOf({ github: { role: 'implementer' } }), undefined, 'nothing judged it, so nothing is added');
+  assert.deepEqual(judgeOf({ github: { maxRevisions: 2 }, judge: { maxRevisions: 3 } }), { maxRevisions: 3 }, 'a definition naming the judge keeps its own');
+  const pinned = parseDefinition({ name: 'reviewer', version: 13, model: 'local/qwen3.8-27b', extensions: { github: { maxRevisions: 2, classifier: clef } } }, parseDeployment(deployment), withJudge);
+  assert.deepEqual((await agentSpec(pinned, withJudge)).extensions!.map((e) => e.name), [`judge:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`, `github:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`], 'the judge installs for it');
+});
+
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-def-'));
   try {

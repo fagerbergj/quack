@@ -23,6 +23,7 @@ import type { DigestDecision } from '../src/report/digest.ts';
 import type { RetroDecision } from '../src/report/retro.ts';
 import { round2 } from '../src/lineup/facts.ts';
 import { retroPrompt } from '../src/report/workflow.ts';
+import { sleeperJudge } from './judge.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/report.json', import.meta.url), 'utf8')) as Record<string, any>;
 const AT = Date.parse('2026-11-10T09:00:00Z');
@@ -158,15 +159,6 @@ test('the preview news check keeps its legacy game unit, and a recap has no news
   assert.deepEqual((await buildEvidence(digestDeclaration, digestInputsOf(recap, JSON.stringify(buildDigestCard(recap, digestDecision))))).evidence.preview, []);
 });
 
-test('the report judges ask the configured decision model', () => {
-  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-  for (const make of [digestWorkflow, retroWorkflow]) {
-    const step = make({ client: clientOf(fixtures), decisionModel: ref }).steps.find((s) => s.name === 'card')!;
-    const { options } = (step as Extract<typeof step, { kind: 'judged' }>).judge({ prior: { facts: {} } } as never);
-    assert.deepEqual(options.decisionModel, ref);
-  }
-});
-
 type Sim = { fx?: Record<string, any>; now?: () => number; setTimer?: SetTimer };
 type Make = (deps: Parameters<typeof digestWorkflow>[0]) => Workflow;
 
@@ -192,7 +184,7 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
   const clock = sim.now ?? (() => AT);
   const workflow = make({ client: createSleeperClient({ fetch: fetchOf(fx), now: clock }), now: clock, news });
   const m = faux.getModel();
-  const s = await openSession({ dir, models, now: sim.now && (() => new Date(sim.now!())), setTimer: sim.setTimer, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the league reporter.', extensions: [workflowExtension([workflow])] } });
+  const s = await openSession({ dir, models, now: sim.now && (() => new Date(sim.now!())), setTimer: sim.setTimer, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the league reporter.', extensions: [...(await sleeperJudge()), workflowExtension([workflow])] } });
   try {
     return await drive(s, workflow, judged);
   } finally {
@@ -207,19 +199,19 @@ async function run(make: Make, input: object, decision: object, news?: News) {
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
     await s.close();
-    return { record: await readSession(join(s.workspace, '..')), sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string; units: number; met: unknown }> } };
+    return { record: await readSession(join(s.workspace, '..')), sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; checks: Array<{ id: string; units: number; met: unknown }> } };
   });
 }
 
 test('the digest workflow seals a recap and a preview card and the judge passes them, saying what was not checked', async () => {
   const recap = await run(digestWorkflow, RECAP, digestDecision);
   assert.deepEqual(await replayed(recap.record, recap.sealed), digestInputsOf(await digestFacts(), recap.sealed.content), 'the recording rebuilds the inputs the judge read');
-  assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed, recap.verdict.notes], ['digest', 'sleeper.digest@4', [], true, []]);
+  assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed], ['digest', 'sleeper.digest@4', [], true]);
   assert.ok(recap.judged.some((q) => /real story/.test(q)));
   assert.deepEqual(recap.verdict.checks.filter((k) => k.id === 'preview_news_decides').map((k) => [k.units, k.met]), [[0, null]]);
   const preview = await run(digestWorkflow, PREVIEW, previewDecision, newsStub);
   await replayed(preview.record, preview.sealed);
-  assert.deepEqual([(JSON.parse(preview.sealed.content) as DigestCard).past, preview.verdict.gatesFailed, preview.verdict.passed, preview.verdict.notes], [false, [], true, []]);
+  assert.deepEqual([(JSON.parse(preview.sealed.content) as DigestCard).past, preview.verdict.gatesFailed, preview.verdict.passed], [false, [], true]);
   assert.ok(preview.judged.some((q) => /swings it/.test(q)));
 });
 
@@ -229,11 +221,11 @@ test('the retro workflow seals a card whose figures are the facts\' and the judg
   const { sealed, verdict, judged, record } = await run(retroWorkflow, RECAP, decision, newsStub);
   assert.deepEqual(await replayed(record, sealed), retroInputsOf(f, sealed.content), 'the recording rebuilds the inputs the judge read');
   const card = JSON.parse(sealed.content) as RetroCard;
-  assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['retro', 12, true, 'sleeper.retro@4', [], true, []]);
+  assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed], ['retro', 12, true, 'sleeper.retro@4', [], true]);
   assert.ok(judged.some((q) => /injury designation restated/.test(q)));
   const bare = await run(retroWorkflow, RECAP, { ...decision, misses: [{ index: 0, why: 'x', knowable: false }] });
   await replayed(bare.record, bare.sealed);
-  assert.deepEqual([bare.verdict.notes, bare.verdict.checks.filter((k) => k.id === 'signal_is_evidence').map((k) => [k.units, k.met])], [[], [[0, null]]]);
+  assert.deepEqual(bare.verdict.checks.filter((k) => k.id === 'signal_is_evidence').map((k) => [k.units, k.met]), [[0, null]]);
 });
 
 test('the report runs are a preview an hour before the first kickoff and a recap and retro once the last game is final', () => {

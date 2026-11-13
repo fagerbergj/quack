@@ -243,6 +243,18 @@ function withDecisionModel(raw: Record<string, unknown>): Record<string, unknown
   return { ...raw, extensions };
 }
 
+// shortcut: snapshots pinned before the judge became an extension (#2060) keep its settings in the feature's config; remove one release after.
+// Workflow cards were judged with one revision, the rest with two.
+function withJudge(raw: Record<string, unknown>, catalog: Catalog): Record<string, unknown> {
+  if (!isObject(raw.extensions) || 'judge' in raw.extensions || !catalog.judge) return raw;
+  const extensions = raw.extensions;
+  const from = ['github', 'research', 'contracts', 'workflows'].find((n) => isObject(extensions[n]) && ('maxRevisions' in extensions[n] || 'decisionModel' in extensions[n]));
+  if (!from) return raw;
+  const c = extensions[from] as Record<string, unknown>;
+  const judge = { maxRevisions: c.maxRevisions ?? (from === 'workflows' ? 1 : 2), decisionModel: c.decisionModel, judgeModel: c.judgeModel, escalations: c.escalations };
+  return { ...raw, extensions: { ...extensions, judge: JSON.parse(JSON.stringify(judge)) } };
+}
+
 function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
   if (!isObject(extensions)) return ['extensions must be an object of name to config'];
   const problems = Object.entries(extensions).flatMap(([name, config]) => catalog[name]
@@ -254,7 +266,7 @@ function extensionProblems(extensions: unknown, deployment: DeploymentConfig, ca
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
 export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
-  const raw = withDecisionModel(withoutRemoved(input));
+  const raw = withJudge(withDecisionModel(withoutRemoved(input)), catalog);
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');

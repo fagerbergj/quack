@@ -13,7 +13,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession } from '@quack/eval';
-import { buildEvidence, type Inputs } from '@quack/judge';
+import { buildEvidence, manifest as judgeManifest, type Inputs, type JudgeConfig } from '@quack/judge';
 import { findingItems, formatResults, htmlToText, inputsOf, isPublicAddress, manifest, reportDeclaration, reportInputs, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 import { excerpt, missingQuotes, quotedSpans } from '../src/report.ts';
 
@@ -124,7 +124,7 @@ function judgeFaux() {
   return faux;
 }
 
-async function run(config: Parameters<typeof researchSessionExtensions>[0], steps: (step: ReturnType<typeof seeing>) => FauxResponseStep[], deps?: Parameters<typeof researchSessionExtensions>[1], extra: Extension[] = []) {
+async function run(config: Parameters<typeof researchSessionExtensions>[0] & JudgeConfig, steps: (step: ReturnType<typeof seeing>) => FauxResponseStep[], deps?: Parameters<typeof researchSessionExtensions>[1], extra: Extension[] = []) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(steps(seeing(seen)));
@@ -134,7 +134,10 @@ async function run(config: Parameters<typeof researchSessionExtensions>[0], step
   const m = faux.getModel();
   const dir = await mkdtemp(join(tmpdir(), 'quack-research-'));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...researchSessionExtensions({ judgeModel: { provider: 'judge', modelId: 'j' }, ...config }, deps), ...extra] } });
+  const { maxRevisions, ...research } = config ?? {};
+  // The judge installs first, as the agent's resolved order puts it before research.
+  const judge = await judgeManifest.session!({ judgeModel: { provider: 'judge', modelId: 'j' }, maxRevisions }, {}, []);
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, ...researchSessionExtensions(research, deps), ...extra] } });
   const done = await session.submit('Do ducks fly?', 'r-1', true);
   return { done, seen, session, dir };
 }

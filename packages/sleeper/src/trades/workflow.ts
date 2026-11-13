@@ -5,6 +5,7 @@ import { newsFor, newsLink, subjectNews } from '../lineup/news.ts';
 import { liveLeague } from '../snapshot.ts';
 import type { NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
+import { cardsKind } from '../lineup/card.ts';
 import { buildFinderCard, type FinderDecision } from './card.ts';
 import { buildTradeFacts, dealable, type FinderInput, type Side, type TPlayer, type TradeFacts } from './facts.ts';
 import { tradeDeclaration, tradeInputs, tradeRubric } from './rubric.ts';
@@ -55,10 +56,11 @@ export function finderWorkflow(deps: TradeJobDeps) {
     },
   };
   const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(subjectNews(deps.news, c.api, deps.decisionModel, c.signal), dealable(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
-  const judgeOf = cardJudge(deps, tradeRubric, { declaration: tradeDeclaration, inputs: tradeInputs });
+  const judgeOf = cardJudge(tradeRubric, { declaration: tradeDeclaration, inputs: tradeInputs });
   const card: Step = {
     name: 'card',
     kind: 'judged',
+    artifact: cardsKind,
     schema: finderSchema,
     prompt: (c) => finderPrompt(prior(c, 'facts'), prior(c, 'news')),
     card: (c, d) => buildFinderCard(prior(c, 'facts'), d as unknown as FinderDecision, prior(c, 'news')),

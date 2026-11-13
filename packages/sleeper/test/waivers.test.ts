@@ -20,6 +20,7 @@ import {
 } from '../src/index.ts';
 import { closeCalls, wideOwned, worth } from '../src/waivers/facts.ts';
 import type { WaiverDecision } from '../src/waivers/card.ts';
+import { sleeperJudge } from './judge.ts';
 
 type Fixtures = Record<string, any>;
 const base = JSON.parse(readFileSync(new URL('./fixtures/waivers.json', import.meta.url), 'utf8')) as Fixtures;
@@ -233,14 +234,6 @@ test('a claim\'s news check keeps the legacy unit: the card\'s row, then the lea
   assert.deepEqual(ev.claims.map((u) => Object.keys(u.state.claim as object)), [['rank', 'add', 'why'], ['rank', 'add', 'why']]);
 });
 
-test('the waivers judge asks the configured decision model', () => {
-  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-  const step = waiversWorkflow({ client: clientOf(base), decisionModel: ref }).steps.find((s) => s.name === 'card')!;
-  assert.equal(step.kind, 'judged');
-  const { options } = (step as Extract<typeof step, { kind: 'judged' }>).judge({ prior: { facts: {} } } as never);
-  assert.deepEqual(options.decisionModel, ref);
-});
-
 async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Parameters<typeof buildWaiverFacts>[0]['news'], stale?: Fixtures) {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
@@ -261,12 +254,12 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
   // `stale` stands in for a once-a-day snapshot a job must not decide from.
   const workflow = waiversWorkflow({ client: clientOf(fixtures), now: () => AT, news, ...(stale && { snapshot: snapshotOf(stale) }) } as never);
   const m = faux.getModel();
-  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the waiver scout.', extensions: [workflowExtension([workflow])] } });
+  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the waiver scout.', extensions: [...(await sleeperJudge()), workflowExtension([workflow])] } });
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    const verdict = sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string; units: number; met: unknown }> };
+    const verdict = sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; checks: Array<{ id: string; units: number; met: unknown }> };
     await s.close();
     return { sealed, judged, verdict, record: await readSession(dir) };
   } finally {
@@ -280,7 +273,7 @@ test('the workflow seals a rolling-league card and the judge passes it, with no 
   assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(), sealed.content), 'the recording rebuilds the inputs the judge read');
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@8', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@8', [], true]);
   assert.deepEqual(verdict.checks.filter((k) => k.id === 'close_call_news').map((k) => [k.units, k.met]), [[0, null]]);
   assert.ok(judged.some((q) => /role and usage/.test(q)) && !judged.some((q) => /close top claim or drop/.test(q)));
 });
@@ -289,7 +282,7 @@ test('the workflow seals a FAAB card with its bids, and with a news source the c
   const { sealed, verdict, judged, record } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual(await replayed(record, sealed), waiversInputsOf(await factsOf(faab, async () => [item]), sealed.content), 'the recording rebuilds the inputs the judge read');
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@8', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.waivers@8', [], true]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });

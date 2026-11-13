@@ -117,7 +117,7 @@ function declared(d: Declaration, rubric: Rubric, units?: string[]): Declaration
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const base = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations };
+  const base = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations };
   const judged = j.judged;
   const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
   const read = new Set<PropertyKey>();

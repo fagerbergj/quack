@@ -1,12 +1,11 @@
 {
   "name": "researcher",
-  "version": 4,
+  "version": 5,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
   "extensions": {
-    "coding": {},
-    "research": {
+    "judge": {
       "maxRevisions": 2,
       "decisionModel": {
         "provider": "clef",
@@ -14,6 +13,8 @@
         "maxInputTokens": 8192
       }
     },
+    "coding": {},
+    "research": {},
     "subagent": {}
   }
 }

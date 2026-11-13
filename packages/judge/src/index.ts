@@ -13,23 +13,21 @@ export { buildEvidence, type AggregateDecl, type Chunk, type CheckDecl, type Dec
 export { registerSelector, registerSplitter } from './library.ts';
 export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './resolve.ts';
 export { limiter } from './limit.ts';
+export { judged, type JudgeConfig, type Judged } from './extension.ts';
+export { manifest } from './manifest.ts';
 
 type Common = {
-  kind: ArtifactKind;
+  /** The artifact kind judged, by name. */
+  kind: string;
   rubric: Rubric;
-  /** Revise-and-recheck rounds before a failing version may go out with its failures marked. A round judges at most maxRevisions + 1 versions; one more submit is refused and ends the run. A pass ends a round. */
+  /** Revise-and-recheck rounds before a failing version may go out with its failures marked: a round judges at most maxRevisions + 1 versions. */
   maxRevisions: number;
-  /** Text when this run has nothing to submit (a checkout found no work); the submit is then refused and ends the run. */
-  refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
   /** A decision model asked first; uncertain items, and a unit that alone is over its input cap, escalate to the judge model. */
   decisionModel?: DecisionModelRef;
   /** Where uncertain items escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
   /** The most judge-model requests in flight at once; 4 by default. A packed group's sub-batch is one request. Decision-model requests stay one at a time. */
   escalations?: number;
-  toolName?: string;
-  /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
-  onCleared?: (sealed: SealedArtifact, verdict: Verdict, api: ToolExecutionApi, ctx: Context) => Promise<{ text: string; isError?: boolean } | undefined>;
 };
 
 type Declared = {
@@ -235,7 +233,7 @@ export function undecidedMessage(ids: string[], toolName: string): string {
   return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again.`;
 }
 
-function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
+export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
   const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric})`;
   const lines = feedback(v.checks).map((l) => `- ${l}`).join('\n');
   if (v.passed) return `${head}, passed.${delivers ? '' : ` Deliver version ${sealed.version}.`}${lines ? `\nMinor:\n${lines}` : ''}`;
@@ -243,57 +241,84 @@ function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers =
   return `${head}, failed:\n${lines}\nRevise the file to address each point, then call ${toolName} again.`;
 }
 
-// The judge as an extension: a durable tool seals and checks the artifact; the yield hook only refuses to finish too early.
-export function judge(opts: JudgeOptions) {
-  const toolName = opts.toolName ?? 'submit_artifact';
+/** One judging round: a deny past the revision limit, an undecided message (nothing attached), or the verdict, attached. */
+export type Outcome = { deny: string } | { undecided: string } | { verdict: Verdict };
+
+/** Judges a sealed version once: a version that carries a verdict keeps it, from any run. */
+export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, toolName: string, ctx: Context): Promise<Outcome> {
+  if (sealed.verdict) return { verdict: sealed.verdict as unknown as Verdict };
+  // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
+  if ((await judgedInRun(api, sealed.kind, ctx)) > opts.maxRevisions) return { deny: `${sealed.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.` };
+  // A workflow step seals from code, whose task shows no running details.
+  const shown = typeof api.details === 'function' ? (p: Progress) => api.details(p, ctx) : undefined;
+  const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, shown);
+  // A verdict missing checks would pass or fail on a model outage; answers are memoized per call, so another submit asks again.
+  if (verdict.undecided.length) return { undecided: undecidedMessage(verdict.undecided, toolName) };
+  await attachVerdict(api, sealed.kind, sealed.version, verdict as never, ctx);
+  return { verdict };
+}
+
+/** A kind the run must not finish without: its path and the seal tool that checks it. */
+export type ToolKind = { kind: string; path: string; tool: string };
+
+/** Refuses to let a run finish before each kind's newest version has passed or been released at the limit. */
+export function yieldHook(kinds: () => ToolKind[]) {
+  return hook(GenerationTask, {
+    async onYield(_answer, api, ctx) {
+      const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+      for (const { kind, path, tool } of kinds()) {
+        const last = doc?.kinds[kind]?.versions.at(-1);
+        const v = last?.verdict as Verdict | null | undefined;
+        if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
+        if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
+        if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
+      }
+      return undefined;
+    },
+  });
+}
+
+/** The legacy factory's options: the kind as declared, plus what github and contracts still pass it. */
+type FactoryOptions = Omit<JudgeOptions, 'kind'> & {
+  kind: ArtifactKind;
+  refuse?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
+  toolName?: string;
+  /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
+  onCleared?: (sealed: SealedArtifact, verdict: Verdict, api: ToolExecutionApi, ctx: Context) => Promise<{ text: string; isError?: boolean } | undefined>;
+};
+
+// shortcut: github and contracts still build their judge here; delete once they gate after the judge extension (#2060 PR 3).
+export function judge(factory: FactoryOptions) {
+  const { kind, refuse, toolName = 'submit_artifact', onCleared, ...rest } = factory;
+  const opts = { ...rest, kind: kind.kind } as JudgeOptions;
   if (opts.declaration) checkDeclaration(opts.declaration, modelChecks(opts.rubric));
   // A cleared version reaches onCleared on every submit, so a delivery that failed is retried; the hook must be idempotent.
   async function finish(sealed: SealedArtifact, v: Verdict, api: ToolExecutionApi, ctx: Context) {
-    const cleared = v.passed || v.limitReached ? await opts.onCleared?.(sealed, v, api, ctx) : undefined;
-    const text = [report(sealed, v, toolName, !!opts.onCleared), cleared?.text].filter(Boolean).join('\n');
+    const cleared = v.passed || v.limitReached ? await onCleared?.(sealed, v, api, ctx) : undefined;
+    const text = [report(sealed, v, toolName, !!onCleared), cleared?.text].filter(Boolean).join('\n');
     return { output: [{ type: 'text' as const, text }], ...(cleared?.isError ? { isError: true } : {}) };
   }
 
   const submit = defineTool({
     name: toolName,
-    description: `Seal ${opts.kind.path} and check it against its rubric. Call it when the ${opts.kind.kind} is ready.`,
+    description: `Seal ${kind.path} and check it against its rubric. Call it when the ${kind.kind} is ready.`,
     parameters: obj({}, { open: true }),
     replay: 'safe',
     async execute(_args, api, ctx) {
-      const refused = await opts.refuse?.(api, ctx);
+      const refused = await refuse?.(api, ctx);
       if (refused) return terminal(refused);
       let sealed: SealedArtifact;
       try {
-        ({ artifact: sealed } = await seal(api, opts.kind, ctx));
+        ({ artifact: sealed } = await seal(api, kind, ctx));
       } catch (err) {
         return { output: [{ type: 'text', text: (err as Error).message }], isError: true };
       }
-      if (sealed.verdict) return finish(sealed, sealed.verdict as unknown as Verdict, api, ctx);
-      // Every judged version counts, passing or not; a run past the limit is looping, and another round cannot help.
-      if ((await judgedInRun(api, opts.kind.kind, ctx)) > opts.maxRevisions) return terminal(`${opts.kind.kind} was already checked ${opts.maxRevisions + 1} times in this run, the most it gets. Stop: this run is over.`);
-      const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, (p) => api.details(p, ctx));
-      // A verdict missing checks would pass or fail on a model outage; answers are memoized per call, so another submit asks again.
-      if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };
-      await attachVerdict(api, opts.kind.kind, sealed.version, verdict as never, ctx);
-      return finish(sealed, verdict, api, ctx);
+      const out = await check(api, opts, sealed, toolName, ctx);
+      if ('deny' in out) return terminal(out.deny);
+      if ('undecided' in out) return { output: [{ type: 'text', text: out.undecided }], isError: true };
+      return finish(sealed, out.verdict, api, ctx);
     },
   });
 
-  return defineExtension({
-    name: `judge:${opts.kind.kind}`,
-    tools: [submit],
-    hooks: [
-      hook(GenerationTask, {
-        async onYield(_answer, api, ctx) {
-          const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-          const last = doc?.kinds[opts.kind.kind]?.versions.at(-1);
-          const v = last?.verdict as Verdict | null | undefined;
-          if (!last) return { continue: `Write ${opts.kind.path} and call ${toolName} before you finish.` };
-          if (!v) return { continue: `Call ${toolName} to check ${opts.kind.path} before you finish.` };
-          if (v.passed || v.limitReached) return undefined;
-          return { continue: `${opts.kind.kind} v${last.version} failed its checks. Revise ${opts.kind.path} using the feedback, then call ${toolName} again.` };
-        },
-      }),
-    ],
-  });
+  return defineExtension({ name: `judge:${kind.kind}`, tools: [submit], hooks: [yieldHook(() => [{ kind: kind.kind, path: kind.path, tool: toolName }])] });
 }
