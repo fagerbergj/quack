@@ -32,6 +32,7 @@ export type GetOptions = { maxBytes: number; timeoutMs: number; /** Only tests r
 export type Fetched = { url: string; status: number; contentType: string; body: Buffer };
 
 // Validates at connect time, on the addresses the socket will use, so a name that re-resolves cannot rebind to a private host.
+// Behind an env proxy (docker sessions) Node sends CONNECT without calling it; the proxy's not_public ACL guards names there.
 const publicLookup = (isPublic: (ip: string) => boolean) => (host: string, options: { all?: boolean; family?: number }, cb: (...args: any[]) => void) => {
   dnsLookup(host, { ...options, all: true }, (err, addrs: LookupAddress[]) => {
     if (err) return cb(err);

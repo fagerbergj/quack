@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createSocket } from 'node:dgram';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { isIPv4, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -91,6 +91,7 @@ test('a live session reaches public hosts only through the egress proxy, and nev
     const sessions = (await must(api, 'POST', '/networks/create', { Name: `${tag}-sessions`, Internal: true, Options: { 'com.docker.network.bridge.gateway_mode_ipv4': 'isolated' } })).Id as string;
     const egress = (await must(api, 'POST', '/networks/create', { Name: `${tag}-egress` })).Id as string;
     const subnet: string = (await must(api, 'GET', `/networks/${sessions}`)).IPAM.Config[0].Subnet;
+    assert.ok(isIPv4(subnet.split('/')[0]!), `the session network's first subnet must be IPv4 to place the proxy in it, not ${subnet}`);
     const [proxyIp, gateway] = ['250', '1'].map((n) => subnet.split('/')[0]!.replace(/\d+$/, n));
     const ip = await hostAddress();
     await must(api, 'POST', `/containers/create?name=${tag}-proxy`, {
