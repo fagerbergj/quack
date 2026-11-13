@@ -5,10 +5,10 @@ import { basename, join } from 'node:path';
 import { shellEnv } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import type { DockerCall } from './docker-api.ts';
+import { SESSION_LABEL, SESSION_MOUNT, SESSION_PREFIX, sessionMount } from './docker-gate.ts';
 import { proxyKeyedServices, proxyProviders } from './keyed-services.ts';
 import { LAUNCH_TOKEN_FILE, LISTENER_TOKEN_FILE, writeLaunchToken, writeListenerToken, type Launch } from './process-driver.ts';
 
-const SESSION_MOUNT = '/session';
 const SESSION_PORT = 8080;
 const STOP_GRACE_SECONDS = 20;
 const PING_TIMEOUT_MS = 2_000;
@@ -63,10 +63,6 @@ async function readConfig(path: string) {
   }
 }
 
-const mountFor = (data: DockerLauncherOptions['data'], sub: string) => 'volume' in data
-  ? { Mounts: [{ Type: 'volume', Source: data.volume, Target: SESSION_MOUNT, VolumeOptions: { Subpath: sub } }] }
-  : { Binds: [`${data.hostDir}/${sub}:${SESSION_MOUNT}`] };
-
 /** The Docker driver: one container per session from the quack image, with only that session's directory mounted. */
 export function dockerLauncher(opts: DockerLauncherOptions): Launch {
   const { api } = opts;
@@ -93,7 +89,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
   }
 
   return async ({ key, dir, agentPath }) => {
-    const name = `quack-session-${basename(dir)}`;
+    const name = `${SESSION_PREFIX}${basename(dir)}`;
     const token = opts.broker.mint(key);
     try {
       const inherited = await opts.inherit(agentPath);
@@ -116,8 +112,8 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
         Cmd: opts.command ?? ['node', 'packages/runtime/src/main.ts'],
         WorkingDir: '/app',
         Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
-        Labels: { 'quack.session': key },
-        HostConfig: { Runtime: opts.runtime, NetworkMode: opts.network, ...mountFor(opts.data, basename(dir)), AutoRemove: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'] },
+        Labels: { [SESSION_LABEL]: key },
+        HostConfig: { Runtime: opts.runtime, NetworkMode: opts.network, ...sessionMount(opts.data, basename(dir)), AutoRemove: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'] },
       }, [201]);
       // Waits for removal, which AutoRemove does after exit, so the name is free again when it resolves.
       const gone = api('POST', `/containers/${name}/wait?condition=removed`).catch(() => undefined);
@@ -173,7 +169,7 @@ export async function onSessionNetwork(api: DockerCall, network: string, interfa
 
 /** Removes containers a previous distributor left running; a restart does not adopt them. */
 export async function reapSessions(api: DockerCall) {
-  const filters = encodeURIComponent(JSON.stringify({ label: ['quack.session'] }));
+  const filters = encodeURIComponent(JSON.stringify({ label: [SESSION_LABEL] }));
   const { body } = await api('GET', `/containers/json?all=1&filters=${filters}`);
   for (const c of Array.isArray(body) ? (body as Array<{ Id: string }>) : []) await api('DELETE', `/containers/${c.Id}?force=1`);
 }
