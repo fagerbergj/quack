@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { Conversation, ConversationView, Harness } from '@earendil-works/pi-durable';
+import type { Conversation, ConversationId, ConversationView, Harness, TaskGraph } from '@earendil-works/pi-durable';
 import { Approvals, Failures, failedRows, onGeneration } from '@quack/sdk';
 import { append, LifecycleStream, openRun, readStream, type PriceOf, type SessionFacts, type Spend, type WireEvent } from './lifecycle.ts';
 
@@ -13,6 +13,8 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 
 /** Whether the conversation has a run going. */
 export const runsIn = (v: ConversationView) => v.docs['pi.live']?.run !== undefined;
+/** Whether a foreground task the conversation itself owns is live, such as a workflow run; owned and background tasks belong to one. */
+const ownsTask = (g: TaskGraph, id: ConversationId) => Object.values(g.tasks).some((t) => t.conversationId === id && t.owner === undefined && !t.background);
 /** What a flush depends on in the conversation view: its last entry, run state, usage and tool states, never streamed deltas. */
 export const viewSignature = (v: ConversationView) => JSON.stringify([v.entries.at(-1)?.id, runsIn(v), v.docs['pi.usage'], (v.docs['pi.live']?.tools as { status: string }[] | undefined)?.map((t) => t.status)]);
 
@@ -164,10 +166,22 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
 
   // Streamed deltas change only the live message, so a flush follows what events are made of: entries, run state, usage.
   const watch = await root.watch(ctx);
-  const runs = runsIn;
+  const graph = await harness.watchTaskGraph(ctx);
   const signatureOf = viewSignature;
   let seen = signatureOf(watch.value);
-  let running = runs(watch.value);
+  // A run is the chat loop's or a task the root owns, so a workflow run counts as one; both watches feed one chain.
+  let looping = runsIn(watch.value);
+  let tasked = ownsTask(graph.value, root.id);
+  let running = looping || tasked;
+  let changing = Promise.resolve();
+  const settle = () => {
+    const next = changing.then(async () => {
+      if ((looping || tasked) !== running) await runChanged((running = !running));
+      await flush();
+    });
+    changing = next.catch(() => {});
+    return next;
+  };
   // A run cut by a restart is closed now; a run still going on open is recorded, or reported running again.
   await runChanged(running, true);
   watch.start(async (call) => {
@@ -175,8 +189,13 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     const next = signatureOf(call.value);
     if (next === seen) return;
     seen = next;
-    if (runs(call.value) !== running) await runChanged((running = !running));
-    await flush();
+    looping = runsIn(call.value);
+    await settle();
+  });
+  graph.start(async (call) => {
+    if (call.kind !== 'value' || ownsTask(call.value, root.id) === tasked) return;
+    tasked = !tasked;
+    await settle();
   });
   await flush();
   // A workflow's questions are committed without any run event, so nothing else would announce them.
@@ -192,7 +211,7 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
     cancelPoll();
     cancelRetry?.();
     await Promise.race([current?.catch(() => {}), new Promise((r) => setTimer(() => r(undefined), STOP_WAIT_MS))]);
-    await watch.stop();
+    await Promise.all([watch.stop(), graph.stop()]);
   }
   return { flush, stop };
 }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
+import { defineExtension, defineTask, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
 import { EVENT_MAX_BYTES, eventBytes, inProcessFetch } from '@quack/sdk';
@@ -232,4 +232,51 @@ test('a session mid-run with two ended turns shows lastActivity at the second tu
   const turns = (await h.stream())!.events.filter((e) => e.type === 'turn.ended');
   assert.deepEqual(turns.map((e) => [e.id, e.data]), [1, 2, 3].map((index) => [`run:1:turn:${index}:ended`, { run: 1, index }]), 'one event per tool round, one-based');
   assert.equal((await h.catalog.getSession(KEY))?.lastActivity, (await h.catalog.getSession(KEY))?.lastRun?.endedAt, 'the run end, later in the channel, is the row\'s');
+});
+
+// A two-phase job, as a workflow runs: each phase holds on a gate the test releases, on a clock the test sets.
+async function jobHarness() {
+  const clock = { at: Date.parse('2026-11-12T23:55:00Z') };
+  const gates = new Map<string, () => void>();
+  const held = (name: string) => new Promise<void>((r) => gates.set(name, r));
+  type Phase = (t: { input: { gate: string } }, rt: { commit: Function }, c: unknown) => Promise<unknown>;
+  const phase = (n: number, next: (rt: { commit: Function }, c: unknown) => unknown): Phase => async (t, rt, c) => { await held(`${t.input.gate}:${n}`); return next(rt, c); };
+  const job = defineTask<{ gate: string }, { phase: string }, null, object>({
+    name: 'test.job', version: 1, initial: () => ({ phase: 'first' }),
+    phases: {
+      first: phase(1, (rt, c) => rt.commit(() => ({ status: 'running', checkpoint: { phase: 'second' } }), c)),
+      second: phase(2, (rt, c) => rt.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: null } }), c)),
+    } as never,
+    abort: ((_t: unknown, rt: { commit: Function }, c: unknown) => rt.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), c)) as never,
+  });
+  const h = await harness(KEY, { extensions: [defineExtension({ name: 'test.jobs', tasks: [job] })], now: () => new Date(clock.at) });
+  const start = async (name: string, background = false) => { await h.session.root.commit(async (tx) => { await tx.createTask(job, { gate: name }, { ownership: { kind: 'conversation' }, background }); }, ctx); await h.settle(); };
+  const release = async (name: string) => { await h.settle(); gates.get(name)!(); await h.settle(); };
+  return { h, clock, start, release, row: () => h.catalog.getSession(KEY) };
+}
+
+test('a task the root owns is a run and shows running through its phases; a background task is none', async () => {
+  const { start, release, row } = await jobHarness();
+  await start('bg', true);
+  assert.equal((await row())?.state, 'idle', 'a background task is not a run');
+  await start('job');
+  assert.deepEqual([(await row())?.state, (await row())?.lastActivity], ['running', facts.createdAt], 'running; lastActivity moves at turn and run ends only');
+  await release('job:1');
+  assert.equal((await row())?.state, 'running', 'still running between phases');
+  await release('job:2');
+  await release('bg:1');
+  await release('bg:2');
+});
+
+test('a task the root owns ends its run: idle, lastActivity at its end, one run.started and one run.ended', async () => {
+  const { h, clock, start, release, row } = await jobHarness();
+  clock.at = Date.parse('2026-11-12T23:55:06Z');
+  await start('job');
+  await release('job:1');
+  clock.at = Date.parse('2026-11-12T23:58:30Z');
+  await release('job:2');
+  const done = await row();
+  assert.deepEqual([done?.state, done?.lastActivity, done?.lastRun?.outcome], ['idle', clock.at, 'succeeded']);
+  const runs = (await h.stream())!.events.filter((e) => e.type === 'run.started' || e.type === 'run.ended').map((e) => [e.id, e.at]);
+  assert.deepEqual(runs, [['run:1:started', '2026-11-12T23:55:06.000Z'], ['run:1:ended', '2026-11-12T23:58:30.000Z']], 'one run, one start and one end');
 });
