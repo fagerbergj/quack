@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { DecisionModelRef, Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { loadArm, packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
+import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
 
 const rubric = (question: string): Rubric => ({
   name: 'acme', version: 1, threshold: 0.5,
@@ -181,4 +181,12 @@ test('an arm whose judge names the decision model otherwise (before #2290, class
   const there = await otherTree(t, [['judge/src/index.ts', 'opts.decisionModel', '(opts as { classifier?: DecisionModelRef }).classifier']]);
   const arm: Arm = { label: 'old', adapters: [adapter('Is it helpful?')], rejudge: there.rejudge, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } };
   await assert.rejects(replayJudge({ cases: [cases[0]], arms: [arm], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel }), /arm old: its judge engine never reads decisionModel, so it would judge without them/);
+});
+
+test('a ref arm keeps its tree, so its contracts TypeScript lint still resolves @types/node', async () => {
+  const before = new Set(readdirSync(tmpdir()));
+  await armAt('HEAD');
+  const dir = join(tmpdir(), readdirSync(tmpdir()).find((d) => d.startsWith('quack-arm-') && !before.has(d))!);
+  const { lintTypeScript } = (await import(pathToFileURL(join(dir, 'packages/contracts/src/index.ts')).href)) as typeof import('@quack/contracts');
+  assert.deepEqual(await lintTypeScript('/** Provided here, consumed by callers. */\nexport type Pid = NodeJS.Process["pid"];\n'), []);
 });
