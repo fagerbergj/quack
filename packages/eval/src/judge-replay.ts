@@ -29,13 +29,11 @@ export function packagesTar(top: string, ref: string): Buffer {
 export async function armAt(ref: string): Promise<Pick<Arm, 'adapters' | 'rejudge'>> {
   if (ref === '.') return { adapters: adaptersOf(await loadManifests()) };
   const dir = mkdtempSync(join(tmpdir(), 'quack-arm-'));
-  try {
-    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-    execFileSync('tar', ['-x', '-C', dir], { input: packagesTar(top, ref) });
-    return await loadArm(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  // The arm reads its tree lazily (the contracts lint finds @types/node under it), so it must outlive this call.
+  process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
+  const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  execFileSync('tar', ['-x', '-C', dir], { input: packagesTar(top, ref) });
+  return loadArm(dir);
 }
 
 /** The adapters and engine of the `packages/` tree in dir, whose @quack/* imports resolve inside dir; third-party modules stay this tree's, shared with the harness. */
