@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { Failures, MODEL_RETRY, pendingApprovals, Questions, statusNote, type Principal } from '@quack/sdk';
+import { Failures, MODEL_RETRY, pendingApprovals, Questions, statusNote, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -26,11 +26,6 @@ export type AgentSpec = {
   commandTimeoutSeconds?: number;
 };
 
-export type SubmitResult =
-  | { submissionId: string; status: 'queued' | 'placed' }
-  | { submissionId: string; status: 'done'; answer: string }
-  | { submissionId: string; status: 'unanswered'; reason: string; detail?: string };
-
 /** The date line of every run's system prompt; a section is resent only when its text changes, so it costs one entry per day. */
 export const clockExtension = (timeZone: string, now: () => Date) =>
   defineExtension({
@@ -42,12 +37,6 @@ function formatDate(d: Date, timeZone: string): string {
   const part = (type: string) => new Intl.DateTimeFormat('en-US', { timeZone, [type]: type === 'year' ? 'numeric' : type === 'weekday' ? 'long' : '2-digit' }).formatToParts(d).find((p) => p.type === type)!.value;
   return `${part('weekday')}, ${part('year')}-${part('month')}-${part('day')}`;
 }
-
-/** An extension that takes over submissions in place of the agent loop, such as a bound workflow; undefined leaves one to the loop. */
-export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult | undefined>;
-/** Reruns the session's failed run from where it stopped; null when nothing failed. */
-export type Resume = (session: { harness: Harness; root: Conversation }) => Promise<SubmitResult | null>;
-export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: Resume };
 
 export { MODEL_RETRY };
 

@@ -1,4 +1,4 @@
-import type { Extension, JsonObject } from '@earendil-works/pi-durable';
+import type { Conversation, Extension, Harness, JsonObject } from '@earendil-works/pi-durable';
 import type { Schema, Static } from '@earendil-works/pi-schema';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { SealedArtifact } from './artifacts.ts';
@@ -7,6 +7,19 @@ import type { DeploymentFile } from './extensions.ts';
 /** A workflow an extension contributes: how to build it from an agent's binding, and the variables it reads from the session process. */
 export type ContributedWorkflow = { build: (config: unknown) => unknown; env: readonly string[] };
 export type ContributedWorkflows = Record<string, ContributedWorkflow>;
+
+/** A submission's result: queued behind the run in hand, placed to start one, answered (the submitter waited), or unanswered with the reason. */
+export type SubmitResult =
+  | { submissionId: string; status: 'queued' | 'placed' }
+  | { submissionId: string; status: 'done'; answer: string }
+  | { submissionId: string; status: 'unanswered'; reason: string; detail?: string };
+
+/** Takes a text submission over in place of the agent loop, as a bound workflow does; undefined leaves it to the loop. The session's submit calls the first extension naming one. */
+export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult | undefined>;
+/** Reruns the session's failed run from where it stopped; null when nothing failed. The session's resume calls the first extension naming one. */
+export type Resume = (session: { harness: Harness; root: Conversation }) => Promise<SubmitResult | null>;
+/** A session extension that takes submissions over (the workflows extension's bound workflow); the session finds it among the agent's extensions. */
+export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: Resume };
 
 /** What an action's `start` is given: the distributor to submit to, and the variables the action declared, read before the session process drops them. */
 export type ActionContext = { distributorUrl: string; fetch: typeof fetch; env: Record<string, string | undefined> };
