@@ -15,9 +15,9 @@ export const DEFAULT_EXEC_TIMEOUT_SECONDS = 600;
 // Address space and maxProcs are opt-in: V8 and WebAssembly reserve huge virtual regions, and RLIMIT_NPROC counts every process of the UID.
 export const DEFAULT_EXEC_LIMITS = { maxFileSizeMb: 1024 };
 
-// The proxy variables carry no secret; a docker-driver session's only way out is the egress proxy they name.
+// A session's own proxy settings name its only way out (the docker driver's egress proxy) and carry no secret.
 const PROXY_ENV = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'NODE_USE_ENV_PROXY'];
-const SHELL_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'TZ', 'LANG', 'LANGUAGE', 'GOPATH', 'GOMODCACHE', 'GOCACHE', 'GOFLAGS', 'CARGO_HOME', 'RUSTUP_HOME', 'NVM_DIR', ...PROXY_ENV]);
+const SHELL_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'TZ', 'LANG', 'LANGUAGE', 'GOPATH', 'GOMODCACHE', 'GOCACHE', 'GOFLAGS', 'CARGO_HOME', 'RUSTUP_HOME', 'NVM_DIR']);
 
 /** The variables a shell gets from the session process: a fixed toolchain set, LC_*, and what the policy names. */
 export function shellEnv(source: NodeJS.ProcessEnv, extra: string[] = []): Record<string, string> {
@@ -48,7 +48,7 @@ export class PolicyExecutionEnv extends NodeExecutionEnv {
     const limits = limitPrefix(this.policy.limits ?? DEFAULT_EXEC_LIMITS);
     // An argv form has no shell to carry ulimit, so it runs through bash, which execs it.
     const wrapped = typeof command === 'string' ? limits + command : ['bash', '-c', `${limits}exec "$@"`, 'bash', ...command];
-    const env = { ...shellEnv(this.source, this.policy.env), ...options?.env };
+    const env = { ...shellEnv(this.source, [...(this.policy.env ?? []), ...PROXY_ENV]), ...options?.env };
     // cwd is dropped so every command starts in the workspace; a `cd` lives and dies with its own process.
     const { cwd: _ignored, ...rest } = options ?? {};
     const result = await super.exec(wrapped, { ...rest, timeout, inheritEnv: false, env }, context);
