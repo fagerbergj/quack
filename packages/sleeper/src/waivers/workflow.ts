@@ -49,7 +49,7 @@ function factsPrompt(f: WaiverFacts): string {
 /** Waivers job: facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function waiversWorkflow(deps: WaiversDeps) {
   const facts = async (c: StepContext, i: LineupInput, at: number) => {
-    const f = (await buildWaiverFacts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel) }, await liveLeague(deps.client, i.league), i, at)) as unknown as JsonObject;
+    const f = (await buildWaiverFacts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel, c.signal) }, await liveLeague(deps.client, i.league), i, at)) as unknown as JsonObject;
     await c.api.commit(async (tx) => { (await tx.doc(WaiversFactsDoc, c.api.conversationId)).facts = f; }, c.ctx);
     return f as unknown as WaiverFacts;
   };

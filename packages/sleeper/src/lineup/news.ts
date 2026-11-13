@@ -72,9 +72,11 @@ export function exaNews(config: ExaConfig): NewsSearch {
   const answers = new Map<string, boolean>();
   const isHis = async (p: Searchable, n: NewsItem, about?: SubjectCheck) => {
     if (namesInTitle(n, p)) return true;
+    // A caller with no check keeps title matches only, never another caller's answers.
+    if (!about) return false;
     const key = JSON.stringify([p.name, p.team, p.pos, n.url]);
     if (!answers.has(key)) {
-      const yes = about && (await ask(() => about(p, n)));
+      const yes = await ask(() => about(p, n));
       if (yes === undefined) return false;
       remember(answers, key, yes);
     }
@@ -97,13 +99,13 @@ const subjectQuestion = (p: Searchable) =>
 type Classifier = Parameters<ToolExecutionApi['models']['classify']>[0];
 
 /** A decision model such as Clef asked whether a report is about the player; undefined when it is missing or gives no answer. */
-export function clefSubject(api: ToolExecutionApi, ref: DecisionModelRef): SubjectCheck {
+export function clefSubject(api: ToolExecutionApi, ref: DecisionModelRef, signal?: AbortSignal): SubjectCheck {
   return async (p, n) => {
     const model = api.models.getAllModels(ref.provider).find((m) => m.id === ref.modelId && m.type === 'classifier') as Classifier | undefined;
     if (!model) return undefined;
     const state = { player: who(p), report: { title: n.title, ...(n.excerpt ? { excerpt: n.excerpt } : {}) } };
     try {
-      const r = await api.models.classify(model, { state, questions: { q0: { type: 'bool', instructions: subjectQuestion(p), criteria: CRITERIA } } }, { maxRetries: 0 });
+      const r = await api.models.classify(model, { state, questions: { q0: { type: 'bool', instructions: subjectQuestion(p), criteria: CRITERIA } } }, { maxRetries: 0, signal });
       const a = r.stopReason === 'stop' ? r.answers.q0 : undefined;
       return a?.type === 'bool' && a.probability !== undefined ? a.probability >= 0.5 : undefined;
     } catch {
@@ -113,8 +115,8 @@ export function clefSubject(api: ToolExecutionApi, ref: DecisionModelRef): Subje
 }
 
 /** A job's news search with its subject check bound: the job's decision model when it names one, else the title alone decides. */
-export const subjectNews = (search: NewsSearch | undefined, api: ToolExecutionApi, ref: DecisionModelRef | undefined): NewsSearch | undefined =>
-  search && ((p, at) => search(p, at, ref && clefSubject(api, ref)));
+export const subjectNews = (search: NewsSearch | undefined, api: ToolExecutionApi, ref: DecisionModelRef | undefined, signal?: AbortSignal): NewsSearch | undefined =>
+  search && ((p, at) => search(p, at, ref && clefSubject(api, ref, signal)));
 
 async function searchOnce(config: ExaConfig, p: Searchable, at: number): Promise<NewsItem[] | null> {
   const since = at - NEWS_WINDOW_MS;

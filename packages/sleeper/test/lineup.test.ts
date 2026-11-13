@@ -398,6 +398,12 @@ test('a title naming the player keeps the report unasked; the subject check deci
   assert.deepEqual(asked, ['https://www.chicagobears.com/c'], 'one question for the team report, and its answer is reused');
 });
 
+test('a search with no check keeps only title matches, even after a checked search cached a yes for the same report', async () => {
+  const search = await exaWith([{ title: 'Week 10 Injury Report: Bears at Giants', url: 'https://www.chicagobears.com/c', text: 'TE Colston Loveland (ankle) - LP' }]);
+  assert.equal((await search(LOVELAND, AT, async () => true)).length, 1);
+  assert.deepEqual(await search(LOVELAND, AT), []);
+});
+
 test('a surname alone never stands for the player: another Williams in the title is asked about, and an unknown answer is asked again', async () => {
   const search = await exaWith([
     { title: 'Kyren Williams Week 10 Outlook - Rams at Cardinals', url: 'https://www.fantasypros.com/k', text: 'Kyren Williams leads a run game; Javonte Williams faces the 49ers.' },

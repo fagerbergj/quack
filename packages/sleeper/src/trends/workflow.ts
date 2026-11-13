@@ -52,7 +52,7 @@ export function trendsWorkflow(deps: TrendsDeps) {
   return defineWorkflow({
     name: TRENDS_WORKFLOW,
     steps: cardSteps<TrendsFacts, TrendsDecision>(deps, {
-      facts: async (c, i, at) => buildTrendsFacts({ ...deps, news: subjectNews(deps.news, c.api, deps.decisionModel) }, await deps.snapshot(i.league), i, at),
+      facts: async (c, i, at) => buildTrendsFacts({ ...deps, news: subjectNews(deps.news, c.api, deps.decisionModel, c.signal) }, await deps.snapshot(i.league), i, at),
       schema: decisionSchema, prompt: factsPrompt, card: buildTrendsCard, rubric: trendsRubric, declaration: trendsDeclaration, inputs: trendsInputs,
     }),
   });

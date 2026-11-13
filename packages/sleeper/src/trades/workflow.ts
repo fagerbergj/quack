@@ -54,7 +54,7 @@ export function finderWorkflow(deps: TradeJobDeps) {
       return (await buildTradeFacts({ client: deps.client }, await liveLeague(deps.client, i.league), i)) as unknown as JsonValue;
     },
   };
-  const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(subjectNews(deps.news, c.api, deps.decisionModel), dealable(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
+  const news: Step = { name: 'news', kind: 'code', run: async (c) => (await newsFor(subjectNews(deps.news, c.api, deps.decisionModel, c.signal), dealable(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue };
   const judgeOf = cardJudge(deps, tradeRubric, { declaration: tradeDeclaration, inputs: tradeInputs });
   const card: Step = {
     name: 'card',

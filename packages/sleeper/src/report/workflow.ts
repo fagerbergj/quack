@@ -59,7 +59,7 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
           return new Wait(Math.min(now + RECHECK_MS, give));
         },
       },
-      ...cardSteps<F, D>(deps, { ...spec, facts: async (c, i, at) => spec.facts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel) }, await liveLeague(deps.client, i.league), i, at) }),
+      ...cardSteps<F, D>(deps, { ...spec, facts: async (c, i, at) => spec.facts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel, c.signal) }, await liveLeague(deps.client, i.league), i, at) }),
     ],
   });
 }

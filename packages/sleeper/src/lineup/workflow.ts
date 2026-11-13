@@ -48,7 +48,7 @@ export function lineupWorkflow(deps: LineupDeps) {
   return defineWorkflow({
     name: LINEUP_WORKFLOW,
     steps: cardSteps<Facts, Decision>(deps, {
-      facts: async (c, i, at) => buildFacts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel) }, await liveLeague(deps.client, i.league), i, at),
+      facts: async (c, i, at) => buildFacts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel, c.signal) }, await liveLeague(deps.client, i.league), i, at),
       // Without a news source no row carries news, so the news check has no item and is not scored.
       schema: decisionSchema, prompt: factsPrompt, card: buildCard, rubric: lineupRubric, declaration: lineupDeclaration, inputs: lineupInputs,
     }),
