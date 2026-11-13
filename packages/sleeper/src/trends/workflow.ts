@@ -1,6 +1,6 @@
 import { arr, lit, obj, opt, str, union } from '@earendil-works/pi-schema';
 import { defineWorkflow } from '@quack/workflows';
-import { newsLink } from '../lineup/news.ts';
+import { newsLink, subjectNews } from '../lineup/news.ts';
 import type { Json } from '../client.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { buildTrendsCard, KINDS, TEXT_MAX, when, type TrendsDecision } from './card.ts';
@@ -52,7 +52,7 @@ export function trendsWorkflow(deps: TrendsDeps) {
   return defineWorkflow({
     name: TRENDS_WORKFLOW,
     steps: cardSteps<TrendsFacts, TrendsDecision>(deps, {
-      facts: async (_c, i, at) => buildTrendsFacts(deps, await deps.snapshot(i.league), i, at),
+      facts: async (c, i, at) => buildTrendsFacts({ ...deps, news: subjectNews(deps.news, c.api, deps.decisionModel, c.signal) }, await deps.snapshot(i.league), i, at),
       schema: decisionSchema, prompt: factsPrompt, card: buildTrendsCard, rubric: trendsRubric, declaration: trendsDeclaration, inputs: trendsInputs,
     }),
   });

@@ -1,8 +1,9 @@
-import { limiter } from '@quack/judge';
-import type { NewsSearch, Searchable } from '../ports.ts';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import { limiter, type DecisionModelRef } from '@quack/judge';
+import type { NewsSearch, Searchable, SubjectCheck } from '../ports.ts';
 import type { NewsItem } from './facts.ts';
 
-export type { Searchable } from '../ports.ts';
+export type { Searchable, SubjectCheck } from '../ports.ts';
 
 export const NEWS_WINDOW_MS = 72 * 3_600_000;
 const PER_PLAYER = 3;
@@ -41,7 +42,7 @@ const around = (text: string, name: string) => {
 };
 const highlights = (h: Hit) => (h.highlights ?? []).map((x) => (typeof x === 'string' ? x : (x.text ?? '')));
 
-/** Exa matches by topic, so an item about a teammate or a team report can come back; keep one only if it names the player in full. */
+/** Exa matches by topic, so an item about a teammate or a team report can come back; a candidate must name the player in full. */
 function item(h: Hit, name: string): NewsItem | undefined {
   if (mentions(h.title, name)) return { title: h.title!, url: h.url, date: h.publishedDate ?? '' };
   const text = highlights(h).find((t) => mentions(t, name));
@@ -53,21 +54,69 @@ export const newsLink = (n: NewsItem) => `[${n.title}](${n.url}), ${n.date.slice
 
 type ExaConfig = { apiKey: string; url?: string; fetch?: typeof fetch };
 
+const remember = <V>(cache: Map<string, V>, key: string, value: V) => {
+  if (cache.size >= CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
+  cache.set(key, value);
+};
+const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').replace(/[’‘]/g, "'").toLowerCase();
+const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const namesInTitle = (n: NewsItem, p: Searchable) => new RegExp(`(^|[^\\p{L}\\p{N}])${escaped(fold(p.name))}($|[^\\p{L}\\p{N}])`, 'u').test(fold(n.title));
+
 /** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup, and is not cached. */
+// A title naming the player keeps a report; any other is his only when `about` says yes, so with no answer it is dropped.
 export function exaNews(config: ExaConfig): NewsSearch {
   const slot = limiter(EXA_CONCURRENCY);
+  // The decision model serves one request at a time, so the checks queue rather than crowd it.
+  const ask = limiter(1);
   const cache = new Map<string, Promise<NewsItem[] | null>>();
-  return async (p, at) => {
-    const key = JSON.stringify([p.name, p.team, p.pos, at]);
-    if (!cache.has(key)) {
-      if (cache.size >= CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
-      cache.set(key, slot(() => searchOnce(config, p, at)));
+  const answers = new Map<string, boolean>();
+  const isHis = async (p: Searchable, n: NewsItem, about?: SubjectCheck) => {
+    if (namesInTitle(n, p)) return true;
+    // A caller with no check keeps title matches only, never another caller's answers.
+    if (!about) return false;
+    const key = JSON.stringify([p.name, p.team, p.pos, n.url]);
+    if (!answers.has(key)) {
+      const yes = await ask(() => about(p, n));
+      if (yes === undefined) return false;
+      remember(answers, key, yes);
     }
+    return answers.get(key)!;
+  };
+  return async (p, at, about) => {
+    const key = JSON.stringify([p.name, p.team, p.pos, at]);
+    if (!cache.has(key)) remember(cache, key, slot(() => searchOnce(config, p, at)));
     const found = await cache.get(key)!;
     if (found === null) cache.delete(key);
-    return found ?? [];
+    const his = await Promise.all((found ?? []).map((n) => isHis(p, n, about)));
+    return (found ?? []).filter((_, i) => his[i]).slice(0, PER_PLAYER);
   };
 }
+
+const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
+const who = (p: Searchable) => (p.pos === 'DEF' ? `the ${p.name} defense` : `${p.name} (${p.team ?? 'no team'} ${p.pos})`);
+const subjectQuestion = (p: Searchable) =>
+  `Does this report give news about ${who(p)} himself, either as its subject or as his own line in an injury or practice report? Answer no when he only appears inside news about another player, such as a teammate's injury, signing or role, or in a photo caption.`;
+type Classifier = Parameters<ToolExecutionApi['models']['classify']>[0];
+
+/** A decision model such as Clef asked whether a report is about the player; undefined when it is missing or gives no answer. */
+export function clefSubject(api: ToolExecutionApi, ref: DecisionModelRef, signal?: AbortSignal): SubjectCheck {
+  return async (p, n) => {
+    const model = api.models.getAllModels(ref.provider).find((m) => m.id === ref.modelId && m.type === 'classifier') as Classifier | undefined;
+    if (!model) return undefined;
+    const state = { player: who(p), report: { title: n.title, ...(n.excerpt ? { excerpt: n.excerpt } : {}) } };
+    try {
+      const r = await api.models.classify(model, { state, questions: { q0: { type: 'bool', instructions: subjectQuestion(p), criteria: CRITERIA } } }, { maxRetries: 0, signal });
+      const a = r.stopReason === 'stop' ? r.answers.q0 : undefined;
+      return a?.type === 'bool' && a.probability !== undefined ? a.probability >= 0.5 : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+}
+
+/** A job's news search with its subject check bound: the job's decision model when it names one, else the title alone decides. */
+export const subjectNews = (search: NewsSearch | undefined, api: ToolExecutionApi, ref: DecisionModelRef | undefined, signal?: AbortSignal): NewsSearch | undefined =>
+  search && ((p, at) => search(p, at, ref && clefSubject(api, ref, signal)));
 
 async function searchOnce(config: ExaConfig, p: Searchable, at: number): Promise<NewsItem[] | null> {
   const since = at - NEWS_WINDOW_MS;
@@ -85,8 +134,7 @@ async function searchOnce(config: ExaConfig, p: Searchable, at: number): Promise
       .filter((h) => credible(h.url))
       .flatMap((h) => item(h, p.name) ?? [])
       .filter((n) => Date.parse(n.date) >= since && Date.parse(n.date) <= at)
-      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
-      .slice(0, PER_PLAYER);
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   } catch {
     return null;
   }

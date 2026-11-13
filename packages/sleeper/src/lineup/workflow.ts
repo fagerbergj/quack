@@ -1,7 +1,7 @@
 import { arr, obj, str } from '@earendil-works/pi-schema';
 import type { DecisionModelRef } from '@quack/judge';
 import { defineWorkflow } from '@quack/workflows';
-import { newsLink } from './news.ts';
+import { newsLink, subjectNews } from './news.ts';
 import type { SleeperClient } from '../client.ts';
 import { liveLeague } from '../snapshot.ts';
 import { buildCard, type Decision } from './card.ts';
@@ -48,7 +48,7 @@ export function lineupWorkflow(deps: LineupDeps) {
   return defineWorkflow({
     name: LINEUP_WORKFLOW,
     steps: cardSteps<Facts, Decision>(deps, {
-      facts: async (_c, i, at) => buildFacts({ client: deps.client, news: deps.news }, await liveLeague(deps.client, i.league), i, at),
+      facts: async (c, i, at) => buildFacts({ client: deps.client, news: subjectNews(deps.news, c.api, deps.decisionModel, c.signal) }, await liveLeague(deps.client, i.league), i, at),
       // Without a news source no row carries news, so the news check has no item and is not scored.
       schema: decisionSchema, prompt: factsPrompt, card: buildCard, rubric: lineupRubric, declaration: lineupDeclaration, inputs: lineupInputs,
     }),
