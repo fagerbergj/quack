@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { RECORDS } from '../src/orphans.ts';
 import { openCatalog } from '@quack/catalog';
-import { createDistributor, forwardOutput, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
+import { createDistributor, credentialBroker, forwardOutput, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 import { PING_TIMEOUT_MS, PROXY_PROOF } from '../src/server.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
 
@@ -823,6 +823,18 @@ test('a session command that cannot be spawned fails the start instead of crashi
   dirs.push(dataDir);
   const driver = processDriver({ command: ['/nonexistent-session'], dataDir, defaultAgent: '' });
   await assert.rejects(driver.ensure('research:unspawnable'), /^Error: session process failed to start: spawn \/nonexistent-session ENOENT; output: \(none\)$/);
+});
+
+test('a start that fails revokes the credential it minted', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const broker = credentialBroker();
+  let token = '';
+  const mint = (key: string) => (token = broker.mint(key));
+  const driver = processDriver({ command: ['/nonexistent-session'], dataDir, defaultAgent: '', broker: { mint, revoke: broker.revoke } });
+  await assert.rejects(driver.ensure('research:revoked'));
+  assert.ok(token);
+  assert.equal(broker.sessionOf(token), undefined);
 });
 
 test('a session process that ignores SIGTERM is killed at the stop deadline', async () => {

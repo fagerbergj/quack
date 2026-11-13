@@ -265,6 +265,20 @@ test('a container that exits while starting fails the start and leaves no token'
   await assert.rejects(launch({ key: 'a', dir: join(dir, 'abc'), agentPath: undefined }), /exited during start/);
 });
 
+test('a container that cannot be created fails the start and leaves no token', async () => {
+  const { docker, broker } = await setup();
+  let token = '';
+  const mint = broker.mint;
+  broker.mint = (key) => (token = mint(key));
+  const refuse: DockerCall = async (method, path, body) => (path.startsWith('/containers/create') ? { status: 500, body: undefined } : docker.api(method, path, body));
+  const dir = await mkdtemp(join(tmpdir(), 'quack-refused-'));
+  await mkdir(join(dir, 'abc'));
+  cleanups.push(() => rm(dir, { recursive: true, force: true }));
+  const launch = dockerLauncher({ api: refuse, broker, image: 'i', runtime: 'runsc', network: 'n', data: { hostDir: '/h' }, distributorUrl: 'http://d', inherit: () => ({}), sleep: async () => {}, startTimeoutMs: 1000 });
+  await assert.rejects(launch({ key: 'a', dir: join(dir, 'abc'), agentPath: undefined }));
+  assert.equal(broker.sessionOf(token), undefined);
+});
+
 test('reapSessions removes containers a previous distributor left', async () => {
   const { docker } = await setup();
   await docker.api('POST', '/containers/create?name=old', {});
