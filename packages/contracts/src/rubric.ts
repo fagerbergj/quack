@@ -1,5 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import { isAbsolute, relative, sep } from 'node:path';
 import ts from 'typescript';
 import { registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
@@ -32,17 +33,43 @@ function pointerResolves(doc: unknown, pointer: string): boolean {
 
 type Reader = (path: string) => Promise<string | undefined>;
 
-// Why a code ref fails, or undefined when it resolves; refs are read relative to the session workspace, so say where.
-async function codeRefProblem(read: Reader | undefined, ref: string): Promise<string | undefined> {
+// A misplaced ref has a clone or packages/ prefix too many or too few; dropping more could match an unrelated src/index.ts.
+const MAX_DROPPED = 2;
+
+// Where the file a wrong ref means is: its trailing segments at the workspace root or under a directory one or two levels down.
+async function locate(read: Reader, roots: string[], path: string): Promise<string | undefined> {
+  const parts = path.split('/').filter((p) => p && p !== '.' && p !== '..');
+  for (let drop = 0; drop <= Math.min(MAX_DROPPED, parts.length - 2); drop++) {
+    for (const root of ['', ...roots]) {
+      const at = [root, ...parts.slice(drop)].filter(Boolean).join('/');
+      if (at !== path && (await read(at)) !== undefined) return at;
+    }
+  }
+  return undefined;
+}
+
+// The exact ref to write, taken from where the file is, else from the session's own clone directory.
+async function missingFile(read: Reader, roots: string[], path: string, line: string): Promise<string> {
+  const clone = roots[0];
+  if (isAbsolute(path)) return `is an absolute path; refs are paths from the workspace root, as "${clone ?? 'repo'}/<path in the clone>:${line}"`;
+  const at = await locate(read, roots, path);
+  if (at) return `names no file in the workspace; the file is at ${at}, so cite it as "${at}:${line}"`;
+  if (!clone) return `names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${path} in it as "repo/${path}:${line}"`;
+  const rel = path.startsWith(`${clone}/`) ? path.slice(clone.length + 1) : path;
+  return `names no file in the workspace. Refs are paths from the workspace root and your clone is ${clone}/, so a file at ${rel} in the clone is cited as "${clone}/${rel}:${line}"; read the clone to find where the file is`;
+}
+
+// Why a code ref fails, or undefined when it resolves.
+async function codeRefProblem(read: Reader | undefined, roots: string[], ref: string): Promise<string | undefined> {
   const m = /^(.+?):(\d+)$/.exec(ref);
   if (!m || !read) return 'is not path:line';
   const text = await read(m[1]);
-  if (text === undefined) return 'names no file in the workspace (refs are workspace paths: a repository cloned into repo/ is cited as repo/<path in it>)';
+  if (text === undefined) return missingFile(read, roots, m[1], m[2]);
   const lines = text.split('\n').length;
   return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
 
-async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answered: Set<string>, read: Reader | undefined): Promise<string[]> {
+async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answered: Set<string>, world: World): Promise<string[]> {
   const out: string[] = [];
   for (const c of spec.choices) {
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
@@ -50,7 +77,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
     for (const w of c.why) {
       const ref = anchorOf(w.ref);
       // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
-      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(read, w.ref);
+      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(world.read, world.roots, w.ref);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
   }
@@ -60,8 +87,9 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
 type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
-/** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, and its workspace. */
-type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined };
+/** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, its workspace's files, and the
+ * directories a ref's file may sit under, the clone first. */
+type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined; roots: string[] };
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // The choices that decide a definition: their pointer is at or under it, or their decision names it; what the person or code asked for shows there.
@@ -98,7 +126,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const prev = base && (parseSpec(base.content) as ContractSpec);
   const [findings, unresolved, breaking] = await Promise.all([
     kind.check(spec.document),
-    unresolvedLinks(spec, guideAnchors(kind.skill), w.answered, w.read),
+    unresolvedLinks(spec, guideAnchors(kind.skill), w.answered, w),
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility } = spec;
@@ -141,17 +169,35 @@ const answeredIn = (items: Record<string, Question>, by = Infinity) =>
 /** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec with its guide. */
 export function specInputs() {
   return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
-    const read = api.env && (async (path: string) => {
-      const r = await api.env!.readTextFile(path, ctx);
-      return r.ok ? r.value : undefined;
-    });
     return inputsIn(sealed, {
       kinds: (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {},
       approvals: (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {},
       answered: answeredIn((await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {}),
-      read,
+      ...(api.env ? await workspaceOf(api.env, ctx) : { read: undefined, roots: [] }),
     });
   };
+}
+
+const within = (root: string, path: string) => { const rel = relative(root, path); return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
+
+// Reads only inside the workspace, as a recording's reader does: an absolute path, a .. or a symlink out of it names no file there.
+async function workspaceOf(env: NonNullable<ToolExecutionApi['env']>, ctx: Context): Promise<Pick<World, 'read' | 'roots'>> {
+  const root = await env.canonicalPath(env.cwd, ctx);
+  const read = async (path: string) => {
+    if (isAbsolute(path)) return undefined;
+    const real = await env.canonicalPath(path, ctx);
+    if (!root.ok || !real.ok || !within(root.value, real.value)) return undefined;
+    const r = await env.readTextFile(real.value, ctx);
+    return r.ok ? r.value : undefined;
+  };
+  const dirs = async (path: string) => {
+    const listed = await env.listDir(path, ctx);
+    return listed.ok ? listed.value.filter((f) => f.kind === 'directory' && !f.name.startsWith('.')).map((f) => f.name).sort() : [];
+  };
+  // The spec is written to artifacts/, so the other directories at the root are clones; theirs (repo/packages) are where a ref may have lost a level.
+  const clones = (await dirs('.')).filter((d) => d !== 'artifacts');
+  const inner = await Promise.all(clones.map(async (c) => (await dirs(c)).map((d) => `${c}/${d}`)));
+  return { read, roots: [...clones, ...inner.flat()] };
 }
 
 /** The same inputs from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet. */
@@ -162,7 +208,8 @@ export async function recordedSpecInputs(session: RecordedSession, content: stri
   const kinds = Object.fromEntries(Object.entries(session.artifacts).map(([k, vs]) => [k, { versions: vs.filter((v) => v.sealedAt <= sealed.sealedAt) }]));
   const approvals = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
   const questions = (session.docs['quack.questions']?.items ?? {}) as unknown as Record<string, Question>;
-  return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile });
+  // shortcut: a recording reads files but cannot list them, so its clone is taken to be repo/ as the prompt says; list it if replays need others.
+  return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile, roots: ['repo', 'repo/packages'] });
 }
 
 const list = (items: string[]) => items.slice(0, 6).join('; ');

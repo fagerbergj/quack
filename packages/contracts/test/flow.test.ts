@@ -151,8 +151,8 @@ test('a spec citing a question nobody answered, or code that is not there, is se
   assert.deepEqual(verdict.gatesFailed, ['justified.links_resolve']);
   const notes = verdict.checks.flatMap((k) => k.notes).join(' ');
   assert.match(notes, /answer ref "nope:1" does not resolve/);
-  // A missing file says the ref is read from the workspace, so an agent that cloned elsewhere knows where to put it.
-  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace \(refs are workspace paths: a repository cloned into repo\/ is cited as repo\/<path in it>\)/);
+  // A missing file says refs are read from the workspace root, in the form its own top directory gives.
+  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace\. Refs are paths from the workspace root and your clone is packages\/, so a file at sleeper\/src\/missing.ts in the clone is cited as "packages\/sleeper\/src\/missing.ts:3"/);
   assert.match(seen, /cannot be put to the person for approval/);
   assert.deepEqual(await pendingApprovals(s.root, ctx), []);
   await s.close();

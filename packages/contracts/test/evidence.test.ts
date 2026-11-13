@@ -1,16 +1,25 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import type { ToolExecutionApi } from '@earendil-works/pi-durable';
+import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, decisionModelTokens, type Evidence, type Unit } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
-import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
+import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 // Approved contracts as they were sealed: two whole specs, and two documents whose specs are not kept here.
 const fixture = (name: string) => readFileSync(new URL(`fixtures-specs/${name}`, import.meta.url), 'utf8');
@@ -118,12 +127,51 @@ test('an answer is cited by the question as asked or by its ask_question id, onc
   assert.deepEqual(await unresolved('7', 5), ['versioning: answer ref "7" does not resolve'], 'the task part of the key is not an id');
 });
 
-test('a code ref missing from the workspace says where refs are read, without repeating the clone directory', async () => {
+test('a recorded code ref under a directory too many names the file where the recording has it', async () => {
   const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
   spec.choices[1].why[1].ref = 'repo/v1/packages/sleeper/src/service.ts:85';
-  const { facts } = await inputsOf(spec);
+  const readFile = async (p: string) => (p === 'repo/packages/sleeper/src/service.ts' ? 'x\n'.repeat(90) : undefined);
+  const { facts } = await inputsOf(spec, { readFile });
   const [note] = (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.includes('repo/v1/packages/sleeper'));
-  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace (refs are workspace paths: a repository cloned into repo/ is cited as repo/<path in it>)');
+  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:85"');
+});
+
+// The refs of prod session contracts:1811f4ba, judged live against a workspace laid out as a git clone, as that session's copy of packages/, or empty.
+const SERVICE = 'packages/sleeper/src/service.ts';
+async function liveNotes(t: TestContext, layout: Record<string, string>, refs: string[]): Promise<string[]> {
+  const dir = await mkdtemp(join(tmpdir(), 'contracts-ws-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(join(dir, 'artifacts'));
+  for (const [at, from] of Object.entries(layout)) await mkdir(dirname(join(dir, at)), { recursive: true }).then(() => cp(join(repoRoot, from), join(dir, at)));
+  const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
+  spec.choices[1].why = refs.map((ref) => ({ source: 'code', text: 'upcomingRuns', ref }));
+  const content = JSON.stringify(spec);
+  const api = { env: new NodeExecutionEnv({ cwd: dir }), conversationId: 'c', snapshot: async () => undefined } as unknown as ToolExecutionApi;
+  const { facts } = await specInputs()(api, { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 1, verdict: null }, BACKGROUND_CONTEXT);
+  return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.startsWith('time-format: code ref '));
+}
+
+test('a live code ref resolves only to a file in the workspace, and a wrong one is told the exact ref', async (t) => {
+  const notes = await liveNotes(t, { [`repo/${SERVICE}`]: SERVICE }, [`repo/${SERVICE}:64`, 'repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `${join(repoRoot, SERVICE)}:64`]);
+  const exact = 'names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:64"';
+  assert.deepEqual(notes, [
+    `time-format: code ref "repo/sleeper/src/service.ts:64" ${exact}`,
+    `time-format: code ref "${SERVICE}:64" ${exact}`,
+    `time-format: code ref "${join(repoRoot, SERVICE)}:64" is an absolute path; refs are paths from the workspace root, as "repo/<path in the clone>:64"`,
+  ], 'an absolute path to the file outside the workspace does not resolve');
+});
+
+test('a ref resolves in the layout the session made: its packages/ copied to repo/ puts sleeper at repo/sleeper', async (t) => {
+  const notes = await liveNotes(t, { 'repo/sleeper/src/service.ts': SERVICE }, ['repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `repo/${SERVICE}:64`]);
+  const exact = 'names no file in the workspace; the file is at repo/sleeper/src/service.ts, so cite it as "repo/sleeper/src/service.ts:64"';
+  assert.deepEqual(notes, [`time-format: code ref "${SERVICE}:64" ${exact}`, `time-format: code ref "repo/${SERVICE}:64" ${exact}`]);
+});
+
+test('a ref to no file gives the exact form from the clone directory, or says to clone when there is none', async (t) => {
+  const [inClone] = await liveNotes(t, { [`repo/${SERVICE}`]: SERVICE }, ['repo/packages/sleeper/src/missing.ts:3']);
+  assert.equal(inClone, 'time-format: code ref "repo/packages/sleeper/src/missing.ts:3" names no file in the workspace. Refs are paths from the workspace root and your clone is repo/, so a file at packages/sleeper/src/missing.ts in the clone is cited as "repo/packages/sleeper/src/missing.ts:3"; read the clone to find where the file is');
+  const [empty] = await liveNotes(t, {}, [`${SERVICE}:64`]);
+  assert.equal(empty, `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`);
 });
 
 // A stand-in for Clef on its wire format: a confident yes to every bool and no to every choice, so the intent is met and no pitfall is present.
