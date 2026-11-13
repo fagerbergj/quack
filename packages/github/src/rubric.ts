@@ -144,7 +144,8 @@ export const reviewDeclaration: Declaration = {
     },
   },
   checks: {
-    approval_grounded: { scope: 'approve', aggregate: ALL, question: yes('This review approves. Do its Takeaway and Verified sections say what about the change makes it safe to merge (which behaviour was checked and how it was checked), rather than only praising the change or asserting that it looks good or that tests pass?') },
+    // Clef passes every bare approve, so the judge model answers.
+    approval_grounded: { scope: 'approve', aggregate: ALL, decisionModel: false, question: yes('This review approves. Do its Takeaway and Verified sections say what about the change makes it safe to merge (which behaviour was checked and how it was checked), rather than only praising the change or asserting that it looks good or that tests pass?') },
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
     promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: false, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, or reported in the review as a blocking finding? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
