@@ -398,6 +398,8 @@ function processLauncher(opts: LauncherOptions): Launch {
       };
     } catch (err) {
       proc.kill('SIGKILL');
+      // A failed spawn emits no `exit`, so the credential is revoked here too.
+      if (token) opts.broker!.revoke(token);
       throw new Error(`${(err as Error).message}; output: ${tail.trim() || '(none)'}`);
     }
   };
