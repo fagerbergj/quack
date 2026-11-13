@@ -6,7 +6,8 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { Artifacts, seal, type ArtifactKind } from '@quack/sdk';
-import { createSessionServer, openSession, type DispatchingExtension } from '@quack/session';
+import type { DispatchingExtension } from '@quack/sdk';
+import { createSessionServer, openSession } from '@quack/session';
 import { defineWorkflow, outcomeOf, WorkflowDoc, workflowSessionExtensions } from '../src/index.ts';
 
 const dirs: string[] = [];

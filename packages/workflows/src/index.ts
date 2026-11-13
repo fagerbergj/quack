@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, defineTool, GenerationTask, hook, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
-import type { Dispatch, DispatchingExtension, Resume } from '@quack/session';
+import type { Dispatch, DispatchingExtension, Resume } from '@quack/sdk';
 import { type Message } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import { Failures } from '@quack/sdk';

@@ -14,9 +14,7 @@ export const LAYERS: Record<string, 'core' | 'foundation' | 'feature' | 'leaf'> 
 const CONTRACT = 'sdk';
 
 /** Known violations to retire, as 'from -> to': why. A stale entry fails the test, so the list only shrinks. */
-export const ALLOWED: Record<string, string> = {
-  'workflows -> session': 'type-only import of Dispatch, DispatchingExtension and Resume; moving them into @quack/sdk changes the SDK surface',
-};
+export const ALLOWED: Record<string, string> = {};
 
 const CAN_IMPORT = { core: ['core'], foundation: ['foundation'], feature: ['foundation'], leaf: ['core', 'foundation'] } as const;
 
