@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord/context';
-import { defineDoc, defineExtension, wrapTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
+import { obj } from '@earendil-works/pi-schema';
+import { defineDoc, defineExtension, defineTool, wrapTool, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
 import { assertSealFits } from './channel.ts';
+import { runSealGates, SealRefused } from './gates.ts';
 
 /** An extension-declared artifact: a finished product at a workspace path, validated by its schema. */
 export type ArtifactKind = {
@@ -14,6 +16,8 @@ export type ArtifactKind = {
   summarize?: (content: string) => string;
   /** What the version was written against (a review's head commit), stored on it so a viewer can tell when it has been overtaken. */
   basis?: (api: ToolExecutionApi, ctx: Context) => Promise<string | undefined>;
+  /** The seal tool artifactsExtension installs for the kind (submit_review); a kind its extension's code seals has none. */
+  tool?: string;
 };
 
 export const SUMMARY_MAX = 80;
@@ -51,15 +55,15 @@ async function readWorkspace(api: ToolExecutionApi, path: string, ctx: Context):
   return read.value;
 }
 
-// Seals the file as an immutable version in the log; an unchanged file keeps its version.
+// An unchanged file keeps its version but reruns the gates, so a failed delivery is retried; a deny or continue rejects with SealRefused.
 // Throws with every schema problem when the file does not validate.
-export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Context): Promise<SealedArtifact> {
+export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Context): Promise<{ artifact: SealedArtifact; notes: string[] }> {
   const content = await readWorkspace(api, kind.path, ctx);
   const problems = kind.validate?.(content) ?? [];
   if (problems.length) throw new Error(`${kind.path} does not match ${kind.kind}:\n- ${problems.join('\n- ')}`);
   const hash = createHash('sha256').update(content).digest('hex');
   const basis = await kind.basis?.(api, ctx);
-  return api.commit(async (tx) => {
+  const artifact = await api.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, api.conversationId);
     // Read back through the draft: `??=` yields the plain object assigned, and mutations to it are lost.
     doc.kinds[kind.kind] ??= { versions: [] };
@@ -76,27 +80,33 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     entry.versions.push(sealed);
     return plain(sealed);
   }, ctx);
+  return { artifact, notes: await runSealGates(api, artifact, ctx) };
+}
+
+// Changes one sealed version in place; throws when the version is not sealed.
+async function updateSealed(api: ToolExecutionApi, kind: string, version: number, ctx: Context, change: (sealed: SealedArtifact) => void): Promise<void> {
+  await api.commit(async (tx) => {
+    const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
+    if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
+    change(sealed);
+  }, ctx);
 }
 
 /** Attaches a checker's verdict to the sealed version it checked. */
 export async function attachVerdict(api: ToolExecutionApi, kind: string, version: number, verdict: JsonObject, ctx: Context): Promise<void> {
-  await api.commit(async (tx) => {
-    const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
-    if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
+  await updateSealed(api, kind, version, ctx, (sealed) => {
     assertSealFits(kind, { ...plain(sealed), verdict: plain(verdict) });
     sealed.verdict = plain(verdict);
-  }, ctx);
+  });
 }
 
 /** Appends a link to a sealed version; the content and hash stay as sealed, and a repeated URL is not added twice. */
 export async function attachLink(api: ToolExecutionApi, kind: string, version: number, link: ArtifactLink, ctx: Context): Promise<void> {
-  await api.commit(async (tx) => {
-    const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
-    if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
+  await updateSealed(api, kind, version, ctx, (sealed) => {
     if (sealed.links?.some((l) => l.url === link.url)) return;
     assertSealFits(kind, { ...plain(sealed), links: [...(sealed.links ?? []), plain(link)] });
     sealed.links = [...(sealed.links ?? []), plain(link)];
-  }, ctx);
+  });
 }
 
 /** A sealed version, read back for delivery by reference: what goes out is exactly what was checked. */
@@ -120,10 +130,32 @@ function validateAfter(tool: ToolRegistration, kinds: ArtifactKind[]): ToolRegis
   };
 }
 
-// Writes to a declared artifact path report every schema problem at once, without blocking the write.
+const text = (t: string, isError = false): ToolExecutionResult => ({ output: [{ type: 'text', text: t }], ...(isError && { isError }) });
+
+// A deny ends the run after this round; a continue or an invalid file is an error the model acts on.
+function sealTool(kind: ArtifactKind & { tool: string }): ToolRegistration {
+  return defineTool({
+    name: kind.tool,
+    description: `Seal ${kind.path} as the next version of the ${kind.kind}; any checks run before the version is accepted. Call it when the ${kind.kind} is ready.`,
+    parameters: obj({}, { open: true }),
+    replay: 'safe',
+    async execute(_args, api, ctx) {
+      try {
+        const { artifact, notes } = await seal(api, kind, ctx);
+        return text(notes.length ? notes.join('\n') : `${kind.kind} v${artifact.version} sealed.`);
+      } catch (err) {
+        if (err instanceof SealRefused && err.verdict.kind === 'deny') return { ...text(err.message, true), control: { terminate: true } };
+        return text((err as Error).message, true);
+      }
+    },
+  }) as ToolRegistration;
+}
+
+// Writes to a declared artifact path report every schema problem at once, without blocking the write; a kind naming a tool gets its seal tool.
 export function artifactsExtension(kinds: ArtifactKind[]) {
   return defineExtension({
     name: 'quack.artifacts',
+    tools: kinds.filter((k): k is ArtifactKind & { tool: string } => !!k.tool).map(sealTool),
     wraps: [
       wrapTool(createWriteTool() as ToolRegistration, (t) => validateAfter(t, kinds)),
       wrapTool(createEditTool() as ToolRegistration, (t) => validateAfter(t, kinds)),

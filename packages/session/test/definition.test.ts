@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { gate } from '@quack/sdk';
 import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
@@ -188,6 +189,21 @@ test('selecting an extension adds what it requires, transitively, and loads depe
   const def = parseDefinition({ name: 'a', version: 1, model: 'local/qwen3.8-27b', extensions: { app: { x: 1 }, workflows: { workflow: 'w' } } }, parseDeployment(deployment), deps);
   const spec = await agentSpec(def, deps);
   assert.deepEqual(spec.extensions!.map((e) => e.name), ['workflows:{"workflow":"w"}', 'mid:undefined', 'app:{"x":1}']);
+});
+
+test('an extension naming the judge as optional registers its gates after the judge, even when the judge installs slowly', async () => {
+  const order: string[] = [];
+  const offs: Array<() => void> = [];
+  const register = (name: string) => (order.push(name), offs.push(gate('artifact.sealed', async () => undefined)));
+  const deps: Catalog = {
+    // The judge's setup awaits before registering; installing in parallel would let the feature register first.
+    judge: async () => { await new Promise((r) => setImmediate(r)); register('judge'); return []; },
+    feature: Object.assign(() => (register('feature'), []), { optional: ['judge'] }),
+  };
+  const def = parseDefinition({ name: 'a', version: 1, model: 'local/qwen3.8-27b', extensions: { feature: {}, judge: {} } }, parseDeployment(deployment), deps);
+  await agentSpec(def, deps);
+  offs.forEach((off) => off());
+  assert.deepEqual(order, ['judge', 'feature']);
 });
 
 test('a missing requirement or a cycle fails the definition with a clear message', () => {

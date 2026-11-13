@@ -64,7 +64,7 @@ test('GET /artifacts lists sealed versions with their verdicts', async () => {
     parameters: obj({}, { open: true }),
     replay: 'safe',
     execute: async (_a, api, ctx) => {
-      const sealed = await seal(api, note, ctx);
+      const { artifact: sealed } = await seal(api, note, ctx);
       await attachVerdict(api, note.kind, sealed.version, { passed: false, checks: [] }, ctx);
       return { output: [{ type: 'text', text: 'sealed' }] };
     },

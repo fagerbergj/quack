@@ -8,6 +8,8 @@ export const statusNote = { get: () => note, set: (text: string | null) => void 
 
 let waiting = 0;
 const listeners = new Set<(waiting: number) => void>();
+/** How many waits on someone other than the model are open now. */
+export const waitingNow = () => waiting;
 /** Hears how many waits on someone other than the model (a person, a child session) are open. */
 export function onWaiting(listener: (waiting: number) => void): () => void {
   listeners.add(listener);

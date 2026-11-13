@@ -317,10 +317,13 @@ export const deploymentEnv = (always: DeploymentExtensions): string[] => always.
 
 export async function agentSpec(def: AgentDefinition, catalog: Catalog, always: DeploymentExtensions = []): Promise<AgentSpec> {
   const slash = def.model.indexOf('/');
+  // One after another, never in parallel: a dependency registers its gates before the extension naming it in requires or optional.
+  const extensions: Extension[] = [];
+  for (const name of resolveExtensions(Object.keys(def.extensions), catalog).order) extensions.push(...(await catalog[name](def.extensions[name])));
   return {
     model: { provider: def.model.slice(0, slash), modelId: def.model.slice(slash + 1) },
     ...(def.exec?.timeoutSeconds && { commandTimeoutSeconds: def.exec.timeoutSeconds }),
-    extensions: [...(await Promise.all(resolveExtensions(Object.keys(def.extensions), catalog).order.map((name) => catalog[name](def.extensions[name])))).flat(), ...always.flatMap((make) => make())],
+    extensions: [...extensions, ...always.flatMap((make) => make())],
   };
 }
 

@@ -106,7 +106,7 @@ async function revise(step: Extract<Step, { kind: 'judged' }>, c: StepContext, m
   if (done) return done;
   const { built, reply, cost } = await converse(step, c, messages, (d) => step.card(c, d));
   await c.api.env!.writeFile(kind.path, JSON.stringify(built, null, 1), c.ctx);
-  const sealed = await seal(c.api, kind, c.ctx);
+  const { artifact: sealed } = await seal(c.api, kind, c.ctx);
   return c.api.memo<Revision>(key, { version: sealed.version, reply: JSON.parse(JSON.stringify(reply)), cost }, c.ctx);
 }
 

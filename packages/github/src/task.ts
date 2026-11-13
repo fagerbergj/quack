@@ -148,7 +148,7 @@ export function deliverTool(config: SessionConfig) {
       if (text.ok) found.push(...unbackedClaims(text.value, await sessionRuns(api, ctx), (await out(r, 'log', '--format=%H', `${t.from}..HEAD`)).split('\n')));
       if (!found.length && t.work) found.push(await branchTaken(api, config, dir, t.work, await out(r, 'rev-parse', 'HEAD'), ctx));
       if (found.some(Boolean)) return reply(`Not delivered; fix these and call deliver again:\n- ${found.filter(Boolean).join('\n- ')}`, true);
-      const sealed = await seal(api, prBodyKind, ctx);
+      const { artifact: sealed } = await seal(api, prBodyKind, ctx);
       const commits = await out(r, 'log', '--format=%h %s', `${t.from}..HEAD`);
       const diffStat = await out(r, 'diff', '--stat', `${t.from}..HEAD`);
       const title = titleOf(sealed.content);

@@ -26,7 +26,7 @@ const submit = defineTool({
   replay: 'safe',
   execute: async (_args, api, ctx) => {
     await api.commit(async (tx) => { (await tx.doc(World, api.conversationId)).seen = 'pr head abc'; }, ctx);
-    const sealed = await seal(api, note, ctx);
+    const { artifact: sealed } = await seal(api, note, ctx);
     await attachVerdict(api, note.kind, sealed.version, { score: 0.9, passed: true, limitReached: false }, ctx);
     return { output: [{ type: 'text', text: `sealed v${sealed.version}` }] };
   },
