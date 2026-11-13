@@ -1,5 +1,6 @@
 import { appEndpoint, type Action, type ExtensionManifest } from '@quack/sdk';
 import { homeSessionExtensions } from './index.ts';
+import { homeApp } from './notices.ts';
 
 const envOf = (actions: Action<any>[]) => [...new Set(actions.flatMap((a) => a.env ?? []))];
 
@@ -22,4 +23,6 @@ export const manifest: ExtensionManifest = {
     const { url, token } = appEndpoint('home');
     return homeSessionExtensions(actions, { distributorUrl: url.slice(0, -'/apps/home'.length), fetch: withCredential(token), env });
   },
+  app: homeApp,
+  listen: ['run.ended'],
 };

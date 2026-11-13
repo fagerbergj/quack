@@ -7,7 +7,7 @@ export { artifactKind, Artifacts, artifactsExtension, attachLink, attachVerdict,
 export { gate, SealRefused, type GateEvent, type GatePoint, type GateVerdict, type ProcessorContext } from './gates.ts';
 export { inputTooLarge, MODEL_RETRY, retryModelCall, type RetrySeams } from './model-retry.ts';
 export { gateGenerations, observeGeneration, onGeneration, onWaiting, statusNote, whileWaiting, type Generation, type GenerationGate, type GenerationRequest } from './signals.ts';
-export type { App, AppContext, PageRoute, Action, ActionContext, ContributedWorkflow, ContributedWorkflows, DeploymentView, Dispatch, DispatchingExtension, Resume, SubmitResult, EvalAdapter, EvalService, ExtensionManifest, RecordedSession } from './manifest.ts';
+export type { App, AppContext, PageRoute, Action, ActionContext, ContributedWorkflow, ContributedWorkflows, DeploymentView, Dispatch, DispatchingExtension, Resume, SubmitResult, EvalAdapter, EvalService, ExtensionManifest, LoopEvent, RecordedSession, RunEnded } from './manifest.ts';
 export { appEndpoint, primeSessionEndpoint, invocationRequest, safeEqual, sendProblem, serviceHttp, inProcessFetch, serveApp, submitToSession, tooLarge, type SessionSubmission } from './http.ts';
 export { checkedSettings, extensionDbPath, extensionEntry, readDeploymentFile, storeFor, type DeploymentFile, type ExtensionEntry, type StoreChoice, type StoreEntry } from './extensions.ts';
 export { escapeTerm, unescapeTerm } from './query.ts';
