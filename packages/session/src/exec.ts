@@ -15,7 +15,9 @@ export const DEFAULT_EXEC_TIMEOUT_SECONDS = 600;
 // Address space and maxProcs are opt-in: V8 and WebAssembly reserve huge virtual regions, and RLIMIT_NPROC counts every process of the UID.
 export const DEFAULT_EXEC_LIMITS = { maxFileSizeMb: 1024 };
 
-const SHELL_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'TZ', 'LANG', 'LANGUAGE', 'GOPATH', 'GOMODCACHE', 'GOCACHE', 'GOFLAGS', 'CARGO_HOME', 'RUSTUP_HOME', 'NVM_DIR']);
+// The proxy variables carry no secret; a docker-driver session's only way out is the egress proxy they name.
+const PROXY_ENV = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'NODE_USE_ENV_PROXY'];
+const SHELL_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'TZ', 'LANG', 'LANGUAGE', 'GOPATH', 'GOMODCACHE', 'GOCACHE', 'GOFLAGS', 'CARGO_HOME', 'RUSTUP_HOME', 'NVM_DIR', ...PROXY_ENV]);
 
 /** The variables a shell gets from the session process: a fixed toolchain set, LC_*, and what the policy names. */
 export function shellEnv(source: NodeJS.ProcessEnv, extra: string[] = []): Record<string, string> {
