@@ -9,6 +9,7 @@ import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 // The launch credential comes from the endpoint the runtime primed, never the definition file.
 export const manifest: ExtensionManifest = {
   name: 'github',
+  // The judge installs first, so its gate runs before the post: a failed review never reaches GitHub.
   optional: ['judge'],
   settings: settingsProblems,
   app: mountGithub,

@@ -9,9 +9,11 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
+import { obj } from '@earendil-works/pi-schema';
+import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import { Artifacts, artifactsExtension, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { feedback, judge, progressOf, score, settled, unitsFor, type CheckResult, type Evidence, type Plan, type Rubric } from '../src/index.ts';
+import { check, feedback, progressOf, report, score, settled, unitsFor, type CheckResult, type Evidence, type JudgeOptions, type Plan, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -60,6 +62,22 @@ const rubric: Rubric = {
   ],
 };
 
+// These checks are judged from built evidence, which judged() does not take, so a test tool runs each submit's round through check().
+function submitThrough(opts: JudgeOptions) {
+  const submit = defineTool({
+    name: 'submit_review',
+    description: 'Seal the review and check it.',
+    parameters: obj({}, { open: true }),
+    async execute(_args, api, ctx) {
+      const { artifact } = await seal(api, review, ctx);
+      const out = await check(api, opts, artifact, 'submit_review', ctx);
+      const text = 'verdict' in out ? report(artifact, out.verdict, 'submit_review') : 'deny' in out ? out.deny : out.undecided;
+      return { output: [{ type: 'text' as const, text }], isError: !('verdict' in out && (out.verdict.passed || out.verdict.limitReached)) };
+    },
+  });
+  return defineExtension({ name: 'judge-under-test', tools: [submit] });
+}
+
 async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[]) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-judge-'));
   dirs.push(dir);
@@ -73,7 +91,7 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
   }
   const m = faux.getModel();
   const decisionModel = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
-  const extensions = [CodingTools, artifactsExtension([review]), judge({ kind: review, rubric, evidence: evidence as never, maxRevisions: 2, decisionModel, toolName: 'submit_review' })];
+  const extensions = [CodingTools, artifactsExtension([review]), submitThrough({ kind: review.kind, rubric, evidence: evidence as never, maxRevisions: 2, decisionModel })];
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review the PR.', 'review-1', true);
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
@@ -94,7 +112,6 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
     tool('write', { path: 'artifacts/review.md', content: good.replace('## Verdict\nrequest_changes\n', '') }),
     tool('submit_review', {}),
     yes,
-    fauxAssistantMessage('Done.'),
     tool('write', { path: 'artifacts/review.md', content: good }),
     tool('submit_review', {}),
     yes,

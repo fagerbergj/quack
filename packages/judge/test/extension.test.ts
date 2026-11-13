@@ -69,6 +69,12 @@ test('a refusal from the registration ends the run before anything is judged', a
   assert.deepEqual(r.versions.map(passed), [null]);
 });
 
+test('a run with nothing to submit may finish without sealing', async () => {
+  const r = await run('refuse-yield', {}, [done, fauxAssistantMessage('should not be asked')], async () => 'Nothing to submit: no work. This run is over.');
+  assert.equal(r.asked, 1, 'the yield hook does not push for a submit the registration would refuse');
+  assert.deepEqual(r.versions, []);
+});
+
 test('a run may not finish before its kind is sealed and checked', async () => {
   const r = await run('yield', { maxRevisions: 1 }, [done, write('ok'), submit, done]);
   assert.match(r.seen[1], /Write artifacts\/note\.md and call submit_note before you finish\./);

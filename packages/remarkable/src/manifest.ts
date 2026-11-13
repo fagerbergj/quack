@@ -12,7 +12,6 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 export const manifest: ExtensionManifest = {
   name: 'remarkable',
   requires: ['workflows'],
-  optional: ['judge'],
   workflows: { [INGEST_WORKFLOW]: { build: (config) => ingestFromEnv(config as Parameters<typeof ingestFromEnv>[0]), env: [] } },
   // The rmfakecloud login is read from the environment by name, never the deployment file.
   pages: [{ method: 'GET', path: '/' }, { method: 'POST', path: '/ingest' }],
