@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { credentialBroker, dockerApi, dockerLauncher, parseDockerHost, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
+import { credentialBroker, dockerApi, dockerGate, dockerLauncher, parseDockerHost, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
 
 // Opt-in: QUACK_LIVE_IMAGE=<quack image> QUACK_LIVE_RUNTIME=runsc, with the Docker daemon on /var/run/docker.sock
 // (or QUACK_DOCKER_HOST) and the temp dir visible to the daemon at the same path. The v1 isolation job runs it.
@@ -80,12 +80,13 @@ async function must(api: DockerCall, method: 'GET' | 'POST' | 'DELETE', path: st
   return res.body as any;
 }
 
-test('a live session reaches public hosts only through the egress proxy, and never a private address or the host', { skip: !image || !runtime }, async () => {
+test('a live session, launched through the docker gate, reaches public hosts only through the egress proxy, and never a private address or the host',{ skip: !image || !runtime }, async () => {
   const api = dockerApi(parseDockerHost(process.env.QUACK_DOCKER_HOST ?? '/var/run/docker.sock'));
   const tag = `quack-live-${process.pid}`;
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-live-'));
   const host = createServer((_req, res) => res.end('host')).listen(0, '0.0.0.0');
   await new Promise((r) => host.once('listening', r));
+  const closers: Array<() => void> = [];
   try {
     await must(api, 'POST', `/images/create?fromImage=${encodeURIComponent(PROXY_IMAGE)}`);
     const sessions = (await must(api, 'POST', '/networks/create', { Name: `${tag}-sessions`, Internal: true, Options: { 'com.docker.network.bridge.gateway_mode_ipv4': 'isolated' } })).Id as string;
@@ -104,8 +105,15 @@ test('a live session reaches public hosts only through the egress proxy, and nev
     const dir = join(dataDir, sessionDirName('net'));
     await mkdir(dir);
     await chmod(dir, 0o777);
+    // The driver reaches dockerd only through the gate, as in production.
+    const gate = dockerGate({ image: image!, runtime: runtime!, network: sessions, data: { hostDir: dataDir } }, api).listen(0, '127.0.0.1');
+    await new Promise((r) => gate.once('listening', r));
+    closers.push(() => gate.close());
+    const gated = dockerApi({ host: '127.0.0.1', port: (gate.address() as AddressInfo).port });
+    const escape = { Image: image, Labels: { 'quack.session': 'x' }, HostConfig: { Runtime: runtime, NetworkMode: sessions, Privileged: true, Binds: ['/:/host'], CapDrop: ['ALL'] } };
+    assert.equal((await gated('POST', `/containers/create?name=quack-session-${sessionDirName('x')}`, escape)).status, 403, 'the gate refuses a privileged create with a host bind');
     const launch = dockerLauncher({
-      api, broker: credentialBroker(), image: image!, runtime: runtime!, network: sessions, egressProxy: `http://${proxyIp}:3128`, data: { hostDir: dataDir }, distributorUrl: 'http://192.0.2.1:8081',
+      api: gated, broker: credentialBroker(), image: image!, runtime: runtime!, network: sessions, egressProxy: `http://${proxyIp}:3128`, data: { hostDir: dataDir }, distributorUrl: 'http://192.0.2.1:8081',
       inherit: () => ({ QUACK_LIVE_TARGETS: `${ip},${(host.address() as AddressInfo).port},${published},${gateway}` }), passthrough: ['QUACK_LIVE_TARGETS'],
       command: ['node', '-e', egressProbe], urlFor: () => `http://127.0.0.1:${(host.address() as AddressInfo).port}`, startTimeoutMs: 120_000,
     });
@@ -118,6 +126,7 @@ test('a live session reaches public hosts only through the egress proxy, and nev
     assert.deepEqual(proxied, { host: 403, tailnet: 403, github: true, fetch: 200 }, 'the proxy refuses private addresses and passes public hosts, for git and for Node');
   } finally {
     host.close();
+    closers.forEach((close) => close());
     await api('DELETE', `/containers/${tag}-proxy?force=1`);
     for (const name of ['sessions', 'egress']) await api('DELETE', `/networks/${tag}-${name}`);
     await rm(dataDir, { recursive: true, force: true });

@@ -2,7 +2,9 @@ import { isIP } from 'node:net';
 
 export type HostConfig =
   | { driver: 'process' }
-  | { driver: 'docker'; image: string; runtime: string; network: string; data: { volume: string } | { hostDir: string }; distributorUrl: string; egressProxy: string; dockerHost: string; passthrough: string[] };
+  | ({ driver: 'docker'; distributorUrl: string; egressProxy: string; dockerHost: string; passthrough: string[] } & SessionContainers);
+
+export type SessionContainers = { image: string; runtime: string; network: string; data: { volume: string } | { hostDir: string } };
 
 const need = (env: NodeJS.ProcessEnv, name: string) => {
   const value = env[name];
@@ -28,11 +30,8 @@ function dataMount(env: NodeJS.ProcessEnv): { volume: string } | { hostDir: stri
   return { hostDir };
 }
 
-/** Reads QUACK_SESSION_DRIVER (process, the default, or docker) and, for docker, the settings it needs; throws on anything unusable. */
-export function parseHostConfig(env: NodeJS.ProcessEnv): HostConfig {
-  const driver = env.QUACK_SESSION_DRIVER ?? 'process';
-  if (driver === 'process') return { driver };
-  if (driver !== 'docker') throw new Error(`QUACK_SESSION_DRIVER must be process or docker, not ${driver}`);
+/** What a session container is (image, runtime, network, data mount): the distributor launches these and the docker gate admits only these. */
+export function sessionContainers(env: NodeJS.ProcessEnv): SessionContainers {
   const runtime = env.QUACK_SESSION_RUNTIME ?? 'runsc';
   // runc shares the host kernel with the session's shell, which defeats the driver; it is for dev and tests only.
   if (runtime === 'runc') {
@@ -40,12 +39,18 @@ export function parseHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     console.warn('WARNING: session containers run under runc, not gVisor or Kata. Do not use this in production.');
   }
   const data = dataMount(env);
-  const distributorUrl = byAddress(env, 'QUACK_SESSION_DISTRIBUTOR_URL');
+  return { runtime, data, image: need(env, 'QUACK_SESSION_IMAGE'), network: env.QUACK_SESSION_NETWORK ?? 'quack-sessions' };
+}
+
+/** Reads QUACK_SESSION_DRIVER (process, the default, or docker) and, for docker, the settings it needs; throws on anything unusable. */
+export function parseHostConfig(env: NodeJS.ProcessEnv): HostConfig {
+  const driver = env.QUACK_SESSION_DRIVER ?? 'process';
+  if (driver === 'process') return { driver };
+  if (driver !== 'docker') throw new Error(`QUACK_SESSION_DRIVER must be process or docker, not ${driver}`);
   return {
-    driver, runtime, data, distributorUrl,
+    driver, ...sessionContainers(env),
+    distributorUrl: byAddress(env, 'QUACK_SESSION_DISTRIBUTOR_URL'),
     egressProxy: byAddress(env, 'QUACK_SESSION_EGRESS_PROXY'),
-    image: need(env, 'QUACK_SESSION_IMAGE'),
-    network: env.QUACK_SESSION_NETWORK ?? 'quack-sessions',
     dockerHost: env.QUACK_DOCKER_HOST ?? '/var/run/docker.sock',
     passthrough: (env.QUACK_SESSION_PASSTHROUGH ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   };
