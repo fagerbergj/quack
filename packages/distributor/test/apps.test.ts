@@ -3,7 +3,7 @@ import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import type { App, AppContext, DeploymentFile, ExtensionManifest } from '@quack/sdk';
-import { appsGateway, mountApps } from '../src/apps.ts';
+import { appStream, appsGateway, mountApps } from '../src/apps.ts';
 import { credentialBroker } from '../src/credentials.ts';
 
 const closers: Array<() => void> = [];
@@ -112,4 +112,18 @@ test('an app reaches the distributor and another app in process, with no socket 
   assert.deepEqual([sent.status, await sent.text()], [202, 'POST /sessions/k/invocations?agent=x']);
   assert.deepEqual(await (await ctx!.peerFetch('b')('http://d/items?x=1')).json(), { seen: '/items?x=1', auth: null });
   assert.equal((await ctx!.peerFetch('missing')('http://d/')).status, 404);
+});
+
+test('an app hears the core types its listen names from every session, and namespaced events only from sessions that have it', async () => {
+  const stream = appStream(async (session) => new Set(session === 'mine' ? ['a'] : []));
+  const heard: string[] = [];
+  const manifests: ExtensionManifest[] = [
+    { name: 'a', listen: ['run.ended', 'b.done'], app: (c) => (c.subscribe((s, e) => void heard.push(`a ${s} ${e.type}`)), { handle: async () => {} }) },
+    { name: 'b', app: (c) => (c.subscribe((s, e) => void heard.push(`b ${s} ${e.type}`)), { handle: async () => {} }) },
+  ];
+  await mountApps({ extensions: { a: {}, b: {} } }, manifests, { distributorUrl: 'http://d', distributor: () => {}, env: { QUACK_DATA_DIR: '/data' }, stream });
+  const ev = (type: string, extension?: true) => ({ seq: 1, id: type, at: 0, type, data: {}, ...(extension && { extension }) });
+  await stream.publish('other', [ev('run.ended'), ev('run.started'), ev('b.done', true)]);
+  await stream.publish('mine', [ev('b.done', true)]);
+  assert.deepEqual(heard, ['a other run.ended', 'a mine b.done']);
 });

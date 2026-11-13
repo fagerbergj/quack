@@ -44,8 +44,14 @@ export type App = { handle(req: IncomingMessage, res: ServerResponse): Promise<u
 /** A route a credential-free request may reach: the app's UI routes and its public ingress (a webhook that signs its own payload). `path` is relative to the mount. */
 export type PageRoute = { method: string; path: string | RegExp };
 
-/** What the distributor gives an app: its deployment entry, database file, the process environment (secrets are read from it by name), and in-process access to the rest: `fetch` calls the distributor's own routes and `peerFetch(name)` another mounted app, neither over a socket or with a credential. `distributorUrl` is only the base those URLs resolve against. */
-export type AppContext = { settings: unknown; dbPath: string; distributorUrl: string; fetch: typeof fetch; peerFetch(name: string): typeof fetch; deployment: DeploymentFile; env: NodeJS.ProcessEnv };
+/** A session's `run.ended` as the lifecycle channel carries it. */
+export type RunEnded = { seq: number; id: string; at: number; type: 'run.ended'; data: { run: number; outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; failedSteps: ReadonlyArray<{ step: string; error: string }>; lastMessage?: string } };
+// shortcut: only run.ended is typed; type the rest as the contract's CoreEvent when a listener reads one.
+export type LoopEvent = RunEnded | { seq: number; id: string; at: number; type: string; data: unknown };
+
+/** What the distributor gives an app: its deployment entry, database file, the process environment (secrets are read from it by name), and in-process access to the rest: `fetch` calls the distributor's own routes and `peerFetch(name)` another mounted app, neither over a socket or with a credential. `distributorUrl` is only the base those URLs resolve against.
+ * `subscribe` hears the session leg of the stream: core event types the manifest's `listen` names from every session, namespaced events (this extension's own when `listen` is absent) only from sessions that have this extension. The callback runs before the batch is acknowledged, so an app that records the event synchronously gets each at least once, keyed by its `id`. */
+export type AppContext = { settings: unknown; dbPath: string; distributorUrl: string; fetch: typeof fetch; peerFetch(name: string): typeof fetch; deployment: DeploymentFile; env: NodeJS.ProcessEnv; subscribe(on: (session: string, event: LoopEvent) => void): () => void };
 
 /** What an extension package exports as `manifest`. `session` installs it for agents selecting `name` (every session if `deployment`); `env` is what it reads from the process. */
 export type ExtensionManifest = {
@@ -69,6 +75,8 @@ export type ExtensionManifest = {
   optional?: string[];
   workflows?: ContributedWorkflows;
   actions?: Action<any>[];
+  /** The event types the app's `subscribe` receives; absent means this extension's own namespace only. */
+  listen?: readonly string[];
   evalAdapters?: EvalAdapter[];
 };
 

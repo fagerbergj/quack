@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { extensionDbPath, inProcessFetch, sendProblem, type App, type DeploymentFile, type ExtensionManifest } from '@quack/sdk';
+import { extensionDbPath, inProcessFetch, sendProblem, type App, type AppContext, type DeploymentFile, type ExtensionManifest, type LoopEvent } from '@quack/sdk';
 
 const sendFailure = (res: ServerResponse, err: unknown) => (res.headersSent ? res.destroy() : sendProblem(res, 500, err instanceof Error ? err.message : String(err)));
 
@@ -33,18 +33,48 @@ export function appsGateway(apps: Record<string, App>, sessionOf: (token: string
   };
 }
 
+type Listener = { name: string; listen?: readonly string[]; on: (session: string, event: LoopEvent) => void };
+
+/** The session leg of the stream for mounted apps: a core type an app's `listen` names comes from every session, a namespaced one
+ * (the app's own when `listen` is absent) only from sessions `installed` says have the app. */
+export function appStream(installed: (session: string) => Promise<ReadonlySet<string>>) {
+  const listeners = new Set<Listener>();
+  const heard = (l: Listener, type: string) => (l.listen ? l.listen.includes(type) : type.startsWith(`${l.name}.`));
+  return {
+    subscriber: (name: string, listen?: readonly string[]): AppContext['subscribe'] => (on) => {
+      const l = { name, listen, on };
+      listeners.add(l);
+      return () => void listeners.delete(l);
+    },
+    async publish(session: string, events: ReadonlyArray<LoopEvent & { extension?: true }>) {
+      let apps: ReadonlySet<string> | undefined;
+      for (const { extension, ...event } of events) {
+        for (const l of listeners) {
+          if (!heard(l, event.type) || (extension && !(apps ??= await installed(session)).has(l.name))) continue;
+          try {
+            l.on(session, event as LoopEvent);
+          } catch (err) {
+            console.error(`app ${l.name}: listener failed on ${event.type}:`, err);
+          }
+        }
+      }
+    },
+  };
+}
+
 /** Builds the app of every extension the deployment file lists; an unlisted extension is not mounted, and a listed name nothing mounts is refused. Apps reach the distributor and each other through in-process fetches, resolved when called. */
-export async function mountApps(deployment: DeploymentFile, manifests: ExtensionManifest[], o: { distributorUrl: string; distributor: (req: IncomingMessage, res: ServerResponse) => unknown; env?: NodeJS.ProcessEnv }): Promise<Record<string, App>> {
+export async function mountApps(deployment: DeploymentFile, manifests: ExtensionManifest[], o: { distributorUrl: string; distributor: (req: IncomingMessage, res: ServerResponse) => unknown; env?: NodeJS.ProcessEnv; stream?: ReturnType<typeof appStream> }): Promise<Record<string, App>> {
   const env = o.env ?? process.env;
   const apps: Record<string, App> = {};
   const peerFetch = (name: string): typeof fetch => (input, init) => (apps[name] ? inProcessFetch((req, res) => apps[name].handle(req, res))(input, init) : Promise.resolve(new Response('{"error":"no such app"}', { status: 404 })));
   const fetch = inProcessFetch(o.distributor);
+  const stream = o.stream ?? appStream(async () => new Set());
   for (const [name, entry] of Object.entries(deployment.extensions ?? {})) {
     const manifest = manifests.find((m) => m.name === name);
     if (!manifest?.app) throw new Error(`extensions.${name}: no extension named ${name} mounts an app`);
     const missing = (manifest.peers ?? []).filter((p) => !(p in (deployment.extensions ?? {})));
     if (missing.length) throw new Error(`extensions.${name}: needs ${missing.join(', ')} listed too, which it calls`);
-    const app = await manifest.app({ settings: entry.settings, dbPath: extensionDbPath(deployment, name, env), distributorUrl: o.distributorUrl, fetch, peerFetch, deployment, env });
+    const app = await manifest.app({ settings: entry.settings, dbPath: extensionDbPath(deployment, name, env), distributorUrl: o.distributorUrl, fetch, peerFetch, deployment, env, subscribe: stream.subscriber(name, manifest.listen) });
     apps[name] = Object.assign(app, { pages: manifest.pages });
   }
   return apps;

@@ -68,7 +68,7 @@ export async function readSession(d: Distributor, row: SessionRow, withMessages 
 const keyParam = str({ description: 'Session key from find_sessions' });
 
 /** The `start` tool: asks the person first (the gate shows the action's summary and the filled params), then calls the action. */
-function startTool(actions: Action<any>[], ctx: ActionContext): ToolRegistration {
+function startTool(d: Distributor, actions: Action<any>[], ctx: ActionContext): ToolRegistration {
   const menu = actions.map((a) => `- ${a.name}: ${a.summary}. Params ${JSON.stringify(a.params)}`).join('\n');
   const parameters = obj({ action: str({ description: 'Action name' }), params: map(unknown(), { description: 'The action params' }) }, { open: true });
   const inner = gated(defineTool({
@@ -78,7 +78,9 @@ function startTool(actions: Action<any>[], ctx: ActionContext): ToolRegistration
     async execute(args) {
       const action = actions.find((a) => a.name === args.action)!;
       const started = await action.start(args.params as never, ctx);
-      return text(`Started ${started.title}. Session key ${started.session}, link ${sessionLink(started.session)}`);
+      // The agent promises to report back, so it is told when it cannot.
+      const heard = await d.started(started.session).then(() => '', (err) => ` You will not be told when it ends (${err instanceof Error ? err.message : String(err)}); check it with read_session.`);
+      return text(`Started ${started.title}. Session key ${started.session}, link ${sessionLink(started.session)}.${heard}`);
     },
   }) as ToolRegistration);
   return defineTool({
@@ -142,7 +144,7 @@ export function homeTools(d: Distributor, actions: Action<any>[], ctx: ActionCon
         return text(`Sent to ${row.title || row.key}, link ${sessionLink(row.key)}`);
       },
     }),
-    startTool(actions, ctx),
+    startTool(d, actions, ctx),
     defineTool({
       name: 'stop_session',
       description: 'Abort the run in a session the person named.',
