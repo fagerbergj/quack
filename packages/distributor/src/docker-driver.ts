@@ -22,8 +22,10 @@ export type DockerLauncherOptions = {
   network: string;
   /** The data volume holds each session's directory: a named volume (each session mounts its subpath; Docker 26+) or a host path (bind). */
   data: { volume: string } | { hostDir: string };
-  /** What a session container uses to reach this distributor's session listener (QUACK_SESSION_PORT), e.g. http://quack-v1:8081. */
+  /** What a session container uses to reach this distributor's session listener (QUACK_SESSION_PORT) by its fixed address on the session network, e.g. http://10.213.0.2:8081. */
   distributorUrl: string;
+  /** The session network's only way out, e.g. http://10.213.0.3:3128; without it a session on an internal network reaches nothing beyond it. */
+  egressProxy?: string;
   inherit: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
   /** Variables copied into containers as they are; these are secrets the container then holds until they are proxied. */
   passthrough?: string[];
@@ -35,7 +37,7 @@ export type DockerLauncherOptions = {
 };
 
 /** The environment a session container gets: toolchain basics, the distributor and its launch credential, session paths, and nothing else unless passed through. */
-export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; token: string; broker: CredentialBroker; distributorUrl: string; passthrough: string[]; agentPath?: string; dir: string }): { env: Record<string, string>; dropped: string[] } {
+export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; token: string; broker: CredentialBroker; distributorUrl: string; egressProxy?: string; passthrough: string[]; agentPath?: string; dir: string }): { env: Record<string, string>; dropped: string[] } {
   const env: Record<string, string> = { ...shellEnv(inherited), QUACK_SESSION_LISTENER_URL: o.distributorUrl, QUACK_LAUNCH_TOKEN_FILE: `${SESSION_MOUNT}/${LISTENER_TOKEN_FILE}` };
   Object.assign(env, proxyKeyedServices(inherited, { broker: o.broker, distributorUrl: o.distributorUrl, token: o.token }));
   for (const name of o.passthrough) if (inherited[name] !== undefined) env[name] = inherited[name]!;
@@ -43,7 +45,14 @@ export function containerEnv(inherited: NodeJS.ProcessEnv, o: { key: string; tok
   Object.assign(env, { PORT: String(SESSION_PORT), QUACK_SESSION_HOST: '0.0.0.0', QUACK_SESSION_TOKEN_FILE: `${SESSION_MOUNT}/${LAUNCH_TOKEN_FILE}`, QUACK_SESSION_DIR: SESSION_MOUNT, QUACK_SESSION_KEY: o.key });
   if (o.agentPath) env.QUACK_AGENT = o.agentPath.replace(o.dir, SESSION_MOUNT);
   if (inherited.QUACK_CONFIG) env.QUACK_CONFIG = `${SESSION_MOUNT}/deployment.json`;
+  if (o.egressProxy) Object.assign(env, proxyEnv(o.egressProxy, new URL(o.distributorUrl).hostname));
   return { env, dropped };
+}
+
+// git and curl read the lower-case names, Node and Go the upper-case ones; Node's fetch and http only with NODE_USE_ENV_PROXY.
+function proxyEnv(proxy: string, distributorHost: string): Record<string, string> {
+  const direct = `${distributorHost},localhost,127.0.0.1`;
+  return { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: proxy, https_proxy: proxy, NO_PROXY: direct, no_proxy: direct, NODE_USE_ENV_PROXY: '1' };
 }
 
 async function readConfig(path: string) {
@@ -88,7 +97,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
     const token = opts.broker.mint(key);
     try {
       const inherited = await opts.inherit(agentPath);
-      const { env, dropped } = containerEnv(inherited, { key, token, broker: opts.broker, distributorUrl: opts.distributorUrl, passthrough: opts.passthrough ?? [], agentPath, dir });
+      const { env, dropped } = containerEnv(inherited, { key, token, broker: opts.broker, distributorUrl: opts.distributorUrl, egressProxy: opts.egressProxy, passthrough: opts.passthrough ?? [], agentPath, dir });
       // Rewritten on every start, so a session that edits its copy keeps the change only until it next restarts.
       if (inherited.QUACK_CONFIG) {
         const proxied = proxyProviders(await readConfig(inherited.QUACK_CONFIG), inherited, { broker: opts.broker, distributorUrl: opts.distributorUrl, token });
@@ -135,11 +144,18 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
   };
 }
 
+// Internal drops the default route; an isolated gateway leaves the bridge without a host address, or sessions could dial the host's own services.
+function unfenced(net: { Internal?: boolean; EnableIPv6?: boolean; Options?: Record<string, string> } | null) {
+  const isolated = (family: 4 | 6) => net?.Options?.[`com.docker.network.bridge.gateway_mode_ipv${family}`] === 'isolated';
+  return !net?.Internal || !isolated(4) || (!!net.EnableIPv6 && !isolated(6));
+}
+
 /** Whether a peer is on the session network, for the public listener to drop, and this host's address there, the only one the session listener binds; throws when either is missing, as sessions must not boot unfenced. */
 export async function onSessionNetwork(api: DockerCall, network: string, interfaces = networkInterfaces()): Promise<{ refuse: (address: string | undefined) => boolean; address: string }> {
   const { status, body } = await api('GET', `/networks/${encodeURIComponent(network)}`);
   const subnets = ((body as { IPAM?: { Config?: Array<{ Subnet?: string }> } } | null)?.IPAM?.Config ?? []).flatMap((c) => (c.Subnet ? [c.Subnet] : []));
   if (status !== 200 || !subnets.length) throw new Error(`docker network ${network} has no subnet to fence off (answered ${status})`);
+  if (unfenced(body as Parameters<typeof unfenced>[0])) throw new Error(`docker network ${network} must be internal with an isolated gateway (docker network create --internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated)`);
   const list = new BlockList();
   for (const subnet of subnets) {
     const [net, prefix] = subnet.split('/');
