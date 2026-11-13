@@ -53,7 +53,7 @@ const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string
 const routes = async (req: IncomingMessage, res: ServerResponse) => (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res));
 const server = createDistributor(driver, { refuse, sessions, catalog, routes, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
 server.sessions.listen(sessionPort, listenAddress);
-// A failed start (the GitHub app finding its agent unpromoted, say) exits so compose restarts it, as the separate service did.
+// A failed start (an extension finding its agent unpromoted, say) exits so compose restarts it, as the separate service did.
 for (const [name, app] of Object.entries(mounted)) {
   void Promise.resolve(app.start?.()).catch((err) => {
     console.error(`app ${name} failed to start:`, err);
