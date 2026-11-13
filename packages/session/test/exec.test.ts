@@ -32,6 +32,15 @@ test('the policy names extra variables, and a caller passes its own to one comma
   assert.deepEqual(Object.keys(shellEnv({ A: '1', PATH: 'p', LC_X: 'x' })).sort(), ['LC_X', 'PATH']);
 });
 
+test("an agent shell keeps the session's proxy variables, so git in a docker-driver session reaches the egress proxy", async () => {
+  const proxied = new PolicyExecutionEnv({ cwd, source: { ...source, HTTPS_PROXY: 'http://10.0.0.3:3128', no_proxy: '10.0.0.2', NODE_USE_ENV_PROXY: '1' } });
+  let output = '';
+  await proxied.exec('echo "$HTTPS_PROXY|$no_proxy|$NODE_USE_ENV_PROXY|$QUACK_GH_SERVICE_TOKEN"', { onOutput: (t) => { output += t; } }, ctx);
+  assert.equal(output.trim(), 'http://10.0.0.3:3128|10.0.0.2|1|');
+  // shellEnv itself stays scrubbed: the docker driver builds a container's environment from it and sets its own proxy.
+  assert.deepEqual(Object.keys(shellEnv({ HTTPS_PROXY: 'x', PATH: 'p' })), ['PATH']);
+});
+
 test('an argv command is confined the same way and keeps its arguments intact', async () => {
   const { result, output } = await run(['sh', '-c', 'echo "[$QUACK_EXA_API_KEY] $1"', 'sh', 'a b']);
   assert.ok(result.ok && result.value.exitCode === 0);
