@@ -29,7 +29,7 @@ const scenario: Scenario = {
     });
     await eachView(ctx, 'artifacts: search, funnel panel, kind chip', async (page, label) => {
       await page.goto(`${ctx.url}/#/artifacts`);
-      await visible(page.getByRole('main').getByRole('button', { name: /^Open / }).first());
+      await visible(page.getByRole('main').getByRole('link', { name: /^Open / }).first());
       await filter(ctx, page, 'artifacts', 'Kind', 'Spec', label, 'Approved version 1');
     });
   },
