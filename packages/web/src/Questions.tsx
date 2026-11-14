@@ -13,7 +13,7 @@ function Headline({ text }: { text: string }) {
 const rowClass = 'flex min-h-11 w-full cursor-pointer flex-col items-start justify-center gap-0.5 rounded-xl border border-line-strong bg-surface px-3 py-2 text-left text-ink hover:bg-soft';
 
 const linkBtn = 'min-h-11 cursor-pointer self-start bg-transparent px-1 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline';
-const field = 'w-full rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
+const field = 'field-grow w-full min-h-[2lh] max-h-[12lh] rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
 
 // A note rides along with the option tapped, so every answer stays one tap.
 function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Resolution) => void }) {
@@ -26,7 +26,7 @@ function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Reso
   const toggle = (m: 'note' | 'text') => { setMode(mode === m ? '' : m); setValue(''); };
   return (
     <div className="flex flex-col gap-2">
-      {mode === 'note' && <textarea data-answer aria-label="Note" placeholder="Your note goes with the option you tap" maxLength={2000} rows={2} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
+      {mode === 'note' && <textarea data-answer aria-label="Note" placeholder="Your note goes with the option you tap" maxLength={2000} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
       {labels.filter((o) => o !== YOU_DECIDE).map((o) => (
         <button key={o} type="button" disabled={busy} onClick={() => choose(o)} className={rowClass}>
           <span className="flex flex-wrap items-center gap-2 text-sm font-semibold [overflow-wrap:anywhere]">
@@ -41,7 +41,7 @@ function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Reso
         {d.freeText && <button type="button" aria-expanded={mode === 'note'} onClick={() => toggle('note')} className={linkBtn}>{mode === 'note' ? 'Remove note' : 'Add a note'}</button>}
         {d.freeText && <button type="button" aria-expanded={mode === 'text'} onClick={() => toggle('text')} className={linkBtn}>Something else…</button>}
       </div>
-      {mode === 'text' && <textarea data-answer aria-label="Your answer" maxLength={2000} rows={3} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
+      {mode === 'text' && <textarea data-answer aria-label="Your answer" maxLength={2000} value={value} onChange={(e) => setValue(e.target.value)} className={field} />}
       {mode === 'text' && <button type="button" disabled={busy || !value.trim()} onClick={() => send({ choice: value, text: value })} className="min-h-11 cursor-pointer self-start rounded-xl border border-line-strong bg-surface px-4 text-sm font-medium text-ink hover:bg-soft disabled:opacity-50">Send</button>}
     </div>
   );

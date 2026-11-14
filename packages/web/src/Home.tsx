@@ -49,14 +49,13 @@ function Ask({ failed }: { failed: boolean }) {
       <Pond still={failed}>
         <label htmlFor="ask" className="wordmark text-2xl leading-tight">What do you need?</label>
       </Pond>
-      <div className="flex flex-col gap-2.5 rounded-[22px] border border-line-strong bg-surface py-3 pr-3 pl-4 shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring">
+      <div className="focus-ring flex flex-col gap-2.5 rounded-[22px] border border-line-strong bg-surface py-3 pr-3 pl-4 shadow-float transition">
         <textarea
           id="ask"
-          rows={3}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask about anything running, or start something new"
-          className="resize-none bg-transparent text-[15.5px] leading-relaxed outline-none placeholder:text-muted"
+          className="field-grow min-h-[3lh] max-h-[10lh] resize-none bg-transparent text-[15.5px] leading-relaxed outline-none placeholder:text-muted"
         />
         <Pending attach={attach} />
         {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}

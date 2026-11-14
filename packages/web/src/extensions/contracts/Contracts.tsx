@@ -16,7 +16,7 @@ function NewContract({ onClose }: { onClose: () => void }) {
     <Modal title="New contract" onClose={onClose} onSubmit={() => text.trim() && go()} action="Start" busy={busy} error={error}>
       <label className="flex flex-col gap-1 text-[13px] text-muted">
         What should it do, and for whom?
-        <textarea autoFocus rows={3} value={text} onChange={(e) => setText(e.target.value)} className="rounded-xl border border-line bg-surface px-3 py-2 text-[15px] text-ink outline-none focus:shadow-ring" />
+        <textarea autoFocus rows={3} value={text} onChange={(e) => setText(e.target.value)} className="field-grow focus-ring min-h-[3lh] max-h-[12lh] rounded-xl border border-line bg-surface px-3 py-2 text-[15px] text-ink" />
       </label>
     </Modal>
   );
