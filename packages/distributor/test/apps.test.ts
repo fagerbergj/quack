@@ -115,7 +115,7 @@ test('an app reaches the distributor and another app in process, with no socket 
 });
 
 test('an app hears the core types its listen names from every session, and namespaced events only from sessions that have it', async () => {
-  const stream = appStream(async (session) => new Set(session === 'mine' ? ['a'] : []));
+  const stream = appStream(async (session) => new Set(session === 'mine' ? ['a', 'b'] : []));
   const heard: string[] = [];
   const manifests: ExtensionManifest[] = [
     { name: 'a', listen: ['run.ended', 'b.done'], app: (c) => (c.subscribe((s, e) => void heard.push(`a ${s} ${e.type}`)), { handle: async () => {} }) },
@@ -125,5 +125,6 @@ test('an app hears the core types its listen names from every session, and names
   const ev = (type: string, extension?: true) => ({ seq: 1, id: type, at: 0, type, data: {}, ...(extension && { extension }) });
   await stream.publish('other', [ev('run.ended'), ev('run.started'), ev('b.done', true)]);
   await stream.publish('mine', [ev('b.done', true)]);
-  assert.deepEqual(heard, ['a other run.ended', 'a mine b.done']);
+  // b has no listen, so its own namespace reaches it only where it is installed: in mine, not in other.
+  assert.deepEqual(heard, ['a other run.ended', 'a mine b.done', 'b mine b.done']);
 });
