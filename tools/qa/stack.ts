@@ -153,6 +153,14 @@ async function modelUrl(parts: Parts, opts: StackOpts): Promise<string> {
   return fake.url;
 }
 
+/** The reMarkable app's login env, pointed at a canned rmfakecloud; empty unless the app is mounted. */
+async function rmfakecloudEnv(parts: Parts, opts: StackOpts): Promise<Record<string, string>> {
+  if (!opts.apps?.includes('remarkable')) return {};
+  const rm = await fakeRmfakecloud();
+  parts.servers.push(rm.server);
+  return { RMFAKECLOUD_URL: rm.url, RMFAKECLOUD_EMAIL: 'qa@example.com', RMFAKECLOUD_PASSWORD: 'qa' };
+}
+
 const ATTEMPTS = 3;
 
 /** Launches the distributor on a free port and waits until it serves; another process can take the port (or port+1, its session port) between freePort and listen, so a distributor that exits first is relaunched on a new one. */
@@ -187,12 +195,11 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     if (opts.apps?.includes('schedules')) await seedSchedules(dataDir);
     const extensions = Object.fromEntries((opts.apps ?? []).map((name) => [name, {}]));
     writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts), opts.capacity), extensions }));
-    const rm = opts.apps?.includes('remarkable') ? await fakeRmfakecloud() : undefined;
-    if (rm) parts.servers.push(rm.server);
+    const rm = await rmfakecloudEnv(parts, opts);
     const url = await startDistributor(parts, {
       QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', ...(opts.apps?.includes('github') && githubEnv(parts.tmp)),
-      ...(rm && { RMFAKECLOUD_URL: rm.url, RMFAKECLOUD_EMAIL: 'qa@example.com', RMFAKECLOUD_PASSWORD: 'qa' }),
+      ...rm,
     });
     if (opts.seed === 'demo') await seedDemo(url);
     return { url, dataDir, stop: async () => { process.off('exit', onExit); await stop(); } };
