@@ -62,6 +62,7 @@ async function harness(key = KEY, setup: Setup = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-lifecycle-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   await writeFile(join(dir, 'agent'), 'quack');
+  await writeFile(join(dir, 'session-key'), key);
   await writeFile(join(dir, 'created'), String(facts.createdAt));
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(setup.responses ?? [fauxAssistantMessage('All done here.'), fauxAssistantMessage('Second answer.')]);
@@ -94,6 +95,13 @@ async function harness(key = KEY, setup: Setup = {}) {
   const settle = async () => { for (let i = 0; i < 50; i++) { await sender.flush(); await new Promise((r) => setImmediate(r)); } };
   return { dir, session, catalog, store, gate, fire, timers, sender, stream, settle, restart: () => startLifecycleSender(session, { url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: () => () => {} }) };
 }
+
+test('a home: conversation is never titled from its first message', async () => {
+  const h = await harness('home:main');
+  await h.session.submit('hello', undefined, true);
+  await h.settle();
+  assert.equal((await h.catalog.getSession('home:main'))?.title, undefined);
+});
 
 test('a session reports its creation, runs and last message, and the catalog acks them', async () => {
   const h = await harness();
