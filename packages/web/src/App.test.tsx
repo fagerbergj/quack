@@ -779,13 +779,13 @@ test('the chat width stays between its minimum and what leaves the pane its own,
   }
 });
 
-test('on a phone a session with a version opens on its tab, named for it; a pending question opens it on Chat, counted there', async () => {
+test('on a phone a session with a version opens on Chat, the pane a tab away; a pending question is counted on Chat', async () => {
   stubViewport(false);
   (live['ui%3Au1'] ??= {}).artifacts = [REPORT];
   const ws = await openSession();
   ws.frame(snapshot());
-  expect(await screen.findByRole('tab', { name: 'Report' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'false');
+  expect(await screen.findByRole('tab', { name: 'Report' })).toHaveAttribute('aria-selected', 'false');
+  expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
   ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'Which source wins?', options: ['a', 'b'], evidence: null, askedAt: 1 }], failures: [], approvals: [] });
   expect(await screen.findByRole('tab', { name: 'Chat 1' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByRole('region', { name: 'Question' })).toHaveTextContent('Which source wins?');
@@ -807,14 +807,14 @@ test('on a phone each tab controls its column as a tab panel, and the arrow keys
   expect(within(panel(report)).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
   expect(within(panel(chat)).getByRole('log', { name: 'Transcript' })).toBeInTheDocument();
   expect(panel(chat)).toHaveAttribute('aria-labelledby', chat.id);
-  expect([report.tabIndex, chat.tabIndex]).toEqual([0, -1]);
-  report.focus();
+  expect([report.tabIndex, chat.tabIndex]).toEqual([-1, 0]);
+  chat.focus();
   await userEvent.keyboard('{ArrowRight}');
-  expect(chat).toHaveFocus();
-  expect(chat).toHaveAttribute('aria-selected', 'true');
-  await userEvent.keyboard('{ArrowLeft}');
   expect(report).toHaveFocus();
   expect(report).toHaveAttribute('aria-selected', 'true');
+  await userEvent.keyboard('{ArrowLeft}');
+  expect(chat).toHaveFocus();
+  expect(chat).toHaveAttribute('aria-selected', 'true');
 });
 
 test('Open on a ledger line shows that version on the pane tab on a phone', async () => {
