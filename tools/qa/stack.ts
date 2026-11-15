@@ -114,8 +114,8 @@ function launch(parts: Parts, args: string[], env: Record<string, string>): Chil
 async function seedSchedules(dataDir: string): Promise<void> {
   const svc = createSchedulesService({ distributorUrl: 'http://unused', dbPath: join(dataDir, 'schedules.db') });
   const post = inProcessFetch((req, res) => svc.handle(req, res));
-  for (const schedule of SAMPLE_SCHEDULES) {
-    const res = await post('http://unused/', { method: 'POST', body: JSON.stringify(schedule) });
+  for (const { id, ...schedule } of SAMPLE_SCHEDULES) {
+    const res = await post(`http://unused/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(schedule) });
     if (!res.ok) throw new Error(`schedule seed failed: ${res.status} ${await res.text()}`);
   }
   svc.stop();
