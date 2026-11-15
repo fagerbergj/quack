@@ -8,7 +8,7 @@ import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { gate } from '@quack/sdk';
-import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
+import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
   defaultModel: 'local/qwen3.8-27b',
@@ -300,4 +300,25 @@ test('defaultModel must resolve to a selectable model', async () => {
   await assert.rejects(bad('local/ids-only'), /defaultModel: .*no contextWindow/);
   await assert.rejects(bad('local/nope'), /defaultModel: model local\/nope is not configured/);
   await assert.rejects(bad('nope/a'), /not configured/);
+});
+
+const oldPinned = { name: 'reviewer', version: 4, status: 'retired', description: 7, maxTurns: 80, prompt: 'prompts/old.md', extensions: { coding: {} } };
+
+test('a repo bundle is refused for an unknown key, a non-enum status, a non-string description and a prompt path', () => {
+  const ok = { name: 'reviewer', version: 4, extensions: { coding: {} } };
+  assert.deepEqual(bundleProblems({ ...ok, status: 'promoted', description: 'd', model: 'local/m', prompt: 'prompt.md', exec: { timeoutSeconds: 5 }, retention: { idleDays: 3 } }), []);
+  assert.deepEqual(bundleProblems(oldPinned), ['unknown key maxTurns', 'status must be draft or promoted', 'description must be a string', 'prompt must be a bare file name']);
+  for (const prompt of ['../x.md', 'a\\b.md', '']) assert.match(bundleProblems({ ...ok, prompt }).join(), /bare file name/);
+  assert.match(bundleProblems({ ...ok, extensions: undefined }).join(), /extensions must be/);
+  assert.match(bundleProblems({ ...ok, model: 'nomodel', retention: { days: 1 } }).join(), /provider\/model.*retention must be/);
+});
+
+test('the same old-shaped content still loads as a pinned snapshot, which parseDefinition never holds to the bundle contract', () => {
+  const quiet = mock.method(console, 'error', () => {});
+  try {
+    const def = parseDefinition(oldPinned, parseDeployment(deployment), catalog);
+    assert.equal(def.prompt, 'prompts/old.md');
+  } finally {
+    quiet.mock.restore();
+  }
 });

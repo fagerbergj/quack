@@ -41,6 +41,15 @@ test('a bundle parse error and a snapshot with an unknown extension fail with th
   assert.match(r.failures[1], /data\/s1\/agent-def\/agent\.json.*unknown extension bogus/s);
 });
 
+test('the validator holds a repo bundle to the bundle contract but loads an old-shaped pinned snapshot', async () => {
+  const old = { ...agent, maxTurns: 80, status: 'retired', prompt: 'prompts/p.md' };
+  const o = layout({ 'deployment.json': config, 'agents/a/agent.json': old, 'agents/a/prompts/p.md': 'x', 'data/s1/agent-def/agent.json': old, 'data/s1/agent-def/prompts/p.md': 'x' });
+  const r = await validate({ ...o, fetch: noList });
+  assert.equal(r.loaded, 1);
+  assert.equal(r.failures.length, 1);
+  assert.match(r.failures[0], /agents\/a\/agent\.json.*unknown key maxTurns/s);
+});
+
 test('the repo agents load without their service env set', async () => {
   const agentsDir = fileURLToPath(new URL('../../../agents', import.meta.url));
   const r = await validate({ ...layout({ 'deployment.json': config }), agentsDir, fetch: noList });

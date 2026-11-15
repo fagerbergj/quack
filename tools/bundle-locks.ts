@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { bundleProblems } from '../packages/session/src/index.ts';
 import { digest } from '../packages/distributor/src/index.ts';
 
 const root = new URL('../agents/', import.meta.url).pathname;
@@ -9,7 +10,10 @@ export async function bundleLocks() {
   const dirs = (await readdir(root, { withFileTypes: true })).filter((e) => e.isDirectory());
   return Promise.all(dirs.map(async (d) => {
     const dir = join(root, d.name);
-    const { name, version } = JSON.parse(await readFile(join(dir, 'agent.json'), 'utf8'));
+    const def = JSON.parse(await readFile(join(dir, 'agent.json'), 'utf8'));
+    const bad = bundleProblems(def);
+    if (bad.length) throw new Error(`${dir}/agent.json breaks the agent bundle contract:\n- ${bad.join('\n- ')}`);
+    const { name, version } = def;
     return { dir, lock: `${JSON.stringify({ name, version, hash: await digest(dir) }, null, 2)}\n` };
   }));
 }

@@ -24,9 +24,13 @@ To measure a decision-model change, run two arms on the same tree:
 
 It prints a markdown table of per-repeat `met` (a decided fold as 1 or 0; null: no unit or an undecided fold, the check does not count) and decision-model/escalation counts per case and check for each arm, then each arm's median and p90 judge seconds per case, then every case and check whose `met` values differ between arms with each arm's values and the judge's notes, for adjudicating false positives, and last any case an adapter declined with what its recording lacks. Paste it into the PR with the cases' provenance.
 
+## Agent bundles
+
+`agents/<name>/agent.json` is closed. Its keys are `name` (`[\w-][\w.-]*`) and `version` (positive integer) and `extensions` (name to config object), all required, and optional `status` (`draft` or `promoted`), `description` (string), `model` (`provider/modelId`), `prompt` (a bare file name beside `agent.json`, no `/` or `\`), `exec` (`timeoutSeconds` only) and `retention` (`idleDays` only). An unknown key, a bad value or a prompt path leaves the bundle unoffered by the distributor, fails `tools/bundle-locks.ts` and fails the validator. Pinned copies in the data dir are history: they are never checked against this and load through the loader's compatibility shims. The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
+
 ## Checking a rollout
 
-Before `compose up` with a new image, run its validator against the prod config, agents and data volume, mounted read-only. It loads every bundle and every session's pinned `agent-def/agent.json` with the deployment-level extensions (unset extension env gets placeholders, nothing is contacted), prints `FAIL <path>: <error>` per failure and `N loaded, M failed`, and exits non-zero on any failure:
+Before `compose up` with a new image, run its validator against the prod config, agents and data volume, mounted read-only. It holds every bundle to the agent bundle contract below, then loads every bundle and every session's pinned `agent-def/agent.json` with the deployment-level extensions (unset extension env gets placeholders, nothing is contacted), prints `FAIL <path>: <error>` per failure and `N loaded, M failed`, and exits non-zero on any failure:
 
 ```
 docker run --rm -v <data>:/data:ro -v <config>:/config/deployment.json:ro -e QUACK_CONFIG=/config/deployment.json -e QUACK_AGENTS_DIR=/app/agents -e QUACK_DATA_DIR=/data <new-image> node packages/runtime/src/validate.ts

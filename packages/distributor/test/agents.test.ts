@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { after, test } from 'node:test';
+import { after, mock, test } from 'node:test';
 import type { ExtensionManifest } from '@quack/sdk';
 import { createDistributor, processDriver, sessionDirName } from '../src/index.ts';
 import { rubricFrom } from '../src/rubrics.ts';
@@ -57,6 +57,23 @@ test('an agent reads at its current version with its rubric, or one a session pi
   assert.deepEqual([old.version, old.prompt, old.rubric], [2, 'old prompt', undefined]);
   assert.equal((await fetch(url('/agents/reviewer?version=9'))).status, 404);
   assert.equal((await fetch(url('/agents/..%2Fx'))).status, 404);
+});
+
+test('a repo bundle with an unknown key is not offered or pinned, while a pinned snapshot of the same shape still reads', async () => {
+  const [dataDir, agentsDir] = [await tmp(), join(await tmp(), 'agents')];
+  const old = { name: 'reviewer', version: 2, status: 'retired', maxTurns: 80, prompt: 'prompt.md' };
+  await write(join(agentsDir, 'reviewer'), { ...bundle(3), ...old, version: 3 }, 'new prompt');
+  await write(join(dataDir, sessionDirName('old'), 'agent-def'), old, 'old prompt');
+  const quiet = mock.method(console, 'error', () => {});
+  try {
+    const { get } = await start(dataDir, agentsDir);
+    assert.deepEqual((await get('/agents')).agents, []);
+    assert.match(String(quiet.mock.calls[0].arguments[0]), /unknown key maxTurns\n- status must be draft or promoted/);
+    assert.deepEqual((await get('/agents/reviewer?version=2')).prompt, 'old prompt');
+    assert.equal((await fetch(`${(await start(dataDir, agentsDir)).url('/agents/reviewer?version=3')}`)).status, 404);
+  } finally {
+    quiet.mock.restore();
+  }
 });
 
 test('a version is kept when first loaded and stays readable after the agents dir moves on', async () => {

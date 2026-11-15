@@ -282,6 +282,25 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
   return { ...raw, model } as AgentDefinition;
 }
 
+const BUNDLE_KEYS = ['name', 'version', 'status', 'description', 'model', 'prompt', 'extensions', 'exec', 'retention'];
+const NAME = /^[\w-][\w.-]*$/;
+
+/** Strict shape of a repo bundle's agent.json (the Agent bundle contract). Only repo bundles are checked: pinned snapshots are immutable history and go through parseDefinition's shims alone. */
+export function bundleProblems(raw: unknown): string[] {
+  if (!isObject(raw)) return ['agent.json must be an object'];
+  const problems = Object.keys(raw).filter((k) => !BUNDLE_KEYS.includes(k)).map((k) => `unknown key ${k}`);
+  if (typeof raw.name !== 'string' || !NAME.test(raw.name)) problems.push('name must match ^[\\w-][\\w.-]*$');
+  if (!positive(raw.version)) problems.push('version must be a positive integer');
+  if (raw.status !== undefined && raw.status !== 'draft' && raw.status !== 'promoted') problems.push('status must be draft or promoted');
+  if (raw.description !== undefined && typeof raw.description !== 'string') problems.push('description must be a string');
+  if (raw.model !== undefined && !(typeof raw.model === 'string' && /^[^/]+\/.+$/.test(raw.model))) problems.push('model must be "provider/model"');
+  if (raw.prompt !== undefined && !(typeof raw.prompt === 'string' && /^[^/\\]+$/.test(raw.prompt))) problems.push('prompt must be a bare file name');
+  const ext = raw.extensions;
+  if (!isObject(ext) || !Object.entries(ext).every(([k, v]) => NAME.test(k) && isObject(v))) problems.push('extensions must be an object of name to config object');
+  if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
+  return [...problems, ...retentionProblems(raw.retention)];
+}
+
 /** The variables the extensions an agent definition selects declare, for the session process to receive (and drop once read). */
 export function declaredEnv(extensions: Record<string, unknown>, catalog: Catalog): string[] {
   return resolveExtensions(Object.keys(extensions), catalog).order.flatMap((name) => {
