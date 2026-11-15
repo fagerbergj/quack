@@ -64,13 +64,18 @@ export function openNotifications(opts: PushOptions) {
   const subscriptions = () => (db.prepare('select data from subscriptions').all() as Array<{ data: string }>).map((r) => JSON.parse(r.data) as Subscription);
   const forget = (endpoint: string) => db.prepare('delete from subscriptions where endpoint = ?').run(endpoint);
 
-  async function deliver(sub: Subscription, payload: object) {
+  /** What the push service answered, by host (an endpoint path is a secret): a status, or the error when it did not take the push. */
+  async function deliver(sub: Subscription, payload: object): Promise<{ host: string; status?: number; error?: string }> {
+    const host = new URL(sub.endpoint).host;
     try {
-      await send(sub, JSON.stringify(payload));
+      const res = (await send(sub, JSON.stringify(payload))) as { statusCode?: number } | undefined;
+      return { host, ...(res?.statusCode !== undefined && { status: res.statusCode }) };
     } catch (err) {
       const status = (err as { statusCode?: number }).statusCode;
+      const error = err instanceof Error ? err.message : String(err);
       if (status === 404 || status === 410) forget(sub.endpoint);
-      else console.error('push failed:', err instanceof Error ? err.message : err);
+      else console.error('push failed:', error);
+      return { host, ...(status !== undefined && { status }), error };
     }
   }
 
@@ -114,8 +119,8 @@ export function openNotifications(opts: PushOptions) {
     }
     const sub = subscriptions().find((s) => s.endpoint === body.endpoint);
     if (!sub) return problem(res, 404, 'this device is not subscribed');
-    await deliver(sub, { title: 'Notifications are on', body: 'You will hear from quack when something needs you.', url: '' });
-    reply(res, 200, { ok: true });
+    const result = await deliver(sub, { title: 'Notifications are on', body: 'You will hear from quack when something needs you.', url: '' });
+    reply(res, 200, { ok: result.error === undefined, results: [result] });
   }
 
   // shortcut: takes no credential though sessions bypass the proxy; the push contract's revision authorizes it.

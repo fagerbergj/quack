@@ -148,3 +148,12 @@ test('errors are problem+json: an unknown push route is 404, a missing endpoint 
   assert.equal((await post('/push/test', { endpoint: sub(9).endpoint })).status, 404);
   assert.equal((await post('/push/subscribe', { subscription: 'x'.repeat(32 * 1024) })).status, 413);
 });
+
+test('/push/test reports the push service\'s answer per subscription, and ok only when it took the push', async () => {
+  const { post } = await setup((endpoint) => (endpoint.endsWith('/2') ? 502 : undefined));
+  await post('/push/subscribe', { subscription: sub(1) });
+  await post('/push/subscribe', { subscription: sub(2) });
+  const test = async (n: number) => (await post('/push/test', { endpoint: sub(n).endpoint })).json();
+  assert.deepEqual(await test(1), { ok: true, results: [{ host: 'push.example' }] });
+  assert.deepEqual(await test(2), { ok: false, results: [{ host: 'push.example', status: 502, error: 'push service said no' }] });
+});
