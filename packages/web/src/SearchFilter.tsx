@@ -58,7 +58,7 @@ export function SearchFilter({ label, text, onText, fields, values, onValues }: 
   return (
     <div className="flex flex-col gap-2">
       <div ref={menu.root} onKeyDown={esc} className="relative flex items-center gap-1.5">
-        <label className={`flex ${HEIGHT} min-w-0 flex-1 items-center gap-2 rounded-full bg-soft px-3 text-sm text-muted focus-within:bg-surface lg:text-[13px] focus-ring `}>
+        <label className={`flex ${HEIGHT} min-w-0 flex-1 items-center gap-2 rounded-full bg-soft px-3 text-sm text-muted focus-within:bg-surface lg:text-[13px] focus-ring`}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="flex-none"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
           <span className="sr-only">{label}</span>
           <input ref={search} type="search" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={label} className="min-w-0 flex-1 border-0 bg-transparent text-ink outline-none" />

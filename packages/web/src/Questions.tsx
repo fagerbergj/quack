@@ -13,7 +13,7 @@ function Headline({ text }: { text: string }) {
 const rowClass = 'flex min-h-11 w-full cursor-pointer flex-col items-start justify-center gap-0.5 rounded-xl border border-line-strong bg-surface px-3 py-2 text-left text-ink hover:bg-soft';
 
 const linkBtn = 'min-h-11 cursor-pointer self-start bg-transparent px-1 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline';
-const field = 'field-grow w-full min-h-[2lh] max-h-[12lh] rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
+const field = 'field-grow focus-ring w-full min-h-[2lh] max-h-[12lh] rounded-lg border border-line-strong bg-surface p-2 text-sm text-ink';
 
 // A note rides along with the option tapped, so every answer stays one tap.
 function Options({ d, busy, send }: { d: Question; busy: boolean; send: (a: Resolution) => void }) {
