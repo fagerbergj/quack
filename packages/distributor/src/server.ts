@@ -415,8 +415,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   }
 
   // A free answer arrives as text (its choice the same text, not an option). Beside an option, text and reason are the session's note.
-  const questionAnswer = (ask: { prompt?: { options: string[] } }, r: { choice: string; text?: string; reason?: string }) => {
-    if (r.text !== undefined && !ask.prompt?.options.includes(r.choice)) return { text: r.text, ...(r.reason !== undefined && { note: r.reason }) };
+  const questionAnswer = (ask: { prompt?: { options: string[] } }, r: { choice: string; text?: string; reason?: string }): string | { text?: string; choice?: string; note?: string } => {
+    const known = ask.prompt?.options.includes(r.choice);
+    // A choice that is no option, beside text that is not it, would drop one of them.
+    if (!known && r.text !== undefined && r.text !== r.choice) return `${JSON.stringify(r.choice)} is not one of the question's options; answer in text alone, or choose an option`;
+    if (r.text !== undefined && !known) return { text: r.text, ...(r.reason !== undefined && { note: r.reason }) };
     const note = [r.text === r.choice ? undefined : r.text, r.reason].filter(Boolean).join('\n\n');
     return { choice: r.choice, ...(note && { note }) };
   };
@@ -424,9 +427,11 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   // A person's answer goes to the session's own gate or question, which is what the waiting run reads.
   async function answer(key: string, ask: { id: string; type: 'approval' | 'question'; prompt?: { options: string[] } }, r: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string }): Promise<boolean | string> {
     const who: Principal = r.by.kind === 'person' ? { kind: 'person', name: r.by.id } : r.by;
+    const mapped = ask.type === 'approval' ? undefined : questionAnswer(ask, r);
+    if (typeof mapped === 'string') return mapped;
     const [path, body] = ask.type === 'approval'
       ? [`/approvals/${encodeURIComponent(ask.id)}`, { decision: r.choice, ...(r.reason !== undefined && { reason: r.reason }) }]
-      : [`/questions/${encodeURIComponent(ask.id)}`, questionAnswer(ask, r)];
+      : [`/questions/${encodeURIComponent(ask.id)}`, mapped];
     let out: boolean | string = false;
     await withSession(key, undefined, `POST ${path}`, async (url) => {
       const res = await fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', ...upstream(key, who) }, body: JSON.stringify(body) });

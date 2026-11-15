@@ -140,7 +140,7 @@ test('a question resolves through PATCH with its choice, a free answer, or a cho
   const m = faux.getModel();
   const session = await openSession({ dir: await temp(), models, agent: { model: { provider: m.provider, modelId: m.id } } });
   cleanups.push(() => session.close());
-  const ids = ['choice', 'free', 'noted', 'none'];
+  const ids = ['choice', 'free', 'noted', 'none', 'unknown'];
   const prompt = { question: 'Who starts?', options: ['Pollard', 'Stevenson'], freeText: true };
   await session.root.commit(async (tx) => {
     const doc = await tx.doc(Questions, session.root.id);
@@ -154,13 +154,16 @@ test('a question resolves through PATCH with its choice, a free answer, or a cho
   assert.equal((await patch('noted', { choice: 'Stevenson', text: 'fresher legs', reason: 'and it is wet' })).status, 200);
   assert.equal((await patch('none', { text: 'Pollard' })).status, 400);
   assert.equal((await patch('none', {})).status, 400);
+  assert.equal((await patch('unknown', { choice: 'Offset', text: 'a note' })).status, 400);
   const items = (await session.harness.snapshot(Questions, session.root.id, ctx))!.items;
   assert.deepEqual(ids.map((id) => items[id]!.answer && { ...items[id]!.answer, by: undefined, at: undefined }), [
     { choice: 'Pollard', by: undefined, at: undefined },
     { choice: 'Rotate both', text: 'Rotate both', by: undefined, at: undefined },
     { choice: 'Stevenson', note: 'fresher legs\n\nand it is wet', by: undefined, at: undefined },
     null,
+    null,
   ]);
+  assert.equal((await catalog.getAsk('idle', 'unknown'))?.state, 'pending');
   assert.deepEqual((await catalog.getAsk('idle', 'noted'))?.resolution, { by: { kind: 'person', id: PERSON['x-authentik-username'] }, choice: 'Stevenson', text: 'fresher legs', reason: 'and it is wet' });
 });
 
