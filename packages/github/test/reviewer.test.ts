@@ -211,7 +211,7 @@ test('a re-review checkout shows the reviewer its own earlier inline comments wi
   await session.close();
 });
 
-test('a second passing version on the same checkout is not posted; a later request for the reviewed head ends without checkout unless the description or CI changed', async () => {
+test('a second version after the posted one is refused and ends the run; a later request for the reviewed head ends without checkout unless the description or CI changed', async () => {
   const revised = review.replace('approve.', 'approve, with one nit.');
   const { done, seen, service, session, live } = await reviewRun((seen) => {
     const step = recorder(seen);
@@ -221,27 +221,28 @@ test('a second passing version on the same checkout is not posted; a later reque
       step(call('submit_review', {})),
       step(write(revised)),
       step(call('submit_review', {})),
-      step(fauxAssistantMessage('Posted.')),
       checkout(),
       step(fauxAssistantMessage('Nothing to do.')),
       checkout(),
       step(fauxAssistantMessage('Looking again.')),
     ];
   });
-  assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[4], /Review v1 was already posted for this checkout; a run posts one review, so v2 was not sent/);
+  assert.equal(done.status, 'done');
+  assert.equal(seen.length, 4, 'no request after the refused submit');
+  const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
+  assert.equal(doc!.kinds['github.review'].versions.length, 1, 'the revision is not sealed');
   assert.equal(service.posted.length, 1);
   assert.equal(service.posted[0].body, inlined);
 
   const again = await session.submit('/review', 'gh-2', true);
   assert.equal(again.status === 'done' && again.answer, 'Nothing to do.');
-  assert.match(seen[5], /already reviewed \w{40}: nothing to do this turn/);
-  assert.doesNotMatch(seen[5], /Checked out/);
+  assert.match(seen[4], /already reviewed \w{40}: nothing to do this turn/);
+  assert.doesNotMatch(seen[4], /Checked out/);
   assert.equal(service.posted.length, 1);
 
   live.body = 'Fixes #3, described right this time';
   await session.submit('/review', 'gh-3', true);
-  assert.match(seen[6], /Checked out \w{40}.*described right this time/);
+  assert.match(seen[5], /Checked out \w{40}.*described right this time/);
   await session.close();
 });
 

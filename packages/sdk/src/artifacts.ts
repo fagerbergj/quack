@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { JsonObject } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
-import { defineDoc, defineExtension, defineTool, wrapTool, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
+import { defineDoc, defineExtension, defineTool, LiveDoc, wrapTool, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
 import { assertSealFits } from './channel.ts';
 import { runSealGates, SealRefused } from './gates.ts';
@@ -25,7 +25,11 @@ export const SUMMARY_MAX = 80;
 /** A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered. */
 export type ArtifactLink = { label: string; url: string };
 
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string; basis?: string };
+export type SealedArtifact = {
+  kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string; basis?: string;
+  /** The run input a judged version was delivered under by its seal tool; no other version of the kind seals until a newer input. */
+  final?: string;
+};
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
 
@@ -55,14 +59,23 @@ async function readWorkspace(api: ToolExecutionApi, path: string, ctx: Context):
   return read.value;
 }
 
-// An unchanged file keeps its version but reruns the gates, so a failed delivery is retried; a deny or continue rejects with SealRefused.
-// Throws with every schema problem when the file does not validate.
+// A person's steer joins the running run as a new input, so the newest input tells a change request from the writer's own edit.
+const newestInput = async (api: ToolExecutionApi, ctx: Context) => {
+  const id = (await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs.at(-1);
+  return id && String(id);
+};
+
+const finalMessage = (kind: ArtifactKind, last: SealedArtifact) =>
+  `${kind.kind} v${last.version} is delivered and final for this run, so this change to ${kind.path} was not sealed; only a person's change request reopens it. This run is over.`;
+
+// An unchanged file keeps its version but reruns the gates, so a failed delivery is retried; a deny or continue rejects with SealRefused,
+// as does a change after a final version. Throws with every schema problem when the file does not validate.
 export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Context): Promise<{ artifact: SealedArtifact; notes: string[] }> {
   const content = await readWorkspace(api, kind.path, ctx);
   const problems = kind.validate?.(content) ?? [];
   if (problems.length) throw new Error(`${kind.path} does not match ${kind.kind}:\n- ${problems.join('\n- ')}`);
   const hash = createHash('sha256').update(content).digest('hex');
-  const basis = await kind.basis?.(api, ctx);
+  const [basis, input] = [await kind.basis?.(api, ctx), await newestInput(api, ctx)];
   const artifact = await api.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, api.conversationId);
     // Read back through the draft: `??=` yields the plain object assigned, and mutations to it are lost.
@@ -70,6 +83,8 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     const entry = doc.kinds[kind.kind];
     const last = entry.versions.at(-1);
     if (last?.hash === hash) return plain(last);
+    // A deny ends the run: a writer revising a delivered version would otherwise loop until the turn limit.
+    if (input && last?.final === input) throw new SealRefused({ kind: 'deny', reason: finalMessage(kind, last) }, finalMessage(kind, last));
     const sealed: SealedArtifact = { kind: kind.kind, version: entry.versions.length + 1, hash, content, sealedAt: api.now(), verdict: null };
     const outcome = kind.outcome?.(content);
     if (outcome) sealed.outcome = outcome;
@@ -130,6 +145,13 @@ function validateAfter(tool: ToolRegistration, kinds: ArtifactKind[]): ToolRegis
   };
 }
 
+// Every gate passed a version a checker judged, so the writer is done with it; code that seals (a workflow) decides for itself.
+async function markFinal(api: ToolExecutionApi, kind: ArtifactKind, version: number, ctx: Context): Promise<void> {
+  const input = await newestInput(api, ctx);
+  if (!input || !(await sealedVersion(api, kind.kind, version, ctx))?.verdict) return;
+  await updateSealed(api, kind.kind, version, ctx, (sealed) => void (sealed.final = input));
+}
+
 const text = (t: string, isError = false): ToolExecutionResult => ({ output: [{ type: 'text', text: t }], ...(isError && { isError }) });
 
 // A deny ends the run after this round; a continue or an invalid file is an error the model acts on.
@@ -142,6 +164,7 @@ function sealTool(kind: ArtifactKind & { tool: string }): ToolRegistration {
     async execute(_args, api, ctx) {
       try {
         const { artifact, notes } = await seal(api, kind, ctx);
+        await markFinal(api, kind, artifact.version, ctx);
         return text(notes.length ? notes.join('\n') : `${kind.kind} v${artifact.version} sealed.`);
       } catch (err) {
         if (err instanceof SealRefused && err.verdict.kind === 'deny') return { ...text(err.message, true), control: { terminate: true } };
