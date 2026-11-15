@@ -22,7 +22,14 @@ export function createIngestService(url: string, token: string, doFetch: typeof 
   return {
     pdf: async (id) => new Uint8Array(await (await call(`/documents/${encodeURIComponent(id)}/pdf`)).arrayBuffer()),
     rmdoc: async (id) => new Uint8Array(await (await call(`/documents/${encodeURIComponent(id)}/rmdoc`)).arrayBuffer()),
-    topics: async () => ((await (await call('/topics')).json()) as { topics: string[] }).topics,
+    topics: async () => {
+      const topics: string[] = [];
+      for (let token: string | undefined; ; ) {
+        const page = (await (await call(`/topics?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`)).json()) as { topics: string[]; nextPageToken?: string };
+        topics.push(...page.topics);
+        if (!(token = page.nextPageToken)) return topics;
+      }
+    },
     addTopic: async (name) => void (await call('/topics', { method: 'POST', body: JSON.stringify({ name }) })),
   };
 }

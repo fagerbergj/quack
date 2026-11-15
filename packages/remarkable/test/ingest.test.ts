@@ -227,8 +227,19 @@ test('an unreachable service fails the render step as such, not as an rmfakeclou
   assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^the reMarkable service is unreachable: fetch failed/);
 });
 
+test('topics() follows nextPageToken to the last page', async () => {
+  const names = Array.from({ length: 1500 }, (_, i) => `t${String(i).padStart(4, '0')}`);
+  const doFetch = (async (url: string) => {
+    const q = new URL(url).searchParams;
+    const from = Number(q.get('pageToken') ?? 0);
+    const next = from + Number(q.get('pageSize'));
+    return Response.json({ topics: names.slice(from, next), ...(next < names.length && { nextPageToken: String(next) }) });
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await createIngestService('http://x.test', 't', doFetch).topics(), names);
+});
+
 test('the service serves the PDF and keeps the topic list, and the ingest client reads both', async () => {
-  const service = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadRmdoc: async () => Buffer.from(await fixture('notebook')), downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
+  const service = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => ['n 1', 'other'].map((id) => ({ id, name: id, version: '1', modified: '' })), downloadRmdoc: async () => Buffer.from(await fixture('notebook')), downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
   const server = serveApp(service).listen(0);
   await new Promise((r) => server.once('listening', r));
   try {
