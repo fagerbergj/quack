@@ -10,7 +10,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 export async function registerSchedule(config: ScheduleConfig, def: ScheduleDef): Promise<string> {
   const { id, agent, sessionKey, input } = def;
   const when = 'at' in def ? { times: [iso(def.at)], deadline: iso(def.deadline) } : { cron: def.cron, tz: def.tz };
-  const res = await (config.fetch ?? fetch)(config.url, { method: 'POST', body: JSON.stringify({ id, agent, sessionKey, input: JSON.stringify(input), ...when }) });
+  const res = await (config.fetch ?? fetch)(`${config.url}/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ agent, sessionKey, input: JSON.stringify(input), ...when }) });
   if (!res.ok) throw new Error(`schedules: registering ${id} returned ${res.status}`);
   return id;
 }

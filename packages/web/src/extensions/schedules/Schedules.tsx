@@ -33,7 +33,7 @@ function Card({ s, remove }: { s: ScheduleItem; remove: () => void }) {
       <span className="text-[13px] text-muted">Runs {s.agent}{key ? <> in <a href={`#/s/${encodeURIComponent(key)}`} className="text-link [overflow-wrap:anywhere]">{key}</a></> : ' in a new session each time'}</span>
       <span className="text-[13px] text-muted">{next ? `Next run ${next}` : 'No upcoming run'} · {s.lastRun ? `last ran ${when(s.lastRun)}` : 'has not run yet'}</span>
       {s.missedRuns.length > 0 && <span className="w-fit rounded-full bg-warning-bg px-2 py-px text-xs text-warning">{s.missedRuns.length} missed</span>}
-      {s.source === 'api' && <button type="button" onClick={remove} aria-label={`Delete ${s.id}`} className="min-h-11 w-fit cursor-pointer rounded-full border border-line bg-surface px-3 text-[13px] text-danger">Delete</button>}
+      <button type="button" onClick={remove} aria-label={`Delete ${s.id}`} className="min-h-11 w-fit cursor-pointer rounded-full border border-line bg-surface px-3 text-[13px] text-danger">Delete</button>
     </li>
   );
 }

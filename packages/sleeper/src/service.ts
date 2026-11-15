@@ -71,10 +71,17 @@ export function createSleeperService(config: ServiceConfig): App & { stop(): voi
   // Sleeper's live week and the next run of each of this league's schedules, soonest first.
   async function upcomingRuns(): Promise<[number, unknown]> {
     if (!config.schedules || !config.league) return [501, { error: 'schedules are not configured' }];
-    const res = await (config.schedules.fetch ?? fetch)(config.schedules.url);
-    if (!res.ok) return [502, { error: `schedules answered ${res.status}` }];
+    const doFetch = config.schedules.fetch ?? fetch;
+    const all: Array<{ id: string; nextRun: string | null }> = [];
+    for (let token = ''; ;) {
+      const res = await doFetch(`${config.schedules.url}?${new URLSearchParams({ pageSize: '1000', ...(token && { pageToken: token }) })}`);
+      if (!res.ok) return [502, { error: `schedules answered ${res.status}` }];
+      const page = (await res.json()) as { schedules: typeof all; nextPageToken?: string };
+      all.push(...page.schedules);
+      if (!page.nextPageToken) break;
+      token = page.nextPageToken;
+    }
     const league = config.league.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const all = ((await res.json()) as { schedules: Array<{ id: string; nextRun: string | null }> }).schedules;
     const runs = all.flatMap((s) => {
       const m = new RegExp(`^sleeper/(lineup|waivers|trends|digest|retro|trade-finder)/${league}(?:/|$)`).exec(s.id);
       return m && s.nextRun ? [{ job: m[1]!, at: s.nextRun }] : [];

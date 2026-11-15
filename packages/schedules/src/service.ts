@@ -18,11 +18,28 @@ export type ServiceConfig = {
 
 const DAY_MS = 86_400_000;
 
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 1000;
+// The ScheduleBody fields: id comes from the path, so a body id is unknown.
+const FIELDS = new Set(['agent', 'cron', 'tz', 'times', 'sessionKey', 'input', 'deadline']);
+
 class BadRequest extends Error {}
 class TooLarge extends Error {}
 
 const http = serviceHttp();
 const { send } = http;
+
+const encodeToken = (id: string) => Buffer.from(JSON.stringify(['schedules', id])).toString('base64url');
+
+// Only a token this service issued decodes: it must re-encode to itself.
+function decodeToken(token: string | null): string {
+  if (!token) return '';
+  try {
+    const [tag, id] = JSON.parse(Buffer.from(token, 'base64url').toString()) as [unknown, unknown];
+    if (tag === 'schedules' && typeof id === 'string' && encodeToken(id) === token) return id;
+  } catch { /* falls through */ }
+  throw new BadRequest('pageToken is not one this service issued');
+}
 
 async function body(req: IncomingMessage): Promise<any> {
   const raw = await http.readBody(req).catch((err) => { throw tooLarge(err) ? new TooLarge() : new BadRequest((err as Error).message); });
@@ -44,8 +61,10 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
   const upsert = db.prepare(`INSERT INTO schedules (id, source, def, created) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET def = excluded.def, source = excluded.source`);
   const record = db.prepare(`INSERT OR IGNORE INTO runs (schedule, occurrence, status, at) VALUES (?, ?, ?, ?)`);
 
-  type Row = { id: string; source: string; def: string; created: string };
+  type Row = { id: string; def: string; created: string };
   const rows = () => db.prepare('SELECT * FROM schedules ORDER BY id').all() as Row[];
+  const rowsAfter = (id: string, limit: number) => db.prepare('SELECT * FROM schedules WHERE id > ? ORDER BY id LIMIT ?').all(id, limit) as Row[];
+  const rowOf = (id: string) => db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as Row | undefined;
   const runsOf = (id: string, status: string) => (db.prepare('SELECT occurrence FROM runs WHERE schedule = ? AND status = ? ORDER BY occurrence').all(id, status) as Array<{ occurrence: string }>).map((r) => r.occurrence);
 
   async function submit(s: Schedule, occurrence: Date): Promise<boolean> {
@@ -73,10 +92,10 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
 
   // Each tick reads every row, so a registered one-shot whose last time is recorded goes; its runs stay, so registering that time again never refires it.
   function dropIfFinished(row: Row, s: Schedule) {
-    if (row.source !== 'api' || !s.times?.length) return;
+    if (!s.times?.length) return;
     const final = new Date(Math.max(...s.times.map((t) => Date.parse(t)))).toISOString();
     const last = db.prepare(`SELECT MAX(occurrence) AS o FROM runs WHERE schedule = ?`).get(row.id) as { o: string | null };
-    if (last.o !== null && last.o >= final) db.prepare(`DELETE FROM schedules WHERE id = ? AND source = 'api'`).run(row.id);
+    if (last.o !== null && last.o >= final) db.prepare(`DELETE FROM schedules WHERE id = ?`).run(row.id);
   }
 
   // The retention each agent's current definition declares, read once per agent per sweep; undefined keeps its sessions.
@@ -131,44 +150,61 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
     }
   }
 
-  function list() {
-    const at = now();
-    return rows().map((r) => {
-      const s = JSON.parse(r.def) as Schedule;
-      return { ...s, source: r.source, lastRun: runsOf(r.id, 'fired').at(-1) ?? null, nextRun: nextAfter(s, at)?.toISOString() ?? null, missedRuns: runsOf(r.id, 'missed') };
-    });
+  function view(r: Row) {
+    const s = JSON.parse(r.def) as Schedule;
+    return { ...s, lastRun: runsOf(r.id, 'fired').at(-1) ?? null, nextRun: nextAfter(s, now())?.toISOString() ?? null, missedRuns: runsOf(r.id, 'missed') };
   }
 
-  function register(raw: any): { status: number; body: unknown } {
+  // A page of schedules by id; fetching one extra row says whether another page follows.
+  function list(url: URL) {
+    const size = url.searchParams.get('pageSize');
+    const limit = size === null ? DEFAULT_PAGE_SIZE : /^\d+$/.test(size) ? Number(size) : 0;
+    if (limit < 1 || limit > MAX_PAGE_SIZE) throw new BadRequest(`pageSize must be an integer from 1 to ${MAX_PAGE_SIZE}`);
+    const found = rowsAfter(decodeToken(url.searchParams.get('pageToken')), limit + 1);
+    const page = found.slice(0, limit);
+    return { schedules: page.map(view), ...(found.length > limit && { nextPageToken: encodeToken(page.at(-1)!.id) }) };
+  }
+
+  function register(id: string, raw: unknown): { status: number; body: unknown } {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new BadRequest('body must be a JSON object');
+    const unknown = Object.keys(raw).filter((k) => !FIELDS.has(k));
+    if (unknown.length) throw new BadRequest(`unknown field: ${unknown.join(', ')}`);
     let s: Schedule;
     try {
-      s = validate(raw);
+      s = validate({ ...(raw as Omit<Schedule, 'id'>), id });
     } catch (err) {
       throw new BadRequest((err as Error).message);
     }
-    upsert.run(s.id, 'api', JSON.stringify(s), now().toISOString());
-    return { status: 201, body: { id: s.id } };
+    const existed = rowOf(id) !== undefined;
+    upsert.run(id, 'api', JSON.stringify(s), now().toISOString());
+    return { status: existed ? 200 : 201, body: view(rowOf(id)!) };
   }
 
-  function removeApi(id: string, res: ServerResponse) {
-    const removed = db.prepare(`DELETE FROM schedules WHERE id = ? AND source = 'api'`).run(id).changes;
-    send(res, removed ? 200 : 404, removed ? { id } : { error: 'no such api schedule' });
-  }
+  const methodNotAllowed = (res: ServerResponse, allow: string) => (res.setHeader('allow', allow), sendProblem(res, 405, 'method not allowed'));
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
     try {
-      const path = new URL(req.url ?? '', 'http://x').pathname;
-      if (req.method === 'GET' && path === '/') return send(res, 200, { schedules: list() });
-      if (req.method === 'POST' && path === '/') {
-        const { status, body: out } = register(await body(req));
+      const url = new URL(req.url ?? '', 'http://x');
+      const method = req.method ?? 'GET';
+      if (url.pathname === '/') return method === 'GET' ? send(res, 200, list(url)) : methodNotAllowed(res, 'GET');
+      const one = /^\/([^/]+)$/.exec(url.pathname);
+      if (!one) return sendProblem(res, 404, 'not found');
+      let id: string;
+      try {
+        id = decodeURIComponent(one[1]!);
+      } catch {
+        throw new BadRequest('scheduleId is not valid percent-encoding');
+      }
+      if (method === 'PUT') {
+        const { status, body: out } = register(id, await body(req));
         return send(res, status, out);
       }
-      const one = /^\/(.+)$/.exec(path);
-      if (req.method === 'DELETE' && one) return removeApi(decodeURIComponent(one[1]), res);
-      send(res, 404, { error: 'not found' });
+      if (method !== 'DELETE') return methodNotAllowed(res, 'DELETE, PUT');
+      if (!db.prepare('DELETE FROM schedules WHERE id = ?').run(id).changes) return sendProblem(res, 404, 'no such schedule');
+      res.writeHead(204).end();
     } catch (err) {
       if (err instanceof TooLarge) return sendProblem(res, 413, 'body too large');
-      send(res, err instanceof BadRequest ? 400 : 500, { error: (err as Error).message });
+      sendProblem(res, err instanceof BadRequest ? 400 : 500, (err as Error).message);
     }
   }
 

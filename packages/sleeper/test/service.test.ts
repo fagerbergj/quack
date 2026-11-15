@@ -191,3 +191,26 @@ test('the app serves its players dump from its day-long copy, and a session clie
   assert.deepEqual(seen, ['http://index/apps/sleeper/players Bearer tok']);
   assert.equal(sessionClient(), client, 'one client, and one cache, per session process');
 });
+
+test('upcoming runs follow the schedules pages to the last', async () => {
+  const pages: Record<string, unknown> = {
+    '': { schedules: [{ id: 'sleeper/trends/L1', nextRun: '2026-11-02T09:00:00Z' }, { id: 'sleeper/trends/L2', nextRun: '2026-11-01T09:00:00Z' }], nextPageToken: 't2' },
+    t2: { schedules: [{ id: 'sleeper/lineup/L1/9/a', nextRun: '2026-11-01T17:00:00Z' }] },
+  };
+  const requested: string[] = [];
+  const schedulesFetch = (async (url: string) => {
+    const q = new URL(url).searchParams;
+    requested.push(q.get('pageToken') ?? '');
+    return new Response(JSON.stringify(pages[q.get('pageToken') ?? '']));
+  }) as unknown as typeof fetch;
+  const client = createSleeperClient({ fetch: double().doFetch, now: () => 0 });
+  const service = serveApp(createSleeperService({ dbPath: ':memory:', client, league: 'L1', schedules: { url: 'http://s', fetch: schedulesFetch } }));
+  await new Promise<void>((r) => service.listen(0, r));
+  try {
+    const { runs } = await (await fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}/schedule`)).json();
+    assert.deepEqual(requested, ['', 't2']);
+    assert.deepEqual(runs, [{ job: 'lineup', at: '2026-11-01T17:00:00Z' }, { job: 'trends', at: '2026-11-02T09:00:00Z' }]);
+  } finally {
+    service.stop();
+  }
+});

@@ -42,17 +42,22 @@ async function start(dbPath: string, tickMs?: number) {
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const api = (method: string, path: string, body?: unknown) =>
-    fetch(base + path, { method, body: body ? JSON.stringify(body) : undefined }).then(async (r) => ({ status: r.status, json: (await r.json()) as any }));
+    fetch(base + path, { method, body: body ? JSON.stringify(body) : undefined }).then(async (r) => {
+      const text = await r.text();
+      return { status: r.status, type: r.headers.get('content-type'), allow: r.headers.get('allow'), text, json: (text ? JSON.parse(text) : undefined) as any };
+    });
   return { svc, api, base };
 }
 
+// The path carries the id and the body does not.
+const put = (api: Awaited<ReturnType<typeof start>>['api'], { id, ...def }: { id: string } & Record<string, unknown>) => api('PUT', `/${encodeURIComponent(id)}`, def);
 const daily = { id: 'daily', agent: 'a', cron: '0 9 * * *', sessionKey: 'daily', input: 'go' };
 const dbFile = async () => join(await mkdtemp(join(tmpdir(), 'sched-')), 's.db');
 
 test('fires at the occurrence with a deterministic request id, once', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T08:00:00Z');
-  assert.equal((await api('POST', '/', daily)).status, 201);
+  assert.equal((await put(api, daily)).status, 201);
   await svc.tick();
   assert.equal(calls.length, 0);
   clock = new Date('2026-01-01T09:00:00Z');
@@ -69,7 +74,7 @@ test('fires at the occurrence with a deterministic request id, once', async () =
 test('a failed submission is retried, not recorded', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T08:00:00Z');
-  await api('POST', '/', daily);
+  await put(api, daily);
   clock = new Date('2026-01-01T09:00:00Z');
   ok = false;
   await svc.tick();
@@ -83,7 +88,7 @@ test('a failed submission is retried, not recorded', async () => {
 test('after downtime only the newest useful miss fires and the rest are recorded missed', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T08:00:00Z');
-  await api('POST', '/', daily);
+  await put(api, daily);
   clock = new Date('2026-01-04T10:00:00Z');
   await svc.tick();
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:daily:2026-01-04T09:00:00.000Z']);
@@ -94,7 +99,7 @@ test('after downtime only the newest useful miss fires and the rest are recorded
 test('a newest miss past its window is recorded missed, not fired', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T08:00:00Z');
-  await api('POST', '/', { ...daily, deadline: '2026-01-02T10:00:00Z' });
+  await put(api, { ...daily, deadline: '2026-01-02T10:00:00Z' });
   clock = new Date('2026-01-02T12:00:00Z');
   await svc.tick();
   assert.equal(calls.length, 0);
@@ -104,8 +109,8 @@ test('a newest miss past its window is recorded missed, not fired', async () => 
 test('the default window is the next occurrence, and explicit times honor a deadline', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T00:00:00Z');
-  await api('POST', '/', { id: 'once', agent: 'a', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x', deadline: '2026-01-01T01:30:00Z' });
-  await api('POST', '/', { id: 'two', agent: 'a', times: ['2026-01-01T01:00:00Z', '2026-01-01T02:00:00Z'], sessionKey: 'two', input: 'x' });
+  await put(api, { id: 'once', agent: 'a', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x', deadline: '2026-01-01T01:30:00Z' });
+  await put(api, { id: 'two', agent: 'a', times: ['2026-01-01T01:00:00Z', '2026-01-01T02:00:00Z'], sessionKey: 'two', input: 'x' });
   clock = new Date('2026-01-01T02:00:00Z');
   await svc.tick();
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:two:2026-01-01T02:00:00.000Z']);
@@ -118,18 +123,18 @@ test('a spent one-shot is deleted while its runs stay, so registering the same t
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T10:00:00Z');
   const once = { id: 'w', agent: 'a', times: ['2026-01-01T10:00:00Z'], deadline: '2026-01-01T12:00:00Z', sessionKey: 'w', input: 'x' };
-  await api('POST', '/', once);
+  await put(api, once);
   await svc.tick();
   assert.equal(calls.length, 1);
   assert.deepEqual((await api('GET', '/')).json.schedules, []);
-  await api('POST', '/', once);
+  await put(api, once);
   clock = new Date('2026-01-01T11:00:00Z');
   await svc.tick();
   assert.equal(calls.length, 1);
   assert.deepEqual((await api('GET', '/')).json.schedules, []);
   // A one-shot still ahead, and a cron, are kept.
-  await api('POST', '/', { ...once, id: 'later', times: ['2026-01-02T10:00:00Z'], deadline: '2026-01-02T12:00:00Z' });
-  await api('POST', '/', daily);
+  await put(api, { ...once, id: 'later', times: ['2026-01-02T10:00:00Z'], deadline: '2026-01-02T12:00:00Z' });
+  await put(api, daily);
   await svc.tick();
   assert.deepEqual((await api('GET', '/')).json.schedules.map((s: any) => s.id), ['daily', 'later']);
 });
@@ -138,7 +143,7 @@ test('schedules and their history survive a restart', async () => {
   const path = await dbFile();
   const first = await start(path);
   clock = new Date('2026-01-01T08:00:00Z');
-  await first.api('POST', '/', daily);
+  await put(first.api, daily);
   clock = new Date('2026-01-01T09:00:00Z');
   await first.svc.tick();
   // Closes the first server too, which a bare svc.stop() left listening.
@@ -154,20 +159,20 @@ test('schedules and their history survive a restart', async () => {
 test('a cron in America/New_York keeps its wall-clock time across the DST change', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-03-07T12:00:00Z');
-  await api('POST', '/', { ...daily, tz: 'America/New_York' });
+  await put(api, { ...daily, tz: 'America/New_York' });
   clock = new Date('2026-03-08T14:00:00Z');
   await svc.tick();
   clock = new Date('2026-03-09T13:00:00Z');
   await svc.tick();
   // Clocks spring forward on Mar 8: 09:00 EST was 14:00Z, 09:00 EDT is 13:00Z (UTC would drift an hour).
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:daily:2026-03-08T13:00:00.000Z', 'schedule:daily:2026-03-09T13:00:00.000Z']);
-  assert.equal((await api('POST', '/', { ...daily, id: 'z', tz: 'Mars/Base' })).status, 400);
+  assert.equal((await put(api, { ...daily, id: 'z', tz: 'Mars/Base' })).status, 400);
 });
 
 test('an exhausted one-shot whose moment passed long ago is recorded missed, not fired', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T00:00:00Z');
-  await api('POST', '/', { id: 'once', agent: 'a', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x' });
+  await put(api, { id: 'once', agent: 'a', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x' });
   clock = new Date('2026-01-02T01:00:00Z');
   await svc.tick();
   assert.equal(calls.length, 0);
@@ -178,10 +183,10 @@ test('a one-shot registered for the moment it is written fires once, and re-regi
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T10:00:00Z');
   const once = { id: 'now', agent: 'a', times: ['2026-01-01T10:00:00Z'], sessionKey: 'now', input: 'x' };
-  await api('POST', '/', once);
+  await put(api, once);
   await svc.tick();
   assert.equal(calls.length, 1);
-  await api('POST', '/', { ...once, input: 'y' });
+  await put(api, { ...once, input: 'y' });
   await svc.tick();
   assert.equal(calls.length, 1);
 });
@@ -190,12 +195,12 @@ test('a one-shot registered after its time but inside its window fires; a record
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T10:30:00Z');
   const late = { id: 'late', agent: 'a', times: ['2026-01-01T10:00:00Z'], deadline: '2026-01-01T12:00:00Z', sessionKey: 'late', input: 'x' };
-  await api('POST', '/', late);
+  await put(api, late);
   await svc.tick();
   assert.equal(calls.length, 1);
-  await api('POST', '/', { id: 'gone', agent: 'a', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T09:30:00Z', sessionKey: 'gone', input: 'x' });
+  await put(api, { id: 'gone', agent: 'a', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T09:30:00Z', sessionKey: 'gone', input: 'x' });
   await svc.tick();
-  await api('POST', '/', { id: 'gone', agent: 'a', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T11:00:00Z', sessionKey: 'gone', input: 'x' });
+  await put(api, { id: 'gone', agent: 'a', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T11:00:00Z', sessionKey: 'gone', input: 'x' });
   await svc.tick();
   assert.equal(calls.length, 1, 'past its window it was recorded missed, and a wider window later does not revive it');
 });
@@ -203,7 +208,7 @@ test('a one-shot registered after its time but inside its window fires; a record
 test('a tick that throws is logged and the loop keeps running', async () => {
   const { svc, api } = await start(':memory:', 1);
   clock = new Date('2026-01-01T08:00:00Z');
-  await api('POST', '/', daily);
+  await put(api, daily);
   clock = new Date('2026-01-01T09:00:00Z');
   const fired = new Promise<void>((r) => (onFetch = r));
   failClockOnce = true;
@@ -212,19 +217,89 @@ test('a tick that throws is logged and the loop keeps running', async () => {
   assert.equal(calls.length, 1);
 });
 
-test('an api schedule can be deleted', async () => {
+test('a schedule can be deleted: 204 with no body, then 404', async () => {
   const { api } = await start(':memory:');
-  await api('POST', '/', daily);
-  assert.equal((await api('DELETE', '/daily')).status, 200);
+  await put(api, daily);
+  const gone = await api('DELETE', '/daily');
+  assert.deepEqual([gone.status, gone.text], [204, '']);
   assert.deepEqual((await api('GET', '/')).json.schedules, []);
+  const again = await api('DELETE', '/daily');
+  assert.deepEqual([again.status, again.type, again.json.status], [404, 'application/problem+json', 404]);
+});
+
+test('PUT creates with 201 then replaces with 200, answering the view without source', async () => {
+  const { api } = await start(':memory:');
+  clock = new Date('2026-01-01T08:00:00Z');
+  const created = await put(api, daily);
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.json, { ...daily, lastRun: null, nextRun: '2026-01-01T09:00:00.000Z', missedRuns: [] });
+  const replaced = await put(api, { ...daily, input: 'again' });
+  assert.equal(replaced.status, 200);
+  assert.equal(replaced.json.input, 'again');
+  assert.equal((await api('GET', '/')).json.schedules[0].source, undefined);
+});
+
+test('an id with a slash travels as one percent-encoded segment', async () => {
+  const { api } = await start(':memory:');
+  const id = 'sleeper/lineup/1/2/lineup';
+  assert.equal((await put(api, { ...daily, id })).status, 201);
+  assert.equal((await api('GET', '/')).json.schedules[0].id, id);
+  assert.equal((await api('DELETE', `/${encodeURIComponent(id)}`)).status, 204);
+  assert.equal((await api('DELETE', '/sleeper/lineup')).status, 404, 'unencoded slashes are an unknown path');
+});
+
+test('the body is closed: an id or any unknown field is 400, as problem+json', async () => {
+  const { id, ...def } = daily;
+  const { api } = await start(':memory:');
+  for (const extra of [{ id: 'daily' }, { colour: 'red' }]) {
+    const res = await api('PUT', '/daily', { ...def, ...extra });
+    assert.deepEqual([res.status, res.type], [400, 'application/problem+json']);
+    assert.match(res.json.detail, /unknown field/);
+  }
+  assert.deepEqual((await api('GET', '/')).json.schedules, []);
+});
+
+test('an error is problem+json with type, title, status, detail and error', async () => {
+  const { api } = await start(':memory:');
+  const res = await api('PUT', '/daily', { agent: 'a' });
+  assert.equal(res.type, 'application/problem+json');
+  assert.deepEqual(res.json, { type: 'about:blank', title: 'Bad Request', status: 400, detail: res.json.detail, error: res.json.detail });
+});
+
+test('a wrong method is 405 with Allow, an unknown path a 404 problem', async () => {
+  const { api } = await start(':memory:');
+  const post = await api('POST', '/', daily);
+  assert.deepEqual([post.status, post.allow, post.type], [405, 'GET', 'application/problem+json']);
+  assert.deepEqual([(await api('GET', '/daily')).status, (await api('GET', '/daily')).allow], [405, 'DELETE, PUT']);
+  assert.equal((await api('PUT', '/')).status, 405);
+  const unknown = await api('GET', '/a/b');
+  assert.deepEqual([unknown.status, unknown.type], [404, 'application/problem+json']);
+});
+
+test('the list pages by id: pageSize, nextPageToken only until the last page, and bad inputs are 400', async () => {
+  const { api } = await start(':memory:');
+  for (const id of ['c', 'a', 'd', 'b', 'e']) await put(api, { ...daily, id });
+  const first = (await api('GET', '/?pageSize=2')).json;
+  assert.deepEqual(first.schedules.map((s: any) => s.id), ['a', 'b']);
+  const second = (await api('GET', `/?pageSize=2&pageToken=${first.nextPageToken}`)).json;
+  assert.deepEqual(second.schedules.map((s: any) => s.id), ['c', 'd']);
+  const last = (await api('GET', `/?pageSize=2&pageToken=${second.nextPageToken}`)).json;
+  assert.deepEqual([last.schedules.map((s: any) => s.id), 'nextPageToken' in last], [['e'], false]);
+  const whole = (await api('GET', '/?pageSize=5')).json;
+  assert.equal('nextPageToken' in whole, false, 'a page that ends exactly at the end has no token');
+  assert.equal((await api('GET', '/')).json.schedules.length, 5, 'the default size is 100');
+  const foreign = Buffer.from(JSON.stringify(['sessions', 'a'])).toString('base64url');
+  for (const q of ['pageToken=nope', `pageToken=${foreign}`, 'pageSize=0', 'pageSize=1001', 'pageSize=x']) {
+    const res = await api('GET', `/?${q}`);
+    assert.deepEqual([res.status, res.type], [400, 'application/problem+json'], q);
+  }
 });
 
 test('the API rejects bad definitions and an oversized body', async () => {
   const { api, base } = await start(':memory:');
-  assert.equal((await api('POST', '/', { ...daily, cron: 'nope' })).status, 400);
-  assert.equal((await api('POST', '/', { ...daily, times: ['2026-01-01T00:00:00Z'] })).status, 400);
-  assert.equal((await api('DELETE', '/daily')).status, 404);
-  const big = await fetch(base + '/', { method: 'POST', body: 'x'.repeat(2 << 20) });
+  assert.equal((await put(api, { ...daily, cron: 'nope' })).status, 400);
+  assert.equal((await put(api, { ...daily, times: ['2026-01-01T00:00:00Z'] })).status, 400);
+  const big = await fetch(`${base}/daily`, { method: 'PUT', body: 'x'.repeat(2 << 20) });
   assert.deepEqual([big.status, big.headers.get('content-type')], [413, 'application/problem+json']);
 });
 
@@ -296,9 +371,9 @@ test('a retention sweep whose distributor fetch fails is retried next tick, then
 test('a registration without an agent is a 400 naming the field', async () => {
   const { api } = await start(':memory:');
   const { agent, ...noAgent } = daily;
-  const res = await api('POST', '/', noAgent);
+  const res = await put(api, noAgent);
   assert.equal(res.status, 400);
-  assert.match(res.json.error, /agent/);
+  assert.match(res.json.detail, /agent/);
   assert.deepEqual((await api('GET', '/')).json.schedules, []);
 });
 
