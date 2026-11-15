@@ -16,7 +16,7 @@ export const SEARCH_DEBOUNCE_MS = 250;
 
 const HEIGHT = 'h-10 lg:h-[34px]';
 const iconBtn = `relative grid ${HEIGHT} w-10 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink lg:w-[34px]`;
-const select = 'h-10 w-full min-w-0 cursor-pointer rounded-lg border border-line bg-soft px-2 text-[13px] text-ink outline-none focus:shadow-ring lg:h-[34px]';
+const select = 'focus-ring h-10 w-full min-w-0 cursor-pointer rounded-lg border border-line bg-soft px-2 text-[13px] text-ink lg:h-[34px]';
 const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 
 // `/` reaches the page's own search only: the sidebar's list sits outside main, and a key another handler took stays taken.
@@ -58,7 +58,7 @@ export function SearchFilter({ label, text, onText, fields, values, onValues }: 
   return (
     <div className="flex flex-col gap-2">
       <div ref={menu.root} onKeyDown={esc} className="relative flex items-center gap-1.5">
-        <label className={`flex ${HEIGHT} min-w-0 flex-1 items-center gap-2 rounded-full bg-soft px-3 text-sm text-muted focus-within:bg-surface focus-within:shadow-ring lg:text-[13px]`}>
+        <label className={`flex ${HEIGHT} min-w-0 flex-1 items-center gap-2 rounded-full bg-soft px-3 text-sm text-muted focus-within:bg-surface lg:text-[13px] focus-ring`}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="flex-none"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
           <span className="sr-only">{label}</span>
           <input ref={search} type="search" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={label} className="min-w-0 flex-1 border-0 bg-transparent text-ink outline-none" />

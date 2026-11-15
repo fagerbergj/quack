@@ -42,7 +42,7 @@ export function RenameDialog({ current, save, onClose }: { current: string; save
     <Modal title="Rename session" onClose={onClose} onSubmit={go} action="Save" busy={busy} error={error}>
       <label className="flex flex-col gap-1 text-[13px] text-muted">
         Title
-        <input autoFocus value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} className="min-h-11 rounded-xl border border-line bg-surface px-3 text-[15px] text-ink outline-none focus:shadow-ring" />
+        <input autoFocus value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} className="focus-ring min-h-11 rounded-xl border border-line bg-surface px-3 text-[15px] text-ink" />
       </label>
       <p className="m-0 text-xs text-muted">Leave it empty to use the first message.</p>
     </Modal>

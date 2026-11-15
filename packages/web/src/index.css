@@ -71,6 +71,11 @@
   a { color: var(--color-link); }
 }
 
+/* Free-text fields grow with what you type and stop at their own max height, so a multi-line message stays all visible. */
+.field-grow { field-sizing: content; }
+/* One focus ring for the fields and the wrappers that hold them: an outline, so it survives forced-colors mode and clears 3:1 in both schemes. */
+.focus-ring:is(:focus-visible, :focus-within) { outline: 2px solid var(--color-link); outline-offset: 2px; }
+
 @keyframes bob { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-4px) rotate(2deg); } }
 .bob { animation: bob 2.8s ease-in-out infinite; transform-origin: 50% 80%; }
 details[open] > summary > .chev { transform: rotate(90deg); }

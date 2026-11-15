@@ -109,6 +109,8 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
   }, []);
   return (
     <>
+      {/* First tab stop on desktop, where the nav and the session list come before the page. The app routes on the hash, so the link focuses main itself. */}
+      <a href="#main" onClick={(e) => (e.preventDefault(), document.getElementById('main')?.focus())} className="max-lg:hidden lg:sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-lg focus:border focus:border-link focus:bg-surface focus:px-3 focus:py-2 focus:text-[13px] focus:text-ink focus:shadow-float">Skip to main content</a>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-line bg-canvas/90 backdrop-blur-md lg:flex">
         <a href="#/" className="logo-link wordmark relative flex items-center gap-2.5 px-5 pt-5 pb-3 text-[19px] text-ink no-underline">
           <span aria-hidden="true" className="quack-bubble absolute top-[-2px] left-[54px] rounded-full rounded-bl-none bg-warm px-2 text-[13px] text-warning">quack!</span>
@@ -134,7 +136,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         <Duck size={30} />
         {route === 'home' ? <span className="wordmark text-xl">quack</span> : route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}
       </header>
-      <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
+      <main id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain focus:outline-none lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
       </div>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(48px+var(--safe-b))] border-t border-line bg-canvas/90 pb-[var(--safe-b)] backdrop-blur-md lg:hidden" style={{ gridTemplateColumns: `repeat(${tabs.length + 2}, minmax(0, 1fr))` }}>
         {[HOME, ...tabs].map((n) => link(n, tabBase))}

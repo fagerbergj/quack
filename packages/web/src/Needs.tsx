@@ -48,7 +48,7 @@ export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: 
       {rejecting && (
         <label className="flex flex-col gap-1 text-[13px] text-ink-2">
           Reason
-          <input value={reason} onChange={(e) => setReason(e.target.value)} className="h-11 rounded-lg border border-line bg-surface px-3 text-sm outline-none focus:border-line-strong lg:h-9" />
+          <input value={reason} onChange={(e) => setReason(e.target.value)} className="focus-ring min-h-11 rounded-lg border border-line bg-surface px-3 text-sm lg:min-h-9" />
         </label>
       )}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}

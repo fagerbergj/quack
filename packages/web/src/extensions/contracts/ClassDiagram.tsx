@@ -36,7 +36,7 @@ type Act = { focus: (name: string) => void; jump: (name: string) => void };
 const Acts = createContext<Act>({ focus: () => {}, jump: () => {} });
 type BoxNode = Node<{ box: Box }, 'box'>;
 
-const chip = 'nodrag cursor-pointer rounded border-0 bg-link-bg px-1 font-mono text-[11px] text-link hover:underline focus-visible:shadow-ring';
+const chip = 'nodrag cursor-pointer rounded border-0 bg-link-bg px-1 font-mono text-[11px] text-link hover:underline focus-ring';
 
 function BoxView({ data: { box } }: NodeProps<BoxNode>) {
   const act = useContext(Acts);
@@ -47,7 +47,7 @@ function BoxView({ data: { box } }: NodeProps<BoxNode>) {
       <button
         type="button" onClick={() => (box.focus ? act.jump(decl.name) : act.focus(decl.name))}
         aria-label={box.focus ? `${decl.name}, go to its declaration` : `Centre the diagram on ${decl.name}`}
-        style={{ height: HEAD }} className="nodrag flex w-full cursor-pointer items-center gap-2 border-0 border-b border-line bg-soft px-2.5 text-left font-mono text-[12px] font-semibold text-ink hover:underline focus-visible:shadow-ring"
+        style={{ height: HEAD }} className="nodrag flex w-full cursor-pointer items-center gap-2 border-0 border-b border-line bg-soft px-2.5 text-left font-mono text-[12px] font-semibold text-ink hover:underline focus-ring"
       >
         <span>{decl.name}<span className="font-normal text-muted">{decl.generics}</span></span>
         {decl.kind !== 'other' && <span className="text-[10px] font-normal tracking-wide text-muted uppercase">{decl.kind}</span>}

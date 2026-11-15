@@ -29,7 +29,7 @@ function Refs({ label, list, names }: { label: string; list: string[]; names: Se
 function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; usedBy: string[]; choices: Choice[] }) {
   const code = (t: string): ReactNode => <Linked text={t} names={names} />;
   return (
-    <article id={`decl-${d.name}`} tabIndex={-1} aria-label={d.name} className="flex scroll-mt-4 flex-col gap-2 border-t border-line pt-3 outline-none first:border-t-0 first:pt-0 focus-visible:shadow-ring">
+    <article id={`decl-${d.name}`} tabIndex={-1} aria-label={d.name} className="flex scroll-mt-4 flex-col gap-2 border-t border-line pt-3 first:border-t-0 first:pt-0 focus-ring">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="m-0 font-mono text-[15px] font-semibold [overflow-wrap:anywhere]">{d.name}<span className="font-normal text-muted">{d.generics}</span></h3>
         {d.kind !== 'other' && <span className={pill}>{d.kind}</span>}
