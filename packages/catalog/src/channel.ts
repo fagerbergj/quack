@@ -122,7 +122,7 @@ export function parseEvents(events: unknown[]): CatalogEvent[] {
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return undefined; } };
 
 /** Handles the channel route for a caller the session listener authenticated; false for any other request. `onApplied`
- * hears each accepted batch, replays included, and never slows or fails the reply. */
+ * hears each accepted batch, replays included, before the reply; its failure never fails the reply. */
 export function eventsRoute(catalog: Catalog, onApplied?: (key: string, events: CatalogEvent[]) => Promise<unknown>) {
   return async (req: IncomingMessage, res: ServerResponse, caller: string): Promise<boolean> => {
     const match = req.method === 'POST' && ROUTE.exec(new URL(req.url ?? '', 'http://distributor').pathname);
@@ -141,8 +141,9 @@ export function eventsRoute(catalog: Catalog, onApplied?: (key: string, events: 
       const out = await catalog.publish(key, events);
       if (out.gap) res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, detail: `the batch starts past seq ${out.acked + 1}`, error: `the batch starts past seq ${out.acked + 1}`, acked: out.acked }));
       else {
+        // Heard before the ack, so a crash between them makes the session resend and the hook hears the batch again.
+        await onApplied?.(key, events).catch((err) => console.error('catalog: after a batch', err));
         send(res, 200, { acked: out.acked });
-        void onApplied?.(key, events).catch((err) => console.error('catalog: after a batch', err));
       }
     } catch (err) {
       if (err instanceof BatchError) sendProblem(res, 400, err.message);

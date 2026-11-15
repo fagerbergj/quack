@@ -44,5 +44,7 @@ export function distributor(url: string, doFetch: typeof fetch = fetch) {
     send: (key: string, agent: string, input: string, requestId: string) => post(`${path(key, '/invocations')}?agent=${encodeURIComponent(agent)}`, { input, requestId, whenBusy: 'followUp' }),
     abort: (key: string) => post(path(key, '/abort')),
     resume: (key: string) => post(path(key, '/resume')),
+    /** Records a key Home started with Home's app, which tells home:main when its runs end. */
+    started: (key: string) => post(`${url}/apps/home/started`, { key }),
   };
 }

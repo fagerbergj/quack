@@ -24,7 +24,7 @@ async function setup(wrap: (f: typeof fetch) => typeof fetch = (f) => f) {
   // The distributor as the app reaches it in process: the Sessions API over the catalog, called as the tailnet.
   const api = sessionsApi(catalog, { deleteSession: async () => 'deleted', answer: async () => true });
   const fetch = wrap(inProcessFetch(async (req, res) => void ((await api(req, res, { kind: 'tailnet' })) || res.writeHead(404).end('{}'))));
-  const app = await manifest.app!({ settings: {}, dbPath: ':memory:', distributorUrl: 'http://distributor.local', fetch, peerFetch: () => fetch, deployment: {}, env: {} });
+  const app = await manifest.app!({ settings: {}, dbPath: ':memory:', distributorUrl: 'http://distributor.local', fetch, peerFetch: () => fetch, deployment: {}, env: {}, subscribe: () => () => {} });
   const server = serveApp(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   cleanups.push(() => new Promise((r) => server.close(r)));

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:http';
+import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,12 +15,13 @@ const created = (seq = 1, id = 'session:r1') => ({ seq, id, at: at(seq), type: '
 const spend = (seq: number, micros: string) => ({ seq, id: 'spend', at: at(seq), type: 'spend.recorded', data: { cost: { currencyCode: 'USD', amountMicros: micros }, tokens: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } } });
 
 // The listener in front: the caller is the session the credential belongs to, as the distributor's session listener resolves it.
-async function channel(store?: SessionCatalogStore) {
+async function channel(store?: SessionCatalogStore, onApplied?: (res: ServerResponse) => Promise<unknown>) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-channel-'));
   const backing = store ?? sqliteCatalog(join(dir, 'c.sqlite'), { currency: 'USD' });
   const catalog = createCatalog({ store: backing, journal: fileJournal(join(dir, 'journal')), log: () => {} });
-  const route = eventsRoute(catalog);
-  const server = createServer(async (req, res) => { if (!(await route(req, res, 'sleeper:platinum:2'))) res.writeHead(418).end(); });
+  let current: ServerResponse | undefined;
+  const route = eventsRoute(catalog, onApplied && (() => onApplied(current!)));
+  const server = createServer(async (req, res) => { current = res; if (!(await route(req, res, 'sleeper:platinum:2'))) res.writeHead(418).end(); });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   cleanups.push(async () => { await new Promise((r) => server.close(r)); await backing.close(); await rm(dir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/${encodeURIComponent('sleeper:platinum:2')}/events`;
@@ -115,4 +116,11 @@ test('v10 turn.ended: a session mid-run with two ended turns shows lastActivity 
   assert.deepEqual([row?.state, row?.lastActivity, row?.lastRun], ['running', Date.parse(at(40)), undefined]);
   assert.deepEqual(await post({ events: [turn(3, 1)] }), { status: 200, body: { acked: 4 } });
   assert.equal((await catalog.getSession(key))?.lastActivity, Date.parse(at(40)), 'a redelivered turn.ended neither applies twice nor regresses');
+});
+
+test('the applied hook runs before the ack, so a crash between them redelivers the batch to it; its failure still acks', async () => {
+  const replied: boolean[] = [];
+  const { post } = await channel(undefined, async (res) => { replied.push(res.writableEnded); throw new Error('listener down'); });
+  assert.deepEqual(await post({ events: [created()] }), { status: 200, body: { acked: 1 } });
+  assert.deepEqual(replied, [false]);
 });

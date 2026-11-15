@@ -24,7 +24,10 @@ const ping: Action<ReturnType<typeof obj>> = {
   },
 };
 
-async function homeSession(...responses: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0]) {
+type Responses = Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0];
+const homeSession = (...responses: Responses) => homeSessionWith(async () => Response.json({ error: 'no such app' }, { status: 404 }), ...responses);
+
+async function homeSessionWith(doFetch: typeof fetch, ...responses: Responses) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(responses);
   const models = createModels();
@@ -32,7 +35,7 @@ async function homeSession(...responses: Parameters<ReturnType<typeof fauxProvid
   const dir = await mkdtemp(join(tmpdir(), 'quack-home-'));
   dirs.push(dir);
   const m = faux.getModel();
-  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: homeSessionExtensions([ping], { distributorUrl: 'http://127.0.0.1:1', fetch, env: {} }) } });
+  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: homeSessionExtensions([ping], { distributorUrl: 'http://127.0.0.1:1', fetch: doFetch, env: {} }) } });
 }
 
 const callStart = () => fauxAssistantMessage(fauxToolCall('start', { action: 'ping_thing', params: { thing: 'x' } }), { stopReason: 'toolUse' });
@@ -60,6 +63,18 @@ test('start asks first, showing the summary and filled params, and runs the acti
   const done = await session.submit('ping x', 'r1', true);
   assert.equal(done.status, 'done');
   assert.deepEqual(started, [{ thing: 'x' }]);
+  await session.close();
+});
+
+test("an approved start records the session's key with Home's app, which reports its run's end", async () => {
+  const posts: string[] = [];
+  const recording: typeof fetch = async (input, init) => (posts.push(`${String(input)} ${String(init?.body)}`), Response.json({ ok: true }));
+  const session = await homeSessionWith(recording, callStart(), fauxAssistantMessage('Started.'));
+  await session.submit('ping x', 'r3');
+  const item = await pending(session);
+  await resolveApproval(session.root, item.id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, BACKGROUND_CONTEXT);
+  assert.equal((await session.submit('ping x', 'r3', true)).status, 'done');
+  assert.deepEqual(posts, ['http://127.0.0.1:1/apps/home/started {"key":"thing:1"}']);
   await session.close();
 });
 

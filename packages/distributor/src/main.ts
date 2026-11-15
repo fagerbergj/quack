@@ -12,7 +12,7 @@ import { credentialBroker } from './credentials.ts';
 import { sessionDriver } from './session-driver.ts';
 import { crossSession, declaredApps, loadManifests } from '@quack/runtime/catalog';
 import { rubricFrom } from './rubrics.ts';
-import { appsGateway, mountApps } from './apps.ts';
+import { appStream, appsGateway, mountApps } from './apps.ts';
 
 function env(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -39,17 +39,23 @@ const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env
 await ready;
 const backfilled = await backfillCatalog(catalog, dataDir, priceOf(parseDeployment(deployment)));
 if (backfilled !== undefined) console.log(`catalog: backfilled ${backfilled} sessions from their logs`);
-// The extensions the deployment file lists run in this process, under /apps/<name>/*; their calls back here, and to each other, are in-process.
-const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.emit('request', req, res) });
 const pinnedDefinition = (key: string) => readFile(pinnedAgentPath(dataDir, key), 'utf8').then(JSON.parse, () => null);
-const apps = appsGateway(mounted, broker.sessionOf, async (key) => declaredApps(await pinnedDefinition(key), manifests));
+const granted = async (key: string) => declaredApps(await pinnedDefinition(key), manifests);
+const stream = appStream(granted);
+// The extensions the deployment file lists run in this process, under /apps/<name>/*; their calls back here, and to each other, are in-process.
+const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.emit('request', req, res), stream });
+const apps = appsGateway(mounted, broker.sessionOf, granted);
 // VAPID keys are made on first boot under the data dir; QUACK_VAPID_PUBLIC_KEY, QUACK_VAPID_PRIVATE_KEY and QUACK_VAPID_SUBJECT override them.
 const push = openNotifications({
   dataDir, env: process.env, title: async (key) => (await catalog.getSession(key))?.title,
   artifacts: async (key) => (await catalog.listArtifacts({ session: key, pageSize: 1000 })).rows,
 });
 // QUACK_PROXY_SECRET is the value the reverse proxy sends in x-quack-proxy-secret; without it no identity header is believed.
-const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)), events: eventsRoute(catalog, (key, events) => push.notify(key, events)) };
+const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)), events: eventsRoute(catalog, async (key, events) => {
+  await stream.publish(key, events);
+  // Pushes leave after the ack, so a slow push service never holds a session's channel.
+  void push.notify(key, events).catch((err) => console.error('push:', err));
+}) };
 const routes = async (req: IncomingMessage, res: ServerResponse) => (await push.routes(req, res)) || (await apps(req, res)) || (await broker.route(req, res));
 const server = createDistributor(driver, { refuse, sessions, catalog, routes, proxySecret: process.env.QUACK_PROXY_SECRET || undefined, webDir: process.env.QUACK_WEB_DIR }).listen(port);
 server.sessions.listen(sessionPort, listenAddress);
