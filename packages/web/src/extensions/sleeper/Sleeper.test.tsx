@@ -214,7 +214,7 @@ test('Run a job lists every job with its last result and starts one through the 
   expect(await sheet.findByRole('link', { name: /^Waivers Running · open/ })).toHaveAttribute('href', `#/s/${encodeURIComponent(key(9, 'waivers'))}`);
   expect(sheet.queryByRole('button', { name: 'Run Waivers' })).toBeNull();
   const posts = calls.filter(([, i]) => i?.method === 'POST');
-  expect(posts.map(([u]) => u)).toEqual(['apps/sleeper/waivers']);
+  expect(posts.map(([u]) => u)).toEqual(['apps/sleeper/jobs/waivers/runs']);
   expect(posts[0]![1]?.headers).toBeUndefined();
 });
 

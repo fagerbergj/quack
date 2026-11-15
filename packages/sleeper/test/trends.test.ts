@@ -242,11 +242,11 @@ test('the trends job starts on demand under the week session key, and a snapshot
   await new Promise<void>((r) => service.listen(0, r));
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const started = await call('/trends', 'POST');
-    assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:9:trends', status: 202 }]);
+    const started = await call('/jobs/trends/runs', 'POST');
+    assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:9:trends' }]);
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Atrends/invocations?agent=sleeper-trends');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
-    assert.equal((await call('/trends')).status, 405);
+    assert.equal((await call('/jobs/trends/runs')).status, 405);
     await call('/leagues/L1/snapshots', 'POST');
     assert.equal((await (await call('/leagues/L1/snapshots/2026-11-06')).json() as { date: string }).date, '2026-11-06');
     assert.equal((await call('/leagues/L1/snapshots/2026-11-05')).status, 404);
@@ -265,7 +265,9 @@ test('the trends workflow reads the service through the endpoint primed when it 
     if (host === 'api.sleeper.app') return new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[pathname] ?? null));
     seen.push(`${init?.method ?? 'GET'} ${u} ${new Headers(init?.headers).get('authorization')}`);
     if (pathname.endsWith('/players')) return new Response(JSON.stringify(lineup['/v1/players/nfl']));
-    return new Response(JSON.stringify(init?.method === 'POST' ? snap : { snapshots: [] }));
+    if (init?.method === 'POST' || /\/snapshots\/\d/.test(pathname)) return new Response(JSON.stringify(snap));
+    // History is paged: the first page names a next one, which history() must follow.
+    return new Response(JSON.stringify(new URL(u).searchParams.has('pageToken') ? { snapshots: [{ date: YESTERDAY, takenAt: '' }] } : { snapshots: [{ date: TODAY, takenAt: '' }], nextPageToken: 'p2' }));
   });
   // The client binds global fetch when built, so build the workflow after the mock or it reaches the real API.
   const workflow = trendsFromEnv();
@@ -273,7 +275,7 @@ test('the trends workflow reads the service through the endpoint primed when it 
   const facts = await (workflow.steps[0] as { run(c: never): unknown }).run({ input: JSON.stringify(INPUT), api: { now: () => AT } } as never);
   assert.equal((facts as { date: string }).date, TODAY);
   // The players dump comes from the Sleeper app's day-long copy, not from Sleeper.
-  assert.deepEqual(seen, ['POST http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/players Bearer tok']);
+  assert.deepEqual(seen, ['POST http://service/apps/sleeper/leagues/L1/snapshots Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots?pageSize=1000 Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots?pageSize=1000&pageToken=p2 Bearer tok', 'GET http://service/apps/sleeper/leagues/L1/snapshots/2026-11-05 Bearer tok', 'GET http://service/apps/sleeper/players Bearer tok']);
 });
 
 test('the page routes answer the configured league and start its lineup job', async () => {
@@ -285,14 +287,14 @@ test('the page routes answer the configured league and start its lineup job', as
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
     assert.deepEqual(await (await call('/')).json(), { league: 'L1' });
-    const started = await call('/lineup?week=8', 'POST');
-    assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:8:lineup', status: 202 }]);
+    const started = await call('/jobs/lineup/runs?week=8', 'POST');
+    assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:8:lineup' }]);
     assert.equal(calls.length, 1);
     assert.deepEqual(await (await call('/schedule')).json(), { week: 9, runs: [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }] });
-    const waivers = await call('/waivers?week=8', 'POST');
+    const waivers = await call('/jobs/waivers/runs?week=8', 'POST');
     assert.deepEqual([waivers.status, ((await waivers.json()) as { sessionKey: string }).sessionKey], [202, 'sleeper:L1:8:waivers']);
-    assert.equal((await call('/lineup?week=x', 'POST')).status, 400);
-    assert.equal((await call('/lineup')).status, 405);
+    assert.equal((await call('/jobs/lineup/runs?week=x', 'POST')).status, 400);
+    assert.equal((await call('/jobs/lineup/runs')).status, 405);
   } finally {
     service.stop();
   }

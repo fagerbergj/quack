@@ -21,9 +21,9 @@ export function openStore(path: string) {
       const r = db.prepare('SELECT * FROM snapshots WHERE league = ? AND date = ?').get(league, date) as Raw | undefined;
       return r && row(r);
     },
-    /** Dates only, newest first; a snapshot is fetched by date. */
-    history(league: string): Array<{ date: string; takenAt: string }> {
-      const rows = db.prepare('SELECT date, taken_at FROM snapshots WHERE league = ? ORDER BY date DESC').all(league) as Array<{ date: string; taken_at: string }>;
+    /** Up to limit dates, newest first and strictly older than after; a snapshot is fetched by date. */
+    history(league: string, limit: number, after = '\uffff'): Array<{ date: string; takenAt: string }> {
+      const rows = db.prepare('SELECT date, taken_at FROM snapshots WHERE league = ? AND date < ? ORDER BY date DESC LIMIT ?').all(league, after, limit) as Array<{ date: string; taken_at: string }>;
       return rows.map((r) => ({ date: r.date, takenAt: r.taken_at }));
     },
     close: () => db.close(),

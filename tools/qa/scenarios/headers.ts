@@ -30,7 +30,7 @@ async function fakeServices(page: Page): Promise<void> {
   await page.route('**/apps/github/repos/fagerbergj/quack/pulls/2243', (r) => r.fulfill({ json: PULL }));
   await page.route('**/apps/sleeper/schedule', (r) => r.fulfill({ json: { runs: [], week: 9 } }));
   await page.route('**/apps/sleeper', (r) => r.fulfill({ json: { league: LEAGUE } }));
-  await page.route('**/apps/sleeper/waivers', (r) => r.fulfill({ json: { sessionKey: `sleeper:${LEAGUE}:9:waivers` } }));
+  await page.route('**/apps/sleeper/jobs/waivers/runs', (r) => r.fulfill({ json: { sessionKey: `sleeper:${LEAGUE}:9:waivers` } }));
 }
 
 // Without the mirror's answer the chip stays neutral and unnamed by state, so this fails if the fake stops matching.

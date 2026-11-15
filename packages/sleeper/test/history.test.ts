@@ -141,11 +141,11 @@ test('the history job starts on demand under the week key, and is never schedule
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const first = await post('/history');
-    assert.deepEqual([first.status, await first.json()], [202, { sessionKey: 'sleeper:H2:3:history', status: 202 }]);
+    const first = await post('/jobs/history/runs');
+    assert.deepEqual([first.status, await first.json()], [202, { sessionKey: 'sleeper:H2:3:history' }]);
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AH2%3A3%3Ahistory/invocations?agent=sleeper-history');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
-    assert.equal((await post('/history', 'GET')).status, 405);
+    assert.equal((await post('/jobs/history/runs', 'GET')).status, 405);
     assert.equal(calls.length, 1);
     assert.equal(historyKey('H2', 3), 'sleeper:H2:3:history');
   } finally {
