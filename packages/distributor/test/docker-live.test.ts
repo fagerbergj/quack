@@ -55,6 +55,7 @@ const SQUID_CONF = fileURLToPath(new URL('../egress/squid.conf', import.meta.url
 const egressProbe = `
 const fs = require('fs'), net = require('net'), { execFileSync } = require('child_process');
 const dial = (host, port) => new Promise((ok) => { const s = net.connect({ host, port, timeout: 3000 }); s.on('connect', () => (s.destroy(), ok(true))).on('error', () => ok(false)).on('timeout', () => (s.destroy(), ok(false))); });
+// Not api.github.com: its anonymous rate limit answers 403 for a shared CI address, which reads as a proxy denial.
 const status = (url) => fetch(url, { signal: AbortSignal.timeout(15000) }).then((r) => r.status, (e) => String(e.cause?.message ?? e.message));
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const clone = () => { try { execFileSync('git', ['ls-remote', 'https://github.com/fagerbergj/quack', 'HEAD'], { stdio: 'ignore', timeout: 20000 }); return true; } catch { return false; } };
@@ -64,7 +65,7 @@ const clone = () => { try { execFileSync('git', ['ls-remote', 'https://github.co
   let github = false;
   for (let i = 0; i < 20 && !github; i++) if (!(github = clone())) await pause(1000);
   const direct = { internet: await dial('1.1.1.1', 443), host: await dial(ip, +port), gateway: await dial(gateway, +port), published: await dial(ip, +published) };
-  const proxied = { host: await status('http://' + ip + ':' + port + '/'), tailnet: await status('http://100.64.0.6:18081/'), github, fetch: await status('https://api.github.com/zen') };
+  const proxied = { host: await status('http://' + ip + ':' + port + '/'), tailnet: await status('http://100.64.0.6:18081/'), github, fetch: await status('https://github.com/fagerbergj/quack/info/refs?service=git-upload-pack') };
   fs.writeFileSync('/session/report.json', JSON.stringify({ direct, proxied }));
 })();`;
 
