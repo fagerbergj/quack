@@ -38,11 +38,11 @@ async function run(name: string, config: JudgeConfig, script: Step[], refuse?: J
   const judge = await manifest.session!(config, {}, []);
   judged(note.kind, how(refuse));
   session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note])] } });
-  await session.submit('Write and submit the note.', `${name}-1`, true);
+  const result = await session.submit('Write and submit the note.', `${name}-1`, true);
   const versions = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))?.kinds[note.kind]?.versions ?? [];
   await session.close();
   const transcript = JSON.stringify((await readExport(join(dir, name))).transcript);
-  return { seen, versions, transcript, asked: seen.length };
+  return { seen, versions, transcript, asked: seen.length, answer: result.status === 'done' ? result.answer : undefined };
 }
 
 const passed = (v: { verdict: unknown }) => (v.verdict as { passed?: boolean } | null)?.passed ?? null;
@@ -55,12 +55,20 @@ test('a failed version comes back to revise; the passing one seals with the judg
   assert.deepEqual(r.versions.map(passed), [false, true]);
 });
 
-const finalRefusal = (v: number) => new RegExp(`test\\.note v${v} is delivered and final for this run, so this change to artifacts/note\\.md was not sealed; only a person's change request reopens it\\. This run is over\\.`);
+const firstRefusal = (outcome: string) => new RegExp(`test\\.note v2 ${outcome}, so it is final for this run and this change to artifacts/note\\.md was not sealed\\. Finish with your reply and seal nothing more`);
 
-test('a revision after a pass is refused, so the passed version stays the one delivered', async () => {
-  const r = await run('after-pass', { maxRevisions: 2 }, [write('no'), submit, write('ok'), submit, write('ok, and better'), submit, fauxAssistantMessage('should not be asked')]);
-  assert.match(r.transcript, finalRefusal(2));
-  assert.equal(r.asked, 6, 'the refusal ends the run');
+test('a revision after a pass is refused, the passed version stays the one delivered, and the writer\'s reply is the answer', async () => {
+  const r = await run('after-pass', { maxRevisions: 2 }, [write('no'), submit, write('ok'), submit, write('ok, and better'), submit, fauxAssistantMessage('Delivered v2.')]);
+  assert.match(r.seen[6], firstRefusal('passed and is delivered'));
+  assert.match(r.seen[6], /"isError":true/);
+  assert.equal(r.answer, 'Delivered v2.');
+  assert.deepEqual(r.versions.map(passed), [false, true]);
+});
+
+test('a second refused revision after a pass ends the run, with the passed version still the newest', async () => {
+  const r = await run('after-pass-twice', { maxRevisions: 2 }, [write('no'), submit, write('ok'), submit, write('ok, and better'), submit, write('ok, best'), submit, fauxAssistantMessage('should not be asked')]);
+  assert.equal(r.asked, 8, 'no request after the second refusal');
+  assert.match(r.transcript, /test\.note v2 passed and is delivered\. A second change after it was not sealed either, so this run is over\./);
   assert.deepEqual(r.versions.map(passed), [false, true]);
 });
 
@@ -79,10 +87,9 @@ test('a version still failing at the revision limit is released with its failure
 });
 
 test('a revision after the limit released a version is refused, so the limit holds for the run', async () => {
-  const r = await run('past', { maxRevisions: 1 }, [write('no'), submit, write('still no'), submit, write('ok'), submit, fauxAssistantMessage('should not be asked')]);
+  const r = await run('past', { maxRevisions: 1 }, [write('no'), submit, write('still no'), submit, write('ok'), submit, done]);
   assert.match(r.seen[4], /The revision limit is reached\. Deliver version 2 with these failures marked\./);
-  assert.match(r.transcript, finalRefusal(2));
-  assert.equal(r.asked, 6, 'the refusal ends the run');
+  assert.match(r.seen[6], firstRefusal('is delivered'));
   assert.deepEqual(r.versions.map(passed), [false, false], 'nothing past the released version is sealed');
 });
 

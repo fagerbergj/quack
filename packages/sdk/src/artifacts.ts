@@ -27,8 +27,8 @@ export type ArtifactLink = { label: string; url: string };
 
 export type SealedArtifact = {
   kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string; summary?: string; basis?: string;
-  /** The run input a judged version was delivered under by its seal tool; no other version of the kind seals until a newer input. */
-  final?: string;
+  /** Set by the seal tool on a judged version every gate passed: the run input it was delivered under, and the changed seals refused since. */
+  final?: { input: string; refused: number };
 };
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
@@ -65,8 +65,17 @@ const newestInput = async (api: ToolExecutionApi, ctx: Context) => {
   return id && String(id);
 };
 
-const finalMessage = (kind: ArtifactKind, last: SealedArtifact) =>
-  `${kind.kind} v${last.version} is delivered and final for this run, so this change to ${kind.path} was not sealed; only a person's change request reopens it. This run is over.`;
+const outcomeOf = (kind: ArtifactKind, last: SealedArtifact) => `${kind.kind} v${last.version} ${last.verdict?.passed ? 'passed and is delivered' : 'is delivered'}`;
+
+// The first change after a final version is refused so the writer can still reply; a second ends the run, so a looping writer costs one turn.
+async function refuseAfterFinal(api: ToolExecutionApi, kind: ArtifactKind, last: SealedArtifact, ctx: Context): Promise<never> {
+  const again = last.final!.refused > 0;
+  await updateSealed(api, kind.kind, last.version, ctx, (sealed) => void sealed.final!.refused++);
+  const said = again
+    ? `${outcomeOf(kind, last)}. A second change after it was not sealed either, so this run is over.`
+    : `${outcomeOf(kind, last)}, so it is final for this run and this change to ${kind.path} was not sealed. Finish with your reply and seal nothing more; only a person's change request reopens it.`;
+  throw new SealRefused(again ? { kind: 'deny', reason: said } : { kind: 'continue', feedback: said }, said);
+}
 
 // An unchanged file keeps its version but reruns the gates, so a failed delivery is retried; a deny or continue rejects with SealRefused,
 // as does a change after a final version. Throws with every schema problem when the file does not validate.
@@ -76,6 +85,8 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
   if (problems.length) throw new Error(`${kind.path} does not match ${kind.kind}:\n- ${problems.join('\n- ')}`);
   const hash = createHash('sha256').update(content).digest('hex');
   const [basis, input] = [await kind.basis?.(api, ctx), await newestInput(api, ctx)];
+  const newest = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[kind.kind]?.versions.at(-1);
+  if (input && newest?.final?.input === input && newest.hash !== hash) await refuseAfterFinal(api, kind, newest, ctx);
   const artifact = await api.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, api.conversationId);
     // Read back through the draft: `??=` yields the plain object assigned, and mutations to it are lost.
@@ -83,8 +94,6 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     const entry = doc.kinds[kind.kind];
     const last = entry.versions.at(-1);
     if (last?.hash === hash) return plain(last);
-    // A deny ends the run: a writer revising a delivered version would otherwise loop until the turn limit.
-    if (input && last?.final === input) throw new SealRefused({ kind: 'deny', reason: finalMessage(kind, last) }, finalMessage(kind, last));
     const sealed: SealedArtifact = { kind: kind.kind, version: entry.versions.length + 1, hash, content, sealedAt: api.now(), verdict: null };
     const outcome = kind.outcome?.(content);
     if (outcome) sealed.outcome = outcome;
@@ -149,7 +158,7 @@ function validateAfter(tool: ToolRegistration, kinds: ArtifactKind[]): ToolRegis
 async function markFinal(api: ToolExecutionApi, kind: ArtifactKind, version: number, ctx: Context): Promise<void> {
   const input = await newestInput(api, ctx);
   if (!input || !(await sealedVersion(api, kind.kind, version, ctx))?.verdict) return;
-  await updateSealed(api, kind.kind, version, ctx, (sealed) => void (sealed.final = input));
+  await updateSealed(api, kind.kind, version, ctx, (sealed) => void (sealed.final = sealed.final?.input === input ? sealed.final : { input, refused: 0 }));
 }
 
 const text = (t: string, isError = false): ToolExecutionResult => ({ output: [{ type: 'text', text: t }], ...(isError && { isError }) });
