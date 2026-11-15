@@ -14,6 +14,7 @@ import { ContextRail, openingOf, useDetails } from './Rail.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { useMenu } from './useMenu.ts';
 import { useDesktop } from './useDesktop.ts';
+import { useStickToBottom } from './useStickToBottom.ts';
 import { stepLabel } from './step.ts';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
@@ -327,7 +328,7 @@ function asksOf(studio: ReturnType<typeof studioFor>, approvals: Approval[], que
 }
 
 // A session has a pane beside the chat once it has something to show there: a studio always, any other session from its first sealed version.
-// Until the person picks a tab on a phone, it opens where a pending ask is answered, else on the pane.
+// Until the person picks a tab on a phone, it opens on the chat; a studio, whose contract is the point, opens on its pane unless an ask waits on the chat.
 function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
   const studio = studioFor(sessionKey);
   const [picked, setTab] = useState<Tab>();
@@ -339,7 +340,7 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const asks = asksOf(studio, approvals, questions);
   const shown = studio ? undefined : paneVersions(items, focus);
   const label = studio?.label ?? (shown && artifactName(shown.a));
-  const tab: Tab = !label ? 'chat' : (picked ?? (asks.inChat && !asks.inPane ? 'chat' : 'pane'));
+  const tab: Tab = !label ? 'chat' : (picked ?? (studio && !(asks.inChat && !asks.inPane) ? 'pane' : 'chat'));
   // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
   const steer: Send = async (input, whenBusy, images) => {
     if (!asks.owned.length) return send(input, whenBusy, images);
@@ -391,6 +392,11 @@ function Side({ live, rail, meta, ...props }: SideProps) {
   );
 }
 
+function JumpToLatest({ away, onClick }: { away: boolean; onClick: () => void }) {
+  if (!away) return null;
+  return <button type="button" aria-label="Jump to latest" title="Jump to latest" onClick={onClick} className={`${iconBtn} pointer-events-auto self-end bg-soft shadow-lift ring-1 ring-line-strong`}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg></button>;
+}
+
 export function SessionView({ sessionKey, agent, name, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
@@ -405,6 +411,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
+  const bottom = useStickToBottom();
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
@@ -420,8 +427,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
       <PaneTabs live={live} />
       <div ref={split.row} style={split.style} className="flex min-h-0 flex-1">
       <div {...live.panel('chat')} className={`relative flex min-h-0 min-w-0 flex-1 flex-col ${chat}`}>
-        <div className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
-          <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+        <div ref={bottom.scroller} onScroll={bottom.onScroll} className="relative mx-auto flex min-h-0 w-full max-w-[860px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5">
+          <div ref={bottom.content} className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <SessionKeyContext value={sessionKey}>
               <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} />
@@ -436,6 +443,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
         {/* On a phone the keyboard leaves room for an open answer field or the composer, not both; focus would flicker it under a tap. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 max-lg:group-has-[[data-answer]]/pane:hidden bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[860px] flex-col gap-2">
+            <JumpToLatest away={bottom.away} onClick={bottom.jump} />
             <Composer sessionKey={sessionKey} state={state} busy={live.busy} send={live.send} queued={queued} unqueue={unqueue} />
           </div>
         </div>
