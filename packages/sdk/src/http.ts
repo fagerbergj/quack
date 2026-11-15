@@ -11,8 +11,8 @@ export function safeEqual(given: string, expected: string): boolean {
 }
 
 /** An RFC 9457 problem reply; `error` repeats `detail` so readers that predate problem+json keep working. */
-export function sendProblem(res: ServerResponse, status: number, detail: string, extra?: object): void {
-  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail, ...extra }));
+export function sendProblem(res: ServerResponse, status: number, detail: string): void {
+  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail }));
 }
 
 /** Whether a body read failed on the app's own size limit, which the app answers 413. */

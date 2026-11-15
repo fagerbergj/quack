@@ -1,4 +1,4 @@
-import { type IncomingMessage, type ServerResponse } from 'node:http';
+import { STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
 import { createIngestQueue, INGEST_CONCURRENCY, type QueuedItem } from './queue.ts';
@@ -44,7 +44,9 @@ class Reject extends Error {
 
 function reply(res: ServerResponse, { status, message, extra, headers }: Reject) {
   for (const [k, v] of Object.entries(headers ?? {})) res.setHeader(k, v);
-  sendProblem(res, status, message, extra);
+  if (!extra) return sendProblem(res, status, message);
+  // shortcut: sendProblem cannot carry extension members, upgrade when #2346 lands
+  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status], status, detail: message, error: message, ...extra }));
 }
 
 // The body must be a JSON object with no field outside `known`.
