@@ -12,10 +12,14 @@ export function openStore(path: string, now: () => Date) {
     CREATE TABLE IF NOT EXISTS batch_requests (request TEXT PRIMARY KEY, batch TEXT NOT NULL REFERENCES batches(id));
     CREATE TABLE IF NOT EXISTS topics (name TEXT PRIMARY KEY COLLATE NOCASE);
   `);
+  const batchFor = (request: string) => (db.prepare('SELECT batch FROM batch_requests WHERE request = ?').get(request) as { batch: string } | undefined)?.batch;
   const settle = db.prepare('UPDATE batch_items SET status = ?, error = ? WHERE batch = ? AND document = ?');
 
   return {
     create(items: Array<{ document: string; name: string; version: string; attempt: number }>, request?: string): string {
+      // Synchronous, so a concurrent duplicate that passed the caller's earlier lookup still lands on the winner's batch.
+      const held = request === undefined ? undefined : batchFor(request);
+      if (held) return held;
       const id = randomUUID();
       db.prepare('INSERT INTO batches (id, created) VALUES (?, ?)').run(id, now().toISOString());
       if (request !== undefined) db.prepare('INSERT INTO batch_requests (request, batch) VALUES (?, ?)').run(request, id);
@@ -24,7 +28,7 @@ export function openStore(path: string, now: () => Date) {
       return id;
     },
     /** The batch an idempotency key first created; batches are never pruned, so the key is remembered for good. */
-    batchFor: (request: string) => (db.prepare('SELECT batch FROM batch_requests WHERE request = ?').get(request) as { batch: string } | undefined)?.batch,
+    batchFor,
     settle(batch: string, document: string, error?: string) {
       settle.run(error === undefined ? 'done' : 'failed', error ?? null, batch, document);
     },

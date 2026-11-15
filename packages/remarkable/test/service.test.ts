@@ -428,6 +428,22 @@ test('a requestId returns the original batch without requeueing, across a restar
   await second.stop();
 });
 
+test('two concurrent requests with one requestId share one batch', async () => {
+  const fetchOk = (async () => new Response('{"status":"done"}')) as unknown as typeof fetch;
+  // Both requests must be past the key lookup before either creates, so the listing holds until two have asked.
+  let asked = 0;
+  const bothAsked = Promise.withResolvers<void>();
+  const client = { tree: async () => [], documents: async () => (++asked === 2 && bothAsked.resolve(), await bothAsked.promise, [{ id: 'n2', name: 'n2', version: '1', modified: '' }]), downloadPdf: async () => Buffer.alloc(0), downloadRmdoc: async () => Buffer.alloc(0) };
+  const svc = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://d.test', fetch: fetchOk, agent: 'a', client });
+  const url = await listen(serveApp(svc));
+  after(() => svc.stop());
+  const post = () => fetch(`${url}/ingest`, { method: 'POST', body: JSON.stringify({ ids: ['n2'], requestId: 'race' }) });
+  const answers = await Promise.all([post(), post()]);
+  assert.deepEqual(answers.map((r) => r.status), [202, 202]);
+  const [a, b] = (await Promise.all(answers.map((r) => r.json()))) as any[];
+  assert.equal(a.batch, b.batch);
+});
+
 test('topics are paged by name with a token, and a bad pageSize or token is a 400', async () => {
   const { url } = await stub();
   const add = (name: string) => fetch(`${url}/topics`, { method: 'POST', body: JSON.stringify({ name }) });
