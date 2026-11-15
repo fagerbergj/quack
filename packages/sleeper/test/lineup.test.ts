@@ -289,15 +289,15 @@ test('the lineup job starts on demand under the week session key, each click its
   await Promise.all([service, bare].map((x) => new Promise<void>((r) => x.listen(0, r))));
   const post = (x: typeof service, path: string) => fetch(`http://127.0.0.1:${(x.address() as AddressInfo).port}${path}`, { method: 'POST', headers: { authorization: 'Bearer t' } });
   try {
-    const first = await post(service, '/lineup');
+    const first = await post(service, '/jobs/lineup/runs');
     assert.equal(first.status, 202);
-    assert.deepEqual(await first.json(), { sessionKey: 'sleeper:L1:9:lineup', status: 202 });
-    await post(service, '/lineup?week=9');
+    assert.deepEqual(await first.json(), { sessionKey: 'sleeper:L1:9:lineup' });
+    await post(service, '/jobs/lineup/runs?week=9');
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Alineup/invocations?agent=sleeper-lineup');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
     assert.notEqual(calls[0].body.requestId, calls[1].body.requestId);
-    assert.equal((await post(service, '/lineup?week=x')).status, 400);
-    assert.equal((await post(bare, '/lineup')).status, 501);
+    assert.equal((await post(service, '/jobs/lineup/runs?week=x')).status, 400);
+    assert.equal((await post(bare, '/jobs/lineup/runs')).status, 501);
   } finally {
     service.stop();
     bare.stop();

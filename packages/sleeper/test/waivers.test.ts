@@ -371,15 +371,15 @@ test('the waivers job starts on demand under the week session key, beside the li
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const first = await post('/waivers');
+    const first = await post('/jobs/waivers/runs');
     assert.equal(first.status, 202);
-    assert.deepEqual(await first.json(), { sessionKey: 'sleeper:L1:9:waivers', status: 202 });
-    await post('/waivers?week=9');
+    assert.deepEqual(await first.json(), { sessionKey: 'sleeper:L1:9:waivers' });
+    await post('/jobs/waivers/runs?week=9');
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Awaivers/invocations?agent=sleeper-waivers');
     assert.deepEqual(JSON.parse(calls[0].body.input), INPUT);
     assert.notEqual(calls[0].body.requestId, calls[1].body.requestId);
-    assert.equal((await post('/waivers?week=x')).status, 400);
-    assert.equal((await post('/waivers', 'GET')).status, 405);
+    assert.equal((await post('/jobs/waivers/runs?week=x')).status, 400);
+    assert.equal((await post('/jobs/waivers/runs', 'GET')).status, 405);
   } finally {
     service.stop();
   }

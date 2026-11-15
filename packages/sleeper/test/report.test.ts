@@ -269,8 +269,8 @@ test('the digest and retro start on demand under their own week session keys', a
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string) => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method: 'POST', headers: { authorization: 'Bearer t' } });
   try {
-    assert.deepEqual(await (await post('/digest?week=9')).json(), { sessionKey: 'sleeper:L1:9:digest', status: 202 });
-    assert.deepEqual(await (await post('/retro')).json(), { sessionKey: 'sleeper:L1:10:retro', status: 202 });
+    assert.deepEqual(await (await post('/jobs/digest/runs?week=9')).json(), { sessionKey: 'sleeper:L1:9:digest' });
+    assert.deepEqual(await (await post('/jobs/retro/runs')).json(), { sessionKey: 'sleeper:L1:10:retro' });
     assert.deepEqual(calls.map((c) => c.url), ['http://d/sessions/sleeper%3AL1%3A9%3Adigest/invocations?agent=sleeper-digest', 'http://d/sessions/sleeper%3AL1%3A10%3Aretro/invocations?agent=sleeper-retro']);
     assert.deepEqual(JSON.parse(calls[0].body.input), RECAP);
   } finally {

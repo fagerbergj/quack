@@ -15,9 +15,9 @@ export const runJob: Action<typeof params> = {
   async start({ job, week }, ctx) {
     const { url, token } = appEndpoint('sleeper');
     // The page's route runs a job in the service's configured league, so the model need not know its id.
-    const res = await ctx.fetch(`${url}/${job}${week ? `?week=${week}` : ''}`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
-    const body = (await res.json().catch(() => ({}))) as { sessionKey?: string; error?: string };
-    if (!res.ok || !body.sessionKey) throw new Error(body.error ?? `the Sleeper service refused the job: HTTP ${res.status}`);
+    const res = await ctx.fetch(`${url}/jobs/${job}/runs${week ? `?week=${week}` : ''}`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    const body = (await res.json().catch(() => ({}))) as { sessionKey?: string; detail?: string; error?: string };
+    if (!res.ok || !body.sessionKey) throw new Error(body.detail ?? body.error ?? `the Sleeper service refused the job: HTTP ${res.status}`);
     return { session: body.sessionKey, title: `Sleeper ${job}${week ? `, week ${week}` : ''}` };
   },
 };

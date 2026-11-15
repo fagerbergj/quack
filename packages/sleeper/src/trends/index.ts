@@ -21,7 +21,15 @@ export function trendsFromEnv(env: Record<string, string | undefined> = process.
       if (!res.ok) throw new Error(`sleeper service: snapshot for ${league} returned ${res.status}`);
       return res.json();
     },
-    history: async (league) => (await get(path(league))).snapshots,
+    history: async (league) => {
+      const all: Array<{ date: string; takenAt: string }> = [];
+      for (let token = ''; ;) {
+        const page = await get(`${path(league)}?${new URLSearchParams({ pageSize: '1000', ...(token && { pageToken: token }) })}`);
+        all.push(...page.snapshots);
+        if (!page.nextPageToken) return all;
+        token = page.nextPageToken;
+      }
+    },
     snapshotOn: (league, date) => get(`${path(league)}/${date}`),
   };
   return trendsWorkflow(deps);

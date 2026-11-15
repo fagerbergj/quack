@@ -23,7 +23,7 @@ export const manifest: ExtensionManifest = {
   settings: settingsProblems,
   app: sleeperApp,
   peers: ['schedules'],
-  pages: [{ method: 'GET', path: '/' }, { method: 'GET', path: '/schedule' }, { method: 'POST', path: /^\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/ }],
+  pages: [{ method: 'GET', path: '/' }, { method: 'GET', path: '/schedule' }, { method: 'POST', path: /^\/jobs\/(lineup|waivers|trends|digest|retro|trade-finder|history)\/runs$/ }],
   evalAdapters: cardAdapters,
   actions: [runJob],
   workflows: {

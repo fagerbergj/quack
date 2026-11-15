@@ -191,12 +191,12 @@ test('the finder starts on demand under the week key', async () => {
   await new Promise<void>((r) => service.listen(0, r));
   const post = (path: string, method = 'POST') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
-    const finder = await post('/trade-finder');
-    assert.deepEqual([finder.status, await finder.json()], [202, { sessionKey: 'sleeper:L1:9:trade-finder', status: 202 }]);
+    const finder = await post('/jobs/trade-finder/runs');
+    assert.deepEqual([finder.status, await finder.json()], [202, { sessionKey: 'sleeper:L1:9:trade-finder' }]);
     assert.equal(calls[0].url, 'http://d/sessions/sleeper%3AL1%3A9%3Atrade-finder/invocations?agent=sleeper-trade-finder');
     assert.deepEqual(JSON.parse(calls[0].body.input), FINDER);
-    assert.equal((await post('/trade-finder?week=x')).status, 400);
-    assert.equal((await post('/trade-finder', 'GET')).status, 405);
+    assert.equal((await post('/jobs/trade-finder/runs?week=x')).status, 400);
+    assert.equal((await post('/jobs/trade-finder/runs', 'GET')).status, 405);
     assert.equal(calls.length, 1);
   } finally {
     service.stop();
