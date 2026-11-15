@@ -45,6 +45,14 @@ test('a starter drop and the picks a history note cites are drawn from the card 
   expect(screen.getByText('Pick 54 Cooper Kupp: WR3 drafted, WR32 finish, Reach')).toBeInTheDocument();
 });
 
+test('a history card sealed before seasons carried cited still draws', () => {
+  const h = JSON.parse(history8.content);
+  for (const s of h.seasons) delete s.cited;
+  pane({ ...(history8 as unknown as SealedArtifact), content: JSON.stringify(h) });
+  expect(screen.getByRole('article', { name: 'League history' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('JSON')).not.toBeInTheDocument();
+});
+
 test('a card whose shape does not match falls back to the JSON tree, not text', () => {
   const bad = sealed(JSON.stringify({ kind: 'waivers', candidates: [{ rank: 1 }] }));
   render(<ArtifactBoundary artifact={bad}>{artifactCard(bad)}</ArtifactBoundary>);

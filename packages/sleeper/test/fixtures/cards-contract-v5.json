@@ -1,0 +1,1768 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "Sleeper card",
+ "description": "The JSON a Sleeper job seals as the sleeper.cards artifact (the workspace file cards.json). Exactly one job's card; the kind names which one, and the page and the job's eval adapter read it by that field. The contract describes cards sealed from this version on: validate() runs only at seal time, so older stored cards are never re-validated, and readers keep tolerating what their writer omitted (the page already reads (s.cited ?? []) for history seasons).",
+ "type": "object",
+ "oneOf": [
+  {
+   "$ref": "#/$defs/lineup"
+  },
+  {
+   "$ref": "#/$defs/waivers"
+  },
+  {
+   "$ref": "#/$defs/digest"
+  },
+  {
+   "$ref": "#/$defs/retro"
+  },
+  {
+   "$ref": "#/$defs/trade-finder"
+  },
+  {
+   "$ref": "#/$defs/trends"
+  },
+  {
+   "$ref": "#/$defs/history"
+  }
+ ],
+ "examples": [
+  {
+   "kind": "trends",
+   "league": "1234567",
+   "week": 11,
+   "date": "2026-11-14",
+   "since": "2026-11-13",
+   "summary": "1 item since 2026-11-13.",
+   "items": [],
+   "source_note": ""
+  },
+  {
+   "kind": "lineup",
+   "league": "1234567",
+   "week": 11,
+   "team": "Ducks",
+   "opponent": "Gooses",
+   "my_proj": 142.35,
+   "opp_proj": 138.2,
+   "summary": "Start Lamar Jackson over Drake Maye at QB.",
+   "starters": [
+    {
+     "slot": "QB",
+     "player": {
+      "id": "4881",
+      "name": "Lamar Jackson",
+      "pos": "QB",
+      "team": "BAL",
+      "inj": null
+     },
+     "proj": 24.1,
+     "action": "start",
+     "locked": false,
+     "replaces": {
+      "id": "5321",
+      "name": "Drake Maye",
+      "pos": "QB",
+      "team": "NE",
+      "inj": null
+     },
+     "game": {
+      "opponent": "GB",
+      "home": false,
+      "kickoff": "2026-11-14T23:00:00.000Z",
+      "locked": false,
+      "status": null
+     },
+     "why": "Top fantasy ADP and his game is still open.",
+     "news": [
+      {
+       "title": "Lamar Jackson named the Ravens' starter",
+       "url": "https://www.espn.com/nfl/story/_/id/45000/lamar-jackson-starts",
+       "date": "2026-11-14T12:30:00Z",
+       "excerpt": "...the Ravens said Lamar Jackson is the starter Sunday...",
+       "player": "Lamar Jackson"
+      }
+     ]
+    },
+    {
+     "slot": "RB1",
+     "player": {
+      "id": "1200",
+      "name": "Bijan Robinson",
+      "pos": "RB1",
+      "team": "ATL",
+      "inj": null
+     },
+     "proj": 18.4,
+     "action": "keep",
+     "locked": true,
+     "replaces": null,
+     "game": {
+      "opponent": "SF",
+      "home": true,
+      "kickoff": "2026-11-15T00:20:00.000Z",
+      "locked": true,
+      "status": "in progress"
+     },
+     "why": "Locked: the game has started.",
+     "news": []
+    }
+   ],
+   "bench": [
+    {
+     "player": {
+      "id": "999",
+      "name": "Free Agent Guy",
+      "pos": "WR2",
+      "team": null,
+      "inj": null
+     },
+     "proj": 12.9,
+     "game": null
+    }
+   ]
+  }
+ ],
+ "$defs": {
+  "lineup": {
+   "description": "Lineup card: the starters and bench for the current week.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the lineup job's.",
+     "const": "lineup",
+     "examples": [
+      "lineup"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "team": {
+     "description": "The user's roster display name.",
+     "type": "string"
+    },
+    "opponent": {
+     "description": "The opponent's roster display name; null when the team has no game that week.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "my_proj": {
+     "description": "Projected points of the starters shown, summed by code and rounded to two decimals.",
+     "type": "number"
+    },
+    "opp_proj": {
+     "description": "Projected points of the opponent's Sleeper lineup; null when there is no opponent.",
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "summary": {
+     "description": "The code's reading of the card: one 'Start X over Y' line per change, or the no-changes line. Written by code from the rows, never by the model.",
+     "type": "string"
+    },
+    "starters": {
+     "description": "One row per slot, in slot order, each with the player in the slot and why he is there.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "slot": {
+        "description": "The slot name, e.g. QB, RB1.",
+        "type": "string"
+       },
+       "player": {
+        "$ref": "#/$defs/playerRef",
+        "description": "The player in the slot."
+       },
+       "proj": {
+        "description": "The player's projection for the week, from the facts.",
+        "type": "number"
+       },
+       "action": {
+        "description": "What the model did to this slot: 'start' changed the starter, 'keep' left the incumbent in.",
+        "type": "string",
+        "enum": [
+         "start",
+         "keep"
+        ]
+       },
+       "locked": {
+        "description": "True when the slot's game has already started, so the player is locked in by construction.",
+        "type": "boolean"
+       },
+       "replaces": {
+        "description": "The incumbent the starter moved over; null when the slot is unchanged or was empty.",
+        "anyOf": [
+         {
+          "$ref": "#/$defs/playerRef"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "game": {
+        "description": "The player's game this week; null when he has none.",
+        "anyOf": [
+         {
+          "$ref": "#/$defs/game"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "why": {
+        "description": "The model's one-line reason for this slot.",
+        "type": "string"
+       },
+       "news": {
+        "description": "News the code attached for the starter and, on a change, the replaced player, so a link is never the model's to copy.",
+        "$ref": "#/$defs/playerNewsList"
+       }
+      },
+      "required": [
+       "slot",
+       "player",
+       "proj",
+       "action",
+       "locked",
+       "replaces",
+       "game",
+       "why",
+       "news"
+      ],
+      "additionalProperties": true
+     }
+    },
+    "bench": {
+     "description": "The roster players not started, best projection first; injury-reserve, taxi and empty-slot players are excluded by the facts.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "player": {
+        "$ref": "#/$defs/playerRef",
+        "description": "The bench player."
+       },
+       "proj": {
+        "description": "The player's projection for the week, from the facts.",
+        "type": "number"
+       },
+       "game": {
+        "description": "The player's game this week; null when he has none.",
+        "anyOf": [
+         {
+          "$ref": "#/$defs/game"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       }
+      },
+      "required": [
+       "player",
+       "proj",
+       "game"
+      ],
+      "additionalProperties": true
+     }
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "team",
+    "opponent",
+    "my_proj",
+    "opp_proj",
+    "summary",
+    "starters",
+    "bench"
+   ],
+   "additionalProperties": true
+  },
+  "waivers": {
+   "description": "Waivers card: the week's claims and the players checked and passed.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the waivers job's.",
+     "const": "waivers",
+     "examples": [
+      "waivers"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "team": {
+     "description": "The user's roster display name.",
+     "type": "string"
+    },
+    "waiver_type": {
+     "description": "The league's waiver type, as the code reads it from the league settings: rolling or reverse_standings is a queue, faab is bidding.",
+     "type": "string",
+     "enum": [
+      "rolling",
+      "reverse_standings",
+      "faab"
+     ],
+     "examples": [
+      "rolling",
+      "faab"
+     ]
+    },
+    "my_priority": {
+     "description": "The team's position in the waiver queue; null when Sleeper sends no waiver_position.",
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "faab_left": {
+     "description": "The FAAB bids left in the league — the budget minus the bids used, before this card's bid; null in a non-faab league, where the queue is the currency.",
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "teams": {
+     "description": "The number of teams in the league.",
+     "type": "integer"
+    },
+    "summary": {
+     "description": "The model's summary of the week's wire; the code substitutes the no-claims line only when the model listed no candidates and its text does not already say 'no claim'.",
+     "type": "string"
+    },
+    "candidates": {
+     "description": "The model's claims in its order, ranked from 1.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "rank": {
+        "description": "The claim's rank, 1-based, in the model's order.",
+        "type": "integer"
+       },
+       "player": {
+        "description": "The free agent the claim adds.",
+        "$ref": "#/$defs/playerRef"
+       },
+       "proj": {
+        "description": "The player's projection for the week, from the facts.",
+        "type": "number"
+       },
+       "owned_pct": {
+        "description": "Sleeper's platform-wide ownership percent for the player — the share of all Sleeper leagues that own him, not just the teams in this league; null when the data has none.",
+        "type": [
+         "number",
+         "null"
+        ]
+       },
+       "adds_24h": {
+        "description": "The player's added-ownership count over the last 24 hours; present only when the data provides a count.",
+        "type": "number"
+       },
+       "bye": {
+        "description": "The NFL week the player's team is on bye; null when there is none.",
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "drop": {
+        "description": "The roster player the claim drops.",
+        "type": "object",
+        "properties": {
+         "player": {
+          "$ref": "#/$defs/playerRef",
+          "description": "The roster player the claim drops."
+         },
+         "role": {
+          "description": "The drop's role on the roster: a starter, a bench player, or an injury-reserve player.",
+          "type": "string",
+          "enum": [
+           "starter",
+           "bench",
+           "ir"
+          ]
+         }
+        },
+        "required": [
+         "player",
+         "role"
+        ],
+        "additionalProperties": true
+       },
+       "size": {
+        "description": "How much the claim costs, in the league's own currency.",
+        "oneOf": [
+         {
+          "description": "A faab bid, with the budget left and its share of it.",
+          "type": "object",
+          "properties": {
+           "kind": {
+            "description": "Discriminator for the size: a faab bid.",
+            "const": "faab"
+           },
+           "bid": {
+            "description": "The bid the model made, whole bids.",
+            "type": "integer"
+           },
+           "left": {
+            "description": "The FAAB bids left in the league before the bid; the percentage is the bid over this number.",
+            "type": "number"
+           },
+           "pct": {
+            "description": "The bid's whole-number share of the FAAB left, 0-100.",
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "bid",
+           "left",
+           "pct"
+          ],
+          "additionalProperties": true
+         },
+         {
+          "description": "The queue position the claim spends.",
+          "type": "object",
+          "properties": {
+           "kind": {
+            "description": "Discriminator for the size: the priority queue position.",
+            "const": "priority"
+           },
+           "position": {
+            "description": "The team's queue position; null when the league has no queue position for the team.",
+            "type": [
+             "integer",
+             "null"
+            ]
+           },
+           "of": {
+            "description": "The number of teams the position is out of.",
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "position",
+           "of"
+          ],
+          "additionalProperties": true
+         }
+        ]
+       },
+       "why": {
+        "description": "The model's one-line reason for the claim.",
+        "type": "string"
+       },
+       "news": {
+        "description": "News the code attached for the add and the drop, so a link is never the model's to copy.",
+        "$ref": "#/$defs/playerNewsList"
+       }
+      },
+      "required": [
+       "rank",
+       "player",
+       "proj",
+       "owned_pct",
+       "bye",
+       "drop",
+       "size",
+       "why",
+       "news"
+      ],
+      "additionalProperties": true
+     }
+    },
+    "also_checked": {
+     "description": "Free agents the model looked at and passed, each with its reason.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "player": {
+        "$ref": "#/$defs/playerRef",
+        "description": "The free agent the model passed on."
+       },
+       "why": {
+        "description": "The model's one-line reason to pass.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "player",
+       "why"
+      ],
+      "additionalProperties": true
+     }
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "team",
+    "waiver_type",
+    "my_priority",
+    "faab_left",
+    "teams",
+    "summary",
+    "candidates",
+    "also_checked"
+   ],
+   "additionalProperties": true
+  },
+  "digest": {
+   "description": "Digest card: the league's games for the week, in preview or recap.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the digest job's.",
+     "const": "digest",
+     "examples": [
+      "digest"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "past": {
+     "description": "True when the week has been played (a recap of final scores); false for a preview before the week.",
+     "type": "boolean"
+    },
+    "summary": {
+     "description": "The model's story for the week.",
+     "type": "string"
+    },
+    "games": {
+     "description": "One row per matchup; the lower roster id is listed first, since Sleeper has no home side.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "id": {
+        "description": "The Sleeper matchup id.",
+        "type": "integer"
+       },
+       "home": {
+        "$ref": "#/$defs/digestSide",
+        "description": "The first side of the matchup; Sleeper has no home side, so the lower roster id is listed first."
+       },
+       "away": {
+        "$ref": "#/$defs/digestSide",
+        "description": "The second side of the matchup."
+       },
+       "margin": {
+        "description": "The absolute point gap between the two sides, rounded to two decimals.",
+        "type": "number"
+       },
+       "mine": {
+        "description": "True when the user's roster is one of the sides.",
+        "type": "boolean"
+       },
+       "note": {
+        "description": "The model's one-line note for the game; the empty string when it wrote none.",
+        "type": "string"
+       },
+       "news": {
+        "description": "News the code attached for the game's top scorers and designated starters, so a link is never the model's to copy.",
+        "$ref": "#/$defs/playerNewsList"
+       }
+      },
+      "required": [
+       "id",
+       "home",
+       "away",
+       "margin",
+       "mine",
+       "note",
+       "news"
+      ],
+      "additionalProperties": true
+     }
+    },
+    "playoff_line": {
+     "description": "The playoff race as the card was written.",
+     "type": "object",
+     "properties": {
+      "teams": {
+       "description": "The number of playoff teams.",
+       "type": "integer"
+      },
+      "remaining_weeks": {
+       "description": "The weeks left in the season.",
+       "type": "integer"
+      },
+      "standings": {
+       "$ref": "#/$defs/standingList",
+       "description": "The league standings, best first."
+      }
+     },
+     "required": [
+      "teams",
+      "remaining_weeks",
+      "standings"
+     ],
+     "additionalProperties": true
+    },
+    "source_note": {
+     "description": "The code's note on where the points come from: final scores in a recap, and the averaging rule in a preview.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "past",
+    "summary",
+    "games",
+    "playoff_line",
+    "source_note"
+   ],
+   "additionalProperties": true
+  },
+  "retro": {
+   "description": "Retro card: the week looked back on — the best lineup, the missed swaps, and the misses knowable before kickoff.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the retro job's.",
+     "const": "retro",
+     "examples": [
+      "retro"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "team": {
+     "description": "The user's roster display name.",
+     "type": "string"
+    },
+    "opponent": {
+     "description": "The opponent's roster display name; null on a bye.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "bye": {
+     "description": "True on a bye week, when the matchup has no opponent.",
+     "type": "boolean"
+    },
+    "started": {
+     "description": "The points the started lineup scored, rounded to two decimals.",
+     "type": "number"
+    },
+    "opp": {
+     "description": "The opponent's points; null on a bye.",
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "won": {
+     "description": "Whether the team won the week's matchup; false on a bye.",
+     "type": "boolean"
+    },
+    "best": {
+     "description": "The best legal lineup's points for the week, from the facts.",
+     "type": "number"
+    },
+    "left": {
+     "description": "The points the best lineup left over the started one: best minus started.",
+     "type": "number"
+    },
+    "misses": {
+     "description": "Best-lineup players who did not start, each paired with the lowest-scoring legal starter he could have replaced.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "slot": {
+        "description": "The slot the replacement would have played.",
+        "type": "string"
+       },
+       "started": {
+        "description": "The starter who was in the slot.",
+        "$ref": "#/$defs/namePts"
+       },
+       "better": {
+        "description": "The bench player who should have started instead.",
+        "$ref": "#/$defs/namePts"
+       },
+       "swing": {
+        "description": "The points gained by the swap: better minus started.",
+        "type": "number"
+       },
+       "knowable": {
+        "description": "True only when the model cited a link the code attached that is dated before the row's cutoff.",
+        "type": "boolean"
+       },
+       "signal": {
+        "description": "The pre-kickoff signal that made the miss knowable; null when none was found.",
+        "anyOf": [
+         {
+          "$ref": "#/$defs/playerNews"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "before": {
+        "description": "The ISO 8601 instant a signal must have preceded: the earlier of the two players' kickoffs.",
+        "type": "string"
+       },
+       "why": {
+        "description": "The model's one-line reading of the miss; the code's no-signal line when it wrote none.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "slot",
+       "started",
+       "better",
+       "swing",
+       "knowable",
+       "signal",
+       "before",
+       "why"
+      ],
+      "additionalProperties": true
+     }
+    },
+    "waiver_misses": {
+     "description": "Free agents who outscored a legal starter, judged against the last waiver run before kickoff.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "description": "The free agent's name.",
+        "type": "string"
+       },
+       "pos": {
+        "description": "The free agent's position.",
+        "type": "string"
+       },
+       "pts": {
+        "description": "The free agent's points for the week.",
+        "type": "number"
+       },
+       "over_name": {
+        "description": "The starter he would have replaced.",
+        "type": "string"
+       },
+       "over_pts": {
+        "description": "That starter's points for the week.",
+        "type": "number"
+       },
+       "knowable": {
+        "description": "True only when the model cited a link the code attached that is dated before the row's cutoff.",
+        "type": "boolean"
+       },
+       "signal": {
+        "description": "The pre-waiver-run signal that made the miss knowable; null when none was found.",
+        "anyOf": [
+         {
+          "$ref": "#/$defs/playerNews"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "before": {
+        "description": "The ISO 8601 instant the last waiver run before the week's kickoff: a signal must have preceded it.",
+        "type": "string"
+       },
+       "why": {
+        "description": "The model's one-line reading of the miss; the code's no-signal line when it wrote none.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "pos",
+       "pts",
+       "over_name",
+       "over_pts",
+       "knowable",
+       "signal",
+       "before",
+       "why"
+      ],
+      "additionalProperties": true
+     }
+    },
+    "lessons": {
+     "description": "The model's process fixes, at most three: the model's decision schema caps the array at three and the builder keeps the first three it was given.",
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 3
+    },
+    "summary": {
+     "description": "The model's summary of the week.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "team",
+    "opponent",
+    "bye",
+    "started",
+    "opp",
+    "won",
+    "best",
+    "left",
+    "misses",
+    "waiver_misses",
+    "lessons",
+    "summary"
+   ],
+   "additionalProperties": true
+  },
+  "trade-finder": {
+   "description": "Trade-finder card: the deals worth asking about this week.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the trade-finder job's.",
+     "const": "trade-finder",
+     "examples": [
+      "trade-finder"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "team": {
+     "description": "The user's roster display name.",
+     "type": "string"
+    },
+    "summary": {
+     "description": "The model's summary of the deals; the code substitutes the no-deals line only when the model listed no suggestions and its text does not already say 'no deal'.",
+     "type": "string"
+    },
+    "suggestions": {
+     "description": "The model's deals in its order, ranked from 1; at most three, one player each way, each taking one of the partner's surplus players — the builder throws on a fourth.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "rank": {
+        "description": "The deal's rank, 1-based, in the model's order.",
+        "type": "integer"
+       },
+       "partner": {
+        "description": "The other team in the deal.",
+        "type": "object",
+        "properties": {
+         "rosterId": {
+          "description": "The partner's Sleeper roster id.",
+          "type": "integer"
+         },
+         "team": {
+          "description": "The partner's roster display name.",
+          "type": "string"
+         },
+         "record": {
+          "description": "The partner's win-loss-tie record, e.g. 7-3-1.",
+          "type": "string"
+         },
+         "stance": {
+          "description": "The partner's standing as the code computes it: in the playoff line is a contender, below it a rebuilder.",
+          "type": "string",
+          "enum": [
+           "contender",
+           "rebuilder"
+          ]
+         },
+         "needs": {
+          "description": "The partner's need by position, from the facts; one number per position it wants.",
+          "type": "object",
+          "additionalProperties": {
+           "type": "number"
+          }
+         }
+        },
+        "required": [
+         "rosterId",
+         "team",
+         "record",
+         "stance",
+         "needs"
+        ],
+        "additionalProperties": true
+       },
+       "partner_need": {
+        "description": "The model's line on what the deal does for the partner.",
+        "type": "string"
+       },
+       "give": {
+        "description": "The user's player in the deal, with his projection.",
+        "$ref": "#/$defs/tRef"
+       },
+       "get": {
+        "description": "The partner's surplus player in the deal, with his projection.",
+        "$ref": "#/$defs/tRef"
+       },
+       "delta": {
+        "description": "The projection swing this week, per side: what each receives minus what each sends.",
+        "type": "object",
+        "properties": {
+         "you": {
+          "description": "The user's projection swing.",
+          "type": "number"
+         },
+         "partner": {
+          "description": "The partner's projection swing.",
+          "type": "number"
+         }
+        },
+        "required": [
+         "you",
+         "partner"
+        ],
+        "additionalProperties": true
+       },
+       "note": {
+        "description": "The model's one-line note for the deal.",
+        "type": "string"
+       },
+       "news": {
+        "description": "News the code attached for both players in the deal, so a link is never the model's to copy.",
+        "$ref": "#/$defs/playerNewsList"
+       }
+      },
+      "required": [
+       "rank",
+       "partner",
+       "partner_need",
+       "give",
+       "get",
+       "delta",
+       "note",
+       "news"
+      ],
+      "additionalProperties": true
+     },
+     "maxItems": 3
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "team",
+    "summary",
+    "suggestions"
+   ],
+   "additionalProperties": true
+  },
+  "trends": {
+   "description": "Trends card: the league's movements since the previous snapshot.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the trends job's.",
+     "const": "trends",
+     "examples": [
+      "trends"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "date": {
+     "description": "The snapshot day this run reads, YYYY-MM-DD.",
+     "type": "string"
+    },
+    "since": {
+     "description": "The previous snapshot day diffed against, YYYY-MM-DD; null on the first snapshot, which has nothing to compare with.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "summary": {
+     "description": "The code's count of the items, or the first-snapshot line when there is no since.",
+     "type": "string"
+    },
+    "items": {
+     "$ref": "#/$defs/trendItemList",
+     "description": "The league's movements, newest first."
+    },
+    "source_note": {
+     "description": "The model's note on its sources.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "date",
+    "since",
+    "summary",
+    "items",
+    "source_note"
+   ],
+   "additionalProperties": true
+  },
+  "trendItem": {
+   "description": "One movement in the league: an injury or depth change, a waiver riser, dated news, or the model's note.",
+   "type": "object",
+   "properties": {
+    "time": {
+     "description": "When it happened, 'YYYY-MM-DD (Day)' in the league's clock.",
+     "type": "string",
+     "examples": [
+      "2026-11-06 (Fri)"
+     ]
+    },
+    "source": {
+     "description": "Who reported it: 'Sleeper' for a field the snapshot diffed, otherwise the outlet the model named.",
+     "type": "string"
+    },
+    "kind": {
+     "description": "The movement's kind.",
+     "type": "string",
+     "enum": [
+      "injury",
+      "waiver",
+      "news",
+      "note"
+     ]
+    },
+    "player": {
+     "description": "The player the item is about; present only when the item names one.",
+     "type": "object",
+     "properties": {
+      "id": {
+       "description": "The player's Sleeper id.",
+       "type": "string"
+      },
+      "name": {
+       "description": "The player's name.",
+       "type": "string"
+      },
+      "pos": {
+       "description": "The player's position; null when the data has none.",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "team": {
+       "description": "The player's team; null when he is a free agent.",
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "inj": {
+       "description": "The player's injury designation; null when the data has none.",
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "required": [
+      "id",
+      "name",
+      "pos",
+      "team",
+      "inj"
+     ],
+     "additionalProperties": true
+    },
+    "text": {
+     "description": "The item's one sentence; the model's decision schema caps it at 160 characters so one sentence stays one line — the builder does not re-check it.",
+     "type": "string",
+     "maxLength": 160
+    },
+    "link": {
+     "description": "The news item the model linked for the player; present only when the item is a link, never a url the model invented.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "time",
+    "source",
+    "kind",
+    "text"
+   ],
+   "additionalProperties": true
+  },
+  "trendItemList": {
+   "description": "The league's movements, newest first.",
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/trendItem"
+   }
+  },
+  "history": {
+   "description": "History card: the team's seasons, newest first, with the model's net-position read per season.",
+   "type": "object",
+   "properties": {
+    "kind": {
+     "description": "Discriminator; this card is the history job's.",
+     "const": "history",
+     "examples": [
+      "history"
+     ]
+    },
+    "league": {
+     "description": "The Sleeper league id the card is about.",
+     "type": "string"
+    },
+    "week": {
+     "description": "The Sleeper week the card is about.",
+     "type": "integer"
+    },
+    "team": {
+     "description": "The user's roster display name.",
+     "type": "string"
+    },
+    "definitions": {
+     "description": "The definitions behind the figures, declared once on the card so the reader and the judge share the one rule.",
+     "type": "object",
+     "properties": {
+      "reach_steal": {
+       "description": "When a draft pick counts as a reach or a steal, in position-rank gap.",
+       "type": "string"
+      },
+      "efficiency": {
+       "description": "How the season efficiency figure is computed.",
+       "type": "string"
+      },
+      "close_loss": {
+       "description": "What counts as a close loss.",
+       "type": "string"
+      },
+      "left": {
+       "description": "How the points-left-on-the-bench figure is computed per week.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "reach_steal",
+      "efficiency",
+      "close_loss",
+      "left"
+     ],
+     "additionalProperties": true
+    },
+    "seasons": {
+     "description": "The team's seasons, newest first, each with its figures and the model's read.",
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/season"
+     }
+    },
+    "summary": {
+     "description": "The model's summary of the team's seasons.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "kind",
+    "league",
+    "week",
+    "team",
+    "definitions",
+    "seasons",
+    "summary"
+   ],
+   "additionalProperties": true
+  },
+  "season": {
+   "description": "One season's figures, plus the model's note and the draft rows it discusses.",
+   "type": "object",
+   "properties": {
+    "season": {
+     "description": "The Sleeper season label, e.g. 2025.",
+     "type": "string"
+    },
+    "league_id": {
+     "description": "The Sleeper league id for that season; older seasons are earlier leagues in the chain.",
+     "type": "string"
+    },
+    "in_progress": {
+     "description": "True while the season is being played.",
+     "type": "boolean"
+    },
+    "wins": {
+     "description": "Regular-season wins.",
+     "type": "integer"
+    },
+    "losses": {
+     "description": "Regular-season losses.",
+     "type": "integer"
+    },
+    "ties": {
+     "description": "Regular-season ties.",
+     "type": "integer"
+    },
+    "pf": {
+     "description": "Points for, rounded to two decimals.",
+     "type": "number"
+    },
+    "pa": {
+     "description": "Points against, rounded to two decimals.",
+     "type": "number"
+    },
+    "pf_rank": {
+     "description": "The roster's rank by points for, 1 best: the most points for.",
+     "type": "integer"
+    },
+    "pa_rank": {
+     "description": "The roster's rank by points against, 1 best: the fewest against.",
+     "type": "integer"
+    },
+    "eff": {
+     "description": "Season points scored over the best possible points, as a percentage; null when Sleeper reports no best possible.",
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "left_total": {
+     "description": "The season's total points left on the bench, week over week.",
+     "type": "number"
+    },
+    "close_losses": {
+     "description": "The number of close losses, per the card's close_loss definition.",
+     "type": "integer"
+    },
+    "champion": {
+     "description": "The season champion's roster display name; null when there is no finished bracket to name one.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "weeks": {
+     "description": "The regular season's weeks, in order; a week without a matchup is absent.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "week": {
+        "description": "The Sleeper week number.",
+        "type": "integer"
+       },
+       "result": {
+        "description": "The week's result against the opponent; null when the team was on bye.",
+        "type": [
+         "string",
+         "null"
+        ],
+        "enum": [
+         "W",
+         "L",
+         "T",
+         null
+        ]
+       },
+       "started": {
+        "description": "The started lineup's points for the week.",
+        "type": "number"
+       },
+       "best": {
+        "description": "The best legal lineup's points for the week.",
+        "type": "number"
+       },
+       "left": {
+        "description": "The points the best lineup left over the started one.",
+        "type": "number"
+       },
+       "opp": {
+        "description": "The opponent's points; null on a bye.",
+        "type": [
+         "number",
+         "null"
+        ]
+       },
+       "close_loss": {
+        "description": "Whether the week was a loss inside the close-loss margin.",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "week",
+       "result",
+       "started",
+       "best",
+       "left",
+       "opp",
+       "close_loss"
+      ],
+      "additionalProperties": true
+     }
+    },
+    "draft": {
+     "description": "The team's draft picks, graded; null while the season is in progress, when there is no finish to grade against.",
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "$ref": "#/$defs/draftFigure"
+     }
+    },
+    "note": {
+     "description": "The model's read of the season; null when it wrote none.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "cited": {
+     "description": "The draft rows the note discusses, in pick order; empty when it cites none. Readers keep the (s.cited ?? []) fallback, because history cards sealed before this contract lack cited.",
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/draftFigure"
+     }
+    }
+   },
+   "required": [
+    "season",
+    "league_id",
+    "in_progress",
+    "wins",
+    "losses",
+    "ties",
+    "pf",
+    "pa",
+    "pf_rank",
+    "pa_rank",
+    "eff",
+    "left_total",
+    "close_losses",
+    "champion",
+    "weeks",
+    "draft",
+    "note",
+    "cited"
+   ],
+   "additionalProperties": true
+  },
+  "draftFigure": {
+   "description": "One draft pick, graded against its finish within its position.",
+   "type": "object",
+   "properties": {
+    "round": {
+     "description": "The pick's draft round.",
+     "type": "integer"
+    },
+    "pick": {
+     "description": "The pick number in the draft.",
+     "type": "integer"
+    },
+    "player": {
+     "description": "The drafted player.",
+     "type": "object",
+     "properties": {
+      "id": {
+       "description": "The player's Sleeper id.",
+       "type": "string"
+      },
+      "name": {
+       "description": "The player's name.",
+       "type": "string"
+      },
+      "pos": {
+       "description": "The player's position.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "id",
+      "name",
+      "pos"
+     ],
+     "additionalProperties": true
+    },
+    "drafted_as": {
+     "description": "The pick's rank when drafted, by pick number within its position; 0 when unranked.",
+     "type": "integer"
+    },
+    "finished": {
+     "description": "The pick's rank when the season finished, by full-season points within its position; 0 when unranked.",
+     "type": "integer"
+    },
+    "pts": {
+     "description": "The player's full-season points under the league's scoring.",
+     "type": "number"
+    },
+    "verdict": {
+     "description": "The pick's grade against the card's reach_steal definition; unknown when it cannot be graded.",
+     "type": "string",
+     "enum": [
+      "reach",
+      "steal",
+      "as_expected",
+      "unknown"
+     ]
+    }
+   },
+   "required": [
+    "round",
+    "pick",
+    "player",
+    "drafted_as",
+    "finished",
+    "pts",
+    "verdict"
+   ],
+   "additionalProperties": true
+  },
+  "digestSide": {
+   "description": "One side of a matchup on the digest card.",
+   "type": "object",
+   "properties": {
+    "team": {
+     "description": "The side's roster display name.",
+     "type": "string"
+    },
+    "pts": {
+     "description": "The side's points for the week: the final score in a recap, the starters' recent-week average in a preview.",
+     "type": "number"
+    },
+    "top_scorers": {
+     "description": "The side's top scorers for the week, best first.",
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "description": "The scorer's name.",
+        "type": "string"
+       },
+       "pts": {
+        "description": "The scorer's points for the week.",
+        "type": "number"
+       }
+      },
+      "required": [
+       "name",
+       "pts"
+      ],
+      "additionalProperties": true
+     }
+    }
+   },
+   "required": [
+    "team",
+    "pts",
+    "top_scorers"
+   ],
+   "additionalProperties": true
+  },
+  "standing": {
+   "description": "One roster in the league standings.",
+   "type": "object",
+   "properties": {
+    "rank": {
+     "description": "The roster's rank in the standings, 1 best.",
+     "type": "integer"
+    },
+    "rosterId": {
+     "description": "The roster's Sleeper id.",
+     "type": "integer"
+    },
+    "team": {
+     "description": "The roster's display name.",
+     "type": "string"
+    },
+    "wins": {
+     "description": "Regular-season wins.",
+     "type": "integer"
+    },
+    "losses": {
+     "description": "Regular-season losses.",
+     "type": "integer"
+    },
+    "ties": {
+     "description": "Regular-season ties.",
+     "type": "integer"
+    },
+    "fpts": {
+     "description": "Points for in the standings.",
+     "type": "number"
+    },
+    "fpts_against": {
+     "description": "Points against in the standings.",
+     "type": "number"
+    },
+    "in_playoff_line": {
+     "description": "Whether the roster sits in the playoff line.",
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "rank",
+    "rosterId",
+    "team",
+    "wins",
+    "losses",
+    "ties",
+    "fpts",
+    "fpts_against",
+    "in_playoff_line"
+   ],
+   "additionalProperties": true
+  },
+  "standingList": {
+   "description": "The league standings, best first.",
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/standing"
+   }
+  },
+  "playerRef": {
+   "description": "A player as the card names him.",
+   "type": "object",
+   "properties": {
+    "id": {
+     "description": "The player's Sleeper id.",
+     "type": "string"
+    },
+    "name": {
+     "description": "The player's name.",
+     "type": "string"
+    },
+    "pos": {
+     "description": "The player's position, as Sleeper writes it.",
+     "type": "string"
+    },
+    "team": {
+     "description": "The player's team; null when he is a free agent.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "inj": {
+     "description": "The player's injury designation; null when the data has none.",
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "pos",
+    "team",
+    "inj"
+   ],
+   "additionalProperties": true
+  },
+  "playerNews": {
+   "description": "A news item with the player it is about, attached by code so a link is never the model's to copy.",
+   "type": "object",
+   "properties": {
+    "title": {
+     "description": "The item's headline, or its url when the source gave none.",
+     "type": "string"
+    },
+    "url": {
+     "description": "The item's link, from the facts the job searched.",
+     "type": "string"
+    },
+    "date": {
+     "description": "The publication date the search source reported; the empty string when the source gave none.",
+     "type": "string"
+    },
+    "excerpt": {
+     "description": "A window of the source text around the player's name; absent when the title names the player.",
+     "type": "string"
+    },
+    "player": {
+     "description": "The player the item is about.",
+     "type": "string"
+    }
+   },
+   "required": [
+    "title",
+    "url",
+    "date",
+    "player"
+   ],
+   "additionalProperties": true
+  },
+  "playerNewsList": {
+   "description": "News the job's code attached for the card's players, so a link is never the model's to copy.",
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/playerNews"
+   }
+  },
+  "game": {
+   "description": "A player's game for the week, from the schedule.",
+   "type": "object",
+   "properties": {
+    "opponent": {
+     "description": "The opponent NFL team, as the schedule writes it.",
+     "type": "string"
+    },
+    "home": {
+     "description": "Whether the player's team is at home.",
+     "type": "boolean"
+    },
+    "kickoff": {
+     "description": "The kickoff instant, ISO 8601; null when it is not set.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "locked": {
+     "description": "Whether the game has locked, so the starter in it cannot change.",
+     "type": "boolean"
+    },
+    "status": {
+     "description": "The game's status, as the schedule reports it; null when it reports none.",
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "opponent",
+    "home",
+    "kickoff",
+    "locked",
+    "status"
+   ],
+   "additionalProperties": true
+  },
+  "namePts": {
+   "description": "A player on the retro card, by name and points for the week.",
+   "type": "object",
+   "properties": {
+    "name": {
+     "description": "The player's name.",
+     "type": "string"
+    },
+    "pts": {
+     "description": "The player's points for the week.",
+     "type": "number"
+    }
+   },
+   "required": [
+    "name",
+    "pts"
+   ],
+   "additionalProperties": true
+  },
+  "tRef": {
+   "description": "A player on a trade, with his projection for the week.",
+   "type": "object",
+   "properties": {
+    "id": {
+     "description": "The player's Sleeper id.",
+     "type": "string"
+    },
+    "name": {
+     "description": "The player's name.",
+     "type": "string"
+    },
+    "pos": {
+     "description": "The player's position, as Sleeper writes it.",
+     "type": "string"
+    },
+    "team": {
+     "description": "The player's team; null when he is a free agent.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "inj": {
+     "description": "The player's injury designation; null when the data has none.",
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "proj": {
+     "description": "The player's projection for the week, from the facts.",
+     "type": "number"
+    },
+    "bye": {
+     "description": "The NFL week the player's team is on bye; null when there is none.",
+     "type": [
+      "integer",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "pos",
+    "team",
+    "inj",
+    "proj",
+    "bye"
+   ],
+   "additionalProperties": true
+  }
+ },
+ "additionalProperties": true
+}
