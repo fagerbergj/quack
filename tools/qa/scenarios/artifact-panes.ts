@@ -43,12 +43,17 @@ const scenario: Scenario = {
   stack: { seed: 'artifacts', apps: ['contracts'] },
   async run(ctx) {
     for (const p of PANES) {
-      await eachView(ctx, `${p.name}: the newest version beside the chat, its own tab on a phone`, async (page, label) => {
+      await eachView(ctx, `${p.name}: the newest version beside the chat, its own tab on a phone, which opens on Chat`, async (page, label) => {
         await fakeServices(page);
         await page.goto(`${ctx.url}/${s(p.key)}`);
         const pane = paneOf(page, p.pane);
+        if (phone(label)) {
+          // A contract studio opens on its contract; every other session on Chat.
+          const opens = p.name === 'contract' ? p.pane : 'Chat';
+          if ((await page.getByRole('tab', { name: new RegExp(`^${opens}`) }).getAttribute('aria-selected')) !== 'true') throw new Error(`a phone does not open on the ${opens} tab`);
+          await page.getByRole('tab', { name: new RegExp(`^${p.pane}`) }).click();
+        }
         await visible(pane.getByText(p.shows).first());
-        if (phone(label) && (await page.getByRole('tab', { name: new RegExp(`^${p.pane}`) }).getAttribute('aria-selected')) !== 'true') throw new Error(`the ${p.pane} tab is not open`);
         if (!phone(label)) await visible(page.getByRole('separator', { name: 'Resize the chat' }));
         if (p.name === 'review') await chipTarget(page);
         await ctx.shot(page, `${p.name}-${label}`);
