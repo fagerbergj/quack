@@ -48,11 +48,11 @@ test('the repo agents load without their service env set', async () => {
   assert.ok(r.loaded > 0);
 });
 
-test('a placeholder session endpoint is primed, so the slots gate is built', async () => {
+test('a placeholder session endpoint is primed, so the capacity gate is built', async () => {
   primeSessionEndpoint(undefined);
   const r = await validate({ ...layout({ 'deployment.json': config }), fetch: noList });
   assert.deepEqual(r.failures, []);
-  assert.deepEqual(appEndpoint('slots'), { url: 'http://placeholder/apps/slots', token: 'placeholder' });
+  assert.deepEqual(appEndpoint('capacity'), { url: 'http://placeholder/apps/capacity', token: 'placeholder' });
 });
 
 test('a defaultModel no provider can serve fails validation before any agent loads', async () => {
@@ -62,11 +62,11 @@ test('a defaultModel no provider can serve fails validation before any agent loa
 
 test('extension settings are checked by the settings check each extension publishes, and a name nothing mounts is refused', async () => {
   const withExtensions = (extensions: object) => layout({ 'deployment.json': { ...config, extensions } });
-  const ok = { sleeper: { settings: { league: '1', owner: 'me' } }, schedules: { settings: { retentionSweep: true } }, slots: {} };
+  const ok = { sleeper: { settings: { league: '1', owner: 'me' } }, schedules: { settings: { retentionSweep: true } }, capacity: {} };
   assert.deepEqual((await validate({ ...withExtensions(ok), fetch: noList })).failures, []);
   await assert.rejects(validate({ ...withExtensions({ sleeper: {} }), fetch: noList }), /extensions\.sleeper\.settings: league must be a non-empty string/);
   await assert.rejects(validate({ ...withExtensions({ schedules: { settings: { retentionSwep: true } } }), fetch: noList }), /extensions\.schedules\.settings: retentionSwep is not a schedules setting/);
-  await assert.rejects(validate({ ...withExtensions({ slots: { settings: { x: 1 } } }), fetch: noList }), /extensions\.slots\.settings: slots takes no settings/);
+  await assert.rejects(validate({ ...withExtensions({ capacity: { settings: { x: 1 } } }), fetch: noList }), /extensions\.capacity\.settings: capacity takes no settings/);
   await assert.rejects(validate({ ...withExtensions({ ghost: {} }), fetch: noList }), /extensions\.ghost: no extension named ghost mounts an app/);
 });
 

@@ -12,7 +12,7 @@ async function runScenario(s: Scenario, out: string, overrides: StackOpts): Prom
   const stack = await startStack({ ...s.stack, ...overrides });
   const browser = await chromium.launch({ executablePath: process.env.QA_CHROMIUM || undefined });
   try {
-    await s.run(makeCtx({ url: stack.url, browser }, join(out, s.name), results));
+    await s.run(makeCtx({ url: stack.url, dataDir: stack.dataDir, browser }, join(out, s.name), results));
   } finally {
     await browser.close();
     await stack.stop();

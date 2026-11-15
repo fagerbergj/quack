@@ -13,7 +13,7 @@ export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasonin
 type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
 const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 /** `systemone` providers are decision models such as Clef: an input cap and no generation. */
-type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many slots the slots gate hands this provider out. */ slots?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
+type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many sessions the capacity gate lets this provider serve at once. */ capacity?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
 export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
@@ -35,7 +35,9 @@ function providerProblems(id: string, p: unknown): string[] {
   if (typeof p.baseUrl !== 'string' || !/^https?:\/\//.test(p.baseUrl)) problems.push(`providers.${id}.baseUrl must be an http(s) URL`);
   if (p.apiKeyEnv !== undefined && typeof p.apiKeyEnv !== 'string') problems.push(`providers.${id}.apiKeyEnv must be a string`);
   if (p.api !== undefined && p.api !== 'openai-completions' && p.api !== 'systemone') problems.push(`providers.${id}.api must be openai-completions or systemone`);
-  if (p.slots !== undefined && !positive(p.slots)) problems.push(`providers.${id}.slots must be a positive integer`);
+  if (p.capacity !== undefined && !positive(p.capacity)) problems.push(`providers.${id}.capacity must be a positive integer`);
+  // shortcut: the named refusal of the pre-rename key; drop it one release after capacity ships.
+  if (p.slots !== undefined) problems.push(`providers.${id}.slots was renamed to providers.${id}.capacity`);
   if (p.models === undefined) return problems;
   if (!isObject(p.models)) return [...problems, `providers.${id}.models must be an object`];
   return [...problems, ...Object.entries(p.models).flatMap(([m, l]) => limitProblems(`providers.${id}.models.${m}`, l))];
@@ -108,6 +110,7 @@ const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'e
 // The catalog is core: its store is named at the root, checked against stores like an extension's.
 function catalogProblems(catalog: unknown, stores: unknown, extensions: unknown): string[] {
   const problems = isObject(extensions) && Object.hasOwn(extensions, 'index') ? ['extensions.index is refused: the catalog is core, so name its store at catalog.store'] : [];
+  if (isObject(extensions) && Object.hasOwn(extensions, 'slots')) problems.push('extensions.slots was renamed to extensions.capacity');
   if (catalog === undefined) return problems;
   if (!isObject(catalog)) return [...problems, 'catalog must be an object'];
   problems.push(...Object.keys(catalog).filter((k) => k !== 'store').map((k) => `catalog.${k} is not a catalog key`));

@@ -30,6 +30,8 @@ export async function seedReview(url: string, key: string) {
 export type StepResult = { name: string; ok: boolean; error?: string; shots: string[] };
 export type Ctx = {
   url: string;
+  /** The stack's throwaway data dir, for checks on what an app stored. */
+  dataDir: string;
   browser: Browser;
   /** Runs `fn` as one named step; a throw fails the step and the scenario goes on to the next. */
   step(name: string, fn: () => Promise<void>): Promise<void>;

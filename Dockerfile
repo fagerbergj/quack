@@ -18,7 +18,7 @@ COPY packages/research/package.json packages/research/
 COPY packages/runtime/package.json packages/runtime/
 COPY packages/remarkable/package.json packages/remarkable/
 COPY packages/schedules/package.json packages/schedules/
-COPY packages/slots/package.json packages/slots/
+COPY packages/capacity/package.json packages/capacity/
 COPY packages/subagent/package.json packages/subagent/
 COPY packages/sleeper/package.json packages/sleeper/
 COPY packages/sdk/package.json packages/sdk/

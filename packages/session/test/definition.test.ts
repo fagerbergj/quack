@@ -232,8 +232,15 @@ test('the root is closed: a removed or misspelled top-level key is rejected and 
   for (const key of ['imageModel', 'defualtModel']) assert.throws(() => parseDeployment({ ...deployment, [key]: 'local/omni' }), new RegExp(`unknown top-level key ${key}`));
   assert.throws(() => parseDeployment({ ...deployment, defaultModel: undefined }), /defaultModel must be "provider\/model"/);
   assert.throws(() => parseDeployment({ ...deployment, providers: {} }), /at least one provider/);
-  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', slots: 0 } } }), /slots must be a positive integer/);
+  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 0 } } }), /providers\.local\.capacity must be a positive integer/);
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
+});
+
+test('the pre-rename slots keys are refused, naming capacity, with no alias', () => {
+  assert.equal(parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 6 } } }).providers.local!.capacity, 6);
+  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', slots: 6 } } }), /providers\.local\.slots was renamed to providers\.local\.capacity/);
+  assert.throws(() => parseDeployment({ ...deployment, extensions: { slots: {} } }), /extensions\.slots was renamed to extensions\.capacity/);
+  assert.throws(() => parseDeployment({ ...deployment, extensions: { index: {}, slots: {} } }), (err: Error) => /extensions\.index is refused/.test(err.message) && /extensions\.slots was renamed/.test(err.message));
 });
 
 test('stores and extensions are checked: kinds, postgres urlEnv, extension keys, and store references', () => {

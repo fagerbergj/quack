@@ -72,8 +72,8 @@ test('the workflows entry refuses a vision model not declared with images: true'
 });
 
 test('an agent declares the apps it selects by name or by workflow, every session gets the deployment ones, and home reaches the actionable ones', () => {
-  assert.deepEqual([...declaredApps({ extensions: { coding: {}, github: {} } }, manifests)].sort(), ['github', 'slots']);
-  assert.deepEqual([...declaredApps({ extensions: { workflows: { workflow: 'sleeper.lineup' } } }, manifests)].sort(), ['slots', 'sleeper'].sort());
-  assert.deepEqual([...declaredApps({ extensions: { home: {} } }, manifests)].sort(), ['contracts', 'github', 'home', 'sleeper', 'slots']);
-  assert.deepEqual([...declaredApps(null, manifests)], ['slots']);
+  assert.deepEqual([...declaredApps({ extensions: { coding: {}, github: {} } }, manifests)].sort(), ['capacity', 'github']);
+  assert.deepEqual([...declaredApps({ extensions: { workflows: { workflow: 'sleeper.lineup' } } }, manifests)].sort(), ['capacity', 'sleeper'].sort());
+  assert.deepEqual([...declaredApps({ extensions: { home: {} } }, manifests)].sort(), ['capacity', 'contracts', 'github', 'home', 'sleeper']);
+  assert.deepEqual([...declaredApps(null, manifests)], ['capacity']);
 });

@@ -1,9 +1,9 @@
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 
 // One process owns one session, so these are module state. They are how session-half extensions
-// see each other: a gate that waits on a person tells a resource gate (slots) the run is not generating.
+// see each other: a gate that waits on a person tells a resource gate (capacity) the run is not generating.
 let note: string | null = null;
-/** A short status the session reports through /ping (for example "Waiting for a model slot (2 ahead)"); null clears it. */
+/** A short status the session reports through /ping (for example "Waiting for model capacity (2 ahead)"); null clears it. */
 export const statusNote = { get: () => note, set: (text: string | null) => void (note = text) };
 
 let waiting = 0;
@@ -36,7 +36,7 @@ export function onGeneration(listener: (g: Generation) => void): () => void {
   generationListeners.add(listener);
   return () => void generationListeners.delete(listener);
 }
-/** Capacity held around each direct completion (a resource gate such as slots implements it); `after` gets back what `before` returned and runs even when the completion throws. */
+/** Capacity held around each direct completion (a resource gate such as capacity implements it); `after` gets back what `before` returned and runs even when the completion throws. */
 export type GenerationGate = { before(provider: string, signal?: AbortSignal): Promise<unknown>; after(held?: unknown): void };
 const generationGates = new Set<GenerationGate>();
 export function gateGenerations(gate: GenerationGate): () => void {
