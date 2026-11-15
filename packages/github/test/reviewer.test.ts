@@ -113,8 +113,8 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
   // The nit cites app.ts:1, which the PR changes: it goes inline and the body lists it by title.
-  assert.match(service.posted[0].deliveryId, /^.+\/v1$/, 'the post names its conversation and version');
-  assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: inlined, deliveryId: service.posted[0].deliveryId, fallbackBody: review, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
+  assert.match(service.posted[0].requestId, /^.+\/v1$/, 'the post names its conversation and version');
+  assert.deepEqual(service.posted[0], { commitId: head, event: 'APPROVE', body: inlined, requestId: service.posted[0].requestId, fallbackBody: review, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
 
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   const verdict = doc!.kinds['github.review'].versions[0].verdict as any;
@@ -135,7 +135,7 @@ test('a post whose answer was lost after GitHub took it is resubmitted under the
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[2], /Posting failed: 502 .*Call the submit tool again to retry\./);
   assert.match(seen[3], /Posted as APPROVE/);
-  assert.deepEqual(service.posted.map((p) => p.deliveryId), [service.posted[0].deliveryId, service.posted[0].deliveryId]);
+  assert.deepEqual(service.posted.map((p) => p.requestId), [service.posted[0].requestId, service.posted[0].requestId]);
   await session.close();
 });
 

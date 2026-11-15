@@ -23,12 +23,18 @@ test('a replay is served the pinned pull request, and its reviews are captured, 
     assert.equal((await fetch(`${url}/pulls/acme/widgets/8`, { headers: auth })).status, 404, 'only the pinned PR exists');
     assert.equal((await fetch(`${url}/git-credential?url=https://github.com/acme/widgets`, { headers: auth })).status, 404, 'no credentials, so nothing can be pushed');
     assert.equal((await fetch(`${url}/pulls/acme/widgets/7`)).status, 401);
-    const post = (r: Record<string, unknown>) => fetch(`${url}/reviews`, { method: 'POST', headers: auth, body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc', event: 'APPROVE', body: 'ok', ...r }) });
+    const at = (n: number) => `${url}/pulls/acme/widgets/${n}/reviews`;
+    const post = (r: Record<string, unknown>, n = 7) => fetch(at(n), { method: 'POST', headers: auth, body: JSON.stringify({ commitId: 'abc', event: 'APPROVE', body: 'ok', requestId: 'c/v1', ...r }) });
     const posted = await post({});
-    assert.deepEqual([posted.status, await posted.json()], [201, { url: '(eval: not delivered)' }]);
-    assert.equal((await post({ number: 8 })).status, 404, 'a review of another PR is not a delivery');
-    assert.equal((await post({ commitId: 'def' })).status, 404, 'nor is a review of another head');
-    assert.deepEqual(svc.captured, [{ owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc', event: 'APPROVE', body: 'ok' }]);
+    assert.deepEqual([posted.status, await posted.json()], [201, { id: 1, url: '(eval: not delivered)' }]);
+    const repeat = await post({ body: 'changed', event: 'COMMENT' });
+    assert.deepEqual([repeat.status, await repeat.json()], [200, { id: 1, url: '(eval: not delivered)' }], 'a repeated requestId answers the first post');
+    assert.equal((await post({}, 8)).status, 404, 'a review of another PR is not a delivery');
+    assert.equal((await post({ commitId: 'def', requestId: 'c/v2' })).status, 404, 'nor is a review of another head');
+    const noKey = await post({ requestId: undefined });
+    assert.deepEqual([noKey.status, noKey.headers.get('content-type')], [400, 'application/problem+json']);
+    assert.equal((await fetch(`${url}/reviews`, { method: 'POST', headers: auth, body: '{}' })).status, 404, 'the old path is gone');
+    assert.deepEqual(svc.captured, [{ commitId: 'abc', event: 'APPROVE', body: 'ok', requestId: 'c/v1' }]);
   } finally {
     await svc.close();
   }
