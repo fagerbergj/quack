@@ -20,7 +20,7 @@ async function start(fixture: string) {
   const agentsDir = join(root, 'agents');
   for (const name of ['reviewer', 'implementer']) {
     await mkdir(join(agentsDir, name), { recursive: true });
-    await writeFile(join(agentsDir, name, 'agent.json'), JSON.stringify({ name, version: 1, prompt: 'prompt.md' }));
+    await writeFile(join(agentsDir, name, 'agent.json'), JSON.stringify({ name, version: 1, prompt: 'prompt.md', extensions: {} }));
     await writeFile(join(agentsDir, name, 'prompt.md'), `${name} prompt`);
   }
   const dataDir = join(root, 'data');

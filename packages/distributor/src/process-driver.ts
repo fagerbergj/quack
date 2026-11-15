@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { SESSION_KEY } from '@quack/catalog';
-import { childPort, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
+import { bundleProblems, childPort, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -167,6 +167,9 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       const path = join(dir, 'agent.json');
       const def = await readJson(path).catch(() => null);
       if (typeof def?.name !== 'string' || typeof def.version !== 'number' || !SAFE_NAME.test(def.name)) return undefined;
+      // A repo bundle is held to the strict contract before it is first pinned; stored versions are never re-checked.
+      const bad = bundleProblems(def);
+      if (bad.length) return void console.error(`agent bundle ${path} is invalid and not offered:\n- ${bad.join('\n- ')}`);
       const id = `${def.name}@${def.version}`;
       if (!kept.has(id)) kept.set(id, keepVersion(opts.dataDir, dir, opts.rubricFor).catch(() => void kept.delete(id)));
       await kept.get(id);

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { declaredEnv, deploymentEnv, loadAgent, parseDeployment, resolveDeployment, type DeploymentConfig } from '@quack/session';
+import { bundleProblems, declaredEnv, deploymentEnv, loadAgent, parseDeployment, resolveDeployment, type DeploymentConfig } from '@quack/session';
 import { primeSessionEndpoint, type ExtensionManifest } from '@quack/sdk';
 import { catalog, deploymentExtensions, manifests } from './catalog.ts';
 
@@ -23,7 +23,8 @@ export async function validate(opts: { config: string; agentsDir: string; dataDi
   const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8'))), opts.fetch);
   const settingsProblems = extensionProblems(deployment.extensions);
   if (settingsProblems.length) throw new Error(`invalid deployment config:\n- ${settingsProblems.join('\n- ')}`);
-  const paths = [...subdirs(opts.agentsDir).map((d) => join(d, 'agent.json')), ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
+  const repo = subdirs(opts.agentsDir).map((d) => join(d, 'agent.json'));
+  const paths = [...repo, ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
   const result: Validation = { loaded: 0, failures: [] };
   for (const name of deploymentEnv(deploymentExtensions)) process.env[name] ??= 'placeholder';
   // Extensions reach their apps through the endpoint a launch primes; a placeholder one is never called here.
@@ -31,7 +32,11 @@ export async function validate(opts: { config: string; agentsDir: string; dataDi
   for (const path of paths) {
     try {
       // Factories throw on unset service env; a placeholder lets them build without contacting anything.
-      const extensions = JSON.parse(readFileSync(path, 'utf8')).extensions ?? {};
+      const def = JSON.parse(readFileSync(path, 'utf8'));
+      // Only repo bundles meet the strict contract; a session's pinned copy is history and loads through the shims.
+      const bad = repo.includes(path) ? bundleProblems(def) : [];
+      if (bad.length) throw new Error(`breaks the agent bundle contract:\n- ${bad.join('\n- ')}`);
+      const extensions = def.extensions ?? {};
       for (const name of declaredEnv(extensions, catalog)) process.env[name] ??= 'placeholder';
       await loadAgent(path, deployment, catalog, deploymentExtensions);
       result.loaded++;

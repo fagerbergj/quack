@@ -37,7 +37,7 @@ async function agentsDirAt(version: number, ...names: string[]) {
   dirs.push(dir);
   for (const name of names) {
     await mkdir(join(dir, name));
-    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version, prompt: 'prompt.md' }));
+    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version, prompt: 'prompt.md', extensions: {} }));
     await writeFile(join(dir, name, 'prompt.md'), `prompt v${version}`);
   }
   return dir;
@@ -301,17 +301,17 @@ test('an agent version whose content changed is refused for new sessions but not
 test('a bundle that dropped a key is refused for new sessions until its version is bumped', async () => {
   const dir = await agentsDirAt(1, 'reviewer');
   const file = join(dir, 'reviewer', 'agent.json');
-  const old = { name: 'reviewer', version: 1, status: 'promoted', model: 'local/qwen3.8-27b', maxTurns: 80, prompt: 'prompt.md', extensions: {} };
+  const old = { name: 'reviewer', version: 1, status: 'promoted', model: 'local/qwen3.8-27b', description: 'Reviews.', prompt: 'prompt.md', extensions: {} };
   await writeFile(file, JSON.stringify(old));
   const { invoke, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   assert.equal((await invoke('github:m#1', { input: 'hi', wait: true }, 'reviewer')).status, 200);
-  const { maxTurns: _, ...cut } = old;
+  const { description: _, ...cut } = old;
   await writeFile(file, JSON.stringify(cut));
   assert.equal((await invoke('github:m#2', { input: 'hi', wait: true }, 'reviewer')).status, 409);
   await writeFile(file, JSON.stringify({ ...cut, version: 2 }));
   assert.equal((await invoke('github:m#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
   const pinned = async (key: string) => JSON.parse(await readFile(ranAs(key).slice('agent: '.length), 'utf8'));
-  assert.equal((await pinned('github:m#1')).maxTurns, 80);
+  assert.equal((await pinned('github:m#1')).description, 'Reviews.');
   assert.equal((await pinned('github:m#2')).version, 2);
 });
 
@@ -410,7 +410,7 @@ test('promoting a version does not fork it, but any other edit without a bump do
   assert.equal((await invoke('github:p#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ status: string }> };
   assert.equal(agents[0].status, 'promoted');
-  await writeFile(file, JSON.stringify({ ...def, status: 'promoted', note: 'edited' }));
+  await writeFile(file, JSON.stringify({ ...def, status: 'promoted', description: 'edited' }));
   assert.equal((await invoke('github:p#3', { input: 'hi', wait: true }, 'reviewer')).status, 409);
 });
 
@@ -433,7 +433,7 @@ test('GET /version reports the build from the environment, null when unset', asy
 
 test('GET /agents reports a promoted agent as promoted', async () => {
   const dir = await agentsDirAt(3, 'reviewer');
-  await writeFile(join(dir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, status: 'promoted', prompt: 'prompt.md' }));
+  await writeFile(join(dir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, status: 'promoted', prompt: 'prompt.md', extensions: {} }));
   const { base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: unknown[] };
   assert.deepEqual(agents, [{ name: 'reviewer', version: 3, status: 'promoted' }]);
