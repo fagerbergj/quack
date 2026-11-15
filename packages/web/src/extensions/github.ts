@@ -38,7 +38,7 @@ export const github: Extension = {
     name: (r) => {
       const { repo, name, number } = prOf(r.key)!;
       const full = prTitle(r, name);
-      return { title: cut(full), full, num: `#${number}`, ...(r.multiRepo && { repo }) };
+      return { title: cut(full), full, num: `#${number}`, ...(r.multiRepo && { repo: name }) };
     },
     words: () => ({ run: 'Reviewing', done: 'Reviewed', none: 'Not reviewed yet' }),
   },

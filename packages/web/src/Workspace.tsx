@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { listSessions } from './api.ts';
+import { EXTENSIONS } from './extensions/index.ts';
 import { Home } from './Home.tsx';
 import { sessionTitle } from './kinds.ts';
 import { multiScope, rowOf, type Row } from './sessions.ts';
@@ -13,7 +14,8 @@ export async function loadRows(q?: string): Promise<Row[]> {
   const sessions = (await listSessions(q)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.key.localeCompare(b.key));
   // A repo prefix only earns its space when reviews come from more than one repo.
   const multiRepo = multiScope(sessions.map((s) => s.key));
-  return sessions.map((s) => rowOf(s, multiRepo));
+  const shown = new Map((await Promise.all(EXTENSIONS.map((e) => e.titles?.(sessions) ?? []))).flatMap((m) => [...m]));
+  return sessions.map((s) => rowOf({ ...s, title: shown.get(s.key) ?? s.title }, multiRepo));
 }
 
 export function useWorkspaceData() {

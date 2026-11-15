@@ -17,8 +17,8 @@ const SESSIONS = [
   sess('contracts:c1', { agent: 'contracts', title: 'Sleeper schedule endpoint' }),
 ];
 
-async function header(key: string) {
-  routes['GET /sessions'] = { sessions: SESSIONS };
+async function header(key: string, sessions = SESSIONS) {
+  routes['GET /sessions'] = { sessions };
   routes['GET /apps/github/repos/fagerbergj/quack/pulls/2243'] = { number: 2243, state: 'open', merged: false, merged_at: null, closed_at: null, html_url: 'https://github.com/fagerbergj/quack/pull/2243', title: 't' };
   routes[`GET /sessions/contracts%3Ac1/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
   stubViewport(false);
@@ -63,4 +63,13 @@ test('the bar holds only back, Details and the menu, all labelled icon buttons; 
   }
   await userEvent.click(within(bar).getByRole('button', { name: 'More actions' }));
   expect(within(bar).getByRole('menuitem', { name: 'Open on GitHub' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/pull/2243');
+});
+
+const LONG = 'Design the JSON Schema contract (kind json-schema) for the research.report artifact, in its parsed form';
+
+test('a contract session is named by its sealed spec title, not by its long opening request', async () => {
+  routes[`GET /sessions/contracts%3Ac9/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
+  routes['GET /apps/contracts/contracts'] = { contracts: [{ key: 'contracts:c9', title: 'research.report artifact', kind: 'json-schema', draft: 2, pendingApproval: true }] };
+  const { line1 } = await header('contracts:c9', [sess('contracts:c9', { agent: 'contracts', title: LONG })]);
+  expect(line1.textContent).toBe('research.report artifact');
 });
