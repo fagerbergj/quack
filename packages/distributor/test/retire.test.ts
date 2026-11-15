@@ -54,7 +54,7 @@ test('a session pinned before retention existed follows its agent current bundle
   servers.push(() => void rm(root, { recursive: true, force: true }));
   const [agentsDir, dataDir] = [join(root, 'agents'), join(root, 'data')];
   await mkdir(join(agentsDir, 'reviewer'), { recursive: true });
-  await writeFile(join(agentsDir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, retention: { idleDays: 14 } }));
+  await writeFile(join(agentsDir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, extensions: {}, retention: { idleDays: 14 } }));
   const pinned = join(dataDir, sessionDirName('old'), 'agent-def');
   await mkdir(pinned, { recursive: true });
   await writeFile(join(pinned, 'agent.json'), JSON.stringify({ name: 'reviewer', version: 2 }));
