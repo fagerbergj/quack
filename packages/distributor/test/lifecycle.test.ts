@@ -13,12 +13,6 @@ after(async () => {
   for (const fn of cleanups) await fn();
 });
 
-// Yields to pending I/O and promises until `probe` holds; bounded in turns, not time, so a broken path fails instead of spinning.
-async function settles(probe: () => boolean) {
-  for (let i = 0; i < 10_000 && !probe(); i++) await new Promise((r) => setImmediate(r));
-  assert.ok(probe(), 'the state was never reached');
-}
-
 // A host whose launches are records: each start waits for `release`, so a test decides when a process comes up.
 async function host(agents: string[] = []) {
   const root = await mkdtemp(join(tmpdir(), 'quack-life-'));
@@ -31,21 +25,25 @@ async function host(agents: string[] = []) {
   }
   const launches: Array<{ dir: string; stopped: boolean; release: () => void }> = [];
   let held = false;
+  const waiters: Array<[number, () => void]> = [];
   const launch: Launch = async ({ dir }) => {
     const entry = { dir, stopped: false, release: () => {} };
     launches.push(entry);
+    for (const [n, wake] of waiters) if (launches.length >= n) wake();
     if (held) await new Promise<void>((r) => (entry.release = r));
     return { url: `http://launch-${launches.length}`, token: 't', stop: async () => void (entry.stopped = true), onExit: () => {} };
   };
   const driver = sessionHost({ dataDir: join(root, 'data'), agentsDir, defaultAgent: '' }, launch);
-  return { driver, launches, hold: () => void (held = true), dataDir: join(root, 'data'), agentsDir };
+  // Resolves when the nth launch has begun; the driver does real file I/O first, so no turn count can bound that wait.
+  const launched = (n: number) => (launches.length >= n ? Promise.resolve() : new Promise<void>((r) => waiters.push([n, r])));
+  return { driver, launches, launched, hold: () => void (held = true), dataDir: join(root, 'data'), agentsDir };
 }
 
 test('a delete during a start waits for it, stops what came up, and a later session starts fresh', async () => {
-  const { driver, launches, hold, dataDir } = await host();
+  const { driver, launches, launched, hold, dataDir } = await host();
   hold();
   const first = driver.ensure('research:x');
-  await settles(() => launches.length > 0);
+  await launched(1);
   const removed = driver.remove('research:x');
   launches[0].release();
   assert.equal(await first, 'http://launch-1');
@@ -53,16 +51,16 @@ test('a delete during a start waits for it, stops what came up, and a later sess
   assert.equal(launches[0].stopped, true, 'the process that came up mid-delete is stopped');
   assert.deepEqual(await readdir(dataDir).catch(() => []), []);
   const again = driver.ensure('research:x');
-  await settles(() => launches.length >= 2);
+  await launched(2);
   launches[1].release();
   assert.equal(await again, 'http://launch-2', 'the new session gets its own process, not the deleted one');
 });
 
 test('a stop during a start waits for it and stops what came up', async () => {
-  const { driver, launches, hold } = await host();
+  const { driver, launches, launched, hold } = await host();
   hold();
   const started = driver.ensure('research:y');
-  await settles(() => launches.length > 0);
+  await launched(1);
   const stopped = driver.stop('research:y');
   launches[0].release();
   await Promise.all([started, stopped]);
@@ -83,7 +81,7 @@ test('two first requests for one new key bind it once: the second agent is refus
 });
 
 test('a delete is refused while a request for the session is starting it, and nothing is left behind', async () => {
-  const { driver, launches, hold } = await host();
+  const { driver, launches, launched, hold } = await host();
   await driver.ensure('research:z');
   await driver.stop('research:z');
   hold();
@@ -99,7 +97,7 @@ test('a delete is refused while a request for the session is starting it, and no
   cleanups.push(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/research%3Az`;
   const read = fetch(`${base}/messages`);
-  await settles(() => launches.length >= 2);
+  await launched(2);
   const del = await fetch(base, { method: 'DELETE' });
   assert.equal(del.status, 409);
   assert.match((await del.json()).detail, /handling a request/);
