@@ -27,6 +27,8 @@ export type StackOpts = {
   model?: 'local' | 'none' | 'fake';
   /** What the fake model answers, picked per request; absent, it answers the demo review. */
   script?: FakeScript;
+  /** The `local` provider's capacity (`providers.local.capacity`); absent, it is not gated. */
+  capacity?: number;
   /** QA-only agents (agent.json and prompt), written beside a copy of agents/ so the shipped bundles stay untouched. */
   agents?: Record<string, { definition: object; prompt: string }>;
 };
@@ -68,12 +70,12 @@ function githubEnv(tmp: string): Record<string, string> {
   return { QUACK_GH_APP_ID: '1', QUACK_GH_PRIVATE_KEY_FILE: key, QUACK_GH_WEBHOOK_SECRET: QA_WEBHOOK_SECRET };
 }
 
-function deployment(modelUrl: string) {
+function deployment(modelUrl: string, capacity?: number) {
   const limits = { contextWindow: 262144, maxTokens: 16384 };
   return {
     defaultModel: 'local/qwen3.8-27b',
     providers: {
-      local: { baseUrl: modelUrl, models: { 'qwen3.8-27b': { ...limits, images: true }, [FAKE_MODEL]: limits } },
+      local: { baseUrl: modelUrl, models: { 'qwen3.8-27b': { ...limits, images: true }, [FAKE_MODEL]: limits }, ...(capacity && { capacity }) },
       clef: { baseUrl: modelUrl, api: 'systemone', models: { clef: { contextWindow: 8192, maxTokens: 1024 } } },
     },
   };
@@ -183,7 +185,7 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     const config = join(parts.tmp, 'deployment.json');
     if (opts.apps?.includes('schedules')) await seedSchedules(dataDir);
     const extensions = Object.fromEntries((opts.apps ?? []).map((name) => [name, {}]));
-    writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts)), extensions }));
+    writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts), opts.capacity), extensions }));
     const url = await startDistributor(parts, {
       QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', ...(opts.apps?.includes('github') && githubEnv(parts.tmp)),
@@ -224,5 +226,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'up') await up(rest);
   else if (cmd === 'down') await down();
-  else console.error('usage: node tools/qa/stack.ts up [--web <dir|current>] [--seed <dir|demo|contracts|artifacts|none>] [--apps schedules,slots] [--model local|none|fake] | down');
+  else console.error('usage: node tools/qa/stack.ts up [--web <dir|current>] [--seed <dir|demo|contracts|artifacts|none>] [--apps schedules,capacity] [--model local|none|fake] | down');
 }

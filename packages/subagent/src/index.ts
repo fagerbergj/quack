@@ -5,7 +5,7 @@ import { whileWaiting, type ExtensionManifest } from '@quack/sdk';
 
 export type { SubagentArgs, SubagentDetails } from './contract.ts';
 
-/** A runaway guard on the children one session may ever start, not a setting; concurrency is bounded by the model-slot gate. */
+/** A runaway guard on the children one session may ever start, not a setting; concurrency is bounded by the capacity gate. */
 export const MAX_CHILDREN = 20;
 
 /** The calls this session has admitted, by task id, so a rerun after a restart is not counted twice. */
@@ -40,7 +40,7 @@ export function subagentExtension(): Extension {
         await api.details({ conversationId: String(child) }, ctx);
         const conversation = (await api.conversation(child, ctx))!;
         const submission = await conversation.submit({ type: 'input', content: args.task, requestId: `subagent:${String(api.taskId)}` }, ctx);
-        // The parent is not generating while its children are, so it gives its model slots back.
+        // The parent is not generating while its children are, so it gives its model leases back.
         const settled = await whileWaiting(() => submission.wait(ctx));
         if (settled.status !== 'done') return failure(`the subagent ended without an answer: ${settled.reason}`);
         const entry = await api.commit((tx) => tx.entry(AssistantEntry, settled.answer as never), ctx);

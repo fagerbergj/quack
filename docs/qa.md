@@ -17,7 +17,7 @@ node tools/qa/run.ts --out /tmp/qa-out
 ## The stack
 
 ```
-node tools/qa/stack.ts up --web <dist dir|current> --seed <dir|demo|contracts|artifacts|none> [--apps schedules,slots] [--model local|none|fake]
+node tools/qa/stack.ts up --web <dist dir|current> --seed <dir|demo|contracts|artifacts|none> [--apps schedules,capacity] [--model local|none|fake]
 node tools/qa/stack.ts down
 ```
 

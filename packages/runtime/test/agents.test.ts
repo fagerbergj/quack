@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { loadAgent, parseDeployment } from '@quack/session';
 import { catalog } from '../src/catalog.ts';
 import { primeSessionEndpoint } from '@quack/sdk';
-import { slotsFromEnv } from '@quack/slots';
+import { capacityFromEnv } from '@quack/capacity';
 import { sessionEnv } from '../src/session-env.ts';
 
 const deployment = parseDeployment({
@@ -94,9 +94,9 @@ test('a session process gets no per-service url or token: only what the host lis
 });
 
 test('the gate is on for a session that was handed the distributor and its launch credential, and off otherwise', () => {
-  assert.equal(slotsFromEnv({}).length, 1);
+  assert.equal(capacityFromEnv({}).length, 1);
   primeSessionEndpoint(undefined);
-  assert.equal(slotsFromEnv({}).length, 0);
+  assert.equal(capacityFromEnv({}).length, 0);
 });
 
 test('the shipped quack definition loads with the home tools, offering every extension\'s actions', async () => {

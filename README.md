@@ -4,7 +4,7 @@ Quack is a self-hosted agent server for local LLMs. A distributor runs one sessi
 
 ## Layout
 
-- `packages/` - npm workspaces, TypeScript run directly by Node's type stripping. Core: `sdk` (the extension contract), `session`, `runtime`, `distributor`, `index`, `web`. Extensions: `judge`, `workflows`, `slots`, `traces`, `github`, `home`, `sleeper`, `remarkable`, `research`, `contracts`, `schedules`. Tools: `eval`, `cli`.
+- `packages/` - npm workspaces, TypeScript run directly by Node's type stripping. Core: `sdk` (the extension contract), `session`, `runtime`, `distributor`, `index`, `web`. Extensions: `judge`, `workflows`, `capacity`, `traces`, `github`, `home`, `sleeper`, `remarkable`, `research`, `contracts`, `schedules`. Tools: `eval`, `cli`.
 - `agents/` - agent bundles (`agent.json`, `prompt.md`, `version.lock`).
 - `tools/` - repo gates (`boundary`, `sloplint`, `dupl`, `bundle-locks`, `leak-check`), the QA rig and the reviewer bench.
 - `docs/` - the CLI, the QA rig, PR evidence and rollout checks.
