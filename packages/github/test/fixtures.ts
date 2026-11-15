@@ -48,7 +48,7 @@ export async function listen(server: Server) {
 
 /** The service half's session-facing API, faked: PR metadata, credentials, and posted reviews recorded. */
 /** With `issue`, number 12 is that issue: /pulls/12 is a 404 and /issues/12 returns it; POST /pulls records the opened pull request in `opened`. */
-/** A repeated `deliveryId` answers the first post, as the service does; `loseFirstReview` records the first post, then answers 502 as a lost reply would. */
+/** A repeated `requestId` answers the first post, as the service does; `loseFirstReview` records the first post, then answers 502 as a lost reply would. */
 export async function fakeService(head: string, extra: Record<string, unknown> = {}, issue?: Record<string, unknown>, faults: { loseFirstReview?: boolean } = {}) {
   const posted: any[] = [];
   const opened: any[] = [];
@@ -58,20 +58,20 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       if (req.headers.authorization !== 'Bearer svc') return res.writeHead(401).end('{}');
       let raw = '';
       for await (const c of req) raw += c;
-      if (req.url?.startsWith('/git-credential')) return res.writeHead(200).end(JSON.stringify({ username: 'x-access-token', token: 'ghs_from_service' }));
+      if (req.url?.startsWith('/git-credential')) return res.writeHead(200).end(JSON.stringify({ username: 'x-access-token', token: 'ghs_from_service', expiresAt: '2099-01-01T00:00:00Z' }));
       if (req.method === 'PATCH') {
         edited.push({ path: req.url, ...JSON.parse(raw) });
         return res.writeHead(200).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7' }));
       }
-      if (req.url === '/pulls' && req.method === 'POST') {
+      if (req.url === '/pulls/acme/widgets' && req.method === 'POST') {
         opened.push(JSON.parse(raw));
         return res.writeHead(201).end(JSON.stringify({ number: 13, url: 'https://github.com/acme/widgets/pull/13' }));
       }
       if (issue && req.url === '/pulls/acme/widgets/12') return res.writeHead(404).end('{}');
       if (issue && req.url === '/issues/acme/widgets/12') return res.writeHead(200).end(JSON.stringify(issue));
-      if (req.url === '/reviews') {
+      if (req.url === '/pulls/acme/widgets/7/reviews') {
         const r = JSON.parse(raw);
-        const repeat = r.deliveryId && posted.some((p) => p.deliveryId === r.deliveryId);
+        const repeat = posted.some((p) => p.requestId === r.requestId);
         posted.push(r);
         if (faults.loseFirstReview && posted.length === 1) return res.writeHead(502).end('{"error":"github POST: socket hang up"}');
         return res.writeHead(repeat ? 200 : 201).end(JSON.stringify({ id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' }));

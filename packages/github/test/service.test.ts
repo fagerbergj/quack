@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHmac, createVerify, generateKeyPairSync } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
+import { createServer, STATUS_CODES, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
 import { serveApp } from '@quack/sdk';
@@ -36,6 +36,7 @@ const reviews = [
   review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
 ];
 let graphqlErrors = false;
+let scopedLifeMs = 3600_000;
 let reviewCommentsDown = false;
 const posted15: any[] = [];
 const thread = (isResolved: boolean, path: string, body: string) => ({ isResolved, path, line: 4, originalLine: 4, comments: { nodes: [{ body, author: { login: 'maria' } }] } });
@@ -63,8 +64,13 @@ const github = await listen(
     const url = req.url!.replace(/^\/repos\/ACME\//, '/repos/acme/');
     if (url === '/app') return jwtValid(auth) ? reply(200, { slug: 'quack-app' }) : reply(401, {});
     if (url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
+    if (url === '/repos/acme/other/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
     if (url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
-    if (url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
+    // A request that names repositories is a session's credential, minted as `ghs_scoped_<repo>`; the service's own token has no body.
+    if (url === '/app/installations/42/access_tokens') {
+      const scope = calls.at(-1)!.body?.repositories?.[0];
+      return jwtValid(auth) ? reply(201, { token: scope ? `ghs_scoped_${scope}` : 'ghs_test', expires_at: new Date(Date.now() + (scope ? scopedLifeMs : 3600_000)).toISOString() }) : reply(401, {});
+    }
     if (url === '/repos/acme/widgets/pulls/7' && req.method === 'PATCH') return reply(200, { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' });
     if (url === '/repos/acme/widgets/pulls/404' && req.method === 'PATCH') return reply(404, { message: 'Not Found' });
     if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
@@ -418,46 +424,112 @@ test('the issue route returns an issue with the default branch; a pull request n
   assert.equal((await fetch(`${elsewhere}/issues/acme/widgets/12`).then((r) => r.json())).baseRef, 'trunk', 'an unlisted repository keeps its default branch');
 });
 
+// POST /pulls/{owner}/{repo}/{number}/reviews; the target leaves the body, and each post gets its own requestId unless it names one.
+let requests = 0;
+const mark = () => `\n\n<!-- quack-delivery: rq-${requests} -->`;
+const reviewAt = (target: string, body: unknown) => fetch(`${service}/pulls/${target}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } });
+const postTo = ({ target = 'acme/widgets/7', ...body }: Record<string, unknown>) =>
+  reviewAt(target as string, { requestId: `rq-${++requests}`, ...body }).then(async (r) => ({ status: r.status, body: await r.json() }));
+const problemShape = (b: any, status: number) => assert.deepEqual([b.type, b.status, b.title, typeof b.detail, b.error], ['about:blank', status, STATUS_CODES[status], 'string', b.detail]);
+
 test('a pull request is opened with the installation token, mentions of the bot defanged', async () => {
-  const open = (body: unknown) => fetch(`${service}/pulls`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  assert.equal((await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'main', title: 't' })).status, 400);
+  const open = (body: unknown) => fetch(`${service}/pulls/acme/widgets`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  assert.equal((await open({ head: 'quack/12-x', base: 'main', title: 't' })).status, 400);
   calls.length = 0;
-  const made = await open({ owner: 'acme', repo: 'widgets', head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping @quack-app; keep `@quack-app`, @quack-apple, me@quack-app.dev\n\nCloses #12' });
+  const made = await open({ head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping @quack-app; keep `@quack-app`, @quack-apple, me@quack-app.dev\n\nCloses #12' });
   assert.deepEqual(made, { status: 201, body: { number: 13, url: 'https://github.com/acme/widgets/pull/13' } });
   const sent = calls.find((c) => c.path === '/repos/acme/widgets/pulls')!;
   assert.equal(sent.auth, 'token ghs_test');
   assert.deepEqual(sent.body, { head: 'quack/12-x', base: 'trunk', title: 'feat: x', body: 'ping quack-app; keep `@quack-app`, @quack-apple, me@quack-app.dev\n\nCloses #12' });
 });
 
-test('git credentials are minted per repository and cached until near expiry', async () => {
-  const get = (url: string, token = 'svc-secret') =>
-    fetch(`${service}/git-credential?url=${encodeURIComponent(url)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+const credential = (url: string, token = 'svc-secret') =>
+  fetch(`${service}/git-credential?url=${encodeURIComponent(url)}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => ({ status: r.status, headers: r.headers, body: await r.json() }));
+const mints = () => calls.filter((c) => c.path.endsWith('/access_tokens'));
+
+test('a git credential is minted for the named repository with contents: write only, and cached until near expiry', async () => {
   calls.length = 0;
-  assert.deepEqual((await get('https://github.com/acme/widgets.git')).body, { username: 'x-access-token', token: 'ghs_test' });
-  assert.equal((await get('https://github.com/acme/widgets')).status, 200);
-  // The webhook test above may already have minted it; either way two requests mint at most once.
-  assert.ok(calls.filter((c) => c.path.endsWith('/access_tokens')).length <= 1, 'the second request uses the cached token');
-  assert.equal((await get('https://gitlab.com/acme/widgets.git')).status, 404);
-  assert.equal((await get('https://github.com/acme/private.git')).status, 404, 'the app is not installed there');
+  const first = await credential('https://github.com/acme/widgets.git');
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('cache-control'), 'no-store');
+  assert.deepEqual([first.body.username, first.body.token], ['x-access-token', 'ghs_scoped_widgets']);
+  assert.match(first.body.expiresAt, /^\d{4}-\d\d-\d\dT.*Z$/);
+  assert.deepEqual(Object.keys(first.body).sort(), ['expiresAt', 'token', 'username']);
+  assert.deepEqual(mints().map((c) => c.body), [{ repositories: ['widgets'], permissions: { contents: 'write' } }]);
+  assert.equal((await credential('https://github.com/acme/widgets')).body.expiresAt, first.body.expiresAt);
+  assert.equal(mints().length, 1, 'the second request uses the cached token');
+  assert.equal((await credential('https://github.com/ACME/widgets')).body.token, 'ghs_scoped_widgets', 'the owner cases the same repository');
+  assert.equal(mints().length, 1);
+  assert.equal((await credential('https://github.com/acme/private.git')).status, 404, 'the app is not installed there');
+});
+
+test('a scoped token near expiry is minted again, by the same skew rule as the service token', async () => {
+  scopedLifeMs = 30_000;
+  try {
+    calls.length = 0;
+    await credential('https://github.com/acme/other');
+    await credential('https://github.com/acme/other');
+    assert.equal(mints().length, 2, 'under a minute left is not served from the cache');
+  } finally {
+    scopedLifeMs = 3600_000;
+  }
+});
+
+test('a scoped token is never served for another repository, nor used for the service itself', async () => {
+  calls.length = 0;
+  const widgets = await credential('https://github.com/acme/widgets');
+  const other = await credential('https://github.com/acme/other.git');
+  assert.deepEqual([widgets.body.token, other.body.token], ['ghs_scoped_widgets', 'ghs_scoped_other']);
+  assert.deepEqual(mints().map((c) => c.body.repositories), [['other']], 'widgets was cached; other minted for itself');
+  assert.equal((await credential('https://github.com/acme/widgets')).body.token, 'ghs_scoped_widgets', 'and widgets is still its own');
+});
+
+test("the service's own calls keep the full installation token, cached apart from a session's scoped one", async () => {
+  const fresh = await listen(serveApp(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), config)));
+  calls.length = 0;
+  const scoped = await fetch(`${fresh}/git-credential?url=${encodeURIComponent('https://github.com/acme/widgets')}`).then((r) => r.json());
+  assert.equal(scoped.token, 'ghs_scoped_widgets');
+  assert.equal((await fetch(`${fresh}/pulls/acme/widgets/7/head`)).status, 200);
+  assert.deepEqual(mints().map((c) => c.body), [{ repositories: ['widgets'], permissions: { contents: 'write' } }, undefined], 'the service minted its own token with no repositories or permissions');
+  assert.ok(calls.filter((c) => c.path.startsWith('/repos/acme/widgets/pulls/7')).every((c) => c.auth === 'token ghs_test'));
+  await fetch(`${fresh}/pulls/acme/widgets/7/head`);
+  assert.equal(mints().length, 2, 'each cache serves its own');
+});
+
+test('a git credential url that is not exactly a github.com repository mints nothing', async () => {
+  calls.length = 0;
+  for (const url of [
+    'https://gitlab.com/acme/widgets.git', 'https://github.com.evil.example/acme/widgets', 'https://evil.example/github.com/acme/widgets', 'https://github.com@evil.example/acme/widgets',
+    'https://notgithub.com/acme/widgets', 'https://github.com/acme/widgets/extra', 'https://github.com/acme/widgets/tree/main', 'https://github.com/acme', 'https://github.com/', 'https://github.com/acme/.git', 'not a url', '',
+  ]) {
+    const r = await credential(url);
+    assert.equal(r.status, 404, url);
+    problemShape(r.body, 404);
+  }
+  assert.deepEqual(calls, [], 'nothing reached GitHub');
+  assert.equal((await credential('https://github.com/acme/widgets/')).status, 200, 'a trailing slash is still the repository');
+});
+
+test('a git credential refusal is a problem document', async () => {
+  assert.equal((await credential('https://github.com/acme/private')).headers.get('content-type'), 'application/problem+json');
 });
 
 test('a sealed review is posted with the installation token, never handed to the session', async () => {
-  const post = (body: unknown) =>
-    fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  assert.equal((await post({ owner: 'acme', repo: 'widgets', number: 7, event: 'MERGE', body: 'x' })).status, 400);
-  const posted = await post({ owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes' });
+  assert.equal((await postTo({ event: 'MERGE', body: 'x' })).status, 400);
+  const posted = await postTo({ commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes' });
   assert.equal(posted.status, 201);
   assert.equal(posted.body.url, 'https://github.com/acme/widgets/pull/7#review-9');
   const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
-  assert.deepEqual(sent.body, { event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', commit_id: 'abc123' });
+  assert.match(sent.body.body, /^## Verdict\nrequest_changes\n\n<!-- quack-delivery: rq-\d+ -->$/);
+  assert.deepEqual({ ...sent.body, body: undefined }, { event: 'REQUEST_CHANGES', body: undefined, commit_id: 'abc123' });
 });
 
 test("an approve on the app's own pull request posts as a comment that leads with the verdict", async () => {
-  const res = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 14, commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' }), headers: { authorization: 'Bearer svc-secret' } });
+  const res = await postTo({ target: 'acme/widgets/14', commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' });
   assert.equal(res.status, 201);
   const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
   assert.equal(sent.body.event, 'COMMENT');
-  assert.match(sent.body.body, /^\*\*Verdict: approve\.\*\* .*\n\n## Verdict\napprove$/);
+  assert.match(sent.body.body, /^\*\*Verdict: approve\.\*\* .*\n\n## Verdict\napprove\n\n<!-- quack-delivery: rq-\d+ -->$/);
 });
 
 test("a PR edit sets the title and body with the installation token, mentions stripped", async () => {
@@ -572,8 +644,7 @@ async function deliveredRunIsSilent(webhookOwner: string, id: string) {
   const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository: { ...repository, owner: { login: webhookOwner } } };
   assert.equal(await deliver('pull_request', labeled, { id }), 202);
   await started;
-  const review = { owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' };
-  assert.equal((await fetch(`${service}/reviews`, { method: 'POST', headers: { authorization: 'Bearer svc-secret' }, body: JSON.stringify(review) })).status, 201);
+  assert.equal((await postTo({ commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' })).status, 201);
   release();
   outcomes[`github-delivery:${id}-sentinel`] = { status: 'unanswered', reason: 'run_failed' };
   const noted = new Promise<void>((r) => commentWaiters.push(r));
@@ -587,33 +658,31 @@ test('a run that delivered a review gets no notice', () => deliveredRunIsSilent(
 test('a review counts for the run however the webhook cases the owner', () => deliveredRunIsSilent('ACME', 'd-delivered-case'));
 
 test('a review posts its inline comments on the right side, mentions stripped; a 422 refusal posts the review as written, an outage is not retried', async () => {
-  const post = (comments: unknown[]) => fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'COMMENT', body: 'cc @quack-app', comments }), headers: { authorization: 'Bearer svc-secret' } }).then((r) => r.status);
+  const post = (comments: unknown[]) => postTo({ commitId: 'abc123', event: 'COMMENT', body: 'cc @quack-app', comments }).then((r) => r.status);
   assert.equal(await post([{ path: 'src/a.ts', line: 3, body: '**nit**: ping @quack-app' }]), 201);
-  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: 'cc quack-app', commit_id: 'abc123', comments: [{ path: 'src/a.ts', line: 3, side: 'RIGHT', body: '**nit**: ping quack-app' }] });
+  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: `cc quack-app${mark()}`, commit_id: 'abc123', comments: [{ path: 'src/a.ts', line: 3, side: 'RIGHT', body: '**nit**: ping quack-app' }] });
   const refused = [{ path: 'gone.ts', line: 3, body: '**nit**: lost?' }];
   const posts = () => calls.filter((c) => c.path.endsWith('/reviews')).length;
   const before = posts();
-  const fallback = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'listed inline', fallbackBody: 'as written, @quack-app', comments: refused }), headers: { authorization: 'Bearer svc-secret' } });
+  const fallback = await postTo({ event: 'COMMENT', body: 'listed inline', fallbackBody: 'as written, @quack-app', comments: refused });
   assert.equal(fallback.status, 201);
   assert.equal(posts() - before, 2);
-  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: 'as written, quack-app' });
+  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: `as written, quack-app${mark()}` });
   // An outage is not a refusal: one attempt, a 502 to the session, nothing marked posted.
-  const down = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'x', fallbackBody: 'y', comments: [{ path: 'down.ts', line: 1, body: 'n' }] }), headers: { authorization: 'Bearer svc-secret' } });
+  const down = await postTo({ event: 'COMMENT', body: 'x', fallbackBody: 'y', comments: [{ path: 'down.ts', line: 1, body: 'n' }] });
   assert.equal(down.status, 502);
   assert.equal(posts() - before, 3);
 });
 
-const postTo = (body: unknown) => fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: 'Bearer svc-secret' } }).then(async (r) => ({ status: r.status, body: await r.json() }));
-
 test('a review delivery whose answer was lost is found on retry, not posted twice', async () => {
-  const review = { owner: 'acme', repo: 'widgets', number: 15, commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', deliveryId: 'conv-1/v1' };
+  const review = { target: 'acme/widgets/15', commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', requestId: 'conv-1/v1' };
   const first = await postTo(review);
   assert.equal(first.status, 201);
   assert.match(posted15[0].body, /\n\n<!-- quack-delivery: conv-1%2Fv1 -->$/);
   const again = await postTo(review);
   assert.deepEqual([again.status, again.body.url], [200, first.body.url]);
   assert.equal(posted15.length, 1, 'GitHub got one review');
-  assert.equal((await postTo({ ...review, deliveryId: 'conv-1/v2' })).status, 201, 'another delivery posts');
+  assert.equal((await postTo({ ...review, requestId: 'conv-1/v2' })).status, 201, 'another request posts');
   assert.equal(posted15.length, 2);
 });
 
@@ -633,7 +702,7 @@ test('the head route reads the pull request once, without its checks, reviews or
 });
 
 test('a GitHub refusal keeps its status and a fault here is a 500, so neither is redelivered as an outage', async () => {
-  assert.equal((await postTo({ owner: 'acme', repo: 'widgets', number: 18, event: 'COMMENT', body: 'x' })).status, 422);
+  assert.equal((await postTo({ target: 'acme/widgets/18', event: 'COMMENT', body: 'x' })).status, 422);
 });
 
 const mirror = (path: string) => fetch(`${service}/repos/${path}`).then(async (r) => ({ status: r.status, type: r.headers.get('content-type'), body: (await r.json()) as any }));
@@ -696,8 +765,68 @@ test('a GitHub outage serves a stored PR as stale, with its Age; with nothing st
 });
 
 test('an oversized body is a 413 problem', async () => {
-  const r = await fetch(`${service}/reviews`, { method: 'POST', body: 'x'.repeat(6 << 20) });
+  const r = await fetch(`${service}/pulls/acme/widgets/7/reviews`, { method: 'POST', body: 'x'.repeat(6 << 20) });
   assert.deepEqual([r.status, r.headers.get('content-type')], [413, 'application/problem+json']);
 });
 
 
+
+test('the pre-contract routes are gone: POST /reviews and POST /pulls answer 404', async () => {
+  const auth = { authorization: 'Bearer svc-secret' };
+  const old = await fetch(`${service}/reviews`, { method: 'POST', headers: auth, body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'x', requestId: 'r' }) });
+  assert.equal(old.status, 404);
+  assert.equal(old.headers.get('content-type'), 'application/problem+json');
+  assert.equal((await fetch(`${service}/pulls`, { method: 'POST', headers: auth, body: JSON.stringify({ owner: 'acme', repo: 'widgets', head: 'h', base: 'b', title: 't', body: '' }) })).status, 404);
+  assert.equal((await fetch(`${service}/pulls/acme/widgets/7/reviews`, { headers: auth })).status, 404, 'reviews are posted, not read');
+});
+
+test('a review needs a requestId, and bodies are closed: an undeclared field is a 400 problem', async () => {
+  const base = { event: 'COMMENT', body: 'x' };
+  const without = await reviewAt('acme/widgets/7', base);
+  assert.equal(without.status, 400);
+  problemShape(await without.json(), 400);
+  for (const bad of [{ requestId: '' }, { requestId: 3 }, { requestId: 'r', owner: 'acme' }, { requestId: 'r', deliveryId: 'r' }, { requestId: 'r', comments: [{ path: 'a', line: 1, body: 'b', side: 'LEFT' }] }, { requestId: 'r', comments: [{ path: 'a', body: 'b' }] }, { requestId: 'r', comments: 'x' }, { requestId: 'r', commitId: 1 }]) {
+    assert.equal((await reviewAt('acme/widgets/7', { ...base, ...bad })).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await reviewAt('acme/widgets/7', [])).status, 400);
+  assert.equal((await reviewAt('acme/widgets/7', '{not json')).status, 400, 'a body that is not JSON');
+});
+
+test('a repeat of a requestId returns the first post even when the event, body or commit differ, and posts nothing', async () => {
+  const first = await postTo({ target: 'acme/widgets/15', commitId: 'abc123', event: 'REQUEST_CHANGES', body: 'first', requestId: 'conv-2/v1' });
+  assert.equal(first.status, 201);
+  const before = posted15.length;
+  const again = await postTo({ target: 'acme/widgets/15', commitId: 'def456', event: 'APPROVE', body: 'second', requestId: 'conv-2/v1' });
+  assert.deepEqual([again.status, again.body], [200, { id: first.body.id, url: first.body.url }]);
+  assert.equal(posted15.length, before, 'the upstream got no second review');
+});
+
+test('a pull request is opened and edited under closed bodies, errors as problems', async () => {
+  const auth = { authorization: 'Bearer svc-secret' };
+  const open = (body: unknown, target = 'acme/widgets') => fetch(`${service}/pulls/${target}`, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+  const full = { head: 'h', base: 'b', title: 't', body: '' };
+  assert.equal((await open(full)).status, 201, 'an empty body is declared valid');
+  for (const bad of [{ ...full, owner: 'acme' }, { ...full, title: '' }, { ...full, body: undefined }, { ...full, extra: 1 }]) {
+    const r = await open(bad);
+    assert.equal(r.status, 400, JSON.stringify(bad));
+    problemShape(await r.json(), 400);
+  }
+  const edit = (body: unknown) => fetch(`${service}/pulls/acme/widgets/7`, { method: 'PATCH', headers: auth, body: JSON.stringify(body) }).then((r) => r.status);
+  assert.equal(await edit({ title: 't', body: 'b', number: 7 }), 400);
+  assert.equal(await edit({ title: 't', body: 'b' }), 200);
+  const missing = await fetch(`${service}/pulls/acme/widgets/404`, { method: 'PATCH', headers: auth, body: JSON.stringify({ title: 't', body: 'b' }) });
+  assert.equal(missing.status, 404);
+  problemShape(await missing.json(), 404);
+});
+
+test('an upstream outage is a 502 problem and a refusal keeps its status, as problem+json', async () => {
+  const outage = await fetch(`${service}/pulls/acme/widgets/25/head`);
+  assert.equal(outage.headers.get('content-type'), 'application/problem+json');
+  assert.equal(outage.status, 502);
+  problemShape(await outage.json(), 502);
+  const limited = await fetch(`${service}/pulls/acme/widgets/26/head`);
+  assert.deepEqual([limited.status, limited.headers.get('retry-after'), limited.headers.get('content-type')], [503, '3600', 'application/problem+json']);
+  const refused = await postTo({ target: 'acme/widgets/18', event: 'COMMENT', body: 'x' });
+  assert.equal(refused.status, 422);
+  problemShape(refused.body, 422);
+});

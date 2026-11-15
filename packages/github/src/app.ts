@@ -122,12 +122,27 @@ export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
     return json.token;
   }
 
+  // Minted for one repository with contents: write only, and cached apart from tokenFor's: a session's token can never serve the service or another repository.
+  const scoped = new Map<string, { token: string; expiresAt: string; expires: number }>();
+  async function credentialFor(owner: string, repo: string): Promise<{ token: string; expiresAt: string }> {
+    const id = await installationFor(owner, repo);
+    const key = `${id}/${owner}/${repo}`.toLowerCase();
+    const cached = scoped.get(key);
+    if (cached && Date.now() < cached.expires - TOKEN_SKEW_MS) return cached;
+    const { json } = await call('POST', `/app/installations/${id}/access_tokens`, `Bearer ${appJwt()}`, { repositories: [repo], permissions: { contents: 'write' } });
+    if (!json?.token) throw new Error(`installation ${id} returned no token`);
+    const minted = { token: String(json.token), expiresAt: String(json.expires_at), expires: Date.parse(json.expires_at) };
+    scoped.set(key, minted);
+    return minted;
+  }
+
   let slugPromise: Promise<string> | undefined;
   // The app's own handle: users mention the bot as @<slug>, and its comments are authored by <slug>[bot].
   const slug = () => (slugPromise ??= call('GET', '/app', `Bearer ${appJwt()}`).then((r) => String(r.json?.slug)).catch((err) => { slugPromise = undefined; throw err; }));
 
   return {
     tokenFor,
+    credentialFor,
     slug,
     /** Calls the REST API as the app itself (JWT), for endpoints such as webhook deliveries. */
     async asApp(method: string, path: string) {

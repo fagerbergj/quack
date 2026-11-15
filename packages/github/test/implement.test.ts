@@ -106,7 +106,7 @@ test('an approved deliver pushes the branch and opens a pull request that closes
   assert.equal((pending.args as Record<string, string>).summary, 'Open a PR from quack/12-add-cache-ttl into main for #12: feat(app): bump a to 3');
   assert.equal((await run).status, 'done');
   assert.equal(sh(bare, 'rev-parse', `refs/heads/${BRANCH}`), sh(join(session.workspace, 'repo'), 'rev-parse', 'HEAD'));
-  assert.deepEqual(service.opened, [{ owner: 'acme', repo: 'widgets', head: BRANCH, base: 'main', title: 'feat(app): bump a to 3', body: 'What: a is 3.\nWhy: the issue asked.\nVerified: node app.ts.\n\nCloses #12' }]);
+  assert.deepEqual(service.opened, [{ head: BRANCH, base: 'main', title: 'feat(app): bump a to 3', body: 'What: a is 3.\nWhy: the issue asked.\nVerified: node app.ts.\n\nCloses #12' }]);
   assert.match(seen[0], /opened https:\/\/github.com\/acme\/widgets\/pull\/13/);
   const sealed = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['github.pr_body'].versions[0];
   assert.deepEqual(sealed.links, [{ label: 'Opened', url: 'https://github.com/acme/widgets/pull/13' }]);

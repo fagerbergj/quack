@@ -57,9 +57,9 @@ const bodyOf = (prMd: string) => prMd.trim().split('\n').slice(1).join('\n').tri
 /** Opens the pull request through the service, which holds the token; the body closes the issue. */
 export async function openPull(config: SessionConfig, w: IssueWork, title: string, body: string): Promise<string> {
   const text = `${bodyOf(body)}\n\nCloses #${w.issue.number}`.trim();
-  const res = await fetch(`${config.serviceUrl}/pulls`, {
+  const res = await fetch(`${config.serviceUrl}/pulls/${w.issue.owner}/${w.issue.repo}`, {
     method: 'POST', headers: { authorization: `Bearer ${config.serviceToken}` },
-    body: JSON.stringify({ owner: w.issue.owner, repo: w.issue.repo, head: w.branch, base: w.issue.baseRef, title, body: text }),
+    body: JSON.stringify({ head: w.branch, base: w.issue.baseRef, title, body: text }),
   });
   if (!res.ok) throw new Error(`cannot open the pull request: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return ((await res.json()) as { url: string }).url;

@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { EvalAdapter } from '@quack/sdk';
+import { sendProblem, type EvalAdapter } from '@quack/sdk';
 import type { PullRequestRecord } from './checkout.ts';
 import { reviewDeclaration, reviewerRubric } from './rubric.ts';
 import { parseReview, reviewKind } from './review.ts';
@@ -14,11 +14,13 @@ import { parseReview, reviewKind } from './review.ts';
 export async function evalService(pin: { pr: PullRequestRecord }) {
   const token = randomBytes(16).toString('hex');
   const captured: unknown[] = [];
+  const posted = new Map<string, { id: number; url: string }>();
   const server = createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
     const send = (status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-    if (req.headers.authorization !== `Bearer ${token}`) return send(401, { error: 'unauthorized' });
+    const problem = (status: number, detail: string) => sendProblem(res, status, detail);
+    if (req.headers.authorization !== `Bearer ${token}`) return problem(401, 'unauthorized');
     const { pr } = pin;
     // The session reaches its apps under /apps/<name> and publishes facts to the same base, which the replay discards.
     const path = (req.url ?? '').replace(/^\/apps\/github/, '');
@@ -26,14 +28,20 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
     if (req.method === 'GET' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}`) return send(200, { ...pr, state: 'open' });
     // submit_review reads the live head before posting; the pinned head never moves.
     if (req.method === 'GET' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}/head`) return send(200, { headSha: pr.headSha, body: pr.body });
-    if (req.method === 'POST' && path === '/reviews') {
+    if (req.method === 'POST' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}/reviews`) {
       const r = JSON.parse(raw);
-      // Only a review of the pinned PR at its pinned head counts as captured; anything else would score a delivery that could not happen.
-      if (r.owner !== pr.owner || r.repo !== pr.repo || r.number !== pr.number || r.commitId !== pr.headSha) return send(404, { error: 'not the pinned pull request' });
+      // Only a review at the pinned head counts as captured; anything else would score a delivery that could not happen.
+      if (r.commitId !== pr.headSha) return problem(404, 'not the pinned pull request');
+      if (typeof r.requestId !== 'string' || !r.requestId) return problem(400, 'need a requestId');
+      // A repeat of a requestId answers the first post and captures nothing more, as the service does.
+      const first = posted.get(r.requestId);
+      if (first) return send(200, first);
+      const reply = { id: posted.size + 1, url: '(eval: not delivered)' };
+      posted.set(r.requestId, reply);
       captured.push(r);
-      return send(201, { url: '(eval: not delivered)' });
+      return send(201, reply);
     }
-    send(404, { error: 'not available in eval' });
+    problem(404, 'not available in eval');
   }).listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

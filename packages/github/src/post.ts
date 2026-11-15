@@ -34,10 +34,10 @@ function post(config: SessionConfig) {
     const marks = v?.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks).map((l) => `- ${l}`).join('\n')}\n` : '';
     const event = EVENT[parseReview(sealed.content).verdict ?? ''];
     const { body: text, comments } = await postable(api, config.repoDir ?? 'repo', pr.baseRef, sealed.content, ctx);
-    // The delivery id makes a resubmit after a lost answer or a crash find the posted review instead of posting it again.
-    const deliveryId = `${api.conversationId}/v${sealed.version}`;
-    const body = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event, body: text + marks, deliveryId, ...(comments.length ? { comments, fallbackBody: sealed.content + marks } : {}) };
-    const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: `Bearer ${config.serviceToken}` } });
+    // The request id makes a resubmit after a lost answer or a crash find the posted review instead of posting it again.
+    const requestId = `${api.conversationId}/v${sealed.version}`;
+    const body = { commitId: pr.headSha, event, body: text + marks, requestId, ...(comments.length ? { comments, fallbackBody: sealed.content + marks } : {}) };
+    const res = await fetch(`${config.serviceUrl}/pulls/${pr.owner}/${pr.repo}/${pr.number}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: `Bearer ${config.serviceToken}` } });
     if (!res.ok) return postFailed(res);
     const posted = (await res.json()) as { url?: string };
     await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.posted = [...(d.posted ?? []), sealed.version]; d.postedThisCheckout = sealed.version; }, ctx);

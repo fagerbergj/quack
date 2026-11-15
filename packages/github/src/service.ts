@@ -52,17 +52,26 @@ export async function assertPromoted(distributorUrl: string, agent: string, slee
 const { send, readBody: raw } = serviceHttp({ maxBody: 5 << 20 });
 const EVENTS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 
-/** owner/repo from a github.com URL such as https://github.com/acme/widgets(.git); undefined for any other host. */
+const NAME = /^[\w.-]+$/;
+
+/** owner/repo from a github.com URL such as https://github.com/acme/widgets(.git); undefined for any other host or a path that is not exactly a repository. */
 export function ownerRepo(raw: string): { owner: string; repo: string } | undefined {
   try {
     const u = new URL(raw);
-    const [owner, repo] = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
-    if (u.hostname.toLowerCase() !== 'github.com' || !owner || !repo) return undefined;
-    return { owner, repo: repo.replace(/\.git$/, '') };
+    const parts = u.pathname.replace(/^\/+|\/+$/g, '').split('/');
+    const [owner, name] = parts;
+    const repo = name?.replace(/\.git$/, '');
+    if (u.hostname.toLowerCase() !== 'github.com' || parts.length !== 2 || !NAME.test(owner) || !repo || !NAME.test(repo)) return undefined;
+    return { owner, repo };
   } catch {
     return undefined;
   }
 }
+
+// A request body that is an object with only declared fields; the contract closes its bodies.
+const closed = (r: unknown, keys: string[]): r is Record<string, unknown> => typeof r === 'object' && r !== null && !Array.isArray(r) && Object.keys(r).every((k) => keys.includes(k));
+const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+const readJson = async (req: IncomingMessage) => JSON.parse((await raw(req)).toString('utf8')) as unknown;
 
 // Reviews posted per PR, and the runs already watched: a run is watched once, so no run notes twice.
 type RunState = { posted: Map<string, number>; watched: Set<string> };
@@ -172,49 +181,58 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   send(res, status, { session: trigger.sessionKey, status: upstream.status, ...(status === 202 ? { queued: true } : { noticed: true }) });
 }
 
+// The token a session pushes with: for the named repository only, contents: write only (no workflows), and never stored by an intermediary.
 async function gitCredential(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
   const target = ownerRepo(new URL(req.url ?? '', 'http://x').searchParams.get('url') ?? '');
-  if (!target) return send(res, 404, { error: 'not a github.com repository' });
-  try {
-    send(res, 200, { username: 'x-access-token', token: await app.tokenFor(target.owner, target.repo) });
-  } catch (err) {
-    send(res, err instanceof NoInstallation ? 404 : 502, { error: (err as Error).message });
-  }
+  if (!target) return sendProblem(res, 404, 'not a github.com repository');
+  const { token, expiresAt } = await app.credentialFor(target.owner, target.repo);
+  res.setHeader('cache-control', 'no-store');
+  send(res, 200, { username: 'x-access-token', token, expiresAt });
 }
 
-const deliveryMark = (r: Record<string, any>) => (typeof r.deliveryId === 'string' && r.deliveryId ? `\n\n<!-- quack-delivery: ${encodeURIComponent(r.deliveryId)} -->` : '');
+// The marker keeps the text it had as `deliveryId`, so reviews already on GitHub still dedupe.
+const deliveryMark = (requestId: string) => `\n\n<!-- quack-delivery: ${encodeURIComponent(requestId)} -->`;
 
-// The review a delivery already posted, found by the mark in its body: a retry after a lost answer or a crash posts nothing twice.
-async function postedBefore(app: GithubApp, r: Record<string, any>, slug: string, mark: string): Promise<any> {
-  if (!mark) return undefined;
-  const reviews = await allReviews(app, r.owner, r.repo, `/repos/${r.owner}/${r.repo}/pulls/${r.number}`, Infinity);
+type Target = { owner: string; repo: string; number: number };
+type Comment = { path: string; line: number; body: string };
+const REVIEW_KEYS = ['event', 'body', 'comments', 'commitId', 'fallbackBody', 'requestId'];
+const isComment = (c: unknown): c is Comment => closed(c, ['path', 'line', 'body']) && typeof c.path === 'string' && Number.isInteger(c.line) && typeof c.body === 'string';
+
+function reviewRequest(r: unknown) {
+  if (!closed(r, REVIEW_KEYS) || !EVENTS.has(String(r.event)) || !nonEmpty(r.body) || !nonEmpty(r.requestId)) return undefined;
+  if (r.comments !== undefined && !(Array.isArray(r.comments) && r.comments.every(isComment))) return undefined;
+  if ([r.commitId, r.fallbackBody].some((v) => v !== undefined && typeof v !== 'string')) return undefined;
+  return { event: r.event as string, body: r.body, requestId: r.requestId, comments: (r.comments ?? []) as Comment[], commitId: r.commitId as string | undefined, fallbackBody: r.fallbackBody as string | undefined };
+}
+
+// The review a request already posted, found by the mark in its body: a retry after a lost answer or a crash posts nothing twice.
+async function postedBefore(app: GithubApp, t: Target, slug: string, mark: string): Promise<any> {
+  const reviews = await allReviews(app, t.owner, t.repo, `/repos/${t.owner}/${t.repo}/pulls/${t.number}`, Infinity);
   return reviews.find((v) => String(v.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase() && String(v.body ?? '').includes(mark.trim()));
 }
 
-// Posts a review the session sealed and checked; the session never holds an API token. A `deliveryId` makes a repeat return the first post.
-async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState) {
-  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
-  const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && EVENTS.has(r.event) && typeof r.body === 'string' && r.body.length > 0;
-  if (!ok) return send(res, 400, { error: 'need owner, repo, integer number, event (APPROVE|REQUEST_CHANGES|COMMENT) and a non-empty body' });
-  const comments = Array.isArray(r.comments) ? r.comments.filter((c: any) => typeof c?.path === 'string' && Number.isInteger(c.line) && typeof c.body === 'string') : [];
+// Posts a review the session sealed and checked; the session never holds an API token. A repeat of a `requestId` returns the first post, whatever else it carries.
+async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState, t: Target) {
+  const r = reviewRequest(await readJson(req));
+  if (!r) return sendProblem(res, 400, 'need event (APPROVE|REQUEST_CHANGES|COMMENT), a non-empty body and requestId, with comments as { path, line, body } and no other fields');
   const slug = await app.slug();
-  const path = `/repos/${r.owner}/${r.repo}/pulls/${r.number}/reviews`;
-  const mark = deliveryMark(r);
-  const key = prKey(r.owner, r.repo, r.number);
+  const path = `/repos/${t.owner}/${t.repo}/pulls/${t.number}/reviews`;
+  const mark = deliveryMark(r.requestId);
+  const key = prKey(t.owner, t.repo, t.number);
   const count = () => state.posted.set(key, (state.posted.get(key) ?? 0) + 1);
-  const earlier = await postedBefore(app, r, slug, mark);
+  const earlier = await postedBefore(app, t, slug, mark);
   if (earlier) return (count(), send(res, 200, { id: earlier.id, url: earlier.html_url }));
   // GitHub refuses an approve or request-changes from a pull request's author, and the implementer opens pull requests as this app.
-  const own = r.event !== 'COMMENT' && String((await app.asInstallation(r.owner, r.repo, 'GET', `/repos/${r.owner}/${r.repo}/pulls/${r.number}`)).json?.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
+  const own = r.event !== 'COMMENT' && String((await app.asInstallation(t.owner, t.repo, 'GET', `/repos/${t.owner}/${t.repo}/pulls/${t.number}`)).json?.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
   const lead = own ? `**Verdict: ${r.event === 'APPROVE' ? 'approve' : 'request changes'}.** GitHub does not take this verdict from a pull request's own author, so it is posted as a comment.\n\n` : '';
-  const post = (body: string, inline: any[]) => app.asInstallation(r.owner, r.repo, 'POST', path, {
+  const post = (body: string, inline: Comment[]) => app.asInstallation(t.owner, t.repo, 'POST', path, {
     event: own ? 'COMMENT' : r.event, body: stripMentions(lead + body, slug) + mark, ...(r.commitId ? { commit_id: r.commitId } : {}),
     ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body, slug) })) } : {}),
   });
   // GitHub answers 422 when an inline line is off the diff; only then does the review go as written, findings in the body. Outages are the caller's to retry.
-  const { json } = await post(r.body, comments).catch((err) => {
-    if (!comments.length || !(err instanceof GithubError) || err.status !== 422) throw err;
-    return post(typeof r.fallbackBody === 'string' ? r.fallbackBody : r.body, []);
+  const { json } = await post(r.body, r.comments).catch((err) => {
+    if (!r.comments.length || !(err instanceof GithubError) || err.status !== 422) throw err;
+    return post(r.fallbackBody ?? r.body, []);
   });
   count();
   send(res, 201, { id: json?.id, url: json?.html_url });
@@ -260,35 +278,36 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
 // An issue the session may implement: its text, labels and the branch to cut from.
 async function issueRoute(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number, base?: string) {
   const issue = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${number}`)).json;
-  if (!issue || issue.pull_request) return send(res, 404, { error: 'no such issue' });
+  if (!issue || issue.pull_request) return sendProblem(res, 404, 'no such issue');
   const baseRef = base ?? (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}`)).json?.default_branch;
   send(res, 200, { owner, repo, number, title: issue.title, body: issue.body ?? '', author: issue.user?.login ?? null, state: issue.state, labels: (issue.labels ?? []).map((l: any) => (typeof l === 'string' ? l : l.name)), baseRef });
 }
 
 // Opens the pull request a session pushed a branch for, after its approval; the session never holds the token.
-async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
-  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
-  if (!['owner', 'repo', 'head', 'base', 'title', 'body'].every((k) => typeof r[k] === 'string' && r[k])) return send(res, 400, { error: 'need owner, repo, head, base, title and body' });
+async function openPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp, owner: string, repo: string) {
+  const r = await readJson(req);
+  if (!closed(r, ['head', 'base', 'title', 'body']) || !nonEmpty(r.head) || !nonEmpty(r.base) || !nonEmpty(r.title) || typeof r.body !== 'string') return sendProblem(res, 400, 'need head, base, a non-empty title and a body, and no other fields');
   const slug = await app.slug();
-  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `/repos/${r.owner}/${r.repo}/pulls`, { head: r.head, base: r.base, title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
+  const { json } = await app.asInstallation(owner, repo, 'POST', `/repos/${owner}/${repo}/pulls`, { head: r.head, base: r.base, title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
   send(res, 201, { number: json?.number, url: json?.html_url });
 }
 
 // Rewrites a pull request's title and body from the description its approver saw; the session never holds the token.
 async function editPullRequest(req: IncomingMessage, res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
-  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
-  if (typeof r.title !== 'string' || !r.title || typeof r.body !== 'string') return send(res, 400, { error: 'need a non-empty title and a body' });
+  const r = await readJson(req);
+  if (!closed(r, ['title', 'body']) || !nonEmpty(r.title) || typeof r.body !== 'string') return sendProblem(res, 400, 'need a non-empty title and a body, and no other fields');
   const slug = await app.slug();
   const { json } = await app.asInstallation(owner, repo, 'PATCH', `/repos/${owner}/${repo}/pulls/${number}`, { title: stripMentions(r.title, slug), body: stripMentions(r.body, slug) });
   // GitHub's 404 comes back as no body; a vanished pull request is not an edit.
-  if (!json?.html_url) return send(res, 404, { error: 'no such pull request' });
+  if (!json?.html_url) return sendProblem(res, 404, 'no such pull request');
   send(res, 200, { url: json.html_url });
 }
 
 // The live head and description alone: one read, for callers that only check whether the PR moved.
 async function pullHead(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
-  send(res, pr ? 200 : 404, pr ? { headSha: pr.head.sha, body: pr.body ?? '' } : { error: 'no such pull request' });
+  if (!pr) return sendProblem(res, 404, 'no such pull request');
+  send(res, 200, { headSha: pr.head.sha, body: pr.body ?? '' });
 }
 
 // /issues|pulls/{owner}/{repo}/{n}: GET reads either, PATCH edits a pull request, GET .../head reads a PR's head; false when the path or method is none of these.
@@ -307,7 +326,8 @@ async function itemRoute(req: IncomingMessage, res: ServerResponse, app: GithubA
 
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const facts = await prFacts(app, owner, repo, number);
-  send(res, facts ? 200 : 404, facts ? { ...facts, feedback: await reviewFeedback(app, owner, repo, number, facts.headSha) } : { error: 'no such pull request' });
+  if (!facts) return sendProblem(res, 404, 'no such pull request');
+  send(res, 200, { ...facts, feedback: await reviewFeedback(app, owner, repo, number, facts.headSha) });
 }
 
 /** The opening card's data, sent beside the input and never in it. shortcut: the first 100 files; a longer diff shows its first page. */
@@ -362,6 +382,15 @@ function failureStatus(err: unknown): number {
   return 500;
 }
 
+// POST /pulls/{owner}/{repo} opens a pull request; POST /pulls/{owner}/{repo}/{number}/reviews posts a review. False for any other path.
+async function createRoute(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState, path: string): Promise<boolean> {
+  const m = /^\/pulls\/([\w.-]+)\/([\w.-]+)(?:\/([1-9]\d*)\/reviews)?$/.exec(path);
+  if (!m) return false;
+  const [, owner, repo, n] = m;
+  await (n ? postReview(req, res, app, state, { owner, repo, number: Number(n) }) : openPullRequest(req, res, app, owner, repo));
+  return true;
+}
+
 /** `resume` re-arms the work a restart found in the store; `stop` ends the retry timer; `sweep` retries waiting work now. */
 export function createGithubService(app: GithubApp, config: ServiceConfig): App & { resume(): void; stop(): void; sweep(): Promise<void> } {
   const state: RunState = { posted: new Map(), watched: new Set() };
@@ -377,13 +406,12 @@ export function createGithubService(app: GithubApp, config: ServiceConfig): App 
       if (get) return await get();
       const mirror = req.method === 'GET' ? MIRROR_PATH.exec(path) : null;
       if (mirror) return await mirrorPull(res, app, states, mirror);
-      const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/pulls': () => openPullRequest(req, res, app) }[path] : undefined;
-      if (post) return await post();
-      if (!(await itemRoute(req, res, app, config, path))) send(res, 404, { error: 'not found' });
+      if (req.method === 'POST' && (await createRoute(req, res, app, state, path))) return;
+      if (!(await itemRoute(req, res, app, config, path))) sendProblem(res, 404, 'not found');
     } catch (err) {
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
       if (err instanceof RateLimited) res.setHeader('retry-after', String(Math.ceil(err.retryAfterMs / 1000)));
-      send(res, failureStatus(err), { error: (err as Error).message });
+      sendProblem(res, failureStatus(err), (err as Error).message);
     }
   } };
 }
