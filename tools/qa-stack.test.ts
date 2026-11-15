@@ -15,6 +15,9 @@ test('the stack serves /version and its stub app, then leaves no listeners', asy
   assert.equal(await listening(stack.url), true);
   const res = await fetch(`${stack.url}/apps/schedules`);
   assert.equal(((await res.json()) as { schedules: unknown[] }).schedules.length, 2);
+  // The gateway refuses a credential-free write and admits the page routes.
+  assert.equal((await fetch(`${stack.url}/apps/schedules/x`, { method: 'PUT', body: '{}' })).status, 401);
+  assert.equal((await fetch(`${stack.url}/apps/schedules/nope`, { method: 'DELETE' })).status, 404);
   await stack.stop();
   assert.equal(await listening(stack.url), false);
 });

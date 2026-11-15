@@ -19,8 +19,8 @@ const scenario: Scenario = {
         await page.locator('main').getByText('weekly-retro', { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
         const list = (await (await fetch(`${ctx.url}/apps/schedules`)).json()) as { schedules: Array<{ id: string; source?: string }> };
         if (list.schedules.map((s) => s.id).join() !== 'daily-digest' || 'source' in list.schedules[0]!) throw new Error(`unexpected list ${JSON.stringify(list)}`);
-        const post = await fetch(`${ctx.url}/apps/schedules`, { method: 'POST', body: '{}' });
-        if (post.status !== 401) throw new Error(`a credential-free POST answered ${post.status}, not the gateway's 401`);
+        const put = await fetch(`${ctx.url}/apps/schedules/daily-digest`, { method: 'PUT', body: '{}' });
+        if (put.status !== 401) throw new Error(`a credential-free PUT answered ${put.status}, not the gateway's 401`);
       } finally {
         await context.close();
       }
