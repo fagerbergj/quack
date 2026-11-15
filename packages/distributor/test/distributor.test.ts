@@ -311,7 +311,7 @@ test('a bundle that dropped a key is refused for new sessions until its version 
   await writeFile(file, JSON.stringify({ ...cut, version: 2 }));
   assert.equal((await invoke('github:m#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
   const pinned = async (key: string) => JSON.parse(await readFile(ranAs(key).slice('agent: '.length), 'utf8'));
-  assert.equal((await pinned('github:m#1')).maxTurns, 80);
+  assert.equal((await pinned('github:m#1')).description, 'Reviews.');
   assert.equal((await pinned('github:m#2')).version, 2);
 });
 
