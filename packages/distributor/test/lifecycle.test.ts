@@ -26,7 +26,7 @@ async function host(agents: string[] = []) {
   const agentsDir = join(root, 'agents');
   for (const name of agents) {
     await mkdir(join(agentsDir, name), { recursive: true });
-    await writeFile(join(agentsDir, name, 'agent.json'), JSON.stringify({ name, version: 1, prompt: 'prompt.md' }));
+    await writeFile(join(agentsDir, name, 'agent.json'), JSON.stringify({ name, version: 1, prompt: 'prompt.md', extensions: {} }));
     await writeFile(join(agentsDir, name, 'prompt.md'), `${name} prompt`);
   }
   const launches: Array<{ dir: string; stopped: boolean; release: () => void }> = [];

@@ -37,7 +37,7 @@ async function agentsDirAt(version: number, ...names: string[]) {
   dirs.push(dir);
   for (const name of names) {
     await mkdir(join(dir, name));
-    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version, prompt: 'prompt.md' }));
+    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version, prompt: 'prompt.md', extensions: {} }));
     await writeFile(join(dir, name, 'prompt.md'), `prompt v${version}`);
   }
   return dir;
@@ -433,7 +433,7 @@ test('GET /version reports the build from the environment, null when unset', asy
 
 test('GET /agents reports a promoted agent as promoted', async () => {
   const dir = await agentsDirAt(3, 'reviewer');
-  await writeFile(join(dir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, status: 'promoted', prompt: 'prompt.md' }));
+  await writeFile(join(dir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, status: 'promoted', prompt: 'prompt.md', extensions: {} }));
   const { base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: unknown[] };
   assert.deepEqual(agents, [{ name: 'reviewer', version: 3, status: 'promoted' }]);

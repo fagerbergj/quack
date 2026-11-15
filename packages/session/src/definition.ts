@@ -284,6 +284,12 @@ export function parseDefinition(input: unknown, deployment: DeploymentConfig, ca
 
 const BUNDLE_KEYS = ['name', 'version', 'status', 'description', 'model', 'prompt', 'extensions', 'exec', 'retention'];
 const NAME = /^[\w-][\w.-]*$/;
+const BUNDLE_FIELDS: Array<[string, (v: unknown) => boolean, string]> = [
+  ['status', (v) => v === 'draft' || v === 'promoted', 'status must be draft or promoted'],
+  ['description', (v) => typeof v === 'string', 'description must be a string'],
+  ['model', (v) => typeof v === 'string' && /^[^/]+\/.+$/.test(v), 'model must be "provider/model"'],
+  ['prompt', (v) => typeof v === 'string' && /^[^/\\]+$/.test(v), 'prompt must be a bare file name'],
+];
 
 /** Strict shape of a repo bundle's agent.json (the Agent bundle contract). Only repo bundles are checked: pinned snapshots are immutable history and go through parseDefinition's shims alone. */
 export function bundleProblems(raw: unknown): string[] {
@@ -291,14 +297,10 @@ export function bundleProblems(raw: unknown): string[] {
   const problems = Object.keys(raw).filter((k) => !BUNDLE_KEYS.includes(k)).map((k) => `unknown key ${k}`);
   if (typeof raw.name !== 'string' || !NAME.test(raw.name)) problems.push('name must match ^[\\w-][\\w.-]*$');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
-  if (raw.status !== undefined && raw.status !== 'draft' && raw.status !== 'promoted') problems.push('status must be draft or promoted');
-  if (raw.description !== undefined && typeof raw.description !== 'string') problems.push('description must be a string');
-  if (raw.model !== undefined && !(typeof raw.model === 'string' && /^[^/]+\/.+$/.test(raw.model))) problems.push('model must be "provider/model"');
-  if (raw.prompt !== undefined && !(typeof raw.prompt === 'string' && /^[^/\\]+$/.test(raw.prompt))) problems.push('prompt must be a bare file name');
+  for (const [key, ok, message] of BUNDLE_FIELDS) if (raw[key] !== undefined && !ok(raw[key])) problems.push(message);
   const ext = raw.extensions;
   if (!isObject(ext) || !Object.entries(ext).every(([k, v]) => NAME.test(k) && isObject(v))) problems.push('extensions must be an object of name to config object');
-  if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, false));
-  return [...problems, ...retentionProblems(raw.retention)];
+  return [...problems, ...(raw.exec === undefined ? [] : execProblems('exec', raw.exec, false)), ...retentionProblems(raw.retention)];
 }
 
 /** The variables the extensions an agent definition selects declare, for the session process to receive (and drop once read). */
