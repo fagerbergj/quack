@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createSchedulesService } from '@quack/schedules';
 import { inProcessFetch } from '@quack/sdk';
 import { FAKE_MODEL, fakeModel, type FakeScript } from './fake-model.ts';
+import { fakeRmfakecloud } from './fake-rmfakecloud.ts';
 import { seedArtifacts } from './seed-artifacts.ts';
 import { seedContracts } from './seed-contracts.ts';
 
@@ -186,9 +187,12 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
     if (opts.apps?.includes('schedules')) await seedSchedules(dataDir);
     const extensions = Object.fromEntries((opts.apps ?? []).map((name) => [name, {}]));
     writeFileSync(config, JSON.stringify({ ...deployment(await modelUrl(parts, opts), opts.capacity), extensions }));
+    const rm = opts.apps?.includes('remarkable') ? await fakeRmfakecloud() : undefined;
+    if (rm) parts.servers.push(rm.server);
     const url = await startDistributor(parts, {
       QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', ...(opts.apps?.includes('github') && githubEnv(parts.tmp)),
+      ...(rm && { RMFAKECLOUD_URL: rm.url, RMFAKECLOUD_EMAIL: 'qa@example.com', RMFAKECLOUD_PASSWORD: 'qa' }),
     });
     if (opts.seed === 'demo') await seedDemo(url);
     return { url, dataDir, stop: async () => { process.off('exit', onExit); await stop(); } };

@@ -9,18 +9,22 @@ export function openStore(path: string, now: () => Date) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, created TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS batch_items (batch TEXT NOT NULL REFERENCES batches(id), document TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', version TEXT NOT NULL, status TEXT NOT NULL, error TEXT, attempt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (batch, document));
+    CREATE TABLE IF NOT EXISTS batch_requests (request TEXT PRIMARY KEY, batch TEXT NOT NULL REFERENCES batches(id));
     CREATE TABLE IF NOT EXISTS topics (name TEXT PRIMARY KEY COLLATE NOCASE);
   `);
   const settle = db.prepare('UPDATE batch_items SET status = ?, error = ? WHERE batch = ? AND document = ?');
 
   return {
-    create(items: Array<{ document: string; name: string; version: string; attempt: number }>): string {
+    create(items: Array<{ document: string; name: string; version: string; attempt: number }>, request?: string): string {
       const id = randomUUID();
       db.prepare('INSERT INTO batches (id, created) VALUES (?, ?)').run(id, now().toISOString());
+      if (request !== undefined) db.prepare('INSERT INTO batch_requests (request, batch) VALUES (?, ?)').run(request, id);
       const insert = db.prepare("INSERT INTO batch_items (batch, document, name, version, attempt, status) VALUES (?, ?, ?, ?, ?, 'pending')");
       for (const i of items) insert.run(id, i.document, i.name, i.version, i.attempt);
       return id;
     },
+    /** The batch an idempotency key first created; batches are never pruned, so the key is remembered for good. */
+    batchFor: (request: string) => (db.prepare('SELECT batch FROM batch_requests WHERE request = ?').get(request) as { batch: string } | undefined)?.batch,
     settle(batch: string, document: string, error?: string) {
       settle.run(error === undefined ? 'done' : 'failed', error ?? null, batch, document);
     },
@@ -30,8 +34,10 @@ export function openStore(path: string, now: () => Date) {
     last: (document: string, version: string) => db.prepare('SELECT status, attempt FROM batch_items WHERE document = ? AND version = ? ORDER BY rowid DESC LIMIT 1').get(document, version) as { status: ItemStatus; attempt: number } | undefined,
     /** The newest attempt at this document at any version; the page derives New / Changed / Failed from it. */
     newest: (document: string) => db.prepare('SELECT version, status, error FROM batch_items WHERE document = ? ORDER BY rowid DESC LIMIT 1').get(document) as { version: string; status: ItemStatus; error: string | null } | undefined,
-    /** The filing topics, oldest first; they outlive any session, so the ingest workflow reads them here. */
-    topics: () => (db.prepare('SELECT name FROM topics ORDER BY rowid').all() as Array<{ name: string }>).map((r) => r.name),
+    /** Up to `limit` topic names after `after`, by name (case-insensitive); they outlive any session. */
+    topicsAfter: (after: string, limit: number) => (db.prepare('SELECT name FROM topics WHERE name > ? ORDER BY name LIMIT ?').all(after, limit) as Array<{ name: string }>).map((r) => r.name),
+    /** The stored spelling of a topic, matched case-insensitively. */
+    topic: (name: string) => (db.prepare('SELECT name FROM topics WHERE name = ?').get(name) as { name: string } | undefined)?.name,
     addTopic: (name: string) => void db.prepare('INSERT OR IGNORE INTO topics (name) VALUES (?)').run(name),
     close: () => db.close(),
   };

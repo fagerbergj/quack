@@ -1,4 +1,4 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import { STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
 import { createIngestQueue, INGEST_CONCURRENCY, type QueuedItem } from './queue.ts';
@@ -25,6 +25,50 @@ export type ServiceConfig = {
 const MAX_BACKOFF_MS = 60_000;
 
 const { send, json: readJson } = serviceHttp();
+
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 1000;
+
+/** A request the service refuses with a problem document; `extra` rides it as RFC 9457 extension members. */
+class Reject extends Error {
+  status: number;
+  extra?: object;
+  headers?: Record<string, string>;
+  constructor(status: number, detail: string, extra?: object, headers?: Record<string, string>) {
+    super(detail);
+    this.status = status;
+    this.extra = extra;
+    this.headers = headers;
+  }
+}
+
+// sendProblem has no extension members, so only a problem that carries some is written here, in the same shape.
+function reply(res: ServerResponse, { status, message, extra, headers }: Reject) {
+  for (const [k, v] of Object.entries(headers ?? {})) res.setHeader(k, v);
+  if (!extra) return sendProblem(res, status, message);
+  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status], status, detail: message, error: message, ...extra }));
+}
+
+// The body must be a JSON object with no field outside `known`.
+async function closedBody(req: IncomingMessage, known: string[]): Promise<Record<string, unknown>> {
+  const body = (await readJson(req).catch((err) => { throw tooLarge(err) ? err : new Reject(400, 'body is not JSON'); })) as Record<string, unknown> | null;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new Reject(400, 'body must be a JSON object');
+  const unknown = Object.keys(body).filter((k) => !known.includes(k));
+  if (unknown.length) throw new Reject(400, `unknown field: ${unknown.join(', ')}`);
+  return body;
+}
+
+const encodeToken = (name: string) => Buffer.from(JSON.stringify(['topics', name])).toString('base64url');
+
+// Only a token this service issued decodes: it must re-encode to itself.
+function decodeToken(token: string | null): string {
+  if (!token) return '';
+  try {
+    const [tag, name] = JSON.parse(Buffer.from(token, 'base64url').toString()) as [unknown, unknown];
+    if (tag === 'topics' && typeof name === 'string' && encodeToken(name) === token) return name;
+  } catch { /* falls through */ }
+  throw new Reject(400, 'pageToken is not one this service issued');
+}
 
 // A 200 only means the session answered; an unanswered result (an operator abort, say) is not an ingested document.
 function failure(res: { status: number; text: string }): string | undefined {
@@ -100,53 +144,73 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
   const withState = (es: RmEntry[]): unknown[] => es.map((e) => (e.folder ? { ...e, children: withState(e.children ?? []) } : { ...e, ...stateOf(e) }));
 
   async function ingest(req: IncomingMessage): Promise<[number, unknown]> {
-    const body = (await readJson(req)) as { ids?: unknown } | null;
-    const ids = body?.ids;
-    if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => typeof i === 'string' && i.length > 0)) return [400, { error: 'ids must be a non-empty array of document ids' }];
+    const { ids, requestId } = await closedBody(req, ['ids', 'requestId']);
+    if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => typeof i === 'string' && i.length > 0)) throw new Reject(400, 'ids must be a non-empty array of document ids');
+    if (requestId !== undefined && (typeof requestId !== 'string' || !requestId)) throw new Reject(400, 'requestId must be a non-empty string');
+    const original = requestId === undefined ? undefined : store.batchFor(requestId);
+    if (original) return [202, { batch: original }];
     const wanted = [...new Set(ids as string[])];
     const listed = new Map((await config.client.documents()).map((d) => [d.id, d]));
     const missing = wanted.filter((id) => !listed.has(id));
-    if (missing.length) return [404, { error: 'unknown document ids', ids: missing }];
+    if (missing.length) throw new Reject(404, 'unknown document ids', { ids: missing });
     // A retry is a new attempt at the same version, so the workflow starts a fresh run instead of joining the failed one.
     const jobs = wanted.map((id) => {
       const d = listed.get(id)!;
       const last = store.last(d.id, d.version);
       return { id: d.id, name: d.name, version: d.version, attempt: last?.status === 'failed' ? last.attempt + 1 : (last?.attempt ?? 0) };
     });
-    const batch = store.create(jobs.map((j) => ({ document: j.id, name: j.name, version: j.version, attempt: j.attempt })));
+    const batch = store.create(jobs.map((j) => ({ document: j.id, name: j.name, version: j.version, attempt: j.attempt })), requestId as string | undefined);
     queue.pump();
     return [202, { batch }];
   }
 
   async function addTopic(req: IncomingMessage): Promise<[number, unknown]> {
-    const name = String(((await readJson(req)) as { name?: unknown } | null)?.name ?? '').trim().replace(/\s+/g, ' ');
-    if (!name || name.length > 40) return [400, { error: 'name must be 1 to 40 characters' }];
+    const name = String((await closedBody(req, ['name'])).name ?? '').trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 40) throw new Reject(400, 'name must be 1 to 40 characters');
+    const existing = store.topic(name);
+    if (existing) return [200, { name: existing }];
     store.addTopic(name);
-    return [200, { topics: store.topics() }];
+    return [201, { name }];
+  }
+
+  function listTopics(url: URL): [number, unknown] {
+    const size = url.searchParams.get('pageSize');
+    const limit = size === null ? DEFAULT_PAGE_SIZE : /^\d+$/.test(size) ? Number(size) : 0;
+    if (limit < 1 || limit > MAX_PAGE_SIZE) throw new Reject(400, `pageSize must be an integer from 1 to ${MAX_PAGE_SIZE}`);
+    const found = store.topicsAfter(decodeToken(url.searchParams.get('pageToken')), limit + 1);
+    const page = found.slice(0, limit);
+    return [200, { topics: page, ...(found.length > limit && { nextPageToken: encodeToken(page.at(-1)!) }) }];
   }
 
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
-    const path = new URL(req.url ?? '', 'http://x').pathname;
-    if (req.method === 'GET' && path === '/') return [200, { tree: withState(await config.client.tree()) }];
-    if (req.method === 'POST' && path === '/ingest') return ingest(req);
-    if (path === '/topics') return req.method === 'POST' ? addTopic(req) : [200, { topics: store.topics() }];
-    return [404, { error: 'not found' }];
+    const url = new URL(req.url ?? '', 'http://x');
+    if (req.method === 'GET' && url.pathname === '/') return [200, { tree: withState(await config.client.tree()) }];
+    if (req.method === 'POST' && url.pathname === '/ingest') return ingest(req);
+    if (url.pathname === '/topics') {
+      if (req.method === 'POST') return addTopic(req);
+      if (req.method !== 'GET') throw new Reject(405, '/topics allows GET, POST', undefined, { allow: 'GET, POST' });
+      return listTopics(url);
+    }
+    throw new Reject(404, 'not found');
+  }
+
+  async function download(res: ServerResponse, id: string, kind: string) {
+    if (!(await config.client.documents()).some((d) => d.id === id)) throw new Reject(404, `document ${id} is not in the notebook`);
+    // Download before writing headers: a failure after writeHead would make the catch's send throw and kill the process.
+    const body = kind === 'pdf' ? await config.client.downloadPdf(id) : await config.client.downloadRmdoc(id);
+    res.writeHead(200, { 'content-type': kind === 'pdf' ? 'application/pdf' : 'application/zip' }).end(body);
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse) {
     try {
       const file = req.method === 'GET' ? /^\/documents\/([^/]+)\/(pdf|rmdoc)$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
-      if (file) {
-        // Download before writing headers: a failure after writeHead would make the catch's send throw and kill the process.
-        const id = decodeURIComponent(file[1]);
-        const body = file[2] === 'pdf' ? await config.client.downloadPdf(id) : await config.client.downloadRmdoc(id);
-        return void res.writeHead(200, { 'content-type': file[2] === 'pdf' ? 'application/pdf' : 'application/zip' }).end(body);
-      }
+      if (file) return await download(res, decodeURIComponent(file[1]), file[2]);
       send(res, ...(await route(req)));
     } catch (err) {
+      if (err instanceof Reject) return reply(res, err);
       if (tooLarge(err)) return sendProblem(res, 413, 'body too large');
       const bad = err instanceof SyntaxError || err instanceof URIError;
-      send(res, bad ? 400 : upstream(err) ? 502 : 500, { error: (err as Error).message });
+      sendProblem(res, bad ? 400 : upstream(err) ? 502 : 500, (err as Error).message);
     }
   }
   queue.pump();

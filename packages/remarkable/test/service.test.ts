@@ -152,7 +152,24 @@ test('ingest rejects empty, malformed and unknown selections', async () => {
   assert.equal((await call('POST', '/ingest', { ids: [7] })).status, 400);
   const unknown = await call('POST', '/ingest', { ids: ['n1', 'ghost'] });
   assert.equal(unknown.status, 404);
-  assert.deepEqual(((await unknown.json()) as any).ids, ['ghost']);
+  assert.deepEqual((await problem(unknown, 404)).ids, ['ghost']);
+  await problem(await call('POST', '/ingest', { ids: [] }), 400);
+  await problem(await fetch(`${base}/ingest`, { method: 'POST', body: 'not json' }), 400);
+});
+
+test('an unknown id queues nothing, and a closed body refuses unknown fields', async () => {
+  seen.length = 0;
+  const before = await docs();
+  await call('POST', '/ingest', { ids: ['n1', 'ghost'] });
+  await problem(await call('POST', '/ingest', { ids: ['n1'], extra: 1 }), 400);
+  await problem(await call('POST', '/ingest', { ids: ['n1'], requestId: '' }), 400);
+  await service.settled();
+  assert.deepEqual(seen, []);
+  assert.deepEqual(await docs(), before);
+});
+
+test('an oversized body is a 413 problem', async () => {
+  await problem(await call('POST', '/topics', { name: 'x'.repeat(2 << 20) }), 413);
 });
 
 test('a document is current only after its session has answered', async () => {
@@ -291,11 +308,34 @@ test('the client puts the first line of the rmfakecloud error body in the reason
   await assert.rejects(client.downloadPdf('broken'), /status 500: json: cannot unmarshal object into Content\.pageTags\.0 of type string$/);
 });
 
-test('a failed or empty PDF export is a 502 and the service keeps serving', async () => {
-  for (const id of ['broken', 'empty', 'html']) assert.equal((await call('GET', `/documents/${id}/pdf`)).status, 502, id);
-  assert.equal((await call('GET', '/documents/n1/pdf')).status, 200);
-  assert.equal((await call('GET', '/documents/n1/rmdoc')).status, 200);
-  assert.equal((await call('GET', '/documents/html/rmdoc')).status, 502);
+// A service over a stub notebook, for the routes that need no distributor.
+async function stub(client: Partial<Parameters<typeof createRemarkableService>[0]['client']> = {}) {
+  const svc = createRemarkableService({ dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadPdf: async () => Buffer.from('%PDF-'), downloadRmdoc: async () => Buffer.from('PK'), ...client } });
+  return { svc, url: await listen(serveApp(svc)) };
+}
+const listed = (...ids: string[]) => async () => ids.map((id) => ({ id, name: id, version: '1', modified: '' }));
+const problem = async (res: Response, status: number) => {
+  assert.equal(res.status, status);
+  assert.equal(res.headers.get('content-type'), 'application/problem+json');
+  const p = (await res.json()) as any;
+  assert.equal(p.status, status);
+  assert.equal(p.error, p.detail);
+  assert.ok(p.type && p.title && p.detail);
+  return p;
+};
+
+test('a failed or empty export of a listed document is a 502 and the service keeps serving', async () => {
+  const failing = async () => { throw new Error('rmfakecloud GET /x: response is not a PDF'); };
+  const { url } = await stub({ documents: listed('d', 'ok'), downloadPdf: async (id) => (id === 'd' ? failing() : Buffer.from('%PDF-')), downloadRmdoc: failing });
+  await problem(await fetch(`${url}/documents/d/pdf`), 502);
+  await problem(await fetch(`${url}/documents/d/rmdoc`), 502);
+  assert.equal((await fetch(`${url}/documents/ok/pdf`)).status, 200);
+});
+
+test('a document the notebook does not list is a 404 problem, not an upstream 502', async () => {
+  const { url } = await stub({ documents: listed('d') });
+  for (const kind of ['pdf', 'rmdoc']) await problem(await fetch(`${url}/documents/ghost/${kind}`), 404);
+  assert.equal((await fetch(`${url}/documents/d/rmdoc`)).status, 200);
 });
 
 test('a malformed document id is a 400, not an upstream error', async () => {
@@ -361,4 +401,63 @@ test('a 502, a 504 or a reset mid-wait resubmits the same request id with backof
   assert.equal(requests.length, 4);
   assert.deepEqual(delays, [1000, 2000, 4000]);
   await retrying.stop();
+});
+
+test('a requestId returns the original batch without requeueing, across a restart', async () => {
+  const dir = mkdtempSync(`${tmpdir()}/rm-`);
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const submitted: string[] = [];
+  const fetchOk = (async (url: string) => (submitted.push(url), new Response('{"status":"done"}'))) as unknown as typeof fetch;
+  const start = () => createRemarkableService({ dbPath: `${dir}/rm.db`, distributorUrl: 'http://d.test', fetch: fetchOk, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
+  const post = (url: string, body: object) => fetch(`${url}/ingest`, { method: 'POST', body: JSON.stringify(body) });
+  const first = start();
+  const firstUrl = await listen(serveApp(first));
+  const a = (await (await post(firstUrl, { ids: ['n2'], requestId: 'k1' })).json()) as any;
+  await first.settled();
+  const again = (await (await post(firstUrl, { ids: ['n2'], requestId: 'k1' })).json()) as any;
+  assert.equal(again.batch, a.batch);
+  const other = (await (await post(firstUrl, { ids: ['n2'], requestId: 'k2' })).json()) as any;
+  assert.notEqual(other.batch, a.batch);
+  await first.stop();
+
+  const second = start();
+  const secondUrl = await listen(serveApp(second));
+  const n = submitted.length;
+  assert.equal(((await (await post(secondUrl, { ids: ['n2'], requestId: 'k1' })).json()) as any).batch, a.batch);
+  assert.equal(submitted.length, n, 'the resubmission queued nothing');
+  await second.stop();
+});
+
+test('topics are paged by name with a token, and a bad pageSize or token is a 400', async () => {
+  const { url } = await stub();
+  const add = (name: string) => fetch(`${url}/topics`, { method: 'POST', body: JSON.stringify({ name }) });
+  for (const n of ['pear', 'Apple', 'cherry', 'banana']) await add(n);
+  const get = async (q = '') => (await (await fetch(`${url}/topics${q}`)).json()) as any;
+  assert.deepEqual(await get(), { topics: ['Apple', 'banana', 'cherry', 'pear'] });
+  const one = await get('?pageSize=3');
+  assert.deepEqual(one.topics, ['Apple', 'banana', 'cherry']);
+  const two = await get(`?pageSize=3&pageToken=${one.nextPageToken}`);
+  assert.deepEqual(two, { topics: ['pear'] });
+  for (const q of ['?pageSize=0', '?pageSize=1001', '?pageSize=x', '?pageSize=1.5', '?pageToken=junk']) await problem(await fetch(`${url}/topics${q}`), 400);
+  assert.equal((await fetch(`${url}/topics?pageSize=1000`)).status, 200);
+});
+
+test('POST /topics is 201 for a new topic and 200 for a duplicate, trims the name and closes the body', async () => {
+  const { url } = await stub();
+  const add = (body: unknown) => fetch(`${url}/topics`, { method: 'POST', body: JSON.stringify(body) });
+  const made = await add({ name: '  Home   renovation ' });
+  assert.deepEqual([made.status, await made.json()], [201, { name: 'Home renovation' }]);
+  const dup = await add({ name: 'home RENOVATION' });
+  assert.deepEqual([dup.status, await dup.json()], [200, { name: 'Home renovation' }]);
+  assert.equal((await add({ name: 'x'.repeat(40) })).status, 201);
+  for (const body of [{ name: 'x'.repeat(41) }, { name: '   ' }, {}, { name: 'a', extra: 1 }, [], null]) await problem(await add(body), 400);
+});
+
+test('other methods on /topics are a 405 with Allow: GET, POST', async () => {
+  const { url } = await stub();
+  for (const method of ['PUT', 'PATCH', 'DELETE']) {
+    const res = await fetch(`${url}/topics`, { method });
+    assert.equal(res.headers.get('allow'), 'GET, POST');
+    await problem(res, 405);
+  }
 });
