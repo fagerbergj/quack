@@ -42,6 +42,8 @@ export function firstInput(dir: string): string | undefined {
 /** The facts a session's lifecycle stream reports, from its directory. */
 export async function sessionFacts(dir: string): Promise<SessionFacts> {
   const version = JSON.parse((await readText(join(dir, 'agent-def', 'agent.json'))) ?? 'null')?.version;
-  const title = recordedTitle(dir)?.slice(0, TITLE_MAX) ?? firstInput(dir);
+  // A home: conversation is one standing session, so its first message names nothing.
+  const standing = (await readText(join(dir, 'session-key')))?.startsWith('home:');
+  const title = standing ? undefined : recordedTitle(dir)?.slice(0, TITLE_MAX) ?? firstInput(dir);
   return { agent: (await readText(join(dir, 'agent')))?.trim() ?? '', version: typeof version === 'number' ? version : null, createdAt: await createdAt(dir), ...(title && { title }) };
 }

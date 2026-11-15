@@ -19,8 +19,8 @@ function state(r: Row, w: Words): Pick<Look, 'line' | 'tone'> {
 }
 
 const FALLBACK: SessionKind = { label: '', match: () => true, icon: DOC, tint: BLUE, name: (r) => plain(r.title ?? r.key), words: () => undefined };
-// Conversations started from Home; the row says Chat or Working, never the agent's name.
-const HOME: SessionKind = { label: 'Chat', match: (r) => r.key.startsWith('home:'), icon: CHAT, tint: BLUE, name: (r) => plain(r.title ?? 'Chat with quack'), words: () => ({ run: 'Working', done: 'Chat', none: 'Chat' }) };
+// Conversations started from Home; the row says Chat or Working, never the agent's name. A standing conversation has no title: a stored one (from before titling stopped) is ignored.
+const HOME: SessionKind = { label: 'Chat', match: (r) => r.key.startsWith('home:'), icon: CHAT, tint: BLUE, name: () => plain('Home'), words: () => ({ run: 'Working', done: 'Chat', none: 'Chat' }) };
 const KINDS: SessionKind[] = [...EXTENSIONS.flatMap((e) => e.session ?? []), HOME, FALLBACK];
 const kindOf = (r: Nameable) => KINDS.find((x) => x.match(r))!;
 

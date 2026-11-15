@@ -65,3 +65,7 @@ test('a Home conversation reads Chat or Working, never the agent name', () => {
   expect(look(row('home:main', { agent: 'quack', ...ended('succeeded') })).line).toBe('Chat');
   expect(look(row('home:main', { agent: 'quack', state: 'running' })).line).toBe('Working');
 });
+
+test('a Home conversation is named Home whatever title it was stored with', () => {
+  expect(look(row('home:main', { agent: 'quack', title: 'Plan the week' })).title).toBe('Home');
+});
