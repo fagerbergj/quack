@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
+import { PageError, pageCursor, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { between, expiry, nextAfter, validate, type Schedule } from './schedule.ts';
 
 export type ServiceConfig = {
@@ -18,8 +18,6 @@ export type ServiceConfig = {
 
 const DAY_MS = 86_400_000;
 
-const DEFAULT_PAGE_SIZE = 100;
-const MAX_PAGE_SIZE = 1000;
 // The ScheduleBody fields: id comes from the path, so a body id is unknown.
 const FIELDS = new Set(['agent', 'cron', 'tz', 'times', 'sessionKey', 'input', 'deadline']);
 
@@ -29,16 +27,14 @@ class TooLarge extends Error {}
 const http = serviceHttp();
 const { send } = http;
 
-const encodeToken = (id: string) => Buffer.from(JSON.stringify(['schedules', id])).toString('base64url');
+const cursor = pageCursor('schedules');
 
-// Only a token this service issued decodes: it must re-encode to itself.
-function decodeToken(token: string | null): string {
-  if (!token) return '';
+function pageArgs(params: URLSearchParams): { limit: number; after: string } {
   try {
-    const [tag, id] = JSON.parse(Buffer.from(token, 'base64url').toString()) as [unknown, unknown];
-    if (tag === 'schedules' && typeof id === 'string' && encodeToken(id) === token) return id;
-  } catch { /* falls through */ }
-  throw new BadRequest('pageToken is not one this service issued');
+    return { limit: cursor.pageSize(params.get('pageSize')), after: cursor.decode(params.get('pageToken')) ?? '' };
+  } catch (err) {
+    throw err instanceof PageError ? new BadRequest(err.message) : err;
+  }
 }
 
 async function body(req: IncomingMessage): Promise<any> {
@@ -157,12 +153,10 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
 
   // A page of schedules by id; fetching one extra row says whether another page follows.
   function list(url: URL) {
-    const size = url.searchParams.get('pageSize');
-    const limit = size === null ? DEFAULT_PAGE_SIZE : /^\d+$/.test(size) ? Number(size) : 0;
-    if (limit < 1 || limit > MAX_PAGE_SIZE) throw new BadRequest(`pageSize must be an integer from 1 to ${MAX_PAGE_SIZE}`);
-    const found = rowsAfter(decodeToken(url.searchParams.get('pageToken')), limit + 1);
+    const { limit, after } = pageArgs(url.searchParams);
+    const found = rowsAfter(after, limit + 1);
     const page = found.slice(0, limit);
-    return { schedules: page.map(view), ...(found.length > limit && { nextPageToken: encodeToken(page.at(-1)!.id) }) };
+    return { schedules: page.map(view), ...(found.length > limit && { nextPageToken: cursor.encode(page.at(-1)!.id) }) };
   }
 
   function register(id: string, raw: unknown): { status: number; body: unknown } {

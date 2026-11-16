@@ -8,6 +8,17 @@ export { registerTrendsSchedules, startTrends, trendsKey, TRENDS_AGENT } from '.
 export { trendsDeclaration, trendsInputs, trendsInputsOf, trendsRubric } from './rubric.ts';
 export { trendsWorkflow, TRENDS_WORKFLOW, type TrendsDeps } from './workflow.ts';
 
+/** Every snapshot of a league, newest first, following the service's pages of 1000. */
+export async function snapshotHistory(get: (path: string) => Promise<any>, path: string): Promise<Array<{ date: string; takenAt: string }>> {
+  const all: Array<{ date: string; takenAt: string }> = [];
+  for (let token = ''; ;) {
+    const page = await get(`${path}?${new URLSearchParams({ pageSize: '1000', ...(token && { pageToken: token }) })}`);
+    all.push(...page.snapshots);
+    if (!page.nextPageToken) return all;
+    token = page.nextPageToken;
+  }
+}
+
 /** The trends workflow wired to the Sleeper API and the service half named in the environment, judged with the agent's decision model. */
 export function trendsFromEnv(env: Record<string, string | undefined> = process.env, config?: { decisionModel?: TrendsDeps['decisionModel'] }) {
   const { url, token } = appEndpoint('sleeper');
@@ -21,15 +32,7 @@ export function trendsFromEnv(env: Record<string, string | undefined> = process.
       if (!res.ok) throw new Error(`sleeper service: snapshot for ${league} returned ${res.status}`);
       return res.json();
     },
-    history: async (league) => {
-      const all: Array<{ date: string; takenAt: string }> = [];
-      for (let token = ''; ;) {
-        const page = await get(`${path(league)}?${new URLSearchParams({ pageSize: '1000', ...(token && { pageToken: token }) })}`);
-        all.push(...page.snapshots);
-        if (!page.nextPageToken) return all;
-        token = page.nextPageToken;
-      }
-    },
+    history: (league) => snapshotHistory(get, path(league)),
     snapshotOn: (league, date) => get(`${path(league)}/${date}`),
   };
   return trendsWorkflow(deps);

@@ -1,4 +1,4 @@
-import { sendProblem, serviceHttp, type App } from '@quack/sdk';
+import { PageError, pageCursor, sendProblem, serviceHttp, type App } from '@quack/sdk';
 import type { SleeperClient } from './client.ts';
 import type { StartConfig } from './jobs.ts';
 import { startLineup } from './lineup/jobs.ts';
@@ -51,22 +51,16 @@ const allow = (method: string, ...ok: string[]) => {
 };
 
 const PAGE_JOBS = { lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro, 'trade-finder': startFinder, history: startHistory };
-const MAX_PAGE_SIZE = 1000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-// The token is the last date served, base64url; only one that re-encodes to itself decodes.
-const pageToken = (date: string) => Buffer.from(date).toString('base64url');
-function afterOf(token: string | null): string | undefined {
-  if (!token) return undefined;
-  const date = Buffer.from(token, 'base64url').toString();
-  if (DATE.test(date) && pageToken(date) === token) return date;
-  throw new HttpError(400, 'pageToken is not one this service issued');
-}
+const cursor = pageCursor('snapshots');
 
-function pageSizeOf(size: string | null): number {
-  const n = size === null ? 100 : /^\d+$/.test(size) ? Number(size) : 0;
-  if (n < 1 || n > MAX_PAGE_SIZE) throw new HttpError(400, `pageSize must be an integer from 1 to ${MAX_PAGE_SIZE}`);
-  return n;
+function pageArgs(params: URLSearchParams): { limit: number; after: string | undefined } {
+  try {
+    return { limit: cursor.pageSize(params.get('pageSize')), after: cursor.decode(params.get('pageToken')) };
+  } catch (err) {
+    throw err instanceof PageError ? new HttpError(400, err.message) : err;
+  }
 }
 
 export function createSleeperService(config: ServiceConfig): App & { stop(): void } {
@@ -101,10 +95,10 @@ export function createSleeperService(config: ServiceConfig): App & { stop(): voi
     }
     allow(method, 'GET', 'POST');
     if (method === 'POST') return [200, await takeSnapshot(config.client, store, league, now())];
-    const limit = pageSizeOf(query.get('pageSize'));
-    const rows = store.history(league, limit + 1, afterOf(query.get('pageToken')));
+    const { limit, after } = pageArgs(query);
+    const rows = store.history(league, limit + 1, after);
     const page = rows.slice(0, limit);
-    return [200, { snapshots: page, ...(rows.length > limit && { nextPageToken: pageToken(page.at(-1)!.date) }) }];
+    return [200, { snapshots: page, ...(rows.length > limit && { nextPageToken: cursor.encode(page.at(-1)!.date) }) }];
   }
 
   // Sleeper's live week and the next run of each of this league's schedules, soonest first.
