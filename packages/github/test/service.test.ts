@@ -36,6 +36,7 @@ const reviews = [
   review(6, 'quack-app[bot]', 'DISMISSED', 'stale'),
 ];
 let graphqlErrors = false;
+let pr7State = 'open';
 let scopedLifeMs = 3600_000;
 let reviewCommentsDown = false;
 const posted15: any[] = [];
@@ -73,7 +74,7 @@ const github = await listen(
     }
     if (url === '/repos/acme/widgets/pulls/7' && req.method === 'PATCH') return reply(200, { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' });
     if (url === '/repos/acme/widgets/pulls/404' && req.method === 'PATCH') return reply(404, { message: 'Not Found' });
-    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { state: pr7State, number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
     const mirrored = { html_url: `https://github.com/acme/widgets/pull/${url.split('/').at(-1)}`, title: 'Fix the cache', base: { repo: { full_name: 'acme/widgets' } } };
     if (url === '/repos/acme/widgets/pulls/9') return reply(200, { ...mirrored, number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z', closed_at: '2026-11-01T00:00:00Z' });
     if (url === '/repos/acme/widgets/pulls/10') return reply(200, { ...mirrored, number: 10, state: 'closed', merged: false, merged_at: null, closed_at: '2026-11-02T00:00:00Z' });
@@ -332,6 +333,65 @@ test('a review that finds another agent in the session is queued, a newer push r
   } finally {
     busy = false;
     busyDetail = MID_RUN;
+    svc.stop();
+  }
+});
+
+// The bot's review of PR 7 at `sha`, listed until the returned undo runs.
+function reviewedAt(sha: string) {
+  const mine = review(50, 'quack-app[bot]', 'APPROVED', 'ok', sha);
+  reviews.push(mine);
+  return () => void reviews.splice(reviews.indexOf(mine), 1);
+}
+
+async function busyThen(url: string, svc: { sweep(): Promise<void> }, id: string, event: object, between: () => void) {
+  busy = true;
+  busyDetail = MID_RUN;
+  try {
+    assert.equal(await deliver('pull_request', event, { id, to: url }), 202);
+    between();
+  } finally {
+    busy = false;
+  }
+  await svc.sweep();
+}
+
+test('a push queued mid-review starts no second run once a review is posted on that head', async () => {
+  invocations.length = 0;
+  const { svc, url } = await queuedService();
+  let undo = () => {};
+  try {
+    await busyThen(url, svc, 'd-dup1', pushed('def456'), () => { undo = reviewedAt('def456'); });
+    assert.equal(invocations.length, 0);
+  } finally {
+    undo();
+    svc.stop();
+  }
+});
+
+test('a label re-trigger on a head the last review covers starts no run; a new head does', async () => {
+  invocations.length = 0;
+  const { svc, url } = await queuedService();
+  const undo = reviewedAt('abc123');
+  try {
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-dup2', to: url }), 200);
+    assert.equal(invocations.length, 0);
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-dup3', to: url }), 202);
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-dup3']);
+  } finally {
+    undo();
+    svc.stop();
+  }
+});
+
+test('a review input for a PR that closed or merged before it starts is dropped', async () => {
+  invocations.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    await busyThen(url, svc, 'd-dup4', pushed('def456'), () => { pr7State = 'closed'; });
+    assert.equal(invocations.length, 0);
+  } finally {
+    pr7State = 'open';
     svc.stop();
   }
 });

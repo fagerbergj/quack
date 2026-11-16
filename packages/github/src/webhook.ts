@@ -8,7 +8,7 @@ export function verifySignature(secret: string, body: Buffer, header: string | u
 }
 
 /** A run to start: which session, in which role, with what input. */
-export type Trigger = { sessionKey: string; role: 'reviewer' | 'implementer'; input: string; repo: { owner: string; name: string }; number: number; title: string; /** The run starts from an issue, so a refusal is worded for one. */ issue?: boolean };
+export type Trigger = { sessionKey: string; role: 'reviewer' | 'implementer'; input: string; repo: { owner: string; name: string }; number: number; title: string; /** The run starts from an issue, so a refusal is worded for one. */ issue?: boolean; /** The head sha a review input names. */ head?: string };
 
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
@@ -24,7 +24,7 @@ function reviewTrigger(p: Payload, pr: Payload, why: string): Trigger {
     '',
     pr.body ?? '',
   ].filter((l, i) => i !== 2 || l).join('\n');
-  return { sessionKey: `github:${owner}/${name}#${pr.number}`, role: 'reviewer', input, repo: { owner, name }, number: pr.number, title: String(pr.title ?? '') };
+  return { sessionKey: `github:${owner}/${name}#${pr.number}`, role: 'reviewer', input, repo: { owner, name }, number: pr.number, title: String(pr.title ?? ''), head: pr.head?.sha };
 }
 
 // @user or @org/team; the leading class skips emails and URL paths. Scoped packages (@angular/core) match too, as GitHub pings them alike.
