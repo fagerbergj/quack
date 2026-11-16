@@ -389,5 +389,22 @@ export function conformance(name: string, fresh: Fresh, skip?: string | false) {
       await catalog.publish('k', fresh2.events);
       assert.deepEqual(await store.getSession('k'), { key: 'k', agent: 'quack', state: 'idle', createdAt: T0, lastActivity: T0, cost: usd(0n), tokens: zero, pendingAsks: 0 });
     });
+
+    test("a default title set under each change's own id never covers a person's rename, live or rebuilt", async () => {
+      const { store, catalog } = await fresh();
+      const s = stream('k');
+      s.next('title.set', { title: 'Define GET /schedule for the Sleeper page' }, 'title');
+      s.next('title.set', { title: 'Sleeper schedule' }, 'title:1');
+      await catalog.publish('k', s.events);
+      assert.equal((await store.getSession('k'))?.title, 'Sleeper schedule');
+      await catalog.rename('k', 'Mine');
+      s.next('title.set', { title: 'Sleeper schedule, retitled' }, 'title:2');
+      await catalog.publish('k', s.events.slice(-1));
+      assert.equal((await store.getSession('k'))?.title, 'Mine');
+      await catalog.rebuild('k', s.events);
+      assert.equal((await store.getSession('k'))?.title, 'Mine', 'the journaled rename replays over the rebuilt defaults');
+      await catalog.rename('k', null);
+      assert.equal((await store.getSession('k'))?.title, 'Sleeper schedule, retitled');
+    });
   });
 }

@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { defineExtension, defineTask, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
-import { EVENT_MAX_BYTES, eventBytes, inProcessFetch } from '@quack/sdk';
+import { EVENT_MAX_BYTES, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
 import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, startLifecycleSender } from '../src/index.ts';
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -44,6 +44,13 @@ test('the stream is the documents at their latest revision, and only a change ap
   assert.deepEqual(next.map((e) => [e.seq, e.type, e.data]), [[12, 'artifact.delivered', { kind: 'review', version: 1, where: 'github', link: 'https://x/pr/1', at: new Date(40).toISOString() }]],
     'a verdict is not core, so it appends nothing; a delivery does; a lower price never reports less spend');
   assert.deepEqual(events.find((e) => e.type === 'artifact.sealed')?.data, { kind: 'review', version: 1, hash: 'h', content: 'c', sealedAt: new Date(40).toISOString() }, 'the seal is the core deliverable only');
+});
+
+test('a title an extension set replaces the derived one under its change count; a standing session reports none', () => {
+  const titled = (f: typeof facts & { title?: string; standing?: boolean }) => currentEvents('r', f, { runs: [], spend: none, spentMicros: 0n, title: { title: 'Sleeper schedule', changes: 2, at: 99 } })
+    .filter((e) => e.type === 'title.set').map((e) => [e.id, e.at, e.data.title]);
+  assert.deepEqual(titled({ ...facts, title: 'Define GET /schedule' }), [['title:2', new Date(99).toISOString(), 'Sleeper schedule']]);
+  assert.deepEqual(titled({ ...facts, standing: true }), []);
 });
 
 test('an over-cap run end is cut with a marker until it fits; other events are left whole', () => {
@@ -287,4 +294,58 @@ test('a task the root owns ends its run: idle, lastActivity at its end, one run.
   assert.deepEqual([done?.state, done?.lastActivity, done?.lastRun?.outcome], ['idle', clock.at, 'succeeded']);
   const runs = (await h.stream())!.events.filter((e) => e.type === 'run.started' || e.type === 'run.ended').map((e) => [e.id, e.at]);
   assert.deepEqual(runs, [['run:1:started', '2026-11-12T23:55:06.000Z'], ['run:1:ended', '2026-11-12T23:58:30.000Z']], 'one run, one start and one end');
+});
+
+// An extension's own tool naming its session, as the contracts extension does when a spec passes.
+const nameIt = defineTool({
+  name: 'name_it', description: 'names the session', parameters: obj({}, { open: true }), replay: 'safe',
+  execute: async (args, api, c) => (await setDefaultSessionTitle(api, (args as { title: string }).title, c), { output: [{ type: 'text', text: 'ok' }] }),
+});
+const naming = (...runs: string[][]): Setup => ({
+  responses: runs.flatMap((titles) => [...titles.map((title) => fauxAssistantMessage(fauxToolCall('name_it', { title }), { stopReason: 'toolUse' })), fauxAssistantMessage('Done.')]),
+  extensions: [defineExtension({ name: 'names', tools: [nameIt] })],
+});
+const setTitles = async (h: Awaited<ReturnType<typeof harness>>) => (await h.stream())!.events.filter((e) => e.type === 'title.set' && e.id !== 'title').map((e) => [e.id, e.data.title]);
+
+test('a set default title beats the first message, each change takes the next id, and the same title again counts as none', async () => {
+  const h = await harness(KEY, naming(['Sleeper schedule endpoint', 'Sleeper  schedule endpoint', 'Sleeper schedule, retitled']));
+  await h.session.submit('Define GET /apps/sleeper/schedule for the Sleeper page', undefined, true);
+  await h.settle();
+  assert.equal((await h.catalog.getSession(KEY))?.title, 'Sleeper schedule, retitled');
+  // The sender may coalesce the first change into the second; what it sends last is the newest, under its count.
+  assert.deepEqual((await setTitles(h)).at(-1), ['title:2', 'Sleeper schedule, retitled']);
+  assert.equal((await h.session.harness.snapshot(SessionTitle, h.session.root.id, ctx))?.changes, 2);
+});
+
+test('a restarted session and a reset catalog come back to the set title, never the derived one', async () => {
+  const h = await harness(KEY, naming(['Sleeper schedule endpoint']));
+  await h.session.submit('Define GET /apps/sleeper/schedule for the Sleeper page', undefined, true);
+  await h.settle();
+  const sent = (await h.stream())!.events.filter((e) => e.type === 'title.set').length;
+  await h.sender.stop();
+  await h.store.resetSession({ key: KEY });
+  const again = await h.restart();
+  await again.flush();
+  await again.stop();
+  assert.equal((await h.catalog.getSession(KEY))?.title, 'Sleeper schedule endpoint');
+  assert.equal((await h.stream())!.events.filter((e) => e.type === 'title.set').length, sent, 'the restart re-derives nothing new');
+});
+
+test("a person's rename outlives a later set title, and clearing it shows the newest set title", async () => {
+  const h = await harness(KEY, naming(['Sleeper schedule endpoint'], ['Sleeper schedule, retitled']));
+  await h.session.submit('Define GET /apps/sleeper/schedule', undefined, true);
+  await h.settle();
+  await h.catalog.rename(KEY, 'Mine');
+  await h.session.submit('Retitle it', undefined, true);
+  await h.settle();
+  assert.equal((await h.catalog.getSession(KEY))?.title, 'Mine');
+  await h.catalog.rename(KEY, null);
+  assert.equal((await h.catalog.getSession(KEY))?.title, 'Sleeper schedule, retitled');
+});
+
+test('a home: conversation ignores a set title', async () => {
+  const h = await harness('home:main', naming(['Sleeper schedule endpoint']));
+  await h.session.submit('hello', undefined, true);
+  await h.settle();
+  assert.deepEqual([(await h.catalog.getSession('home:main'))?.title, await setTitles(h)], [undefined, []]);
 });

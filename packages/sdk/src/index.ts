@@ -12,3 +12,4 @@ export { appEndpoint, primeSessionEndpoint, invocationRequest, safeEqual, sendPr
 export { checkedSettings, extensionDbPath, extensionEntry, readDeploymentFile, storeFor, type DeploymentFile, type ExtensionEntry, type StoreChoice, type StoreEntry } from './extensions.ts';
 export { escapeTerm, unescapeTerm } from './query.ts';
 export { approvalOpenedData, artifactDeliveredData, artifactSealedData, assertSealFits, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
+export { setDefaultSessionTitle, SessionTitle, type SessionTitleDoc } from './title.ts';
