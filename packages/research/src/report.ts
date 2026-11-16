@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
+import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
@@ -366,7 +366,8 @@ export const reportDeclaration: Declaration = {
     contradicted_by_source: { scope: 'claim', aggregate: { name: 'share', pass: ['no'] }, decisionModel: false, question: defect('Does the fetched text of the source this finding cites contradict it?', 'Yes: the source says something different from the finding.', 'No: the source does not say otherwise.') },
     answers_every_ask: { scope: 'request', aggregate: { name: 'all' }, question: bool("Is every distinct ask and constraint in the request (place, timeframe, budget, audience) answered in the report's Summary and Findings, or named under Assumptions as unsettled?") },
     summary_follows_findings: { scope: 'summary', aggregate: { name: 'all' }, question: bool("Does this sentence of the report's Summary follow from the findings shown with it?") },
-    no_self_contradiction: { scope: 'report', aggregate: { name: 'all', pass: ['no'] }, question: defect('Does any figure, date or name in the report conflict with another passage of the report?', 'Yes: two passages give different figures, dates or names for the same thing.', 'No: they all agree.') },
+    // Clef clears clean reports well but gives no reason, so only a flag goes to the judge model, which says what conflicts.
+    no_self_contradiction: { scope: 'report', aggregate: { name: 'all', pass: ['no'] }, decisionModel: PASS_ONLY, question: defect('Does any figure, date or name in the report conflict with another passage of the report?', 'Yes: two passages give different figures, dates or names for the same thing.', 'No: they all agree.') },
   },
 };
 

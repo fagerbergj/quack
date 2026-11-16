@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { buildEvidence, type Declaration, type ModelSplit } from '../src/declaration.ts';
+import { buildEvidence, checkDeclaration, PASS_ONLY, type Declaration, type ModelSplit } from '../src/declaration.ts';
 import { fold, metOf } from '../src/fold.ts';
 import { registerSelector, registerSplitter, rejudge, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
 
@@ -195,7 +195,7 @@ test('while the fold can go either way the unsure item escalates; when nobody ca
   const answered = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => yes);
   const v = await rejudge(answered.api, opts(rubricOf('kept', 2), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(answered.escalated, ['Does it keep the rule?']);
-  assert.deepEqual([v.checks[0].met, v.checks[0].resolvers, v.passed], [true, { clef: 2, 'judge-model': 1 }, true]);
+  assert.deepEqual([v.checks[0].met, v.checks[0].resolvers, v.passed], [true, { clef: 2, j: 1 }, true]);
   const silent = fakeApi((q) => ({ type: 'bool', probability: p[q] }), () => 'no idea');
   const u = await rejudge(silent.api, opts(rubricOf('kept', 2), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual([u.checks[0].met, u.checks[0].undecided, u.undecided], [null, 1, ['c.kept']]);
@@ -222,7 +222,8 @@ test('coverageUnion by related counts what code found and asks no model; a decla
   assert.deepEqual([v.checks[0].met, v.checks[0].resolvers], [true, { code: 2 }]);
   await assert.rejects(rejudge(api, opts(rubricOf('other', 2), decl), sealed, 'm', BACKGROUND_CONTEXT), /no declaration for other; declared checks the rubric lacks: cited/);
   const routed = { ...decl, checks: { cited: { ...decl.checks.cited, decisionModel: true as never } } };
-  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /decisionModel may only be false: cited/);
+  await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /decisionModel may only be false or pass-only: cited/);
+  assert.doesNotThrow(() => checkDeclaration({ ...decl, checks: { cited: { ...decl.checks.cited, decisionModel: PASS_ONLY } } }, ['cited']));
 });
 
 registerSelector('test.backed', (_i, chunk) => ({ value: '', matches: chunk.text.includes('backed') ? 1 : 0 }));

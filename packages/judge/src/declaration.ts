@@ -78,13 +78,17 @@ export type AggregateDecl = {
   pass?: string[];
 };
 
+/** The decisionModel value under which the decision model may pass an item but not fail it; the judge model decides and explains a failing one. */
+export const PASS_ONLY = 'pass-only' as const;
+
 /** How one model check is judged: the scope it fans out over, the question asked per item, and the fold. */
 export type CheckDecl = {
   scope: string;
   question: Question;
   aggregate: AggregateDecl;
-  /** false: the check's questions skip the decision model and go to the judge model, packed with the group's other escalations. */
-  decisionModel?: false;
+  /** false: the check's questions skip the decision model and go to the judge model, packed with the group's other escalations.
+   *  PASS_ONLY: the decision model may pass an item but never fail one; a failing answer escalates like an unsure one, and the judge model's answer and reason stand. */
+  decisionModel?: false | typeof PASS_ONLY;
 };
 
 /** The named scopes, and, keyed by rubric check id, how each model check is judged. */
@@ -200,7 +204,7 @@ export function checkDeclaration(decl: Declaration, modelChecks: string[]): void
   const missing = modelChecks.filter((id) => !decl.checks[id]);
   const extra = Object.keys(decl.checks).filter((id) => !modelChecks.includes(id));
   const unscoped = Object.entries(decl.checks).filter(([, c]) => !decl.scopes[c.scope]).map(([id, c]) => `${id} (${c.scope})`);
-  const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false).map(([id]) => id);
-  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false: ${routed.join(', ')}`].filter(Boolean);
+  const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false && c.decisionModel !== PASS_ONLY).map(([id]) => id);
+  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false or ${PASS_ONLY}: ${routed.join(', ')}`].filter(Boolean);
   if (problems.length) throw new Error(`the judge declaration does not match its rubric: ${problems.join('; ')}`);
 }

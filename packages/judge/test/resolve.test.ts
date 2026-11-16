@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import type { Context } from '@earendil-works/chord/context';
+import { PASS_ONLY } from '../src/declaration.ts';
 import { limiter } from '../src/limit.ts';
 import { answerItems, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, type DecisionModelRef } from '../src/resolve.ts';
 
@@ -139,7 +140,7 @@ test('a packed request sends the context once and one question per unit; its uns
   assert.deepEqual(sent[0].state, { context: shared, items: units.map((u) => ({ id: u.id, text: u.id })) });
   assert.equal(sent[0].questions.q2.instructions, 'About items[2] (u2): Does it say why?');
   assert.doesNotMatch(JSON.stringify(sent[0]), /says_why/, 'no check id reaches the decision model, which would read it as part of the question');
-  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [['u0', true, 'clef', undefined], ['u1', true, 'judge-model', 'says so'], ['u2', false, 'judge-model', 'only asserts'], ['u3', false, 'clef', undefined]]);
+  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [['u0', true, 'clef', undefined], ['u1', true, 'j', 'says so'], ['u2', false, 'j', 'only asserts'], ['u3', false, 'clef', undefined]]);
   assert.equal(prompts.length, 1, 'one judge-model request for both unsure units');
   assert.equal(prompts[0].split('serve the page').length, 2, 'the shared context is sent once');
   assert.match(prompts[0], /- q0: About items\[0\] \(u1\): Does it say why\?\n  Options: yes, no\n- q1: About items\[1\] \(u2\)/);
@@ -191,7 +192,7 @@ test('eight unsure questions of one group go to the judge model as two requests 
   const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
   assert.deepEqual(prompts.map((p) => (p.match(/^- q\d+:/gm) ?? []).length), [MAX_BATCH_QUESTIONS, MAX_BATCH_QUESTIONS]);
   assert.equal(peak, 2, 'the two sub-batches run in parallel within the escalation limit');
-  assert.ok(answered.every((a) => a.answer!.met === true && a.answer!.resolver === 'judge-model'));
+  assert.ok(answered.every((a) => a.answer!.met === true && a.answer!.resolver === 'j'));
 });
 
 test('a batch over the judge model window splits into sub-batches that each fit; a question a reply leaves out escalates alone', async () => {
@@ -259,13 +260,84 @@ test('a check with decisionModel false never reaches the decision model and is e
   assert.deepEqual(sent.map((r) => Object.values(r.questions).map((q) => q.instructions)), [['About items[0] (f0): Does it say why?', 'About items[1] (f1): Does it say why?']]);
   assert.equal(prompts.length, 1, 'both contradicted questions and the unsure says_why go in one judge-model request');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.check.id, a.answer!.met, a.answer!.resolver]), [
-    ['f0', 'c.says_why', true, 'clef'], ['f0', 'c.contradicted', true, 'judge-model'], ['f1', 'c.says_why', true, 'judge-model'], ['f1', 'c.contradicted', false, 'judge-model'],
+    ['f0', 'c.says_why', true, 'clef'], ['f0', 'c.contradicted', true, 'j'], ['f1', 'c.says_why', true, 'j'], ['f1', 'c.contradicted', false, 'j'],
   ]);
   const only = callApi(async () => assert.fail('a group of decisionModel-false checks sends the decision model nothing'));
   Object.assign(only, { now: () => 0, agent: async () => ({}) });
   Object.assign(only.models, { getModel: (provider: string, id: string) => ({ provider, id }), completeSimple: async () => ({ stopReason: 'stop', content: [{ type: 'text', text: '{"choice": "no", "confidence": 0.9, "reason": "fine"}' }] }) });
   await answerItems(only as never, settings, [{ unit: { id: 'lone', state: { finding: 'x' } }, checks: [contra] }], BACKGROUND_CONTEXT);
   assert.equal(only.calls(), 0);
+});
+
+// A pass-only pitfall: the item holds on "no", and only a confident "no" from the decision model stands.
+const contradicts = { id: 'c.self', question: { type: 'choice' as const, instructions: 'Does any figure conflict?', options: { yes: 'Two passages differ.', no: 'They agree.' } }, pass: ['no'], decisionModel: PASS_ONLY };
+
+// An api whose decision model answers each packed question with `noMass` (the probability of "no") and whose judge model answers
+// every question it is sent with `choice`, counting requests and the most in flight at once.
+function passOnlyApi(noMass: number[], choice: string) {
+  const api = callApi(async () => ({ stopReason: 'stop', answers: Object.fromEntries(noMass.map((p, i) => [`q${i}`, { type: 'choice', probabilities: { yes: 1 - p, no: p } }])) }));
+  const seen = { prompts: [] as string[], active: 0, peak: 0 };
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      const prompt = r.messages[0].content;
+      seen.prompts.push(prompt);
+      seen.peak = Math.max(seen.peak, ++seen.active);
+      await new Promise((res) => setImmediate(res));
+      seen.active--;
+      const n = (prompt.match(/^- q\d+:/gm) ?? []).length;
+      const one = { choice, confidence: 0.9, reason: `the judge says ${choice}` };
+      const text = n ? JSON.stringify(Object.fromEntries(Array.from({ length: n }, (_, i) => [`q${i}`, one]))) : JSON.stringify(one);
+      return { stopReason: 'stop', content: [{ type: 'text', text }] };
+    },
+  });
+  return { api, seen };
+}
+
+test('a pass-only check keeps a confident pass from the decision model; a confident fail and an unsure answer go to the judge model, whose answer and reason stand', async () => {
+  const shared = { request: 'r' };
+  const units = ['u0', 'u1', 'u2'].map((id) => ({ id, shared, state: { report: id } }));
+  const { api, seen } = passOnlyApi([0.95, 0.03, 0.5], 'no');
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
+  const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks: [contradicts] })), BACKGROUND_CONTEXT);
+  assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [
+    ['u0', true, 'clef', undefined],
+    ['u1', true, 'j', 'the judge says no'],
+    ['u2', true, 'j', 'the judge says no'],
+  ]);
+  assert.equal(seen.prompts.length, 1, 'the two escalations go in one judge-model request');
+});
+
+test('a confident fail stands on a check without the option and escalates on a pass-only one, asked of the same unit', async () => {
+  const plain = { ...contradicts, id: 'c.plain', decisionModel: undefined };
+  const { api, seen } = passOnlyApi([0.02, 0.02], 'yes');
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
+  const answered = await answerItems(api as never, settings, [{ unit: { id: 'r', state: { report: 'x' } }, checks: [plain, contradicts] }], BACKGROUND_CONTEXT);
+  assert.deepEqual(answered.map((a) => [a.check.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [
+    ['c.plain', false, 'clef', undefined],
+    ['c.self', false, 'j', 'the judge says yes'],
+  ]);
+  assert.equal(seen.prompts.length, 1);
+});
+
+test('many confident fails on a pass-only check escalate in sub-batches within the escalation limit', async () => {
+  const shared = { request: 'r' };
+  const units = Array.from({ length: 9 }, (_, i) => ({ id: `u${i}`, shared, state: { report: `u${i}` } }));
+  const { api, seen } = passOnlyApi(units.map(() => 0.01), 'yes');
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(2) };
+  const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks: [contradicts] })), BACKGROUND_CONTEXT);
+  assert.ok(answered.every((a) => a.answer!.resolver === 'j' && a.answer!.met === false));
+  assert.equal(seen.prompts.length, Math.ceil(units.length / MAX_BATCH_QUESTIONS));
+  assert.ok(seen.peak <= 2, `at most two judge-model requests at once, saw ${seen.peak}`);
+});
+
+test('a pass-only item is never failed on the decision model alone: with no judge model answer it stays undecided', async () => {
+  const { api } = passOnlyApi([0.01], 'yes');
+  Object.assign(api.models, { getModel: () => undefined });
+  const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
+  const [a] = await answerItems(api as never, settings, [{ unit: { id: 'r', state: { report: 'x' } }, checks: [contradicts] }], BACKGROUND_CONTEXT);
+  assert.deepEqual([a.answer!.met, a.answer!.resolver], [null, 'none']);
 });
 
 test('a limiter runs at most n tasks at once and starts the next as one ends', async () => {

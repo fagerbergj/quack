@@ -42,6 +42,7 @@ export type CheckResult = {
   weight: number | 'gate';
   met: boolean | number | null;
   units: number;
+  /** Settled items by resolver: `code`, or the modelId of the model that answered (the decision model, or the judge model an escalation reached); they sum to the settled items. */
   resolvers: Record<string, number>;
   notes: string[];
   /** The items the fold left undecided while the check decided; listed so the reader sees what was not asked. */

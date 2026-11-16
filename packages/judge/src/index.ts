@@ -8,7 +8,7 @@ import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, ty
 import { feedback, score, unitsFor, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
-export { buildEvidence, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type SplitExpect, type Where } from './declaration.ts';
+export { buildEvidence, PASS_ONLY, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type SplitExpect, type Where } from './declaration.ts';
 export { registerSelector, registerSplitter } from './library.ts';
 export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './resolve.ts';
 export { limiter } from './limit.ts';
@@ -67,7 +67,7 @@ function planChecks(rubric: Rubric, decl: Declaration | undefined, built: BuiltE
     const units = d ? built.evidence[d.scope] ?? [] : unitsFor(k.scope, built.evidence);
     const split = d && built.splits[d.scope];
     const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}), ...(split?.reason ? { splitterReason: split.reason } : {}) };
-    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel === false && { decisionModel: false as const }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
+    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel !== undefined && { decisionModel: d.decisionModel }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
     return { key, result, ask, units, aggregate: d?.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, failed: split?.failed };
   }));
 }
@@ -165,10 +165,9 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
   const tally = async ({ unit, check, answer }: Answered) => {
     const p = byKey.get(check.id)!;
     p.left--;
-    if (answer) {
-      p.answers.set(unit.id, answer);
-      p.result.resolvers[answer.resolver] = (p.result.resolvers[answer.resolver] ?? 0) + 1;
-    }
+    if (answer) p.answers.set(unit.id, answer);
+    // Resolvers count settled items only; an item no model could answer is the check's undecided.
+    if (answer && answer.met !== null) p.result.resolvers[answer.resolver] = (p.result.resolvers[answer.resolver] ?? 0) + 1;
     if (!p.left) await publish();
   };
   // An unsure item escalates only while its check's fold can still go either way.
