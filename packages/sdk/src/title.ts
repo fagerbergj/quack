@@ -4,16 +4,19 @@ import { defineDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 // The lifecycle channel bounds title.set's title at its source.
 const TITLE_MAX = 120;
 
-/** The default title an extension set for its own session; `changes` counts the times it changed, and names its title.set.
- * Not on the SDK's public surface: core reads the document by its kind (packages/session/src/lifecycle.ts). */
+/** A session's default title (null until set), how many times it changed (names title.set `title:<changes>`) and when.
+ * Core's lifecycle reads it to derive the stream. */
 export type SessionTitleDoc = { title: string | null; changes: number; at: number };
 
+/** The session's default-title document: conversation-scoped, kind 'quack.session-title', starting at
+ * { title: null, changes: 0, at: 0 }. */
 export const SessionTitle = defineDoc<SessionTitleDoc>({
   kind: 'quack.session-title', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ title: null, changes: 0, at: 0 }), checkpointWhen: () => false,
 });
 
-/** Sets the calling extension's own session's default title, last write wins; the same title again (a replayed step) writes nothing. */
+/** Sets the calling extension's own session's default title, last write wins; each change goes out as title.set `title:<n>`
+ * and a higher seq supersedes, same id or not. The same title again (a replayed step) writes nothing. */
 export async function setDefaultSessionTitle(api: ToolExecutionApi, title: string, ctx: Context): Promise<void> {
   const folded = title.trim().replace(/\s+/g, ' ').slice(0, TITLE_MAX);
   if (!folded) return;
