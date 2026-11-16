@@ -34,6 +34,8 @@ test('a fenced block is its finding\'s continuation, whatever its lines start wi
   for (const n of ['fence-diff', 'fence-tilde', 'fence-unclosed', 'fence-before-finding']) assert.deepEqual(parseReview(md(n)).unparsed, [], n);
   const [first] = parseReview(md('fence-diff')).findings;
   assert.match(first.text, /\n- if \(ok\) return;\n\+ if \(!ok\) return;\n- nit: this is code, not a finding\n```$/);
+  assert.match(parseReview(md('fence-blank-lines')).findings[0].text, /const a = 1;\n\nconst b = 2;\n\n\nrun\(a, b\);\n```$/);
+  assert.match(parseReview(md('fence-blank-after-open')).findings[0].text, /\n~~~\n\n- old\n/);
   assert.equal(parseReview(md('fence-unclosed')).findings.length, 1);
   assert.deepEqual(parseReview(md('fence-before-finding')).findings.map((f) => f.text), ['the first finding.']);
 });

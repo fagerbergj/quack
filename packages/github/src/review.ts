@@ -33,8 +33,10 @@ function parseFindings(section: string): Pick<ParsedReview, 'findings' | 'unpars
       const cite = CITATION.exec(m[3]);
       findings.push({ index: findings.length + 1, label: m[1], anchor: m[2], path: cite?.[1], line: cite ? Number(cite[2]) : undefined, text: cite?.[3] ?? m[3] });
     } else if (!inside && BULLET.test(line)) unparsed.push(line);
-    else if (findings.length && line.trim()) findings.at(-1)!.text += `\n${line}`;
+    else if (findings.length && (inside || line.trim())) findings.at(-1)!.text += `\n${line}`;
   }
+  // The blank lines that end an unclosed fence are the section's padding, not part of the block.
+  if (fenced && findings.length) findings.at(-1)!.text = findings.at(-1)!.text.replace(/\n+$/, '');
   return { findings, unparsed };
 }
 

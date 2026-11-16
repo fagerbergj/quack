@@ -222,7 +222,7 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
 });
 
 test('an inline finding takes its whole fenced diff with it, and a fenced "- nit:" line is not a finding of its own', () => {
-  const text = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- suggestion: src/a.ts:2 — Swap it.\n```diff\n- two\n+ two!\n- nit: not a finding\n```\n- blocking (defect): src/a.ts:90 — Off the diff.\n## Verified\n- y\n';
+  const text = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- suggestion: src/a.ts:2 — Swap it.\n```diff\n- two\n+ two!\n\n- nit: not a finding\n```\n- blocking (defect): src/a.ts:90 — Off the diff.\n## Verified\n- y\n';
   const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
   assert.deepEqual(comments.map((c) => c.line), [2]);
   assert.equal(body, '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- blocking (defect): src/a.ts:90 — Off the diff.\n\nPosted inline on the diff:\n- suggestion: Swap it.\n## Verified\n- y\n');

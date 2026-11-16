@@ -31,8 +31,10 @@ function findingsOf(section: string): Pick<Reading, 'findings' | 'unparsed'> {
     const last = out.findings.at(-1);
     if (m) out.findings.push(toFinding(m, out.findings.length + 1));
     else if (free[i] && BULLET.test(line)) out.unparsed.push(line);
-    else if (last && line.trim()) last.text += `\n${line}`;
+    else if (last && (!free[i] || line.trim())) last.text += `\n${line}`;
   });
+  const last = out.findings.at(-1);
+  if (last && lines.filter((l) => FENCE.test(l)).length % 2) last.text = last.text.replace(/\n+$/, '');
   return out;
 }
 

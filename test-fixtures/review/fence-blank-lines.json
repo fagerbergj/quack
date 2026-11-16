@@ -1,0 +1,28 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- suggestion: src/a.ts:3 — split the setup from the call.\n```ts\nconst a = 1;\n\nconst b = 2;\n\n\nrun(a, b);\n```\n\n- nit: src/b.ts:1 — after the fence.\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "suggestion",
+        "path": "src/a.ts",
+        "line": 3,
+        "text": "split the setup from the call.\n```ts\nconst a = 1;\n\nconst b = 2;\n\n\nrun(a, b);\n```"
+      },
+      {
+        "index": 2,
+        "label": "nit",
+        "path": "src/b.ts",
+        "line": 1,
+        "text": "after the fence."
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}
