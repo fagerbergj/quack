@@ -69,8 +69,13 @@ const outcomeOf = (kind: ArtifactKind, last: SealedArtifact) => `${kind.kind} v$
 
 // The first change after a final version is refused so the writer can still reply; a second ends the run, so a looping writer costs one turn.
 async function refuseAfterFinal(api: ToolExecutionApi, kind: ArtifactKind, last: SealedArtifact, ctx: Context): Promise<never> {
-  const again = last.final!.refused > 0;
-  await updateSealed(api, kind.kind, last.version, ctx, (sealed) => void sealed.final!.refused++);
+  // A rerun of this call after a crash finds its refusal in the call's memo, so one refusal counts once.
+  const key = `seal:final:${kind.kind}:v${last.version}`;
+  let again = await api.memo<boolean>(key, ctx);
+  if (again === undefined) {
+    again = await api.memo(key, last.final!.refused > 0, ctx);
+    await updateSealed(api, kind.kind, last.version, ctx, (sealed) => void sealed.final!.refused++);
+  }
   const said = again
     ? `${outcomeOf(kind, last)}. A second change after it was not sealed either, so this run is over.`
     : `${outcomeOf(kind, last)}, so it is final for this run and this change to ${kind.path} was not sealed. Finish with your reply and seal nothing more; only a person's change request reopens it.`;
