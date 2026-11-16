@@ -101,7 +101,8 @@ test(`a type more than ${HUB} boxes in view name is a chip on each field, not an
 });
 
 test('a TypeScript contract opens as a diagram and a card per declaration, with linked types and the why on its card', async () => {
-  const { contracts } = await import('./index.ts');
+  // Load the lazy chain before render so a cold import never counts against findByRole's 1000 ms.
+  const [{ contracts }] = await Promise.all([import('./index.ts'), import('./typescript-model.ts'), import('./CodeContract.tsx')]);
   const spec = { kind: 'typescript', title: 'Stores', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: dts, choices: [{ id: 's', pointer: '/Store', decision: 'Store is a union.', why: [{ source: 'guide', text: 'One shape per kind.', ref: 'typescript#unions' }] }] };
   render(<>{contracts.card!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
   const diagram = await screen.findByRole('region', { name: 'Class diagram' });
