@@ -21,22 +21,28 @@ const write = (content: string) => fauxAssistantMessage(fauxToolCall('write', { 
 const submit = fauxAssistantMessage(fauxToolCall('submit_note', {}), { stopReason: 'toolUse' });
 const done = fauxAssistantMessage('Done.');
 
+type Reply = ReturnType<typeof fauxAssistantMessage>;
+type Session = Awaited<ReturnType<typeof openSession>>;
+// A step may act on the session before it answers, as a person steering mid-run does.
+type Step = Reply | ((s: Session) => Promise<Reply>);
+
 // One run of an agent that enables the judge with `config` and registers test.note, the way a feature's session setup does.
-async function run(name: string, config: JudgeConfig, script: Array<ReturnType<typeof fauxAssistantMessage>>, refuse?: Judged['refuse']) {
+async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse']) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
-  faux.setResponses(script.map((reply) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), reply)));
+  let session: Session;
+  faux.setResponses(script.map((step) => async (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), typeof step === 'function' ? step(session) : step)));
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const judge = await manifest.session!(config, {}, []);
   judged(note.kind, how(refuse));
-  const session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note])] } });
-  await session.submit('Write and submit the note.', `${name}-1`, true);
+  session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note])] } });
+  const result = await session.submit('Write and submit the note.', `${name}-1`, true);
   const versions = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))?.kinds[note.kind]?.versions ?? [];
   await session.close();
   const transcript = JSON.stringify((await readExport(join(dir, name))).transcript);
-  return { seen, versions, transcript, asked: seen.length };
+  return { seen, versions, transcript, asked: seen.length, answer: result.status === 'done' ? result.answer : undefined };
 }
 
 const passed = (v: { verdict: unknown }) => (v.verdict as { passed?: boolean } | null)?.passed ?? null;
@@ -45,8 +51,33 @@ test('a failed version comes back to revise; the passing one seals with the judg
   const r = await run('revise', { maxRevisions: 1 }, [write('no'), submit, write('ok then'), submit, done]);
   assert.match(r.seen[2], /test\.note v1: \d+% \(says-ok@1\), failed:.*Revise the file to address each point, then call submit_note again\./);
   assert.match(r.seen[2], /"isError":true/);
-  assert.match(r.seen[4], /test\.note v2: 100% \(says-ok@1\), passed\. Deliver version 2\./);
+  assert.match(r.seen[4], /test\.note v2: 100% \(says-ok@1\), passed\. Version 2 is final for this run; finish without revising it\./);
   assert.deepEqual(r.versions.map(passed), [false, true]);
+});
+
+const firstRefusal = (outcome: string) => new RegExp(`test\\.note v2 ${outcome}, so it is final for this run and this change to artifacts/note\\.md was not sealed\\. Finish with your reply and seal nothing more`);
+
+test('a revision after a pass is refused, the passed version stays the one delivered, and the writer\'s reply is the answer', async () => {
+  const r = await run('after-pass', { maxRevisions: 2 }, [write('no'), submit, write('ok'), submit, write('ok, and better'), submit, fauxAssistantMessage('Delivered v2.')]);
+  assert.match(r.seen[6], firstRefusal('passed and is delivered'));
+  assert.match(r.seen[6], /"isError":true/);
+  assert.equal(r.answer, 'Delivered v2.');
+  assert.deepEqual(r.versions.map(passed), [false, true]);
+});
+
+test('a second refused revision after a pass ends the run, with the passed version still the newest', async () => {
+  const r = await run('after-pass-twice', { maxRevisions: 2 }, [write('no'), submit, write('ok'), submit, write('ok, and better'), submit, write('ok, best'), submit, fauxAssistantMessage('should not be asked')]);
+  assert.equal(r.asked, 8, 'no request after the second refusal');
+  assert.match(r.transcript, /test\.note v2 passed and is delivered\. A second change after it was not sealed either, so this run is over\./);
+  assert.deepEqual(r.versions.map(passed), [false, true]);
+});
+
+test("a person's change request after a pass is judged, with a fresh revision budget", async () => {
+  const steer = async (s: Session) => (await s.submit('Make it say more.', 'steer-1', false, 'steer'), write('nope, longer'));
+  const r = await run('change', { maxRevisions: 1 }, [write('no'), submit, write('ok'), submit, steer, submit, write('ok, longer'), submit, done]);
+  assert.match(r.seen[5], /Make it say more\./);
+  assert.match(r.seen[6], /test\.note v3: \d+% \(says-ok@1\), failed:.*Revise the file/, 'v3 is judged, and the limit counts from the pass');
+  assert.deepEqual(r.versions.map(passed), [false, true, false, true]);
 });
 
 test('a version still failing at the revision limit is released with its failures marked', async () => {
@@ -55,11 +86,11 @@ test('a version still failing at the revision limit is released with its failure
   assert.deepEqual(r.versions.map((v) => (v.verdict as { limitReached: boolean }).limitReached), [true]);
 });
 
-test('a seal past the limit is refused and ends the run', async () => {
-  const r = await run('past', { maxRevisions: 0 }, [write('no'), submit, write('still no'), submit, fauxAssistantMessage('should not be asked')]);
-  assert.match(r.transcript, /test\.note was already checked 1 times in this run, the most it gets\. Stop: this run is over\./);
-  assert.equal(r.asked, 4, 'no request after the refused seal');
-  assert.deepEqual(r.versions.map(passed), [false, null], 'the refused version is sealed but not judged');
+test('a revision after the limit released a version is refused, so the limit holds for the run', async () => {
+  const r = await run('past', { maxRevisions: 1 }, [write('no'), submit, write('still no'), submit, write('ok'), submit, done]);
+  assert.match(r.seen[4], /The revision limit is reached\. Deliver version 2 with these failures marked\./);
+  assert.match(r.seen[6], firstRefusal('is delivered'));
+  assert.deepEqual(r.versions.map(passed), [false, false], 'nothing past the released version is sealed');
 });
 
 test('a refusal from the registration ends the run before anything is judged', async () => {

@@ -233,7 +233,8 @@ export function undecidedMessage(ids: string[], toolName: string): string {
 export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
   const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric})`;
   const lines = feedback(v.checks).map((l) => `- ${l}`).join('\n');
-  if (v.passed) return `${head}, passed.${delivers ? '' : ` Deliver version ${sealed.version}.`}${lines ? `\nMinor:\n${lines}` : ''}`;
+  // Notes under a pass read as a to-do list and drew revisions that replaced the passed version; the verdict keeps them for people.
+  if (v.passed) return `${head}, passed.${delivers ? '' : ` Version ${sealed.version} is final for this run; finish without revising it.`}`;
   if (v.limitReached) return `${head}, failed:\n${lines}\nThe revision limit is reached.${delivers ? '' : ` Deliver version ${sealed.version} with these failures marked.`}`;
   return `${head}, failed:\n${lines}\nRevise the file to address each point, then call ${toolName} again.`;
 }

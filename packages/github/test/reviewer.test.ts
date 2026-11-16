@@ -211,7 +211,7 @@ test('a re-review checkout shows the reviewer its own earlier inline comments wi
   await session.close();
 });
 
-test('a second passing version on the same checkout is not posted; a later request for the reviewed head ends without checkout unless the description or CI changed', async () => {
+test('a second version after the posted one is refused and not sealed; a later request for the reviewed head ends without checkout unless the description or CI changed', async () => {
   const revised = review.replace('approve.', 'approve, with one nit.');
   const { done, seen, service, session, live } = await reviewRun((seen) => {
     const step = recorder(seen);
@@ -229,7 +229,9 @@ test('a second passing version on the same checkout is not posted; a later reque
     ];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[4], /Review v1 was already posted for this checkout; a run posts one review, so v2 was not sent/);
+  assert.match(seen[4], /github\.review v1 passed and is delivered, so it is final for this run/);
+  const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
+  assert.equal(doc!.kinds['github.review'].versions.length, 1, 'the revision is not sealed');
   assert.equal(service.posted.length, 1);
   assert.equal(service.posted[0].body, inlined);
 
@@ -278,7 +280,7 @@ test('a closed PR ends the run at the first submit: it is refused for good, not 
   await session.close();
 });
 
-test('submits that keep changing stop at the revision limit: the 4th judged version in a run is refused and ends it', async () => {
+test('submits that keep changing stop at the revision limit: the version released there is final, and the second change after it ends the run', async () => {
   const counter = { turns: 0 };
   const steps = Array.from({ length: 40 }, (_, i) => (_c: unknown) => {
     counter.turns++;
@@ -286,7 +288,7 @@ test('submits that keep changing stop at the revision limit: the 4th judged vers
   });
   const { done, service, session } = await reviewRun(() => steps);
   assert.equal(done.status, 'done');
-  assert.equal(counter.turns, 1 + 2 * 4, 'checkout, then four draft and submit pairs');
+  assert.equal(counter.turns, 1 + 2 * 5, 'checkout, three judged draft and submit pairs, then two refused');
   assert.equal(service.posted.length, 1, 'v3 went out at the limit with its failures marked');
   await session.close();
 });
