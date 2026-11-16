@@ -356,9 +356,9 @@ test('findings_cited: every finding bullet needs a [sN]; the bare one is named',
 
 const cited = (report: string) => findingItems(report).map((f) => [f.first, /\[s\d+\]/.test(f.text)]);
 
-test('findingItems: every "## Findings" section counts, whatever follows the word', () => {
-  const r = '## Summary\nx\n## Findings — Taunton\n- Sorel, HIC 205379. [s9]\n## Findings — Raynham\n- Naylor, CSL 042837. [s15]\n## Shortlist\n- Sorel first.\n';
-  assert.deepEqual(cited(r), [['- Sorel, HIC 205379. [s9]', true], ['- Naylor, CSL 042837. [s15]', true]]);
+test('findingItems: only the "## Findings" section counts, not one that merely starts with the word', () => {
+  const r = '## Summary\nx\n## Findings\n- Sorel, HIC 205379. [s9]\n## Findings — Raynham\n- Naylor, CSL 042837. [s15]\n## Shortlist\n- Sorel first.\n';
+  assert.deepEqual(cited(r), [['- Sorel, HIC 205379. [s9]', true]]);
 });
 
 test('findingItems: a mark on the paragraph above a list or on the bullet a sub-bullet sits in cites it; a bullet that only introduces sub-bullets is not a finding', () => {

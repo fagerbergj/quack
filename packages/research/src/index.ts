@@ -4,7 +4,7 @@ import { artifactsExtension } from '@quack/sdk';
 import { reportDeclaration, reportInputs, reportKind, researchRubric } from './report.ts';
 import { readSourceTool, webFetchTool, webSearchTool, type ResearchConfig } from './tools.ts';
 
-export { citedIds, findingItems, inputsOf, recordedReportInputs, reportDeclaration, reportInputs, reportKind, researchRubric, validateReport } from './report.ts';
+export { citedIds, findingItems, inputsOf, parseReport, recordedReportInputs, reportDeclaration, reportInputs, reportKind, researchRubric, validateReport } from './report.ts';
 export { isPublicAddress, safeGet } from './net.ts';
 export { formatResults, htmlToText, sourceText, SourcesDoc, type ResearchConfig, type SourceRecord } from './tools.ts';
 
