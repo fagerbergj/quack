@@ -120,7 +120,8 @@ async function stream(session: Session, ws: WebSocket, caller: Caller) {
 }
 
 export function liveUpgrade(session: Session) {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + MAX_IMAGES * MAX_IMAGE_CHARS + 1024 });
+  // The artifacts frame carries every sealed version's document, megabytes for a long contract; deflate takes about 4x off it.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + MAX_IMAGES * MAX_IMAGE_CHARS + 1024, perMessageDeflate: { threshold: 1024 } });
   return (req: IncomingMessage, socket: Duplex, head: Buffer, who?: Principal) => {
     if (req.url !== '/ws') return socket.destroy();
     wss.handleUpgrade(req, socket, head, (ws) => void stream(session, ws, who ?? 'service').catch(() => ws.close(1011)));

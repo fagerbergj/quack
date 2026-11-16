@@ -129,6 +129,27 @@ test('an open question rides the socket as a standing frame and clears when answ
   await session.close();
 });
 
+test('a long ledger rides the socket deflated and arrives whole', async () => {
+  const models = createModels();
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await mkdtemp(join(tmpdir(), 'quack-live-')), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
+  const versions = Array.from({ length: 20 }, (_, i) => ({ kind: 'demo.note', version: i + 1, hash: `h${i}`, content: JSON.stringify({ doc: 'x'.repeat(50_000) }), sealedAt: i, verdict: null }));
+  await nextFrame(ws, (f) => f.type === 'artifacts');
+  const sealed = nextFrame(ws, (f) => f.type === 'artifacts' && f.artifacts.length === versions.length);
+  await session.root.commit(async (tx) => { (await tx.doc(Artifacts, session.root.id)).kinds['demo.note'] = { versions }; }, BACKGROUND_CONTEXT);
+  assert.deepEqual((await sealed).artifacts, versions);
+  const negotiated = ws.extensions;
+  ws.close();
+  await new Promise((r) => server.close(r));
+  await session.close();
+  assert.match(negotiated, /permessage-deflate/);
+});
+
 test('a gated call\'s approval and each sealed artifact ride the socket the moment they are committed', async () => {
   const post = gated(defineTool({ name: 'post_comment', description: 'post', parameters: obj({ body: str() }, { open: true }), execute: async () => ({ output: [{ type: 'text', text: 'posted' }] }) }));
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });

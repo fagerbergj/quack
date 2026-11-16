@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Readable, Writable } from 'node:stream';
+import { gzip } from 'node:zlib';
 import type { App } from './manifest.ts';
 
 /** Constant-time string equality; unequal lengths answer false without comparing. */
@@ -27,7 +28,13 @@ export function serveApp(app: App) {
 /** The scaffolding every extension HTTP service repeats: JSON replies, a bounded body read and a bearer check. */
 export function serviceHttp(opts: { token?: string; maxBody?: number } = {}) {
   const maxBody = opts.maxBody ?? 1 << 20;
-  const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+  // A list of sealed documents runs to megabytes, and a phone pays for every byte; JSON gzips about 4x.
+  const send = (res: ServerResponse, status: number, body: unknown) => {
+    const text = JSON.stringify(body);
+    const headers = { 'content-type': 'application/json', vary: 'accept-encoding' };
+    if (text.length < 1024 || !/\bgzip\b/.test(String(res.req?.headers['accept-encoding']))) return void res.writeHead(status, headers).end(text);
+    gzip(text, (err, zipped) => (err ? res.writeHead(status, headers).end(text) : res.writeHead(status, { ...headers, 'content-encoding': 'gzip' }).end(zipped)));
+  };
   const problem = sendProblem;
   async function readBody(req: IncomingMessage): Promise<Buffer> {
     let size = 0;
