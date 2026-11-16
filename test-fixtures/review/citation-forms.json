@@ -1,0 +1,68 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- question: node:18 is the pin, right?\n- nit: `src/a.ts:12-20` — a backticked range.\n- nit: src/b.ts:7 a citation without a dash\n- blocking(defect): Dockerfile:3 - anchor without a space, root file.\n- nit: ./x/y.go:4 — dot-slash path.\n- nit (scope): Makefile:0 — line zero.\n- nit: README.md:5 – en dash.\n- nit: no citation at all\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "question",
+        "text": "node:18 is the pin, right?"
+      },
+      {
+        "index": 2,
+        "label": "nit",
+        "path": "src/a.ts",
+        "line": 12,
+        "text": "a backticked range."
+      },
+      {
+        "index": 3,
+        "label": "nit",
+        "path": "src/b.ts",
+        "line": 7,
+        "text": "a citation without a dash"
+      },
+      {
+        "index": 4,
+        "label": "blocking",
+        "anchor": "defect",
+        "path": "Dockerfile",
+        "line": 3,
+        "text": "anchor without a space, root file."
+      },
+      {
+        "index": 5,
+        "label": "nit",
+        "path": "./x/y.go",
+        "line": 4,
+        "text": "dot-slash path."
+      },
+      {
+        "index": 6,
+        "label": "nit",
+        "anchor": "scope",
+        "path": "Makefile",
+        "line": 0,
+        "text": "line zero."
+      },
+      {
+        "index": 7,
+        "label": "nit",
+        "path": "README.md",
+        "line": 5,
+        "text": "en dash."
+      },
+      {
+        "index": 8,
+        "label": "nit",
+        "text": "no citation at all"
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}

@@ -1,0 +1,28 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- suggestion: src/a.ts:3 — use a map.\n~~~\n- old\n+ new\n* star\n1. one\n~~~\n- nit: src/b.ts:1 — after the fence.\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "suggestion",
+        "path": "src/a.ts",
+        "line": 3,
+        "text": "use a map.\n~~~\n- old\n+ new\n* star\n1. one\n~~~"
+      },
+      {
+        "index": 2,
+        "label": "nit",
+        "path": "src/b.ts",
+        "line": 1,
+        "text": "after the fence."
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}

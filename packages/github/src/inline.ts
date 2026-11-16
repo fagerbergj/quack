@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { diffOf, FINDING, parseReview, resolveCitedPath, trackedFiles } from './review.ts';
+import { BULLET, diffOf, FENCE, FINDING, parseReview, resolveCitedPath, trackedFiles } from './review.ts';
 
 export type InlineComment = { path: string; line: number; body: string };
 
@@ -36,13 +36,17 @@ function lineOwners(lines: string[]) {
   let current = 0;
   let count = 0;
   let end = -1;
+  let fenced = false;
   const owner = lines.map((line, i) => {
     const heading = /^## (\w+)/.exec(line);
-    if (heading) { section = heading[1].toLowerCase(); current = 0; return 0; }
+    if (heading) { section = heading[1].toLowerCase(); current = 0; fenced = false; return 0; }
     if (section !== 'findings') return 0;
     if (line.trim()) end = i;
-    if (FINDING.test(line)) return (current = ++count);
-    return line.startsWith('- ') ? 0 : current;
+    const fence = FENCE.test(line);
+    const inside = fenced || fence;
+    if (fence) fenced = !fenced;
+    if (!inside && FINDING.test(line)) return (current = ++count);
+    return !inside && BULLET.test(line) ? 0 : current;
   });
   return { owner, end };
 }

@@ -1,0 +1,13 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "Approve — ship it.\n\n",
+      "findings": "\n"
+    },
+    "verdict": "approve",
+    "findings": [],
+    "unparsed": []
+  },
+  "problems": []
+}

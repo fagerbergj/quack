@@ -13,18 +13,19 @@ const md = (name: string) => readFileSync(join(process.cwd(), 'src/extensions/fi
 const sealed = (content: string, over: Partial<SealedArtifact> = {}): SealedArtifact => ({ kind: 'github.review', version: 1, hash: 'h', content, sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, ...over });
 
 test('a review parses into its takeaway, findings, verified and notes', () => {
-  const r = parseReview(md('review-changes'))!;
+  const r = parseReview(md('review-changes'));
   expect(r.verdict).toBe('request_changes');
-  expect(r.findings.map((f) => [f.severity, f.kind, f.loc])).toEqual([
+  expect(r.items.map((f) => [f.label, f.anchor, `${f.path}:${f.line}`])).toEqual([
     ['blocking', 'defect', 'v1/packages/index/src/publisher.ts:58'],
     ['suggestion', undefined, 'v1/packages/index/test/publisher.test.ts:105'],
   ]);
-  expect(r.findings[0]!.title).toMatch(/^If `root.commit` for the direct-spend record rejects, .*…$/);
-  expect(r.findings[0]!.more).toContain('```ts');
+  expect(r.items[0]!.title).toMatch(/^If `root.commit` for the direct-spend record rejects, .*…$/);
+  expect(r.items[0]!.more).toContain('```ts');
   expect(r.verified).toHaveLength(6);
   expect(r.notes).toHaveLength(3);
-  expect(parseReview(md('review-comment'))!.findings.map((f) => f.kind)).toEqual([undefined, undefined, undefined, 'tests', undefined, undefined]);
-  expect(parseReview('just some text')).toBeUndefined();
+  expect(parseReview(md('review-comment')).items.map((f) => f.anchor)).toEqual([undefined, undefined, undefined, 'tests', undefined, undefined]);
+  expect(parseReview('just some text').verdict).toBeUndefined();
+  expect(parseReview('## Verdict\nApprove\n').verdict).toBe('approve');
 });
 
 test('the review card shows the seal, counts, a posted link, findings with their severity and location', () => {

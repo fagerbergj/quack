@@ -1,0 +1,29 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- blocking (defect): src/a.ts:10 — the guard is inverted.\n```diff\n- if (ok) return;\n+ if (!ok) return;\n- nit: this is code, not a finding\n```\n- nit: src/b.ts:2 — rename it.\n  ```ts\n  const x = 1;\n  ```\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "blocking",
+        "anchor": "defect",
+        "path": "src/a.ts",
+        "line": 10,
+        "text": "the guard is inverted.\n```diff\n- if (ok) return;\n+ if (!ok) return;\n- nit: this is code, not a finding\n```"
+      },
+      {
+        "index": 2,
+        "label": "nit",
+        "path": "src/b.ts",
+        "line": 2,
+        "text": "rename it.\n  ```ts\n  const x = 1;\n  ```"
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}

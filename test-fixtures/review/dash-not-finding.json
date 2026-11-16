@@ -1,0 +1,31 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- praise: nice\n- not a finding line at all\n- nit: src/a.ts:1 — one.\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "praise",
+        "text": "nice"
+      },
+      {
+        "index": 2,
+        "label": "nit",
+        "path": "src/a.ts",
+        "line": 1,
+        "text": "one."
+      }
+    ],
+    "unparsed": [
+      "- not a finding line at all"
+    ]
+  },
+  "problems": [
+    "finding 1: label must be one of blocking, suggestion, nit, question",
+    "not a finding line (\"- label (anchor): path:line — text\"): - not a finding line at all"
+  ]
+}

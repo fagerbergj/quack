@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "github.review — the Markdown review in the form parseReview returns",
+  "description": "The parsed form of the github.review artifact: the Markdown at artifacts/review.md that a reviewer session writes, submit_review seals, and the github app posts as the pull request's review. This schema is the sealed shape — what a review parses to once it has passed validateReview, which gates every seal: the takeaway, verdict and findings sections exist, the verdict is one of three words, every finding's label is one of four, and unparsed is empty. parseReview (packages/github/src/review.ts) is deliberately more tolerant than this — any label, any first verdict word, and unreadable '- ' lines collected in unparsed — so the validator can name exactly what is wrong; readers must still parse leniently, because stored reviews are never re-validated: validate() runs only at seal time. The exact Markdown grammar every writer and parser must agree on is stated in x-grammar and mirrored in the property descriptions. The normative parser is packages/github/src/review.ts; the web keeps a separate, drifted copy (packages/web/src/extensions/review.ts) — its drifts are listed in this contract's choices, not here.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "sections",
+    "verdict",
+    "findings",
+    "unparsed"
+  ],
+  "x-grammar": {
+    "file": "artifacts/review.md — the artifact path the kind declares; the sealed content is this file's text.",
+    "heading": "A section starts at a line beginning '## ' followed by one word of letters, digits or underscore (regex ^## (\\w+)); the key is that word lowercased, so '## Takeaway' is 'takeaway'. Any words after the first on the heading line are dropped, and the heading line itself is not part of any section. Lines before the first '## ' heading are discarded. Two headings with the same key concatenate into one value.",
+    "sectionBody": "Every line after the heading, up to the next '## ' heading, is appended verbatim with its newline — blank lines included — so a section value always ends in a newline, and a file whose last section ends with a newline has one more blank line appended (ending in two newlines). A key exists only if at least one line, blank included, follows the heading; a heading with nothing after it leaves no key.",
+    "sections": {
+      "required": [
+        "takeaway",
+        "verdict",
+        "findings"
+      ],
+      "conventional": [
+        "verified",
+        "notes"
+      ],
+      "note": "validateReview requires Takeaway, Verdict and Findings; Verified and Notes are the two sections the reviewer prompt's format block defines; any further single-word sections are allowed and ignored by the app."
+    },
+    "verdictWord": "The first whitespace-separated word of the Verdict section's text, trimmed and lowercased. In a sealed review it is one of approve, comment, request_changes. The parser does not check it; the validator does, at seal time. A Verdict section whose text is blank parses to the empty string and fails the seal.",
+    "findingLine": {
+      "form": "- label (anchor): path:line — text",
+      "regex": "^- (\\w+)(?:\\s*\\((\\w+)\\))?:\\s*(.*)$",
+      "label": "One word of letters, digits or underscore directly after '- '; in a sealed review one of blocking, suggestion, nit, question.",
+      "anchor": "Optional: '(word)' with one word of letters, digits or underscore, attached with zero or more spaces before the '(' (so 'blocking(defect)' parses); as written, not lowercased. The six canonical anchors are defect, delivery, security, design, scope, tests; the reviewer prompt says a blocking finding names one of them. Nothing at seal time checks the anchor's value — only a judge gate requires a blocking finding to name one.",
+      "colon": "Immediately after the label, or after the anchor group; no space may stand between the label and ':'."
+    },
+    "citation": {
+      "form": "path:line[-end], optionally wrapped in backticks",
+      "regex": "^`?((?:\\.{1,2}\\/)?[\\w.@+-]*\\/[\\w.@/+-]+|[\\w@+-][\\w@+-]*\\.[\\w.@+-]+|[A-Z][\\w-]*):(\\d+)(?:-\\d+)?`?\\s*[—–-]?\\s*(.*)$",
+      "path": "One of three shapes, so a word like 'node' in 'node:18' is text, not a citation: (1) a relative path with a directory, optionally prefixed './' or '../'; (2) a single file name with an extension; (3) a capitalized root file (Dockerfile, Makefile).",
+      "line": "One or more digits. An optional '-end' range is accepted but only the first number is kept as the finding's line.",
+      "separator": "Optional: an em dash —, en dash – or hyphen -, each surrounded by optional spaces, between the citation and the text.",
+      "absent": "When the rest of the finding line is not a citation, the finding has no path and no line, and its text is the whole rest of the line."
+    },
+    "continuation": "The parser tracks code fences under Findings: a line starting with three backticks or three tildes opens a fence, and the next such line closes it; an unclosed fence runs to the end of the section. Every line inside a fence — whatever it starts with, including '- ', '* ', '+ ' and numbered lines — is continuation text of the finding that started before it, so a fenced diff ('- old' / '+ new') rides under its finding. A fence that starts before any finding is dropped like other pre-finding prose. Outside fences, a non-empty line that is neither a finding line nor a '- ' line is appended to the text of the finding that started before it, prefixed with a newline — this is how a proposed change rides under its finding — when one has started; other prose before the first finding stays dropped. A line outside a fence that is bullet-shaped but not a '- ' finding line (a '* ' or '+ ' item, or a numbered '1. ' item) goes to unparsed, so the seal fails and the writer fixes the bullet. Blank lines are dropped. A '- ' line outside a fence that is not a finding line goes to unparsed and fails the seal. Finding lines and the bullet-shaped rule apply only outside fences."
+  },
+  "properties": {
+    "sections": {
+      "type": "object",
+      "description": "The review's '## ' sections, keyed by lowercased heading word to the section's verbatim text (each line with its newline; the value always ends in a newline, in two newlines for a file-final section). Text before the first heading is discarded, and a heading with no following line (blank included) leaves no key — so a sealed review's required sections each have at least one following line.",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9_]+$"
+      },
+      "properties": {
+        "takeaway": {
+          "type": "string",
+          "description": "The Takeaway section: one sentence a reader can act on in fifteen seconds, agreeing with the findings. Required: the validator names its absence by the heading it wants."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "The Verdict section's text; its first word, trimmed and lowercased, is the review's verdict, mirrored in the top-level verdict field. Required."
+        },
+        "findings": {
+          "type": "string",
+          "description": "The Findings section's raw text: the finding lines with their continuation lines (fenced proposed changes ride here). Parsed into the top-level findings array. Required."
+        },
+        "verified": {
+          "type": "string",
+          "description": "The Verified section: what the reviewer read or ran and what it showed, as list items; an item names its source (a command, file:line, CI check, commit, URL or search). Optional; the judge rubric and the web read it, and the validator does not require it."
+        },
+        "notes": {
+          "type": "string",
+          "description": "The Notes section: points with no line to anchor to — architecture, follow-ups, a failing check outside the diff's scope. Optional."
+        }
+      },
+      "required": [
+        "takeaway",
+        "verdict",
+        "findings"
+      ]
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "comment",
+        "request_changes"
+      ],
+      "description": "The first word of the Verdict section, lowercased: approve (merge as is; a clean change gets an explicit approve), comment (an open question, or verification that could not finish; nothing blocking), request_changes (at least one blocking finding stands). The post gate maps it to the review event APPROVE, COMMENT or REQUEST_CHANGES it posts, which is the event the approved github app routes contract defines for the /reviews post. Present in every sealed review: the validator rejects an absent Verdict section and any word outside the three.",
+      "examples": [
+        "approve",
+        "comment",
+        "request_changes"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "description": "The review's findings in the order their lines appear under '## Findings', parsed from the section text. May be empty: a clean approve carries an empty Findings section.",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "unparsed": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "string"
+      },
+      "description": "Lines under Findings the parser could not read as a finding line — '- ' lines and bullet-shaped lines (a '* ' or '+ ' item, or a numbered '1. ' item), all outside fences; a line inside a fence is never unparsed — verbatim. Empty in every sealed review: the parser collects them precisely so the validator can name each one ('not a finding line (\"- label (anchor): path:line — text\")'), and the seal fails while any is present.",
+      "examples": [
+        []
+      ]
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "One finding: a '- label (anchor): path:line — text' line under '## Findings', with its continuation lines folded into text. Exactly the shape the parser's Finding type carries.",
+      "required": [
+        "index",
+        "label",
+        "text"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based position of the finding line in the Findings section (the count of findings parsed so far, plus one). Readers name findings as finding-<index> in validator problems and judge check details.",
+          "examples": [
+            1
+          ]
+        },
+        "label": {
+          "type": "string",
+          "enum": [
+            "blocking",
+            "suggestion",
+            "nit",
+            "question"
+          ],
+          "description": "The finding's severity: blocking (it goes wrong once merged — a wrong-output finding is blocking, never a suggestion; preference alone is never blocking), suggestion (the change and why), nit (naming, docs, style — the linter's calls), question (what the reviewer needs answered). The validator rejects any other label; the verdict is picked from the labels: request_changes if a blocking finding stands, comment for an open question or unfinished verification, otherwise approve.",
+          "examples": [
+            "blocking",
+            "suggestion",
+            "nit",
+            "question"
+          ]
+        },
+        "anchor": {
+          "type": "string",
+          "description": "Optional: the word in parentheses after the label, as written (not lowercased). For a blocking finding it names the concrete cause; the six canonical anchors are defect (wrong output, a crash or data loss), delivery (a promise not kept), security, design (a named principle), scope (work outside the change's purpose), tests (missing or broken). Nothing at seal time checks the value or requires it — a blocking finding without an anchor fails the judge gate blocking_names_anchor, not the seal.",
+          "examples": [
+            "defect",
+            "delivery",
+            "security",
+            "design",
+            "scope",
+            "tests"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "Optional: the file the finding cites, in one of the three citation shapes — a relative path with a directory, a file name with an extension, a capitalized root file — so 'node:18' parses as text, not a citation. May be written relative to the repo root or to the checkout directory; resolution against tracked files (as given, minus the checkout dir, or a unique tail at a '/' boundary) happens at post and judge time, not here. Absent when the finding line carries no citation; present with line, never alone.",
+          "examples": [
+            "internal/eval/replay.go",
+            "src/a.ts",
+            "Dockerfile",
+            "./x/y.go"
+          ]
+        },
+        "line": {
+          "type": "integer",
+          "description": "Optional: the first number of the cited line or range — a b/c.ts:214-220 citation keeps 214 — 1-based in the checked-out head. The parser also accepts ':0', which no reader resolves (an excerpt treats line below 1 as a missing citation), so this schema sets no minimum. Absent with path; a finding cites lines or cites none.",
+          "examples": [
+            214,
+            12
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "What the finding says, after the optional citation and dash: what goes wrong, for what input, and why it matters — and, for a proposed change, the code in a fenced block with a language tag on the lines after the finding, which ride in here as continuation lines joined with newlines. Without a citation, the text is the whole rest of the finding line plus its continuations.",
+          "examples": [
+            "adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```",
+            "no citation here?"
+          ]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "sections": {
+        "takeaway": "The fix is the guard the failing e2e shows; ship it.\n",
+        "verdict": "approve\n",
+        "findings": "- nit: src/app.ts:12 — rename the flag to read well.\n\n"
+      },
+      "verdict": "approve",
+      "findings": [
+        {
+          "index": 1,
+          "label": "nit",
+          "path": "src/app.ts",
+          "line": 12,
+          "text": "rename the flag to read well."
+        }
+      ],
+      "unparsed": []
+    },
+    {
+      "sections": {
+        "takeaway": "Fix the double-counted cache tokens before merging.\n",
+        "verdict": "request_changes\n",
+        "findings": "- blocking (defect): internal/eval/replay.go:214 — adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```\n- nit: `internal/cli/eval.go:88` rename the flag\n- question: no citation here?\n",
+        "verified": "- read replay.go:200-230\n\n"
+      },
+      "verdict": "request_changes",
+      "findings": [
+        {
+          "index": 1,
+          "label": "blocking",
+          "anchor": "defect",
+          "path": "internal/eval/replay.go",
+          "line": 214,
+          "text": "adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```"
+        },
+        {
+          "index": 2,
+          "label": "nit",
+          "path": "internal/cli/eval.go",
+          "line": 88,
+          "text": "rename the flag"
+        },
+        {
+          "index": 3,
+          "label": "question",
+          "text": "no citation here?"
+        }
+      ],
+      "unparsed": []
+    }
+  ]
+}

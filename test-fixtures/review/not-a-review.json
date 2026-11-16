@@ -1,0 +1,12 @@
+{
+  "parse": {
+    "sections": {},
+    "findings": [],
+    "unparsed": []
+  },
+  "problems": [
+    "missing a \"## Takeaway\" section",
+    "missing a \"## Verdict\" section",
+    "missing a \"## Findings\" section"
+  ]
+}
