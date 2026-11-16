@@ -15,8 +15,10 @@ import { EXTENSIONS } from './extensions/index.ts';
 const head = 'm-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase';
 const jumpBtn = 'flex min-h-11 w-full cursor-pointer items-start border-0 bg-transparent p-0 text-left text-[13px] text-ink lg:min-h-8';
 
+// scrollIntoView ignores the CSS reduced-motion rule when asked for smooth, so the choice is made here.
 function jump(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.getElementById(id)?.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
 }
 
 const clock = (at: string | number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
