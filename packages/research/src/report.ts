@@ -5,16 +5,64 @@ import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
+const FENCE = /^\s*(`{3,}|~{3,})/;
+
+/** Each line with whether it sits in a code fence; a fence's own lines count as fenced. */
+function fenced(text: string): Array<[string, boolean]> {
+  let open = '';
+  return text.split('\n').map((line) => {
+    const mark = FENCE.exec(line)?.[1][0];
+    const inside = !!open || !!mark;
+    if (mark && (!open || mark === open)) open = open ? '' : mark;
+    return [line, inside];
+  });
+}
+
+type Section = { name: string; heading: string; lines: string[] };
+
+/** The one heading rule every reader uses: a section starts at a line "## name" outside code fences and is keyed by its name, trimmed and
+ *  lowercased; the preamble before the first heading belongs to no section. */
+export function splitReport(text: string): { preamble: string[]; sections: Section[] } {
+  const out = { preamble: [] as string[], sections: [] as Section[] };
+  for (const [line, code] of fenced(text)) {
+    if (!code && line.startsWith('## ')) out.sections.push({ name: line.slice(3).trim().toLowerCase(), heading: line, lines: [] });
+    else (out.sections.at(-1)?.lines ?? out.preamble).push(line);
+  }
+  return out;
+}
+
+/** The trimmed bodies of the named sections, joined by a newline. */
+export const sectionBody = (text: string, names: string[]) => splitReport(text).sections.filter((s) => names.includes(s.name)).map((s) => s.lines.join('\n').trim()).join('\n');
+
+/** The text without the named sections, headings and all; the preamble stays. */
+export function withoutSections(text: string, names: string[]): string {
+  const { preamble, sections } = splitReport(text);
+  return [...preamble, ...sections.filter((s) => !names.includes(s.name)).flatMap((s) => [s.heading, ...s.lines])].join('\n');
+}
+
+/** The report's own text: code fences and inline code are quoted material, so a mark there cites nothing. */
+const ownText = (text: string) => fenced(text).filter(([, code]) => !code).map(([line]) => line.replace(/(`+)[^\n]*?\1/g, ' ')).join('\n');
 
 /** The source ids a text cites, each once, in order of first citation. */
-export const citedIds = (text: string) => [...new Set([...text.matchAll(CITATION)].map((m) => m[1]))];
+export const citedIds = (text: string) => [...new Set([...ownText(text).matchAll(CITATION)].map((m) => m[1]))];
 
 const SECTIONS = ['summary', 'assumptions', 'findings'];
+const heading = (s: string) => `## ${s[0].toUpperCase()}${s.slice(1)}`;
+
+/** Why a required section is not there exactly once, naming the headings that look like it but do not count, so the writer can fix them. */
+function sectionProblem(text: string, sections: Section[], s: string): string[] {
+  const n = sections.filter((x) => x.name === s).length;
+  if (n > 1) return [`"${heading(s)}" appears ${n} times; a report has one "${heading(s)}" section, so merge them`];
+  if (n) return [];
+  const near = fenced(text).filter(([line, code]) => !code && /^#/.test(line) && line.replace(/^#+/, '').trim().toLowerCase().startsWith(s)).map(([line]) => `"${line.trim()}"`);
+  if (!near.length) return [`missing a "${heading(s)}" section`];
+  return [`missing a "${heading(s)}" section: the heading must read exactly "${heading(s)}", once, and ${near.join(', ')} ${near.length > 1 ? 'do' : 'does'} not count`];
+}
 
 /** Structure problems, all at once; whether the citations are real is the judge's gate, since it needs the session's fetch log. */
 export function validateReport(text: string): string[] {
-  const headings = new Set([...text.matchAll(/^## (\w+)/gm)].map((m) => m[1].toLowerCase()));
-  const problems = SECTIONS.filter((s) => !headings.has(s)).map((s) => `missing a "## ${s[0].toUpperCase()}${s.slice(1)}" section`);
+  const { sections } = splitReport(text);
+  const problems = SECTIONS.flatMap((s) => sectionProblem(text, sections, s));
   if (!citedIds(text).length) problems.push('no source is cited; cite fetched sources as [s1], [s2]');
   return problems;
 }
@@ -23,8 +71,7 @@ const unmark = (s: string) => s.replace(/\s*\[s\d+\]/g, '').replace(/[*_`#>]/g, 
 
 /** The first line of "## Summary", else the first heading; source marks and markdown are stripped. */
 export function summarizeReport(text: string): string {
-  const body = /^## Summary\s*$([\s\S]*?)(?=^## |(?![\s\S]))/im.exec(text)?.[1] ?? '';
-  const line = body.split('\n').map(unmark).find(Boolean);
+  const line = sectionBody(text, ['summary']).split('\n').map(unmark).find(Boolean);
   return line ?? unmark(/^#+ .+$/m.exec(text)?.[0] ?? '');
 }
 
@@ -60,11 +107,11 @@ function readLine(p: Parse, line: string) {
   p.gap = !line.trim();
 }
 
-/** Every bullet under a "## Findings…" heading, with its first line (which names it in feedback) and as text its own lines after its context:
+/** Every bullet under the "## Findings" heading, with its first line (which names it in feedback) and as text its own lines after its context:
  *  the bullets it sits in and the paragraph above its list, whose marks cite it too. */
 export function findingItems(report: string): Array<{ first: string; text: string }> {
   const p: Parse = { items: [], open: [], para: [], intro: [], gap: false, fence: false };
-  for (const m of report.matchAll(/^## Findings\b.*$([\s\S]*?)(?=^## |(?![\s\S]))/gim)) for (const line of `${m[1]}\n#`.split('\n')) readLine(p, line);
+  for (const s of splitReport(report).sections.filter((x) => x.name === 'findings')) for (const line of [...s.lines, '#']) readLine(p, line);
   return p.items.filter((i) => !leads(i)).map((i) => ({ first: i.lines[0].trim(), text: [...i.context, ...i.lines].join('\n') }));
 }
 
@@ -192,9 +239,10 @@ export async function requestText(api: ToolExecutionApi, ctx: Context): Promise<
   return textOf(first?.model?.[0]?.content).trim() || undefined;
 }
 
-/** The judge's named texts: the report and the request whole, the kept text of each cited source by id, and the ids this session fetched. */
+/** The judge's named texts: the report and the request whole, the report's Summary and the report outside its Summary and Assumptions,
+ *  cut by this package's heading rule, the kept text of each cited source by id, and the ids this session fetched. */
 export function inputsOf(report: string, request: string | undefined, texts: Map<string, string>, fetchedIds: string[]): Inputs {
-  return { report, request: request ?? '', sources: JSON.stringify(Object.fromEntries(texts)), fetched: JSON.stringify(fetchedIds) };
+  return { report, summary: sectionBody(report, ['summary']), outside: withoutSections(report, ['summary', 'assumptions']), request: request ?? '', sources: JSON.stringify(Object.fromEntries(texts)), fetched: JSON.stringify(fetchedIds) };
 }
 
 /** The inputs from the fetch log, a reader of the kept source files and the request, wherever those come from. */
@@ -231,6 +279,12 @@ export async function recordedReportInputs(session: RecordedSession, content: st
 // Each finding is an item named by its place in the report, so a replay case can name one.
 const findingChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => findingItems(inputs[String(o.from)]).map((f, i) => ({ id: `finding-${i + 1}`, text: f.text }));
 registerSplitter('research.findings', findingChunks);
+
+/** The report's parsed form, as the research report artifact contract states it: its sections by name, the ids it cites and its findings. */
+export function parseReport(report: string): { sections: Record<string, string>; citedIds: string[]; findings: Array<{ first: string; text: string }> } {
+  const keys = [...new Set(splitReport(report).sections.map((s) => s.name))];
+  return { sections: Object.fromEntries(keys.map((k) => [k, sectionBody(report, [k])])), citedIds: citedIds(report), findings: findingItems(report) };
+}
 
 /** The passages of each cited source whose text was kept that say what the finding says; undefined, dropping the finding, when none was kept. */
 function sourceExcerpts(inputs: Inputs, chunk: Chunk, o: SelectorDecl): string | undefined {
@@ -300,9 +354,9 @@ export const reportDeclaration: Declaration = {
     request: { split: { name: 'whole', from: 'request' }, piece: 'request', context: { report: { name: 'whole', from: 'report' } } },
     // Every sentence sees every finding, once per request, rather than the few that share its words.
     summary: {
-      split: { name: 'sentences', from: 'report', sections: ['Summary'], strip: CITE },
+      split: { name: 'sentences', from: 'summary', strip: CITE },
       piece: 'sentence',
-      context: { findings: { name: 'items', from: 'report', skip: ['Summary', 'Assumptions'], strip: CITE } },
+      context: { findings: { name: 'items', from: 'outside', strip: CITE } },
     },
     report: { split: { name: 'whole', from: 'report' }, piece: 'report' },
   },
@@ -319,7 +373,7 @@ export const reportDeclaration: Declaration = {
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 6,
+  version: 7,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [

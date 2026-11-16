@@ -1,0 +1,167 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "research.report, parsed",
+ "description": "The parsed form of a research.report: the Markdown report a researcher session seals at artifacts/report.md with the submit_report tool. The sealed content is the Markdown; nothing here is stored on the sealed version — a parser derives this form from the content per the grammar the descriptions state. The heading rule, used by every reader through one shared splitter: a section heading is a line '## name' outside code fences; the name is the heading text after the '## ', trimmed and lowercased; a required section is recognised only when the whole name equals summary, assumptions or findings exactly, so '## Summary:', '## Summary of results' and '## Findings — Taunton' are not the section, and no required section may appear twice. The report's preamble — everything before its first '## ' heading, a '# ' title line included — belongs to no section and has no field here. A citation mark is [sN] in the report's own text: one lowercase s, N one or more digits, no spaces or commas inside; marks in code fences or inline code are quoted material and cite nothing.",
+ "type": "object",
+ "additionalProperties": true,
+ "required": [
+  "sections",
+  "citedIds",
+  "findings"
+ ],
+ "properties": {
+  "sections": {
+   "description": "The report's '## ' sections, keyed by heading name lowercased. The three the kind requires are named, each exactly once; a report may add further '## ' sections, and their text is kept here too.",
+   "type": "object",
+   "additionalProperties": {
+    "$ref": "#/$defs/sectionBody"
+   },
+   "required": [
+    "summary",
+    "assumptions",
+    "findings"
+   ],
+   "properties": {
+    "summary": {
+     "description": "The body of the '## Summary' section: what the report concluded and what it leaves unsettled. The stored one-line summary of the sealed version is its first non-blank line after stripping source marks and every asterisk, underscore, backtick, hash and greater-than sign (even inside words), or, if that leaves nothing, the first '#+ ' heading line of any level in the report; the SDK then cuts it to 80 characters with an ellipsis. Each of its sentences is checked against the report's findings, observe-only: it does not affect the score.",
+     "examples": [
+      "Two cabins on the same farm fit two for the week [s1]; ski hire is 2 km up the valley [s2]."
+     ]
+    },
+    "assumptions": {
+     "description": "The body of the '## Assumptions' section: what the report settled in the request's absence — unsettled asks are named here. It is read by the request-answering check, which asks whether every ask and constraint in the request is answered in the Summary and Findings or named here as unsettled; that check is observe-only and does not affect the score.",
+     "examples": [
+      "The request names no exact dates; the midweek weekly rate is assumed."
+     ]
+    },
+    "findings": {
+     "description": "The body of the '## Findings' section: the claims that answer the request. Each finding is a bullet that carries its own source mark — '- claim [s1]' — or sits in a lead-in that carries one; a finding that cites no source fails the rubric's findings_cited gate. Its quotes must appear word for word in the fetched text of a cited source or the quotes_exist gate fails, and the judge decides each claim against its cited sources' excerpts (supported, contradicted).",
+     "examples": [
+      "- The cabins sit on the same farm, priced per week\n- Cabin A sleeps two and takes a weekly booking [s1].\n- The nearest ski hire is 2 km up the valley, on foot [s2]."
+     ]
+    }
+   }
+  },
+  "citedIds": {
+   "description": "The source ids the report cites, each once, in order of first citation: every [sN] mark in the report's own text, code fences and inline code excluded. The seal requires at least one; whether each id names a source this session fetched is the judge's cites_fetched_sources gate.",
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/sourceId"
+   },
+   "minItems": 1,
+   "uniqueItems": true,
+   "examples": [
+    [
+     "s1",
+     "s2"
+    ]
+   ]
+  },
+  "findings": {
+   "description": "The report's findings, in report order: every list item under the '## Findings' section, top-level or nested, '-' '*', '1.' alike. A lead-in is a bullet whose text, with source marks and trailing emphasis stripped, ends in a colon and has direct sub-bullets; it is not itself a finding, and it folds into its children's context only if it carries a source mark, and is otherwise dropped. A parent bullet that is not a lead-in is its own finding, and its lines are context for its children — a context that counts only when it carries a source mark, like the lead-in's and the paragraph's. Siblings are never context. A colon bullet without sub-bullets is an ordinary finding. A paragraph directly above a list is a finding's context only if it carries a source mark. Bullets in code fences are not findings.",
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+     "first",
+     "text"
+    ],
+    "properties": {
+     "first": {
+      "description": "The finding's first line as written, trimmed of surrounding whitespace; the bullet mark and any source mark are kept. Its first eight words name the finding in feedback.",
+      "examples": [
+       "- Cabin A sleeps two and takes a weekly booking [s1]."
+      ]
+     },
+     "text": {
+      "description": "The finding's own lines after its context: its parent's lines, when the parent carries a source mark (with the parent's own context before them), or, for a top-level item, the paragraph directly above the list when it carries one, then the finding's own lines, joined by a newline.",
+      "examples": [
+       "- Cabin A sleeps two and takes a weekly booking [s1]."
+      ]
+     }
+    }
+   },
+   "examples": [
+    [
+     {
+      "first": "- The cabins sit on the same farm, priced per week",
+      "text": "- The cabins sit on the same farm, priced per week"
+     },
+     {
+      "first": "- Cabin A sleeps two and takes a weekly booking [s1].",
+      "text": "- Cabin A sleeps two and takes a weekly booking [s1]."
+     }
+    ]
+   ]
+  }
+ },
+ "$defs": {
+  "sourceId": {
+   "description": "A fetched source's id as cited: the mark [sN]'s inside, one lowercase s and N one or more digits. web_fetch assigns s1, s2, ... in fetch order and prints the id at the head of each page it returns; read_source reads a page back by the same id. Whether the id exists in this session's fetch log is the judge's check.",
+   "type": "string",
+   "pattern": "^s\\d+$",
+   "examples": [
+    "s1",
+    "s12"
+   ]
+  },
+  "sectionBody": {
+   "description": "A section's Markdown: the lines after its '## name' heading line up to the next '## ' heading line, excluding both, for a heading whose name is recognised by the whole-name rule. It may carry source marks, quotes, bullets and code; the report's preamble before its first '## ' heading belongs to no section.",
+   "type": "string"
+  }
+ },
+ "examples": [
+  {
+   "sections": {
+    "summary": "Two cabins on the same farm fit two for the week [s1]; ski hire is 2 km up the valley [s2].",
+    "assumptions": "The request names no exact dates; the midweek weekly rate is assumed.",
+    "findings": "- The cabins sit on the same farm, priced per week\n- Cabin A sleeps two and takes a weekly booking [s1].\n- The nearest ski hire is 2 km up the valley, on foot [s2]."
+   },
+   "citedIds": [
+    "s1",
+    "s2"
+   ],
+   "findings": [
+    {
+     "first": "- The cabins sit on the same farm, priced per week",
+     "text": "- The cabins sit on the same farm, priced per week"
+    },
+    {
+     "first": "- Cabin A sleeps two and takes a weekly booking [s1].",
+     "text": "- Cabin A sleeps two and takes a weekly booking [s1]."
+    },
+    {
+     "first": "- The nearest ski hire is 2 km up the valley, on foot [s2].",
+     "text": "- The nearest ski hire is 2 km up the valley, on foot [s2]."
+    }
+   ]
+  },
+  {
+   "sections": {
+    "summary": "Two cabins on the same farm fit two for the week [s1]; ski hire is 2 km up the valley [s2].",
+    "assumptions": "The request names no exact dates; the midweek weekly rate is assumed.",
+    "findings": "- The cabins sit on the same farm, priced per week\n- Cabin A sleeps two and takes a weekly booking [s1].\n- The nearest ski hire is 2 km up the valley, on foot [s2].",
+    "method": "Both farm pages were fetched and compared; the ski hire's own page was fetched too [s2]."
+   },
+   "citedIds": [
+    "s1",
+    "s2"
+   ],
+   "findings": [
+    {
+     "first": "- The cabins sit on the same farm, priced per week",
+     "text": "- The cabins sit on the same farm, priced per week"
+    },
+    {
+     "first": "- Cabin A sleeps two and takes a weekly booking [s1].",
+     "text": "- Cabin A sleeps two and takes a weekly booking [s1]."
+    },
+    {
+     "first": "- The nearest ski hire is 2 km up the valley, on foot [s2].",
+     "text": "- The nearest ski hire is 2 km up the valley, on foot [s2]."
+    }
+   ]
+  }
+ ]
+}
