@@ -1,0 +1,1031 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Quack durable session documents",
+  "description": "The five pi-durable documents a quack session keeps in its durable store beside its run: quack.artifacts (sealed artifact versions), quack.approvals (gated tool calls awaiting or holding a verdict), quack.questions (questions escalated to a person), quack.failures (where the latest run ended) and quack.workflow (the latest run's steps). Each stored value is one of the five $defs; which one is fixed by the document's kind string stored beside the value, not by a field in the value. Objects at every level are open (additionalProperties: true): stored documents outlive the code that wrote them, so a reader skips unknown fields and treats a field added by later code as possibly absent. Sealed from now: this schema describes documents written from this version on; stored documents are not re-validated, and a reader must tolerate values older code produced (e.g. a workflow step of kind 'gated', removed in f7e32ff5 #2275) without crashing.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/artifactsDoc"
+    },
+    {
+      "$ref": "#/$defs/approvalsDoc"
+    },
+    {
+      "$ref": "#/$defs/questionsDoc"
+    },
+    {
+      "$ref": "#/$defs/failuresDoc"
+    },
+    {
+      "$ref": "#/$defs/workflowDoc"
+    }
+  ],
+  "examples": [
+    {
+      "kinds": {}
+    },
+    {
+      "name": "trades",
+      "task": "42",
+      "request": "Anything to deal with?",
+      "steps": [
+        {
+          "name": "facts",
+          "kind": "code",
+          "status": "done",
+          "startedAt": 1763161200000,
+          "durationMs": 1200,
+          "cost": 0,
+          "progress": {
+            "done": 3,
+            "total": 5
+          },
+          "error": null
+        },
+        {
+          "name": "card",
+          "kind": "judged",
+          "status": "waiting",
+          "startedAt": 1763161201200,
+          "durationMs": null,
+          "cost": 0.42,
+          "error": null
+        }
+      ],
+      "kept": {
+        "facts": {
+          "deal": true
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "epochMillis": {
+      "type": "integer",
+      "description": "A time as an integer of milliseconds since the Unix epoch, as written by api.now() or Date.now(); the lifecycle channel renders it as RFC 3339 only on the wire."
+    },
+    "principal": {
+      "description": "Who acted: a named person, a tailnet caller, or a bare name string in a record written before principals were typed (the SDK's principalName resolves all three).",
+      "anyOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "kind": {
+              "const": "person",
+              "description": "Discriminator: a named person."
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The person's name; the session server requires a non-empty name."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "tailnet",
+              "description": "Discriminator: a tailnet caller."
+            }
+          },
+          "description": "A tailnet caller. Closed, unlike the person branch: the SDK's tailnet principal (repo/packages/sdk/src/principal.ts:2) has no other field, and a name beside a tailnet kind would read as a person."
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "sealedArtifact": {
+      "type": "object",
+      "description": "A version of one kind's artifact at the instant it was sealed: the sha256 of content as hash, the content itself, and what the run concluded (outcome is a note, e.g. contracts' `v6` - nothing enforces a length). Links, a checker's verdict and the finalization are attached to the version after the fact; the content and hash never change.",
+      "required": [
+        "kind",
+        "version",
+        "hash",
+        "content",
+        "sealedAt",
+        "verdict"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The name of the artifact kind this version belongs to, as declared by the session's artifacts extension.",
+          "examples": [
+            "review.report",
+            "contract.spec"
+          ]
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "This version's ordinal within its kind, one-based; sealing content unchanged from the latest version returns that version instead of a new one."
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The SHA-256 of the sealed content, lowercase hex; identical content keeps its version."
+        },
+        "content": {
+          "type": "string",
+          "description": "The exact content of the workspace file as sealed; it never changes on a version — a link and the verdict attach to the version without touching it."
+        },
+        "sealedAt": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When this version was sealed, in epoch milliseconds; unchanged when a link or verdict is attached to the version."
+        },
+        "verdict": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "What a checker (and any seal gates) recorded: an opaque object with the keys the checker and gates wrote (run, passed, limitReached, score, gatesFailed, rubric, checks, undecided), or null until checked. This schema does not define its fields; the judge and rubric own them."
+        },
+        "links": {
+          "type": "array",
+          "description": "Pointers an extension attaches after sealing, e.g. where the version was delivered; omitted when there are none, and a repeated URL is not added twice.",
+          "items": {
+            "$ref": "#/$defs/artifactLink"
+          }
+        },
+        "outcome": {
+          "type": "string",
+          "description": "A short reading of the sealed content (a review's verdict, a contract's version), stored on the version so lists need not fetch content; nothing enforces a length."
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "One line of what the content concluded, or undefined until the summarizer attaches one; cut to 80 chars (SUMMARY_MAX). May be the empty string: contracts' reconcile writes note.slice(0, 80), which is empty for a rejection with no reason."
+        },
+        "basis": {
+          "type": "string",
+          "description": "What the version was written against (a review's head commit), stored so a viewer can tell when it has been overtaken."
+        },
+        "final": {
+          "description": "Set by the SDK's seal tool on a judged version every gate passed: input is the run's newest input id (a SubmissionId as a string) at delivery, and refused counts the changed seals refused since the version became final, starting at 0. While input is still the run's newest input, a changed seal of that kind is refused - first as a continue, then as a deny that ends the run - and a new input to the run reopens it. Optional, never null: the SDK writes the object or leaves the key absent.",
+          "$ref": "#/$defs/finalArtifact"
+        }
+      },
+      "examples": [
+        {
+          "kind": "review.report",
+          "version": 1,
+          "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "content": "<the report file, as sealed>",
+          "sealedAt": 1763161200000,
+          "verdict": null
+        },
+        {
+          "kind": "review.report",
+          "version": 2,
+          "hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "content": "<the report file, as sealed>",
+          "sealedAt": 1763161300000,
+          "verdict": {
+            "passed": true,
+            "run": "42"
+          },
+          "links": [
+            {
+              "label": "delivered to PR #31",
+              "url": "https://github.com/acme/repo/pull/31"
+            }
+          ],
+          "outcome": "ship",
+          "summary": "Ship: the regression is fixed and the report passes.",
+          "basis": "a1b2c3d"
+        }
+      ]
+    },
+    "artifactLink": {
+      "type": "object",
+      "description": "A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered.",
+      "required": [
+        "label",
+        "url"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "The where, in words: what the version was delivered to.",
+          "examples": [
+            "delivered to PR #31"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "description": "The link itself; a repeated URL is not attached twice."
+        }
+      }
+    },
+    "kindVersions": {
+      "type": "object",
+      "description": "One artifact kind's sealed versions.",
+      "required": [
+        "versions"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "versions": {
+          "type": "array",
+          "description": "The kind's sealed versions, oldest first.",
+          "items": {
+            "$ref": "#/$defs/sealedArtifact"
+          }
+        }
+      }
+    },
+    "artifactsDoc": {
+      "type": "object",
+      "description": "quack.artifacts: the sealed artifact versions a session has produced, grouped by kind.",
+      "required": [
+        "kinds"
+      ],
+      "additionalProperties": true,
+      "default": {
+        "kinds": {}
+      },
+      "properties": {
+        "kinds": {
+          "type": "object",
+          "description": "The session's artifact kinds, keyed by kind name; a kind is absent until its first seal.",
+          "additionalProperties": {
+            "$ref": "#/$defs/kindVersions"
+          },
+          "examples": [
+            {
+              "review.report": {
+                "versions": []
+              }
+            }
+          ]
+        }
+      },
+      "examples": [
+        {
+          "kinds": {}
+        },
+        {
+          "kinds": {
+            "review.report": {
+              "versions": [
+                {
+                  "kind": "review.report",
+                  "version": 1,
+                  "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                  "content": "<the report file, as sealed>",
+                  "sealedAt": 1763161200000,
+                  "verdict": null
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "approvalVerdict": {
+      "type": "object",
+      "description": "A person's decision on a gated tool call; recorded once, never overwritten — resolving an unknown or already-decided approval is refused.",
+      "required": [
+        "decision",
+        "reason",
+        "by",
+        "at"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "description": "Whether the call may run; the session's HTTP API accepts nothing else."
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The person's words for the decision; null when they gave none."
+        },
+        "by": {
+          "$ref": "#/$defs/principal",
+          "description": "Who decided: a person, a tailnet caller, or a bare name string in a record written before principals were typed."
+        },
+        "at": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When the decision was recorded, in epoch milliseconds."
+        }
+      },
+      "examples": [
+        {
+          "decision": "approve",
+          "reason": null,
+          "by": {
+            "kind": "person",
+            "name": "Ada"
+          },
+          "at": 1763161260000
+        }
+      ]
+    },
+    "approval": {
+      "type": "object",
+      "description": "A gated tool call and its state: opened with the call's arguments, decided by a person, then executed exactly once.",
+      "required": [
+        "tool",
+        "args",
+        "requestedAt",
+        "verdict",
+        "executing",
+        "done"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "The name of the gated tool that requested the approval.",
+          "examples": [
+            "propose_contract"
+          ]
+        },
+        "args": {
+          "description": "The arguments the tool was called with, as JSON; any JSON value."
+        },
+        "requestedAt": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When the gated call opened its approval, in epoch milliseconds."
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/approvalVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The person's decision; null while the call is pending, after which it is fixed."
+        },
+        "executing": {
+          "type": "boolean",
+          "description": "True once the approved call has started execution, so a crash mid-execution is reported instead of re-running the side effect."
+        },
+        "done": {
+          "type": "boolean",
+          "description": "True once the approved call has finished."
+        }
+      },
+      "examples": [
+        {
+          "tool": "propose_contract",
+          "args": {
+            "summary": "Approve v2",
+            "version": 2,
+            "artifact": 3
+          },
+          "requestedAt": 1763161200000,
+          "verdict": null,
+          "executing": false,
+          "done": false
+        },
+        {
+          "tool": "propose_contract",
+          "args": {
+            "summary": "Approve v2",
+            "version": 2,
+            "artifact": 3
+          },
+          "requestedAt": 1763161200000,
+          "verdict": {
+            "decision": "approve",
+            "reason": null,
+            "by": "Ada",
+            "at": 1763161260000
+          },
+          "executing": true,
+          "done": false
+        }
+      ]
+    },
+    "approvalsDoc": {
+      "type": "object",
+      "description": "quack.approvals: the gated tool calls awaiting or holding a person's decision.",
+      "required": [
+        "items"
+      ],
+      "additionalProperties": true,
+      "default": {
+        "items": {}
+      },
+      "properties": {
+        "items": {
+          "type": "object",
+          "description": "Keyed by String(api.taskId) of the gated tool call, one approval per call; a session can hold several (a prod session holds approvals 96, 113, 125, 190, 211 and 222).",
+          "additionalProperties": {
+            "$ref": "#/$defs/approval"
+          },
+          "examples": [
+            {
+              "17": {
+                "tool": "propose_contract",
+                "args": {},
+                "requestedAt": 1763161200000,
+                "verdict": null,
+                "executing": false,
+                "done": false
+              }
+            }
+          ]
+        }
+      },
+      "examples": [
+        {
+          "items": {}
+        },
+        {
+          "items": {
+            "17": {
+              "tool": "propose_contract",
+              "args": {
+                "summary": "Approve v2"
+              },
+              "requestedAt": 1763161200000,
+              "verdict": {
+                "decision": "approve",
+                "reason": null,
+                "by": {
+                  "kind": "person",
+                  "name": "Ada"
+                },
+                "at": 1763161260000
+              },
+              "executing": true,
+              "done": false
+            }
+          }
+        }
+      ]
+    },
+    "questionAnswer": {
+      "type": "object",
+      "description": "A person's answer to a question; the first answer stands.",
+      "required": [
+        "choice",
+        "by",
+        "at"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "choice": {
+          "type": "string",
+          "description": "The option label chosen, or — for a free-text answer — the person's words, which text then repeats."
+        },
+        "by": {
+          "$ref": "#/$defs/principal",
+          "description": "Who answered: a person, a tailnet caller, or a bare name string in a record written before principals were typed."
+        },
+        "at": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When the answer was recorded, in epoch milliseconds; the first answer stands, later ones are refused."
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "A note the person added to a listed choice; at most 2000 characters (MAX_ANSWER_CHARS)."
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "The person's own words; present only on a free-text answer, at most 2000 characters."
+        }
+      },
+      "examples": [
+        {
+          "choice": "main",
+          "by": "Ada",
+          "at": 1763161260000,
+          "note": "ship it"
+        }
+      ]
+    },
+    "question": {
+      "type": "object",
+      "description": "A question a run escalated to a person, with the card copy it was asked with and its answer; the last resolver of a decision chain is a person.",
+      "required": [
+        "question",
+        "options",
+        "evidence",
+        "askedAt",
+        "answer",
+        "closed"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question in words."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The option labels an answer must match one of, unless the question is free text."
+        },
+        "evidence": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The evidence offered with the question; null when there was none."
+        },
+        "header": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A short chip naming the topic; absent on questions stored before these card fields existed."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The question as a headline; absent on questions stored before these card fields existed."
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "One to three sentences of context; absent on questions stored before these card fields existed."
+        },
+        "optionDescriptions": {
+          "type": "object",
+          "description": "One line (the trade-off) per option label; {} when the question named none; absent on questions stored before these card fields existed.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "suggested": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The index into options of the recommended choice; null when none was recommended; absent on questions stored before these card fields existed."
+        },
+        "freeText": {
+          "type": "boolean",
+          "description": "Whether the question accepts the person's own words, or a note on a listed option; false when the question opted out; absent on questions stored before these card fields existed."
+        },
+        "askedAt": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When the question was asked, in epoch milliseconds."
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/questionAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The person's answer; null until it stands — the first answer wins, later ones are refused."
+        },
+        "closed": {
+          "type": "boolean",
+          "description": "True when the run that asked ended without an answer, so nobody is waiting on it; an answer is refused on a closed question."
+        }
+      },
+      "examples": [
+        {
+          "question": "Which branch ships?",
+          "options": [
+            "main",
+            "release/2.0"
+          ],
+          "evidence": null,
+          "askedAt": 1763161200000,
+          "answer": null,
+          "closed": false
+        },
+        {
+          "question": "Which branch ships?",
+          "options": [
+            "main",
+            "release/2.0"
+          ],
+          "evidence": "main is one commit ahead of release/2.0.",
+          "header": "Ship",
+          "title": "Choose the ship branch",
+          "detail": "main is one commit ahead of release/2.0.",
+          "optionDescriptions": {
+            "main": "No backports pending"
+          },
+          "suggested": 0,
+          "freeText": false,
+          "askedAt": 1763161200000,
+          "answer": {
+            "choice": "main",
+            "by": {
+              "kind": "tailnet"
+            },
+            "at": 1763161260000,
+            "note": "ship it"
+          },
+          "closed": false
+        }
+      ]
+    },
+    "questionsDoc": {
+      "type": "object",
+      "description": "quack.questions: the questions escalated to a person, beside quack.approvals — written by whichever extension escalates, served and indexed generically.",
+      "required": [
+        "items"
+      ],
+      "additionalProperties": true,
+      "default": {
+        "items": {}
+      },
+      "properties": {
+        "items": {
+          "type": "object",
+          "description": "Keyed by <task id>:<question name> - String(api.taskId) plus the question point's name - one entry per question point asked by a run.",
+          "additionalProperties": {
+            "$ref": "#/$defs/question"
+          },
+          "examples": [
+            {
+              "17:branch": {
+                "question": "Which branch ships?",
+                "options": [
+                  "main"
+                ],
+                "evidence": null,
+                "askedAt": 1763161200000,
+                "answer": null,
+                "closed": false
+              }
+            }
+          ]
+        }
+      },
+      "examples": [
+        {
+          "items": {}
+        },
+        {
+          "items": {
+            "17:branch": {
+              "question": "Which branch ships?",
+              "options": [
+                "main",
+                "release/2.0"
+              ],
+              "evidence": null,
+              "askedAt": 1763161200000,
+              "answer": null,
+              "closed": false
+            }
+          }
+        }
+      ]
+    },
+    "failureRow": {
+      "type": "object",
+      "description": "What the latest run ended on for one step: a failed run leaves no transcript, so this is where its error shows; a later run's clean row supersedes an earlier failure.",
+      "required": [
+        "error",
+        "run",
+        "at"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The error a run ended on; null while the run reached this step and got through it — a clean run clears its row."
+        },
+        "run": {
+          "type": "integer",
+          "description": "The id of the run that wrote this row, as a number; it orders rows so a later run's clean one supersedes an earlier failure."
+        },
+        "at": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When the row was written, in epoch milliseconds; 0 on a row startWorkflow or resumeWorkflow opened before a failure, while the 'model' row instead carries a real timestamp."
+        }
+      },
+      "examples": [
+        {
+          "error": "fetch failed: 502",
+          "run": 42,
+          "at": 1763161300000
+        },
+        {
+          "error": null,
+          "run": 43,
+          "at": 0
+        }
+      ]
+    },
+    "failuresDoc": {
+      "type": "object",
+      "description": "quack.failures: where the latest run ended, for the session view and the index.",
+      "required": [
+        "items"
+      ],
+      "additionalProperties": true,
+      "default": {
+        "items": {}
+      },
+      "properties": {
+        "items": {
+          "type": "object",
+          "description": "Keyed by step name, by 'runaway' for a run the runtime aborted, and by 'model' for the model-fault path; startWorkflow replaces items wholesale, dropping earlier 'runaway' and 'model' rows.",
+          "additionalProperties": {
+            "$ref": "#/$defs/failureRow"
+          },
+          "examples": [
+            {
+              "news": {
+                "error": null,
+                "run": 42,
+                "at": 0
+              }
+            }
+          ]
+        }
+      },
+      "examples": [
+        {
+          "items": {}
+        },
+        {
+          "items": {
+            "news": {
+              "error": "fetch failed: 502",
+              "run": 42,
+              "at": 1763161300000
+            }
+          }
+        }
+      ]
+    },
+    "stepProgress": {
+      "type": "object",
+      "description": "How far a step has worked through its units (pages).",
+      "required": [
+        "done",
+        "total"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "done": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many units the step has finished."
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many units the step works through in all."
+        }
+      },
+      "examples": [
+        {
+          "done": 3,
+          "total": 5
+        }
+      ]
+    },
+    "stepRecord": {
+      "type": "object",
+      "description": "One step of the latest run, as the session view renders it: its status, duration and cost.",
+      "required": [
+        "name",
+        "kind",
+        "status",
+        "startedAt",
+        "durationMs",
+        "cost",
+        "error"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The step's name, unique within the workflow."
+        },
+        "kind": {
+          "enum": [
+            "code",
+            "model",
+            "judged",
+            "decision"
+          ],
+          "description": "The step's nature: the four kinds the workflow engine runs. Closed: adding or renaming a kind is a breaking change. The kind 'gated' (it existed from #1872 to #2275) is not accepted here; stored documents are not re-validated, and no reader switches on kind."
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "waiting",
+            "done",
+            "failed",
+            "aborted"
+          ],
+          "description": "Where the step is in its run; 'waiting' is a step blocked on a person, and aborting the run moves a waiting step to 'aborted'. A step interrupted by a close stays 'running' and resumes."
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/epochMillis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When the step started its run; null while it is still pending."
+        },
+        "durationMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How long the step took, in milliseconds, from start to end; null until it ends."
+        },
+        "cost": {
+          "type": "number",
+          "description": "The spend the step has accumulated so far, the sum of its model calls' usage.cost.total as reported by the engine; 0 for a code step."
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/stepProgress"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The units a step works through (pages); absent on records written before it existed, null once set and not yet reported."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The error that failed the step; null unless the step failed."
+        }
+      },
+      "examples": [
+        {
+          "name": "facts",
+          "kind": "code",
+          "status": "pending",
+          "startedAt": null,
+          "durationMs": null,
+          "cost": 0,
+          "error": null
+        },
+        {
+          "name": "card",
+          "kind": "judged",
+          "status": "waiting",
+          "startedAt": 1763161201200,
+          "durationMs": null,
+          "cost": 0.42,
+          "progress": {
+            "done": 3,
+            "total": 5
+          },
+          "error": null
+        }
+      ]
+    },
+    "workflowDoc": {
+      "type": "object",
+      "description": "quack.workflow: what the session view renders for the latest run — each step's status, duration and cost.",
+      "required": [
+        "name",
+        "task",
+        "request",
+        "steps"
+      ],
+      "additionalProperties": true,
+      "default": {
+        "name": null,
+        "task": null,
+        "request": null,
+        "steps": [],
+        "kept": null
+      },
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The workflow's declared name; null before the session's first run."
+        },
+        "task": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The task id of the latest run, as a string; null before the first run. A resume starts a new task and replaces it."
+        },
+        "request": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The person's request that started the latest run; null when it named none."
+        },
+        "steps": {
+          "type": "array",
+          "description": "The steps of the latest run in declared order; a resume splices in from the failed step, keeping the earlier records.",
+          "items": {
+            "$ref": "#/$defs/stepRecord"
+          }
+        },
+        "kept": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The results of the steps before a failed one, so a resume starts from them; set on failure, left in place after a resume, reset to null only by a new run. Absent on records written before it existed.",
+          "additionalProperties": {
+            "description": "The step's stored result; any JSON value."
+          }
+        }
+      },
+      "examples": [
+        {
+          "name": null,
+          "task": null,
+          "request": null,
+          "steps": [],
+          "kept": null
+        },
+        {
+          "name": "trades",
+          "task": "42",
+          "request": "Anything to deal with?",
+          "steps": [
+            {
+              "name": "facts",
+              "kind": "code",
+              "status": "done",
+              "startedAt": 1763161200000,
+              "durationMs": 1200,
+              "cost": 0,
+              "progress": {
+                "done": 3,
+                "total": 5
+              },
+              "error": null
+            }
+          ],
+          "kept": {
+            "facts": {
+              "deal": true
+            }
+          }
+        }
+      ]
+    },
+    "finalArtifact": {
+      "type": "object",
+      "required": [
+        "input",
+        "refused"
+      ],
+      "properties": {
+        "input": {
+          "type": "string",
+          "description": "The run's newest input id (a SubmissionId as a string) at delivery."
+        },
+        "refused": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The changed seals refused since the version became final; starts at 0."
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
