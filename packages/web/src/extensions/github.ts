@@ -27,7 +27,7 @@ function outdated(a: SealedArtifact, now: Parameters<NonNullable<Extension['card
 const DECISION: Record<string, string> = { approve: 'Approve', request_changes: 'Request changes', comment: 'Comment' };
 
 const postedTo = (a: SealedArtifact) => {
-  const decision = DECISION[parseReview(a.content)?.verdict ?? ''];
+  const decision = DECISION[parseReview(a.content).verdict ?? ''];
   return `Posted to GitHub${decision ? ` as ${decision}` : ''}`;
 };
 

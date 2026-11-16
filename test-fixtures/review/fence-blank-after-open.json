@@ -1,0 +1,21 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- suggestion: src/a.ts:3 — the block opens with a blank line.\n~~~\n\n- old\n+ new\n~~~\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "suggestion",
+        "path": "src/a.ts",
+        "line": 3,
+        "text": "the block opens with a blank line.\n~~~\n\n- old\n+ new\n~~~"
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}

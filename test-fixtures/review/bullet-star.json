@@ -1,0 +1,25 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- nit: src/a.ts:1 — one.\n* a star item\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "nit",
+        "path": "src/a.ts",
+        "line": 1,
+        "text": "one."
+      }
+    ],
+    "unparsed": [
+      "* a star item"
+    ]
+  },
+  "problems": [
+    "not a finding line (\"- label (anchor): path:line — text\"): * a star item"
+  ]
+}

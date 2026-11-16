@@ -1,0 +1,21 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "- suggestion: src/a.ts:3 — use a map.\n```\n- old\n+ new\n* star\n- nit: swallowed by the fence\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "suggestion",
+        "path": "src/a.ts",
+        "line": 3,
+        "text": "use a map.\n```\n- old\n+ new\n* star\n- nit: swallowed by the fence"
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}

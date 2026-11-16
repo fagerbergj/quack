@@ -1,0 +1,21 @@
+{
+  "parse": {
+    "sections": {
+      "takeaway": "One sentence.\n\n",
+      "verdict": "approve\n\n",
+      "findings": "```\n- not a finding\n* nor this\n```\n- nit: src/a.ts:1 — the first finding.\n\n"
+    },
+    "verdict": "approve",
+    "findings": [
+      {
+        "index": 1,
+        "label": "nit",
+        "path": "src/a.ts",
+        "line": 1,
+        "text": "the first finding."
+      }
+    ],
+    "unparsed": []
+  },
+  "problems": []
+}

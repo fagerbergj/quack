@@ -15,6 +15,31 @@ export const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
 // A path with a directory or an extension, or a capitalized root file (Dockerfile, Makefile), so `node:18` is not one.
 const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
 
+export const FENCE = /^(```|~~~)/;
+// A '- ' line that is no finding, or a '* ' / '+ ' / '1. ' item: a list the gates would never see.
+export const BULLET = /^(- |[*+] |\d+\. )/;
+
+/** The findings under `## Findings`; a fenced block is the finding's continuation, whatever its lines start with. */
+function parseFindings(section: string): Pick<ParsedReview, 'findings' | 'unparsed'> {
+  const findings: Finding[] = [];
+  const unparsed: string[] = [];
+  let fenced = false;
+  for (const line of section.split('\n')) {
+    const fence = FENCE.test(line);
+    const inside = fenced || fence;
+    if (fence) fenced = !fenced;
+    const m = inside ? null : FINDING.exec(line);
+    if (m) {
+      const cite = CITATION.exec(m[3]);
+      findings.push({ index: findings.length + 1, label: m[1], anchor: m[2], path: cite?.[1], line: cite ? Number(cite[2]) : undefined, text: cite?.[3] ?? m[3] });
+    } else if (!inside && BULLET.test(line)) unparsed.push(line);
+    else if (findings.length && (inside || line.trim())) findings.at(-1)!.text += `\n${line}`;
+  }
+  // The blank lines that end an unclosed fence are the section's padding, not part of the block.
+  if (fenced && findings.length) findings.at(-1)!.text = findings.at(-1)!.text.replace(/\n+$/, '');
+  return { findings, unparsed };
+}
+
 /** Splits a review into its `## ` sections and parses its findings; tolerant, so the validator can name what is wrong. */
 export function parseReview(text: string): ParsedReview {
   const sections: Record<string, string> = {};
@@ -24,18 +49,7 @@ export function parseReview(text: string): ParsedReview {
     if (heading) current = heading[1].toLowerCase();
     else if (current) sections[current] = `${sections[current] ?? ''}${line}\n`;
   }
-  const findings: Finding[] = [];
-  const unparsed: string[] = [];
-  for (const line of (sections.findings ?? '').split('\n')) {
-    const m = FINDING.exec(line);
-    if (!m && line.startsWith('- ')) unparsed.push(line);
-    else if (m) {
-      const cite = CITATION.exec(m[3]);
-      findings.push({ index: findings.length + 1, label: m[1], anchor: m[2], path: cite?.[1], line: cite ? Number(cite[2]) : undefined, text: cite?.[3] ?? m[3] });
-    } else if (findings.length && line.trim()) {
-      findings.at(-1)!.text += `\n${line}`;
-    }
-  }
+  const { findings, unparsed } = parseFindings(sections.findings ?? '');
   return { sections, verdict: sections.verdict?.trim().split(/\s/)[0]?.toLowerCase(), findings, unparsed };
 }
 

@@ -220,3 +220,10 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual(built.evidence.verified.map((u) => [u.id, u.related]), [['verified item-1', { sources: 2 }], ['verified item-2', { sources: 0 }]]);
   assert.deepEqual(reviewDeclaration.checks.verified_names_evidence.aggregate, { name: 'share', by: 'either' }, 'a named source settles the item; the rest go to Clef');
 });
+
+test('an inline finding takes its whole fenced diff with it, and a fenced "- nit:" line is not a finding of its own', () => {
+  const text = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- suggestion: src/a.ts:2 — Swap it.\n```diff\n- two\n+ two!\n\n- nit: not a finding\n```\n- blocking (defect): src/a.ts:90 — Off the diff.\n## Verified\n- y\n';
+  const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
+  assert.deepEqual(comments.map((c) => c.line), [2]);
+  assert.equal(body, '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- blocking (defect): src/a.ts:90 — Off the diff.\n\nPosted inline on the diff:\n- suggestion: Swap it.\n## Verified\n- y\n');
+});

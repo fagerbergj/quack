@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { SealedArtifact } from '../api.ts';
 import { Markdown } from '../Markdown.tsx';
 import { TitleTick, Verdict } from './sleeper/parts.tsx';
-import { parseReview, type Finding, type Review } from './review.ts';
+import { parseReview, type Finding, type Item, type Review } from './review.ts';
 
 const VERDICT: Record<string, { label: string; tone: string; band: string }> = {
   approve: { label: 'Approved', tone: 'text-success', band: 'bg-success-bg' },
@@ -36,7 +36,7 @@ function Seal({ className }: { className: string }) {
 }
 
 function counts(findings: Finding[]): string[] {
-  const by = Map.groupBy(findings, (f) => f.severity);
+  const by = Map.groupBy(findings, (f) => f.label);
   const known = ORDER.filter((s) => by.has(s));
   return [...known, ...[...by.keys()].filter((s) => !ORDER.includes(s))].map((s) => {
     const n = by.get(s)!.length;
@@ -45,11 +45,11 @@ function counts(findings: Finding[]): string[] {
 }
 
 // A finding with more to say is itself the toggle; the chevron alone says it opens.
-function FindingRow({ f }: { f: Finding }) {
+function FindingRow({ f }: { f: Item }) {
   const head = (
     <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-      <span className={`inline-flex h-[22px] items-center self-start rounded-full px-2.5 text-[12px] font-semibold ${SEVERITY[f.severity] ?? 'bg-soft text-muted'}`}>{cap(f.severity) + (f.kind ? ` · ${f.kind}` : '')}</span>
-      {f.loc && <code className="font-mono text-[12px] break-all text-link">{f.loc}</code>}
+      <span className={`inline-flex h-[22px] items-center self-start rounded-full px-2.5 text-[12px] font-semibold ${SEVERITY[f.label] ?? 'bg-soft text-muted'}`}>{cap(f.label) + (f.anchor ? ` · ${f.anchor}` : '')}</span>
+      {f.path && <code className="font-mono text-[12px] break-all text-link">{`${f.path}:${f.line}`}</code>}
       <span className="text-[14px] leading-snug font-semibold"><Inline text={f.title} /></span>
     </span>
   );
@@ -91,8 +91,8 @@ function Footer({ a, md }: { a: SealedArtifact; md: string }) {
   );
 }
 
-function Body({ r, a, outdated }: { r: Review; a: SealedArtifact; outdated: boolean }): ReactNode {
-  const v = VERDICT[r.verdict] ?? { label: cap(r.verdict.replace(/_/g, ' ')), tone: 'text-ink', band: 'bg-soft' };
+function Body({ r, verdict, a, outdated }: { r: Review; verdict: string; a: SealedArtifact; outdated: boolean }): ReactNode {
+  const v = VERDICT[verdict] ?? { label: cap(verdict.replace(/_/g, ' ')), tone: 'text-ink', band: 'bg-soft' };
   const posted = a.links?.[0];
   const line = counts(r.findings);
   return (
@@ -109,7 +109,7 @@ function Body({ r, a, outdated }: { r: Review; a: SealedArtifact; outdated: bool
       </div>
       {outdated && <p className="m-0 border-b border-line px-3.5 py-2 text-[12.5px] text-muted">About an earlier commit · reviewing the latest</p>}
       {r.takeaway && <div className="px-3.5 py-3 text-[14px] leading-normal text-ink [&_p]:m-0"><Markdown text={r.takeaway} /></div>}
-      <div className={outdated ? 'opacity-60' : undefined}>{r.findings.map((f, i) => <FindingRow key={i} f={f} />)}</div>
+      <div className={outdated ? 'opacity-60' : undefined}>{r.items.map((f, i) => <FindingRow key={i} f={f} />)}</div>
       <List label="Verified" items={r.verified} />
       <List label="Notes" items={r.notes} />
       <Footer a={a} md={a.content} />
@@ -120,5 +120,5 @@ function Body({ r, a, outdated }: { r: Review; a: SealedArtifact; outdated: bool
 /** The review as a card; undefined for a sealed text that is not a review. */
 export function reviewCard(a: SealedArtifact, outdated = false): ReactNode | undefined {
   const r = parseReview(a.content);
-  return r && <Body r={r} a={a} outdated={outdated} />;
+  return r.verdict ? <Body r={r} verdict={r.verdict} a={a} outdated={outdated} /> : undefined;
 }
