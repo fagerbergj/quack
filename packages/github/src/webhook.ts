@@ -8,7 +8,7 @@ export function verifySignature(secret: string, body: Buffer, header: string | u
 }
 
 /** A run to start: which session, in which role, with what input. */
-export type Trigger = { sessionKey: string; role: 'reviewer' | 'implementer'; input: string; repo: { owner: string; name: string }; number: number; title: string; /** The run starts from an issue, so a refusal is worded for one. */ issue?: boolean };
+export type Trigger = { sessionKey: string; role: 'reviewer' | 'implementer'; input: string; repo: { owner: string; name: string }; number: number; title: string; /** The run starts from an issue, so a refusal is worded for one. */ issue?: boolean; /** Set only on an automatic push input: it is dropped once the app's review is on this head. A label or /review is a person's request and is never stale by head. */ pushedHead?: string };
 
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
@@ -77,7 +77,7 @@ function implementTrigger(event: string | undefined, p: Payload): Trigger | unde
 export function triggerFor(event: string | undefined, p: Payload, label: string): Trigger | undefined {
   if (event === 'pull_request' && p.action === 'labeled' && p.label?.name === label) return reviewTrigger(p, p.pull_request, `label ${label}`);
   // Without this a force-push after an approval left the new head unreviewed; checkout_pr ends a turn whose head was already posted.
-  if (event === 'pull_request' && p.action === 'synchronize' && p.pull_request?.labels?.some((l: Payload) => l.name === label)) return reviewTrigger(p, p.pull_request, `new commits pushed to a ${label} PR`);
+  if (event === 'pull_request' && p.action === 'synchronize' && p.pull_request?.labels?.some((l: Payload) => l.name === label)) return { ...reviewTrigger(p, p.pull_request, `new commits pushed to a ${label} PR`), pushedHead: p.pull_request.head?.sha };
   const fix = fixTrigger(event, p) ?? implementTrigger(event, p);
   if (fix) return fix;
   const isReviewComment = event === 'issue_comment' && p.action === 'created' && p.issue?.pull_request && p.comment?.body?.trim() === '/review';
