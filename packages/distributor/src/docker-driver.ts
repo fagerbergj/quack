@@ -88,6 +88,16 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
     throw new Error(`session container ${name} exited during start; see docker logs ${name}`);
   }
 
+  // Resolves only once dockerd says the container is removed (200) or unknown (404). A dropped call or a gate 5xx (the gate
+  // restarting on a deploy) says nothing about the container, so the wait is re-asked; it ends with the removal or this process.
+  async function removed(name: string) {
+    for (let pause = 100; ; pause = Math.min(pause * 2, 5_000)) {
+      const res = await api('POST', `/containers/${name}/wait?condition=removed`).catch(() => undefined);
+      if (res && res.status < 500) return;
+      await sleep(pause);
+    }
+  }
+
   return async ({ key, dir, agentPath }) => {
     const name = `${SESSION_PREFIX}${basename(dir)}`;
     const token = opts.broker.mint(key);
@@ -116,7 +126,7 @@ export function dockerLauncher(opts: DockerLauncherOptions): Launch {
         HostConfig: { Runtime: opts.runtime, NetworkMode: opts.network, ...sessionMount(opts.data, basename(dir)), AutoRemove: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'] },
       }, [201]);
       // Waits for removal, which AutoRemove does after exit, so the name is free again when it resolves.
-      const gone = api('POST', `/containers/${name}/wait?condition=removed`).catch(() => undefined);
+      const gone = removed(name);
       void gone.then(() => opts.broker.revoke(token));
       await call('POST', `/containers/${name}/start`, undefined, [204]);
       const url = (opts.urlFor ?? ((n) => `http://${n}:${SESSION_PORT}`))(name);

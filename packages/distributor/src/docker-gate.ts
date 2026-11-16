@@ -133,6 +133,8 @@ if (import.meta.main) {
   const policy = sessionContainers(process.env);
   const listen = process.env.QUACK_GATE_LISTEN ?? '2375';
   if (!/^\d+$/.test(listen)) rmSync(listen, { force: true });
+  // As PID 1 node ignores SIGTERM by default, so a stop waited out the grace; the driver re-asks the waits this drops.
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => process.exit(0));
   dockerGate(policy, dockerApi(parseDockerHost(process.env.QUACK_GATE_UPSTREAM ?? '/var/run/docker.sock')))
     .listen(/^\d+$/.test(listen) ? Number(listen) : listen, () => console.log(`docker gate on ${listen}: ${policy.image} under ${policy.runtime} on ${policy.network}`));
 }
