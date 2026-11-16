@@ -10,5 +10,7 @@ export { gateGenerations, observeGeneration, onGeneration, onWaiting, statusNote
 export type { App, AppContext, PageRoute, Action, ActionContext, ContributedWorkflow, ContributedWorkflows, DeploymentView, Dispatch, DispatchingExtension, Resume, SubmitResult, EvalAdapter, EvalService, ExtensionManifest, LoopEvent, RecordedSession, RunEnded } from './manifest.ts';
 export { appEndpoint, primeSessionEndpoint, invocationRequest, safeEqual, sendProblem, serviceHttp, inProcessFetch, serveApp, submitToSession, tooLarge, type SessionSubmission } from './http.ts';
 export { checkedSettings, extensionDbPath, extensionEntry, readDeploymentFile, storeFor, type DeploymentFile, type ExtensionEntry, type StoreChoice, type StoreEntry } from './extensions.ts';
+export { PageError, pageCursor } from './page.ts';
+export { isSessionKey, SESSION_KEY } from './session-key.ts';
 export { escapeTerm, unescapeTerm } from './query.ts';
 export { approvalOpenedData, artifactDeliveredData, artifactSealedData, assertSealFits, eventBytes, EVENT_MAX_BYTES } from './channel.ts';

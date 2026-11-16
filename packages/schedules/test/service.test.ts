@@ -295,6 +295,15 @@ test('the list pages by id: pageSize, nextPageToken only until the last page, an
   }
 });
 
+test('a token minted before the sdk cursor still decodes', async () => {
+  const { api } = await start(':memory:');
+  for (const id of ['nightly', 'oz', 'zed']) await put(api, { ...daily, id });
+  // Minted by this service's own encodeToken on main, before it moved to pageCursor('schedules').
+  const old = 'WyJzY2hlZHVsZXMiLCJuaWdodGx5Il0';
+  assert.equal(Buffer.from(old, 'base64url').toString(), '["schedules","nightly"]');
+  assert.deepEqual((await api('GET', `/?pageToken=${old}`)).json.schedules.map((s: any) => s.id), ['oz', 'zed']);
+});
+
 test('the API rejects bad definitions and an oversized body', async () => {
   const { api, base } = await start(':memory:');
   assert.equal((await put(api, { ...daily, cron: 'nope' })).status, 400);

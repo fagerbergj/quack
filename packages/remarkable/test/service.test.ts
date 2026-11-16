@@ -444,6 +444,15 @@ test('two concurrent requests with one requestId share one batch', async () => {
   assert.equal(a.batch, b.batch);
 });
 
+test('a topics token minted before the sdk cursor still decodes', async () => {
+  const { url } = await stub();
+  for (const n of ['pear', 'Work notes', 'zebra']) await fetch(`${url}/topics`, { method: 'POST', body: JSON.stringify({ name: n }) });
+  // Minted by this service's own encodeToken on main, before it moved to pageCursor('topics').
+  const old = 'WyJ0b3BpY3MiLCJXb3JrIG5vdGVzIl0';
+  assert.equal(Buffer.from(old, 'base64url').toString(), '["topics","Work notes"]');
+  assert.deepEqual(await (await fetch(`${url}/topics?pageToken=${old}`)).json(), { topics: ['zebra'] });
+});
+
 test('topics are paged by name with a token, and a bad pageSize or token is a 400', async () => {
   const { url } = await stub();
   const add = (name: string) => fetch(`${url}/topics`, { method: 'POST', body: JSON.stringify({ name }) });

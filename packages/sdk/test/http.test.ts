@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Agent, createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { appEndpoint, inProcessFetch, invocationRequest, primeSessionEndpoint, safeEqual, serviceHttp, submitToSession } from '../src/index.ts';
+import { appEndpoint, inProcessFetch, invocationRequest, primeSessionEndpoint, safeEqual, sendProblem, serviceHttp, submitToSession } from '../src/index.ts';
 
 async function serve(opts: Parameters<typeof serviceHttp>[0]) {
   const http = serviceHttp(opts);
@@ -100,4 +100,13 @@ test('appEndpoint serves the primed pair, an explicit env as-is, and names the l
   assert.deepEqual(appEndpoint('sleeper', { QUACK_INDEX_URL: 'http://e', QUACK_INDEX_TOKEN: 'u' }), { url: 'http://e/apps/sleeper', token: 'u' });
   primeSessionEndpoint(undefined);
   assert.throws(() => appEndpoint('sleeper'), /QUACK_SESSION_LISTENER_URL and QUACK_LAUNCH_TOKEN_FILE/);
+});
+
+test('sendProblem writes extension members after the standard ones and never lets them replace those', async () => {
+  const fetchOf = (extra?: Record<string, unknown>) => inProcessFetch((_req, res) => sendProblem(res, 404, 'unknown ids', extra));
+  const plain = await fetchOf()('http://x/');
+  assert.deepEqual(await plain.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'unknown ids', error: 'unknown ids' });
+  const res = await fetchOf({ ids: ['a'], type: 't', title: 'T', status: 200, detail: 'd', error: 'e' })('http://x/');
+  assert.equal(res.headers.get('content-type'), 'application/problem+json');
+  assert.deepEqual(await res.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'unknown ids', error: 'unknown ids', ids: ['a'] });
 });

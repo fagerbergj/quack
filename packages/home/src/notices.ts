@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { escapeTerm, sendProblem, serviceHttp, submitToSession, type App, type AppContext, type RunEnded } from '@quack/sdk';
+import { escapeTerm, isSessionKey, sendProblem, serviceHttp, submitToSession, type App, type AppContext, type RunEnded } from '@quack/sdk';
 import { sessionLink } from './tools.ts';
 
 /** The standing Home conversation, which hears how the sessions it started ended. */
@@ -65,7 +65,7 @@ export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fet
     async handle(req, res) {
       if (req.method !== 'POST' || req.url !== '/started') return sendProblem(res, 404, 'not found');
       const body = (await http.json(req).catch(() => null)) as { key?: unknown } | null;
-      if (typeof body?.key !== 'string' || !body.key || body.key.length > 512) return sendProblem(res, 400, 'key must be a session key');
+      if (typeof body?.key !== 'string' || !isSessionKey(body.key)) return sendProblem(res, 400, 'key must be a session key');
       db.prepare('INSERT OR IGNORE INTO started (key) VALUES (?)').run(body.key);
       http.send(res, 200, { ok: true });
     },

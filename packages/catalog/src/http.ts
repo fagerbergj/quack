@@ -1,6 +1,6 @@
 // The Sessions API's HTTP adapter (approved v9): the catalog's reads and a person's writes, in the approved wire shapes.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
+import { isSessionKey, SESSION_KEY, sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
 import type { Catalog, ListRequest } from './core.ts';
 import { CursorError } from './keyset.ts';
 import type { ArtifactRow, AskRow, Principal, SessionRow } from './port.ts';
@@ -18,8 +18,8 @@ export type SessionsApiDeps = {
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string>;
 };
 
-/** The one session-key pattern: the Sessions API, the lifecycle channel and the distributor's routes and driver all test it. */
-export const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
+// Re-exported from the sdk, the one definition, so existing @quack/catalog imports keep working.
+export { isSessionKey, SESSION_KEY };
 const ASK_ID = /^[A-Za-z0-9._:-]{1,100}$/;
 const TITLE_MAX = 120;
 const { send, json } = serviceHttp({ maxBody: 64 * 1024 });
@@ -57,7 +57,7 @@ function listRequest(params: URLSearchParams): ListRequest {
 const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return undefined; } };
 const keyOf = (raw: string) => {
   const key = decode(raw);
-  if (!key || !SESSION_KEY.test(key)) throw new Problem(400, 'invalid session key');
+  if (!key || !isSessionKey(key)) throw new Problem(400, 'invalid session key');
   return key;
 };
 

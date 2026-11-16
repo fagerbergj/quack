@@ -10,9 +10,12 @@ export function safeEqual(given: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** An RFC 9457 problem reply; `error` repeats `detail` so readers that predate problem+json keep working. */
-export function sendProblem(res: ServerResponse, status: number, detail: string): void {
-  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail }));
+const STANDARD_MEMBERS = ['type', 'title', 'status', 'detail', 'error'];
+
+/** An RFC 9457 problem reply; `error` repeats `detail` so readers that predate problem+json keep working. `extra` members follow the standard ones and never replace them. */
+export function sendProblem(res: ServerResponse, status: number, detail: string, extra: Record<string, unknown> = {}): void {
+  const members = Object.fromEntries(Object.entries(extra).filter(([k]) => !STANDARD_MEMBERS.includes(k)));
+  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail, ...members }));
 }
 
 /** Whether a body read failed on the app's own size limit, which the app answers 413. */

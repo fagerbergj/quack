@@ -27,8 +27,15 @@ async function home(dbPath?: string) {
   const app = homeApp({ dbPath: path, distributorUrl: 'http://d', fetch, subscribe: (on) => ((listener = on), () => (listener = undefined)) });
   const call = inProcessFetch((req, res) => app.handle(req, res));
   const started = (key: string) => call('http://app/started', { method: 'POST', body: JSON.stringify({ key }) });
-  return { app, sent, started, path, hear: (session: string, e: LoopEvent) => listener!(session, e) };
+  return { app, call, sent, started, path, hear: (session: string, e: LoopEvent) => listener!(session, e) };
 }
+
+test('/started answers 400 for a key outside the session-key grammar or one that is not a string', async () => {
+  const h = await home();
+  for (const key of ['', 'a b', 'a'.repeat(201), 'k?x']) assert.equal((await h.started(key)).status, 400, key);
+  assert.equal((await h.call('http://app/started', { method: 'POST', body: JSON.stringify({ key: 7 }) })).status, 400);
+  assert.equal((await h.started('a'.repeat(200))).status, 200);
+});
 
 test("a Home-started session's run end sends home:main one follow-up with the outcome, the newest result's summary and the link", async () => {
   const h = await home();

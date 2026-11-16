@@ -1,5 +1,5 @@
-import { STATUS_CODES, type IncomingMessage, type ServerResponse } from 'node:http';
-import { invocationRequest, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
+import { type IncomingMessage, type ServerResponse } from 'node:http';
+import { invocationRequest, PageError, pageCursor, sendProblem, serviceHttp, tooLarge, type App } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
 import { createIngestQueue, INGEST_CONCURRENCY, type QueuedItem } from './queue.ts';
 import { openStore } from './store.ts';
@@ -26,8 +26,6 @@ const MAX_BACKOFF_MS = 60_000;
 
 const { send, json: readJson } = serviceHttp();
 
-const DEFAULT_PAGE_SIZE = 100;
-const MAX_PAGE_SIZE = 1000;
 
 /** A request the service refuses with a problem document; `extra` rides it as RFC 9457 extension members. */
 class Reject extends Error {
@@ -44,9 +42,7 @@ class Reject extends Error {
 
 function reply(res: ServerResponse, { status, message, extra, headers }: Reject) {
   for (const [k, v] of Object.entries(headers ?? {})) res.setHeader(k, v);
-  if (!extra) return sendProblem(res, status, message);
-  // shortcut: sendProblem cannot carry extension members, upgrade when #2346 lands
-  res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status], status, detail: message, error: message, ...extra }));
+  sendProblem(res, status, message, extra as Record<string, unknown> | undefined);
 }
 
 // The body must be a JSON object with no field outside `known`.
@@ -58,16 +54,14 @@ async function closedBody(req: IncomingMessage, known: string[]): Promise<Record
   return body;
 }
 
-const encodeToken = (name: string) => Buffer.from(JSON.stringify(['topics', name])).toString('base64url');
+const cursor = pageCursor('topics');
 
-// Only a token this service issued decodes: it must re-encode to itself.
-function decodeToken(token: string | null): string {
-  if (!token) return '';
+function pageArgs(params: URLSearchParams): { limit: number; after: string } {
   try {
-    const [tag, name] = JSON.parse(Buffer.from(token, 'base64url').toString()) as [unknown, unknown];
-    if (tag === 'topics' && typeof name === 'string' && encodeToken(name) === token) return name;
-  } catch { /* falls through */ }
-  throw new Reject(400, 'pageToken is not one this service issued');
+    return { limit: cursor.pageSize(params.get('pageSize')), after: cursor.decode(params.get('pageToken')) ?? '' };
+  } catch (err) {
+    throw err instanceof PageError ? new Reject(400, err.message) : err;
+  }
 }
 
 // A 200 only means the session answered; an unanswered result (an operator abort, say) is not an ingested document.
@@ -174,12 +168,10 @@ export function createRemarkableService(config: ServiceConfig): App & { settled(
   }
 
   function listTopics(url: URL): [number, unknown] {
-    const size = url.searchParams.get('pageSize');
-    const limit = size === null ? DEFAULT_PAGE_SIZE : /^\d+$/.test(size) ? Number(size) : 0;
-    if (limit < 1 || limit > MAX_PAGE_SIZE) throw new Reject(400, `pageSize must be an integer from 1 to ${MAX_PAGE_SIZE}`);
-    const found = store.topicsAfter(decodeToken(url.searchParams.get('pageToken')), limit + 1);
+    const { limit, after } = pageArgs(url.searchParams);
+    const found = store.topicsAfter(after, limit + 1);
     const page = found.slice(0, limit);
-    return [200, { topics: page, ...(found.length > limit && { nextPageToken: encodeToken(page.at(-1)!) }) }];
+    return [200, { topics: page, ...(found.length > limit && { nextPageToken: cursor.encode(page.at(-1)!) }) }];
   }
 
   async function route(req: IncomingMessage): Promise<[number, unknown]> {

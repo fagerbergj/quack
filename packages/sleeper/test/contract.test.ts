@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { serveApp } from '@quack/sdk';
+import { snapshotHistory } from '../src/trends/index.ts';
 import { createSleeperClient, createSleeperService } from '../src/index.ts';
 
 // The "Sleeper app routes" v5 contract (contracts:6fe21e34-ebc4-41a7-8de5-63a38c0d8749), asserted route by route.
@@ -179,6 +180,20 @@ test('an upstream fault while taking a snapshot is a 502 problem', async () => {
   await new Promise<void>((r) => service.listen(0, r));
   try {
     await problem(await fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}/leagues/L1/snapshots`, { method: 'POST' }), 502);
+  } finally {
+    service.stop();
+  }
+});
+
+test('a pre-v24 bare-date pageToken is a 400, and the trends history walks every page of the new tokens', async () => {
+  const { service, call, seed } = await setup();
+  try {
+    await seed(1001);
+    await problem(await call('GET', `/leagues/L1/snapshots?pageToken=${Buffer.from('2026-01-01').toString('base64url')}`), 400, /pageToken/);
+    const get = async (path: string) => (await call('GET', path)).json();
+    const all = await snapshotHistory(get, '/leagues/L1/snapshots');
+    assert.equal(all.length, 1001);
+    assert.equal(new Set(all.map((s) => s.date)).size, 1001);
   } finally {
     service.stop();
   }
