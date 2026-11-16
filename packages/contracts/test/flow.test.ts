@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
+import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval, SessionTitle } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession } from '@quack/eval';
 import type { Inputs } from '@quack/judge';
@@ -72,6 +72,7 @@ const approve = async (s: Open, seen: string[] = []) => {
 };
 const versions = async (s: Open) => (await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds['contract.spec']?.versions ?? [];
 const kindOf = async (s: Open, kind: string) => (await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds[kind]?.versions ?? [];
+const sessionTitle = async (s: Open) => (await s.harness.snapshot(SessionTitle, s.root.id, ctx))?.title ?? undefined;
 
 const refs = { versioning: '', time: '' };
 const received = { versioning: '', time: '' };
@@ -155,12 +156,13 @@ test('a spec citing a question nobody answered, or code that is not there, is se
   assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace\. Refs are paths from the workspace root and your clone is packages\/, so a file at sleeper\/src\/missing.ts in the clone is cited as "packages\/sleeper\/src\/missing.ts:3"/);
   assert.match(seen, /cannot be put to the person for approval/);
   assert.deepEqual(await pendingApprovals(s.root, ctx), []);
+  assert.equal(await sessionTitle(s), undefined, 'a failed version names nothing');
   await s.close();
 });
 
 test('end to end: version 1, then a version 2 that names the Sleeper page, each put up for approval as it passes; its recording rebuilds what the judge read', async () => {
   const bareV2 = (): ContractSpec => scheduleSpecV2(refs, []);
-  const v2 = (): ContractSpec => scheduleSpecV2(refs, [SLEEPER_PAGE]);
+  const v2 = (): ContractSpec => ({ ...scheduleSpecV2(refs, [SLEEPER_PAGE]), title: 'Sleeper schedule in Unix seconds' });
   const live: Inputs[] = [];
   const builder = specInputs();
   const s = await open([
@@ -176,8 +178,10 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   const { run } = await defineV1(s);
   const one = await approve(s);
   await run;
+  assert.equal(await sessionTitle(s), 'Sleeper schedule endpoint');
   const second = s.submit('Make the run time Unix seconds', 'r-2', true);
   const two = await nextProposal(s, [one.id]);
+  assert.equal(await sessionTitle(s), 'Sleeper schedule in Unix seconds', "a later version's new title renames the session");
   assert.deepEqual([two.args.version, two.args.artifact, two.args.summary], [2, 3, 'Approve GET /apps/sleeper/schedule v2'], 'the failed attempt is never put up');
   assert.ok(two.args.breaks.length > 0, 'the break against approved version 1 is computed in code for the approver');
   await resolveApproval(s.root, two.id, { decision: 'approve', by: jf }, ctx);
@@ -209,6 +213,7 @@ test('a version that passes is put up for approval in the same submit, and appro
   const s = await open([...v1Script.slice(0, -1), (c) => ((seen = text(c)), fauxAssistantMessage('Version 1 is approved.'))]);
   const { run } = await defineV1(s);
   const item = await nextProposal(s);
+  assert.equal(await sessionTitle(s), 'Sleeper schedule endpoint', 'the passed spec names the session before the person is asked');
   const [v1] = await versions(s);
   assert.deepEqual([item.args.summary, item.args.version, item.args.artifact, item.args.hash], ['Approve GET /apps/sleeper/schedule v1', 1, 1, v1.hash]);
   assert.ok(Array.isArray(item.args.findings) && Array.isArray(item.args.breaks));
@@ -318,6 +323,7 @@ test('a change request after a pass gets a fresh check budget; a failed newest v
   assert.equal((v2.verdict as { passed: boolean }).passed, false, 'the revision is checked, and fails');
   assert.match(proposed, /Only the newest sealed version can be put up/);
   assert.equal((await pendingApprovals(s.root, ctx)).length, 0);
+  assert.equal(await sessionTitle(s), 'Sleeper schedule endpoint', 'the failed retitle keeps the passed name');
   await s.close();
 });
 

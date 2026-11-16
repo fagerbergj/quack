@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import type { CatalogEvent } from '@quack/catalog';
+import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import { num, obj, str } from '@earendil-works/pi-schema';
+import { createCatalog, eventsRoute, fileJournal, sqliteCatalog, type CatalogEvent } from '@quack/catalog';
+import { gated, inProcessFetch, pendingApprovals, resolveApproval, setDefaultSessionTitle } from '@quack/sdk';
+import { openSession, sessionFacts, startLifecycleSender } from '@quack/session';
 import { openNotifications as openPush } from '../src/notifications.ts';
 
 const dirs: string[] = [];
@@ -147,4 +153,65 @@ test('errors are problem+json: an unknown push route is 404, a missing endpoint 
   assert.equal((await post('/push/test', { endpoint: 7 })).status, 400);
   assert.equal((await post('/push/test', { endpoint: sub(9).endpoint })).status, 404);
   assert.equal((await post('/push/subscribe', { subscription: 'x'.repeat(32 * 1024) })).status, 413);
+});
+
+// End to end: a session names itself and asks the way the contracts gate does, its lifecycle stream is applied to a real
+// catalog, and each applied batch is pushed with the catalog's title.
+async function namingSession() {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-push-title-'));
+  dirs.push(dir);
+  const key = 'contracts:push';
+  await writeFile(join(dir, 'session-key'), key);
+  await writeFile(join(dir, 'created'), String(NOW));
+  const propose = gated(defineTool({ name: 'propose_contract', description: 'put a version up', parameters: obj({ version: num() }, { open: true }), execute: async () => ({ output: [{ type: 'text', text: 'approved' }] }) }));
+  const submit = defineTool({
+    name: 'submit_contract', description: 'seal and propose', parameters: obj({ title: str(), version: num() }, { open: true }), replay: 'safe',
+    async execute(args, api, c) {
+      const { title, version } = args as { title: string; version: number };
+      await setDefaultSessionTitle(api, title, c);
+      return propose.execute({ version } as never, api, c);
+    },
+  });
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const proposeV = (title: string, version: number) => fauxAssistantMessage(fauxToolCall('submit_contract', { title, version }), { stopReason: 'toolUse' });
+  faux.setResponses([proposeV('research.report artifact', 1), proposeV('research.report artifact, parsed', 2), fauxAssistantMessage('Done.')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir, models, now: () => new Date(NOW), agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'contracts', tools: [submit] })] } });
+  const catalog = createCatalog({ store: sqliteCatalog(join(dir, 'catalog.sqlite'), { currency: 'USD' }), journal: fileJournal(join(dir, 'journal')), now: () => NOW, log: () => {} });
+  const sent: string[] = [];
+  const push = openPush({ dataDir: dir, now: () => NOW, title: async (k) => (await catalog.getSession(k))?.title, send: async (_s, p) => void sent.push(JSON.parse(p).title) });
+  const route = eventsRoute(catalog, (k, events) => push.notify(k, events));
+  const fetcher = inProcessFetch(async (req, res) => void ((await route(req, res, key)) || res.writeHead(404).end()));
+  const sender = await startLifecycleSender(session, { url: 'http://d', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: () => () => {}, now: () => NOW });
+  after(async () => { await sender.stop(); await session.close(); await catalog.close(); push.close(); });
+  const server = createServer((req, res) => void push.routes(req, res));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/push/subscribe`, { method: 'POST', body: JSON.stringify({ subscription: sub(1) }) });
+  server.close();
+  // Flushes until `done` holds; the sender's own watches race these, which only ever sends sooner.
+  const until = async (done: () => boolean | Promise<boolean>) => { for (let i = 0; i < 200 && !(await done()); i++) { await sender.flush(); await new Promise((r) => setImmediate(r)); } };
+  const pending = async () => (await pendingApprovals(session.root, ctx)).map((a) => a.id);
+  return { key, session, catalog, sent, until, pending };
+}
+
+test("a contract's approval push names the contract; after a person's rename, a later version's push and the list keep the person's title", async () => {
+  const s = await namingSession();
+  const run = s.session.submit('Design the JSON Schema contract (kind json-schema) for the research.report artifact, in its parsed form', undefined, true);
+  await s.until(() => s.sent.length > 0);
+  assert.deepEqual(s.sent, ['Approval waiting: research.report artifact']);
+  await s.catalog.rename(s.key, 'Report contract');
+  const [first] = await s.pending();
+  await resolveApproval(s.session.root, first!, { decision: 'reject', reason: 'parse it first', by: { kind: 'person', name: 'jf' } }, ctx);
+  await s.until(() => s.sent.length > 1);
+  assert.deepEqual(s.sent, ['Approval waiting: research.report artifact', 'Approval waiting: Report contract']);
+  const [second] = await s.pending();
+  await resolveApproval(s.session.root, second!, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, ctx);
+  await run;
+  const listed = async () => (await s.catalog.listSessions({})).rows.map((r) => r.title);
+  await s.until(async () => (await s.catalog.getSession(s.key))?.state === 'idle');
+  assert.deepEqual(await listed(), ['Report contract']);
+  await s.catalog.rename(s.key, null);
+  assert.deepEqual(await listed(), ['research.report artifact, parsed'], 'the newest set title is the default under the rename');
 });
