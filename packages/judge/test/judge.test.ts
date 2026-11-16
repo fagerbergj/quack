@@ -125,7 +125,7 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   assert.equal(v2.passed, true);
   assert.equal(v2.score, 1);
   const says = v2.checks.find((c: any) => c.id === 'says_why');
-  assert.deepEqual(says.resolvers, { clef: 1, 'agent-model': 1 }, 'f1 by Clef, f2 escalated');
+  assert.deepEqual(says.resolvers, { clef: 1, worker: 1 }, 'f1 by Clef, f2 escalated');
   assert.equal(says.met, 1);
   const preference = v2.checks.find((c: any) => c.id === 'preference_only');
   assert.equal(preference.units, 1, 'only the blocking finding');
@@ -139,7 +139,7 @@ test('a unit over the decision model cap skips it and every check escalates', as
   const content = '## Takeaway\nLooks good.\n## Verdict\napprove\n## Findings\n- nit: src/y.ts:3 rename\n';
   const { versions } = await run(baseUrl, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), yes, yes, fauxAssistantMessage('Done.')]);
   assert.equal(clefCalls.length, 0);
-  assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
+  assert.ok(versions[0].checks.filter((c: any) => c.resolvers.worker).length >= 2);
   assert.equal(versions[0].passed, true);
 });
 

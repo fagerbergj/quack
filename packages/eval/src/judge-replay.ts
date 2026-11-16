@@ -59,7 +59,8 @@ export type Replayed = { rows: Row[]; declined: Declined[] };
 /** `escalations` bounds each job's concurrent judge-model calls (the judge's default when unset), so the judge model sees at most concurrency × escalations. */
 export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number };
 
-const ESCALATED = ['judge-model', 'agent-model'];
+// Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
+const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
 /** The options that route a job's questions; every arm's engine must read them under these names. */
 const ROUTING = ['decisionModel', 'judgeModel', 'escalations'] as const;
 /** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
@@ -127,7 +128,7 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const ignored = ROUTING.filter((k) => opts[k] !== undefined && !read.has(k));
   if (ignored.length) throw new Error(`arm ${j.arm}: its judge engine never reads ${ignored.join(', ')}, so it would judge without them; run that arm from a ref whose judge takes these options, or from its own worktree`);
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
-  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms, notes: k.notes }));
+  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), ms, notes: k.notes }));
 }
 
 /** Judges every case under every arm `repeat` times and returns one row per check, and the cases an arm declined. */

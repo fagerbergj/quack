@@ -3,7 +3,7 @@ import { contentText, type ClassifierModel, type ClassifierQuestion } from '@ear
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
 import { agentModel, decide, modelResolver, observeGeneration, inputTooLarge, parseDecision, retryModelCall, type RetrySeams } from '@quack/sdk';
-import type { ModelSplit, Question } from './declaration.ts';
+import { PASS_ONLY, type ModelSplit, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
 
@@ -16,7 +16,7 @@ export type Answer = { met: boolean | null; resolver: string; note?: string };
 const BYTES_PER_TOKEN = 3;
 
 /** One question asked of a unit: `id` is the check's key; a choice question holds when the answer is one of `pass` (its first option by default). */
-export type Ask = { id: string; question: Question; pass?: string[]; /** false: never asked of the decision model, only escalated. */ decisionModel?: false };
+export type Ask = { id: string; question: Question; pass?: string[]; /** false: never asked of the decision model, only escalated; PASS_ONLY: only its passing answers stand. */ decisionModel?: false | typeof PASS_ONLY };
 
 /** A unit with the questions asked of it. */
 export type Item = { unit: Unit; checks: Ask[] };
@@ -183,7 +183,9 @@ async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask
   const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId, s.retry), id: 'judge-model' } : agentModel;
   const d = await decide(api, point(memo, unit, ask), [resolver], ctx);
   if (!d) return { met: null, resolver: 'none', note: 'no resolver could decide' };
-  return { met: passing(ask).includes(d.choice), resolver: d.resolver, note: d.reason };
+  // An escalated item counts under the modelId of the model that answered it, the judge model's or the agent's own.
+  const by = (judgeModel ?? (await api.agent?.(ctx))?.model)?.modelId;
+  return { met: passing(ask).includes(d.choice), resolver: by ?? d.resolver, note: d.reason };
 }
 
 /** `retry` is the model calls' retry test seam. */
@@ -207,7 +209,7 @@ async function probabilitiesOf(api: ToolExecutionApi, s: Settings, items: Item[]
 async function escalateGroup(api: ToolExecutionApi, s: Settings, unsure: Pending[], ctx: Context, need: Need, alone: Alone, done: Done) {
   const ref = s.judgeModel ?? (await api.agent(ctx)).model;
   const model = ref && api.models.getModel(ref.provider, ref.modelId);
-  const resolver = s.judgeModel ? 'judge-model' : 'agent-model';
+  const resolver = ref?.modelId ?? agentModel.id;
   await Promise.all(subBatches(unsure, windowOf(model)).map(async (batch) => {
     const replies = await s.escalations(() => askBatch(api, s, model, batch.filter((p) => need(p.unit, p.check)), ctx));
     await Promise.all(batch.map(async (p) => {
@@ -227,15 +229,16 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   const probabilities = await probabilitiesOf(api, s, items, ctx);
   const act = s.ref?.act ?? 0.8;
   const asked = items.flatMap((it, i) => it.checks.map((check) => ({ i, unit: it.unit, check, p: probabilities?.[qid(check, i, packed)] })));
-  const sure = (p?: number) => p !== undefined && (p >= act || 1 - p >= act);
+  // A PASS_ONLY check's confident failing answer is not taken: the judge model decides it and gives the writer a reason.
+  const sure = (p: number | undefined, check: Ask) => p !== undefined && (p >= act || (1 - p >= act && check.decisionModel !== PASS_ONLY));
   const out = new Map<Pending, Answered>();
   const done = async (a: Pending, answer: Answer | undefined) => {
     const answered = { unit: a.unit, check: a.check, answer };
     out.set(a, answered);
     await onAnswer?.(answered);
   };
-  for (const a of asked.filter((x) => sure(x.p))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
-  const unsure = asked.filter((x) => !sure(x.p));
+  for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
+  const unsure = asked.filter((x) => !sure(x.p, x.check));
   const alone = (a: Pending) => (need(a.unit, a.check) ? s.escalations(() => (need(a.unit, a.check) ? escalate(api, s, a.unit, a.check, ctx) : Promise.resolve(undefined))) : undefined);
   if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);
   else await Promise.all(unsure.map(async (a) => done(a, await alone(a))));

@@ -436,7 +436,7 @@ test('a finding citing many long pages keeps a full excerpt of each, and its cla
   const cites = Object.keys(many).map((id) => `[${id}]`).join('');
   const ev = await evidenceFor(findings(`The harbour budget covers dredging and repairs. ${cites}`), many);
   assert.ok((ev.claim[0].state.sources as Array<{ text: string }>).every((s) => s.text.length > 3500 && s.text.length <= 4000));
-  assert.deepEqual(['supported_by_source', 'contradicted_by_source'].map((id) => reportDeclaration.checks[id].decisionModel), [false, false]);
+  assert.deepEqual(['supported_by_source', 'contradicted_by_source', 'no_self_contradiction'].map((id) => reportDeclaration.checks[id].decisionModel), [false, false, 'pass-only'], 'a self-contradiction flag goes to the judge model for its reason');
 });
 
 const PAGE = 'I. Config. Store config in the environment. There is a tendency for config files to be scattered about in different places and different formats, making it hard to see where.';
