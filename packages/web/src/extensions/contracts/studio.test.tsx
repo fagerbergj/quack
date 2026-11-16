@@ -40,11 +40,11 @@ function open(artifacts: SealedArtifact[], approvals: object[] = []) {
   return { ws, pane: contract() };
 }
 const bar = () => screen.getByRole('region', { name: 'Approval' });
-const side = (name: 'from' | 'to') => screen.getByRole('button', { name: new RegExp(`^Compare ${name}: `) });
+const side = (name: 'from' | 'to') => screen.getByRole('button', { name: new RegExp(`^Compare ${name} version: `) });
 // The versions a side's menu offers, read by opening it and closing it again.
 async function offered(name: 'from' | 'to') {
   await userEvent.click(side(name));
-  const items = within(screen.getByRole('menu', { name: `Compare ${name}` })).getAllByRole('menuitem').map((i) => i.textContent);
+  const items = within(screen.getByRole('menu', { name: `Compare ${name} version` })).getAllByRole('menuitem').map((i) => i.textContent);
   await userEvent.keyboard('{Escape}');
   return items;
 }
@@ -77,6 +77,18 @@ test('the breadcrumb names where a change is: route › parameter › part, sche
   expect(code.changes[0]!.rows).toEqual([{ was: 'number', now: 'string' }]);
 });
 
+test.each([
+  ['a person', { kind: 'person', id: 'dana' }, 'dana asked for changes to version 2.'],
+  ['the tailnet', { kind: 'tailnet' }, 'A reviewer asked for changes to version 2.'],
+] as const)('a rejection by %s says who asked, with the first two lines of the reason, and offers no Approve', async (_n, by, text) => {
+  routes[STATUS] = status([1, 'approved'], [2, 'changes_requested']);
+  routes[`GET /sessions/${KEY}/asks`] = { asks: [{ session: KEY, id: 'p/1', type: 'approval', state: 'resolved', createdAt: '2026-11-01T01:00:00.000Z', toolCall: { tool: 'propose_contract', args: { artifact: 2 } }, resolution: { by, choice: 'reject', reason: 'first\nsecond\nthird' } }] };
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
+  await waitFor(() => expect(within(bar()).getByRole('status')).toHaveTextContent(text));
+  expect(within(bar()).getByText(/first\s+second/)).not.toHaveTextContent('third');
+  expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
+});
+
 test('only a version put up for approval can be approved; every other status says why not, a verdict explaining a draft', () => {
   const v = (verdict?: Verdict | null) => ({ a: verdict === undefined ? bare(2, v2) : spec(2, v2, verdict), spec: v2 as ContractSpec });
   expect(approvalState(v(), undefined, undefined, false)).toEqual({ can: false, text: 'Reading where version 2 stands…' });
@@ -86,7 +98,7 @@ test('only a version put up for approval can be approved; every other status say
   expect(approvalState(v(), undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
   expect(approvalState(v(), undefined, undefined, true, 'proposed').can).toBe(false);
   expect(approvalState(v(), undefined, undefined, false, 'proposed').text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
-  expect(approvalState(v(), undefined, undefined, false, 'changes_requested').text).toBe('You asked for changes to version 2.');
+  expect(approvalState(v(), undefined, undefined, false, 'changes_requested').text).toBe('Someone asked for changes to version 2.');
   expect(approvalState(v(), proposal(2, 2), undefined, true, 'proposed')).toEqual({ can: true, text: 'Version 2 is up for your approval.' });
   expect(approvalState(v(), undefined, 2, false, 'approved')).toEqual({ can: false, done: true, text: 'Version 2 is approved.' });
 });
@@ -95,7 +107,7 @@ test('until the status answers, nothing is compared and no version carries a sta
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`));
   expect(within(pane).queryByText(/^Text diff from/)).toBeNull();
-  expect(side('from')).toHaveAccessibleName('Compare from: None: the whole contract');
+  expect(side('from')).toHaveAccessibleName('Compare from version: None: the whole contract');
   expect(await offered('from')).toEqual(['None: the whole contract', 'Version 2', 'Version 1']);
   expect(within(bar()).getByRole('status')).toHaveTextContent('Reading where version 2 stands…');
 });
@@ -113,12 +125,12 @@ test('the approval card reads in decision order: the checks, the breaks with the
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, [{ text: 'runs are now oldest first' }])]);
   const card = await waitFor(() => { const c = bar(); expect(within(c).getByRole('status')).toHaveTextContent('Version 2 is up for your approval.'); return c; });
   expect(within(card).getByText('Automatic checks passed')).toBeInTheDocument();
-  const breaks = within(card).getByRole('region', { name: 'Breaks' });
-  expect(breaks).toHaveTextContent('Breaks callers · 1 in the spec');
+  const breaks = within(card).getByRole('region', { name: 'Breaking changes' });
+  expect(breaks).toHaveTextContent('Breaking changes · 1 in the spec');
   expect(breaks).toHaveTextContent("The code checker found breaks in 1 route not named in the spec's breaks: runs are now oldest first");
   expect(within(card).getByRole('region', { name: 'What changed' })).toHaveTextContent('Changed from version 1 · 3');
   const order = [...card.querySelectorAll('p, h4, summary, button')].map((e) => e.textContent);
-  const seen = ['Automatic checks passed', 'Breaks callers · 1 in the spec', 'Changed from version 1 · 3', 'Approve', 'Ask for changes'].map((t) => order.indexOf(t));
+  const seen = ['Automatic checks passed', 'Breaking changes · 1 in the spec', 'Changed from version 1 · 3', 'Approve', 'Ask for changes'].map((t) => order.indexOf(t));
   expect(seen.every((i) => i >= 0)).toBe(true);
   expect(seen).toEqual(seen.toSorted((x, y) => x - y));
   expect(within(pane).getAllByText(/^Changed from version 1/), 'the view below does not repeat the card').toHaveLength(1);
@@ -153,7 +165,7 @@ test("the checker's breaks show as wrapped blocks per place, a cut one marked, a
   const long = `export "Judged": values core now produces no longer fit old consumers: ${'x'.repeat(300)}`;
   const found = [{ id: 'produced-breaks', text: long, operation: '', path: '/Judged' }, { id: 'provided-breaks', text: 'export "judged": values extensions already provide no longer fit: Type…', operation: '', path: '/judged' }];
   const { ws } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, found)]);
-  const breaks = await within(await waitFor(bar)).findByRole('region', { name: 'Breaks' });
+  const breaks = await within(await waitFor(bar)).findByRole('region', { name: 'Breaking changes' });
   expect(breaks).toHaveTextContent("The code checker found breaks in 2 routes not named in the spec's breaks: Judged, judged");
   await userEvent.click(within(breaks).getByText('Checker output (2)'));
   const blocks = [...breaks.querySelectorAll('pre')];
@@ -184,13 +196,13 @@ test('a request for an older seal than the newest says it is out of date and off
 test('each sealed draft replaces the shown one live: checking, then failed, each refused with its reason', async () => {
   routes[STATUS] = status([1, 'approved']);
   const { ws } = open([spec(1, v1), approvedRec(1, 1)]);
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to: Version 1, approved'));
+  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 1, approved'));
   expect(screen.queryByRole('region', { name: 'Approval' }), 'an approved newest version is a badge, not a bar').toBeNull();
   routes[STATUS] = status([1, 'approved'], [2, 'draft']);
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, null)] });
   expect(await within(bar()).findByText("Version 2 can't be approved yet: its checks are still running.")).toBeInTheDocument();
   expect(await within(contract()).findByText('Text diff from version 1')).toBeInTheDocument();
-  expect(side('from')).toHaveAccessibleName('Compare from: Version 1, approved');
+  expect(side('from')).toHaveAccessibleName('Compare from version: Version 1, approved');
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(contract()).toHaveTextContent('Runs from the start of the week');
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, fail)] });
@@ -225,7 +237,7 @@ const tsSpec = (version: number, document: string) => ({ kind: 'typescript', tit
 async function proposeTwo(one: object, two: object) {
   routes[STATUS] = status([1, 'approved']);
   const { ws, pane } = open([bare(1, one)]);
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to: Version 1, approved'));
+  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 1, approved'));
   routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
   ws.frame({ type: 'artifacts', artifacts: [bare(1, one), bare(2, two)] });
   ws.frame({ type: 'standing', questions: [], failures: [], approvals: [proposal(2, 2)] });
@@ -256,13 +268,13 @@ test('with no verdicts, a TypeScript contract marks the declarations that change
 test("each version is labelled by where it stands with the person, and the approval bar reads the newest one's status", async () => {
   routes[STATUS] = status([1, 'approved'], [2, 'changes_requested'], [3, 'proposed'], [4, 'draft']);
   open([bare(1, v1), approvedRec(1, 1), bare(2, v2), bare(3, v2), bare(4, v2)]);
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to: Version 2, draft 3, draft'));
-  expect(side('to')).toHaveTextContent('v2 draft 3');
+  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 2, draft 3, draft'));
+  expect(side('to').textContent).toBe('v2 draft 3');
   expect(await offered('to')).toEqual(['Version 2, draft 3#4draft, draft', 'Version 2, draft 2#3awaiting, awaiting approval', 'Version 2, draft 1#2changes asked, changes requested', 'Version 1approved, approved']);
   expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 is a draft and not up for approval.');
-  expect(side('from')).toHaveAccessibleName('Compare from: Version 1, approved');
+  expect(side('from')).toHaveAccessibleName('Compare from version: Version 1, approved');
   const v = { a: bare(2, v2), spec: v2 as ContractSpec };
-  expect(approvalState(v, undefined, undefined, false, 'changes_requested').text).toBe('You asked for changes to version 2.');
+  expect(approvalState(v, undefined, undefined, false, 'changes_requested').text).toBe('Someone asked for changes to version 2.');
   expect(approvalState(v, undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
   expect(approvalState(v, undefined, undefined, false, 'proposed').text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
   expect(approvalState(v, undefined, 2, false, 'approved').done).toBe(true);

@@ -166,7 +166,7 @@ export function Summary({ spec, told }: { spec: ContractSpec; told?: boolean }) 
   const breaks = listedBreaks(spec).length, changes = spec.changes?.length ?? 0, safe = spec.compatibility?.safe ?? [];
   return (
     <div className="flex flex-col gap-2">
-      {!told && breaks > 0 && <Fold title="Breaks callers" count={breaks}><BreakRows spec={spec} /></Fold>}
+      {!told && breaks > 0 && <Fold title="Breaking changes" count={breaks}><BreakRows spec={spec} /></Fold>}
       {!told && changes > 0 && <Fold title={`Changed from ${since(spec)}`} count={changes}><ChangeRows spec={spec} /></Fold>}
       {safe.length > 0 && <Fold title="Unchanged, checked" count={safe.length}>
         <ul className="m-0 flex list-none flex-col gap-1.5 px-4 py-3 text-sm [overflow-wrap:anywhere]">{safe.map((s) => <li key={s}><span aria-hidden="true" className="mr-2 text-success">✓</span><Inline text={s} /></li>)}</ul>

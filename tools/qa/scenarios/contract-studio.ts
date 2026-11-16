@@ -15,13 +15,13 @@ const scenario: Scenario = {
       await visible(pane.getByRole('region', { name: 'Approval' }).getByText('Version 2 is up for your approval.'));
       if (!(await pane.getByRole('button', { name: 'Approve', exact: true }).isEnabled())) throw new Error('Approve is disabled');
       // The card lists the spec's breaks and changes; the text diff since the approved version opens on request.
-      await visible(pane.getByRole('region', { name: 'Breaks' }));
+      await visible(pane.getByRole('region', { name: 'Breaking changes' }));
       await pane.getByText('Text diff from version 1').click();
       await visible(pane.getByText('GET /apps/sleeper/schedule › 200 › runs › at › type'));
       await visible(pane.locator('del').first());
       await ctx.shot(page, `studio-rest-${label}`);
-      await pane.getByRole('button', { name: /^Compare from: / }).click();
-      const labels = await pane.getByRole('menu', { name: 'Compare from' }).getByRole('menuitem').allTextContents();
+      await pane.getByRole('button', { name: /^Compare from version: / }).click();
+      const labels = await pane.getByRole('menu', { name: 'Compare from version' }).getByRole('menuitem').allTextContents();
       if (labels.join('|') !== 'None: the whole contract|Version 2awaiting, awaiting approval|Version 1approved, approved') throw new Error(`version labels: ${labels.join(', ')}`);
       await ctx.shot(page, `studio-rest-versions-${label}`);
       await page.keyboard.press('Escape');
@@ -74,7 +74,7 @@ const scenario: Scenario = {
         await page.goto(`${ctx.url}/${SCHEDULE}`);
         const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
         await bar.getByRole('button', { name: 'Approve' }).click();
-        await visible(page.getByRole('button', { name: 'Compare to: Version 2, approved' }));
+        await visible(page.getByRole('button', { name: 'Compare to version: Version 2, approved' }));
         await bar.waitFor({ state: 'detached' });
         await ctx.shot(page, 'studio-approved-1280');
       } finally {
