@@ -1,7 +1,7 @@
 // A session's lifecycle event stream for the distributor's catalog, derived from its log and kept in it: the log is the outbox.
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
-import { approvalOpenedData, Approvals, artifactDeliveredData, artifactSealedData, Artifacts, eventBytes, EVENT_MAX_BYTES, Questions, type Approval, type Principal, type Question, type SealedArtifact } from '@quack/sdk';
+import { approvalOpenedData, Approvals, artifactDeliveredData, artifactSealedData, Artifacts, eventBytes, EVENT_MAX_BYTES, Questions, SessionTitle, type Approval, type Principal, type Question, type SealedArtifact } from '@quack/sdk';
 
 /** One channel event as the lifecycle channel carries it. */
 export type WireEvent = { seq: number; id: string; at: string; type: string; data: JsonObject };
@@ -25,11 +25,6 @@ export const LifecycleStream = defineDoc<StreamDoc>({
   initial: () => ({ events: [], signatures: {}, acked: 0, runs: [] }), checkpointWhen: () => false,
 });
 
-// setDefaultSessionTitle's document: the SDK keeps its token off its public surface, so core reads the same kind with its own.
-export const SessionTitle = defineDoc<{ title: string | null; changes: number; at: number }>({
-  kind: 'quack.session-title', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
-  initial: () => ({ title: null, changes: 0, at: 0 }), checkpointWhen: () => false,
-});
 type SetTitle = ReturnType<typeof SessionTitle.definition.initial>;
 
 /** What the session knows about itself beyond its documents; read the same way by the session and by the distributor's backfill. */
