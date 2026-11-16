@@ -1,7 +1,7 @@
 import { checkFailed, type Check, type Verdict } from './api.ts';
 import { CheckRow, Pill } from './CheckList.tsx';
 
-const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
+export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
 
 // A score only when partial: a failed gate can sit beside a weighted 100%, and "100%" on a fail reads as a contradiction.
 function headline(v: Verdict, failed: number): string {
@@ -15,7 +15,7 @@ function headline(v: Verdict, failed: number): string {
 const telling = (c: Check) => c.met === null || (c.met > 0 && c.met < 1);
 
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */
-export function CheckResult({ verdict, open }: { verdict: Verdict; open: boolean }) {
+export function CheckResult({ verdict, open, summary }: { verdict: Verdict; open: boolean; summary?: string }) {
   const failed = verdict.checks.filter(checkFailed);
   const rest = verdict.checks.filter((c) => !checkFailed(c));
   const group = (title: string, checks: Check[], all: boolean) => checks.length > 0 && (
@@ -28,7 +28,7 @@ export function CheckResult({ verdict, open }: { verdict: Verdict; open: boolean
     <details open={open} className="text-[13px]">
       <summary className={`flex min-h-11 cursor-pointer list-none items-center gap-2 lg:min-h-8 [&::-webkit-details-marker]:hidden ${verdict.passed ? 'text-success' : 'text-danger'}`}>
         {chev}
-        <span>{headline(verdict, failed.length)}</span>
+        <span>{summary ?? headline(verdict, failed.length)}</span>
       </summary>
       <div className="ml-[18px] flex flex-col gap-2 text-ink">
         {group(verdict.limitReached ? 'Released with these unfixed' : 'The revision must fix', failed, true)}

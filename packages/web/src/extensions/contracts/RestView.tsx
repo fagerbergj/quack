@@ -3,74 +3,21 @@ import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
 import { DiffContext, opUnits, useAnyMark, useMark } from './diff.ts';
-import { choicesAt, Info, Inline, unplaced } from './Info.tsx';
-import { MARKED, MarkTag, SchemaTree } from './SchemaTree.tsx';
+import { choicesAt, Info, unplaced } from './Info.tsx';
+import { MarkTag, SchemaTree } from './SchemaTree.tsx';
+import { card, label, Purpose, Summary } from './Sections.tsx';
+
+export { card, label };
 import { fields, operations, paramFields, resolve, restPointers, toYaml, type Choice, type ContractSpec, type Json, type Operation } from './spec.ts';
 
 const METHOD: Record<string, string> = { GET: 'bg-link-bg text-link', POST: 'bg-success-bg text-success', DELETE: 'bg-danger-bg text-danger' };
-export const label = 'text-xs font-semibold uppercase tracking-wider text-muted';
 const dt = 'w-20 flex-none whitespace-nowrap';
-export const card = 'rounded-[18px] border border-line bg-surface';
 // The pane header's actions: one 44px icon button each, named by aria-label and title.
 const round = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 no-underline hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
 const svg = (d: string) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
 
 function Method({ m }: { m: string }) {
   return <span className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs font-semibold ${METHOD[m] ?? 'bg-warning-bg text-warning'}`}>{m}</span>;
-}
-
-// Under a comparison the Studio lists the real changes, so the agent's account of them stands back.
-export function Changes({ spec }: { spec: ContractSpec }) {
-  const byId = new Map(spec.choices.map((c) => [c.id, c]));
-  if (useContext(DiffContext) || !spec.changes?.length) return null;
-  return (
-    <section aria-label="What changed" className={`${card} overflow-hidden`}>
-      <h3 className={`m-0 px-4 py-3 font-sans ${label}`}>Changed from {spec.baseline === 'shipped' ? 'the shipped code' : `version ${spec.baseline ?? spec.version - 1}`}</h3>
-      <ul className="m-0 list-none p-0">
-        {spec.changes.map((c) => {
-          const choice = byId.get(c.choice);
-          return (
-            <li key={c.choice} className="flex items-start gap-3 border-t border-line px-4 py-3">
-              <span aria-hidden="true" className={`w-3.5 flex-none font-semibold ${c.was ? 'text-warning' : 'text-success'}`}>{c.was ? '~' : '+'}</span>
-              <span className="sr-only">{c.was ? 'Changed' : 'Added'}</span>
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-sm [overflow-wrap:anywhere]">
-                <Inline text={c.now} />
-                {c.was && <span className="text-[12.5px] text-muted">Was {c.was.charAt(0).toLowerCase() + c.was.slice(1)}</span>}
-                <span className="text-[12.5px] text-muted">{c.why}</span>
-              </span>
-              {choice && <Info choices={[choice]} />}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
-}
-
-export function Compatibility({ spec }: { spec: ContractSpec }) {
-  const c = spec.compatibility;
-  if (!c) return null;
-  return (
-    <section aria-label="Compatibility" className="flex flex-col gap-3">
-      {c.breaking.map((b, i) => {
-        const callers = [b.callers ?? []].flat();
-        return (
-          <div key={i} className="flex flex-col gap-1.5 rounded-[18px] border border-warning/40 bg-warning-bg px-4 py-3.5">
-            <h3 className="m-0 font-sans text-[14.5px] text-warning">Breaks {callers.length === 1 ? 'the current caller' : 'current callers'}</h3>
-            <p className="m-0 text-sm leading-snug text-ink-2">{b.what ?? (b as { change?: string }).change}</p>
-            <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">{callers.map((n) => <li key={n} className="rounded-full bg-surface px-2.5 py-0.5 text-xs text-ink-2">{n}</li>)}</ul>
-            {b.migration && <p className="m-0 text-[12.5px] leading-snug text-ink-2"><span className="font-semibold">Migration:</span> {b.migration}</p>}
-          </div>
-        );
-      })}
-      {c.safe.length > 0 && (
-        <div className={`${card} flex flex-col gap-2 px-4 py-3.5`}>
-          <h3 className={`m-0 font-sans ${label}`}>Checked against what you asked</h3>
-          <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-sm">{c.safe.map((s) => <li key={s}><span aria-hidden="true" className="mr-2 text-success">✓</span>{s}</li>)}</ul>
-        </div>
-      )}
-    </section>
-  );
 }
 
 const routes = (ops: Operation[]) => `${ops.length} ${ops.length === 1 ? 'route' : 'routes'}`;
@@ -180,7 +127,8 @@ export function download(body: string, type: string, filename: string) {
   URL.revokeObjectURL(a.href);
 }
 
-export type ViewProps = { spec: ContractSpec; verdict?: Verdict | null };
+// `told`: the approval card above already shows the breaks and changes.
+export type ViewProps = { spec: ContractSpec; verdict?: Verdict | null; told?: boolean };
 
 // A passed double-check is a tick beside the title; the decisions no element carries sit there too.
 export function Header({ spec, count, file, verdict, info = [] }: { spec: ContractSpec; count: string; file: { label: string; save: () => void }; verdict?: Verdict | null; info?: Choice[] }) {
@@ -200,17 +148,7 @@ export function Header({ spec, count, file, verdict, info = [] }: { spec: Contra
   );
 }
 
-export function Purpose({ spec }: { spec: ContractSpec }) {
-  const m = useMark('#purpose');
-  return (
-    <section aria-label="What it does" className={`${card} flex flex-col gap-1.5 px-4 py-3.5 ${m ? MARKED[m] : ''}`}>
-      <h3 className={`m-0 flex items-center gap-2 font-sans ${label}`}>What it does<MarkTag m={m} /></h3>
-      <div className="text-[14.5px] leading-relaxed"><Markdown text={spec.intent.purpose} /></div>
-    </section>
-  );
-}
-
-export function RestView({ spec, verdict }: ViewProps) {
+export function RestView({ spec, verdict, told }: ViewProps) {
   const [sel, setSel] = useState(0);
   const doc = spec.document as Json;
   const ops = operations(doc);
@@ -220,9 +158,8 @@ export function RestView({ spec, verdict }: ViewProps) {
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
       <Header spec={spec} count={routes(ops)} file={openapiFile(doc)} verdict={verdict} info={unplaced(spec.choices, restPointers(doc, ops))} />
-      <Changes spec={spec} />
-      <Compatibility spec={spec} />
       <Purpose spec={spec} />
+      <Summary spec={spec} told={told} />
       <div className={`grid grid-cols-1 items-start gap-4 ${many ? '@[900px]:grid-cols-[280px_minmax(0,1fr)]' : ''}`}>
         {many && <Routes ops={ops} doc={doc} sel={sel} onPick={setSel} />}
         {o && <Detail o={o} spec={spec} ctx={ctx} />}

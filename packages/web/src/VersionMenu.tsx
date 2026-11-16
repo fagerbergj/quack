@@ -1,7 +1,7 @@
 import { useMenu } from './useMenu.ts';
 
-/** One version as the picker lists it: `short` on the button ("v2"), `name` in the menu, `status` in words and as a coloured badge. */
-export type VersionItem = { id: number; short: string; name: string; status?: string; badge?: { text: string; cls: string } };
+/** One version as the picker lists it: `short` on the button ("v2"), `name` in the menu, `status` in words and as a coloured badge, `note` muted in the menu only. */
+export type VersionItem = { id: number; short: string; name: string; status?: string; badge?: { text: string; cls: string }; note?: string };
 
 const item = 'flex min-h-11 w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 text-left text-[13px] text-ink hover:bg-soft aria-[current=true]:font-semibold lg:min-h-9';
 const chevron = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>;
@@ -27,7 +27,7 @@ export function VersionMenu({ name, items, value, none, title, onPick }: { name:
           {none && <button type="button" role="menuitem" aria-current={!v || undefined} tabIndex={-1} onClick={() => choose(undefined)} className={item}>{none}</button>}
           {[...items].reverse().map((x) => (
             <button key={x.id} type="button" role="menuitem" aria-current={x === v || undefined} tabIndex={-1} onClick={() => choose(x.id)} className={item}>
-              <span className="flex-1">{x.name}</span><Badge b={x.badge} /><span className="sr-only">{x.status && `, ${x.status}`}</span>
+              <span className="flex-1">{x.name}</span>{x.note && <span className="text-[12px] text-muted">{x.note}</span>}<Badge b={x.badge} /><span className="sr-only">{x.status && `, ${x.status}`}</span>
             </button>
           ))}
         </div>
