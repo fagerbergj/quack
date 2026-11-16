@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -8,7 +8,7 @@ import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { gate } from '@quack/sdk';
-import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
+import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, withCurrentJudge, type Catalog } from '../src/index.ts';
 
 const deployment = {
   defaultModel: 'local/qwen3.8-27b',
@@ -86,6 +86,27 @@ test('a definition pinned before the judge was an extension is judged with the s
   assert.deepEqual(judgeOf({ github: { maxRevisions: 2 }, judge: { maxRevisions: 3 } }), { maxRevisions: 3 }, 'a definition naming the judge keeps its own');
   const pinned = parseDefinition({ name: 'reviewer', version: 13, model: 'local/qwen3.8-27b', extensions: { github: { maxRevisions: 2, classifier: clef } } }, parseDeployment(deployment), withJudge);
   assert.deepEqual((await agentSpec(pinned, withJudge)).extensions!.map((e) => e.name), [`judge:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`, `github:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`], 'the judge installs for it');
+});
+
+test('a pinned definition is judged with its agent\'s current judge settings and keeps the rest of its pin', async () => {
+  const clef = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const withJudge: Catalog = { ...catalog, contracts: () => [], judge: (config) => [{ name: `judge:${JSON.stringify(config)}` } as never] };
+  const dir = await mkdtemp(join(tmpdir(), 'quack-def-'));
+  try {
+    const path = join(dir, 'agent.json');
+    await writeFile(path, JSON.stringify({ name: 'contracts', version: 6, model: 'local/qwen3.8-27b', prompt: 'prompt.md', extensions: { judge: { maxRevisions: 2 }, contracts: {} } }));
+    await writeFile(join(dir, 'prompt.md'), 'Contracts v6.');
+    const current = { name: 'contracts', version: 13, model: 'local/other', extensions: { judge: { maxRevisions: 2, decisionModel: clef }, contracts: {}, coding: {} } };
+    const spec = await loadAgent(path, parseDeployment(deployment), withJudge, [], current);
+    assert.deepEqual(spec.extensions!.map((e) => e.name), [`judge:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`], 'only the judge follows v13: no coding, same model and prompt');
+    assert.equal(spec.instructions, 'Contracts v6.');
+    assert.equal(spec.model.modelId, 'qwen3.8-27b');
+    const legacy = { name: 'reviewer', version: 4, model: 'local/qwen3.8-27b', extensions: { github: { maxRevisions: 2 } } };
+    assert.equal(parseDefinition(legacy, parseDeployment(deployment), withJudge, { extensions: { github: {} } }).extensions.judge, undefined, 'a current bundle without the judge drops even settings lifted from an old pin');
+    assert.equal(referencedProviders(withCurrentJudge(JSON.parse(await readFile(path, 'utf8')), current), { ...deployment, providers: { ...deployment.providers, clef: { baseUrl: 'http://x' } } }).includes('clef'), true, 'the decision model\'s provider is resolved for the session');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {

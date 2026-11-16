@@ -258,6 +258,17 @@ function withJudge(raw: Record<string, unknown>, catalog: Catalog): Record<strin
   return { ...raw, extensions: { ...extensions, judge: JSON.parse(JSON.stringify(judge)) } };
 }
 
+/** The current bundle's agent.json of a session's agent, which the distributor writes into the session dir before each start. */
+export const CURRENT_AGENT_FILE = 'agent-current.json';
+
+// The judge gates sealed versions outside the recorded conversation, so its settings follow the agent's current bundle; the rest stays pinned.
+export function withCurrentJudge<T>(pinned: T, current: unknown): T {
+  if (!isObject(pinned) || !isObject(pinned.extensions) || !isObject(current) || !isObject(current.extensions)) return pinned;
+  const rest = Object.entries(pinned.extensions).filter(([name]) => name !== 'judge');
+  const judge = Object.hasOwn(current.extensions, 'judge') ? [['judge', current.extensions.judge]] : [];
+  return { ...pinned, extensions: Object.fromEntries([...rest, ...judge]) } as T;
+}
+
 function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
   if (!isObject(extensions)) return ['extensions must be an object of name to config'];
   const problems = Object.entries(extensions).flatMap(([name, config]) => catalog[name]
@@ -266,10 +277,10 @@ function extensionProblems(extensions: unknown, deployment: DeploymentConfig, ca
   return [...problems, ...resolveExtensions(Object.keys(extensions), catalog).problems];
 }
 
-/** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
-export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
+/** Validates an agent definition against the deployment and the catalog, reporting every problem at once; `current` is its agent's current bundle (see withCurrentJudge). */
+export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog, current?: unknown): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
-  const raw = withJudge(withDecisionModel(withoutRemoved(input)), catalog);
+  const raw = withCurrentJudge(withJudge(withDecisionModel(withoutRemoved(input)), catalog), current);
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
@@ -364,14 +375,14 @@ export async function agentSpec(def: AgentDefinition, catalog: Catalog, always: 
 }
 
 /** Reads an agent definition file and the prompt file it names (resolved beside it) into an agent spec. */
-export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog, always: DeploymentExtensions = []): Promise<AgentSpec> {
+export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog, always: DeploymentExtensions = [], current?: unknown): Promise<AgentSpec> {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
   } catch (err) {
     throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const def = parseDefinition(raw, deployment, catalog);
+  const def = parseDefinition(raw, deployment, catalog, current);
   const instructions = def.prompt ? readFileSync(resolve(dirname(path), def.prompt), 'utf8') : undefined;
   return { ...(await agentSpec(def, catalog, always)), instructions };
 }
