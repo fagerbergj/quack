@@ -44,6 +44,34 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: npm run sloplint -- diff origin/${{ github.base_ref }}
 
+  # Every rig scenario that needs no live model, so a change to text or a count a scenario asserts fails here. Not yet a required check.
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      # The contracts scenarios diff OpenAPI versions with oasdiff; keep the pin in step with the check job.
+      - run: go install github.com/oasdiff/oasdiff@v1.34.0 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - id: pw
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ steps.pw.outputs.version }}
+      - run: npx playwright install --with-deps chromium
+      - run: node tools/qa/run.ts --out qa-out
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qa-screenshots
+          path: qa-out
+          retention-days: 7
+
   # Session isolation is only provable against a real image under gVisor, so this job builds one and runs the live test.
   isolation:
     runs-on: ubuntu-latest

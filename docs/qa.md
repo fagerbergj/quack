@@ -12,7 +12,9 @@ npx playwright install chromium      # or: export QA_CHROMIUM=/path/to/chrome
 node tools/qa/run.ts --out /tmp/qa-out
 ```
 
-`run.ts` builds `packages/web` once, then for each scenario starts its own stack, runs it, and tears the stack down. Flags: `--scenario home-sessions,schedules` to pick scenarios, `--web <dist dir>` to reuse a build (or one from another branch's checkout), `--model local|none|fake` to override the scenario's model, `--out <dir>`. The exit code is non-zero if any step failed.
+CI runs the same command (job `qa` in `.github/workflows/v1.yaml`) on every pull request and trunk push, and uploads `qa-out` as the `qa-screenshots` artifact when a step fails. A step asserting text or a count the code produces therefore fails the pull request that changes it; change the assertion in the same pull request.
+
+`run.ts` builds `packages/web` once, then for each scenario starts its own stack, runs it, and tears the stack down. Flags: `--scenario home-sessions,schedules` to pick scenarios, `--web <dist dir>` to reuse a build (or one from another branch's checkout), `--model local|none|fake` to override the scenario's model (scenarios that script the fake model, and `headers`, which seeds sessions through it, need their own model, so CI does not override), `--out <dir>`. The exit code is non-zero if any step failed.
 
 ## The stack
 
@@ -44,7 +46,7 @@ node tools/qa/stack.ts down
 | `pr-live` | A github review session in the Sessions list whose badge is open after a signed `reopened` webhook, then flips to merged on a signed `closed` webhook through the app's `pull_request` stream, with no re-read, at 1280 and 400 px, light and dark |
 | `home-read-session` | The home agent's `read_session`, called through the fake model with the home session's own credential: a seeded session's sealed report leads the read in full with no messages, and a researcher session read with `messages: true` returns its last messages (no browser steps) |
 | `home-hears-runs` | With the home app mounted, home:main starts a research session through an approved `start`; when its run ends, home's conversation gets exactly one notice with the outcome, the newest result and the session link, the fake model answers it, and the notice shows in the transcript at 1280 px |
-| `judge-loop` | QA-only research agents enabling the judge (2 and 0 revisions), with the fake model writing and judging: a failing report comes back and its revision passes, a failing report at the limit goes out with its failures marked, and another seal past the limit ends the run; the passed report in its pane at 1280 px |
+| `judge-loop` | QA-only research agents enabling the judge (2 and 0 revisions), with the fake model writing and judging: a failing report comes back and its revision passes, a failing report at the limit goes out with its failures marked, and after that delivered version the first changed seal is refused and a second ends the run; the passed report in its pane at 1280 px |
 | `contracts-gate` | A QA-only contracts agent enabling the judge, with the fake model writing and judging: the passed spec is put to the person through the contracts gate after the judge's, a rejection reaches the model as feedback, and the revised version is put up again and approved, ending the run |
 | `remarkable` | The reMarkable page against the remarkable app and a canned rmfakecloud (`--apps remarkable`) listing one notebook and one folder, at 1280 and 400 px, light and dark; an ingest naming an unknown id answers a 404 problem carrying `ids`, an unknown body field is 400, and a credential-free `GET /topics` is the gateway's 401 |
 
