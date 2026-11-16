@@ -67,10 +67,11 @@ export function scheduleSpecV2(refs: Refs, callers: string[]): ContractSpec {
   return {
     ...v1,
     version: 2,
+    baseline: 1,
     document: scheduleDocument('epoch'),
     choices: v1.choices.map((c) => (c.id === 'time-format' ? { ...c, decision: 'Run times are Unix seconds.', why: [...c.why, { source: 'answer', text: 'The change request asked for epoch seconds.', ref: 'request' }] } : c)),
     changes: [{ choice: 'time-format', was: 'ISO 8601 date-time string', now: 'Unix seconds integer', why: 'The change request asked for epoch seconds.' }],
-    compatibility: { breaking: callers.length ? [{ what: 'runs[].at changes from a string to an integer', callers }] : [], safe: ['week and the other fields are unchanged'] },
+    compatibility: { breaking: callers.length ? [{ what: 'runs[].at changes from a string to an integer', callers, migration: 'Read runs[].at as Unix seconds' }] : [], safe: ['week and the other fields are unchanged'] },
   };
 }
 

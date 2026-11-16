@@ -91,7 +91,8 @@ export async function proposeVersion(sealed: SealedArtifact, api: ToolExecutionA
   if (!verdict.isError) return { text: `Version ${spec.version} is approved.` };
   const text = textOf(verdict as never);
   if (!text.startsWith('Rejected by')) return { text, isError: true };
-  return { text: `${text}. Act on what the person said, in this reason or in the message that follows it: for a change, write version ${spec.version + 1} with its changes and compatibility and call submit_contract; for a question, answer it and call submit_contract to put version ${spec.version} up again.`, isError: true };
+  const against = was ? `with baseline ${was.version} and its changes and compatibility measured against that approved version` : 'with changes and compatibility only if its baseline is "shipped", never measured against this rejected version';
+  return { text: `${text}. Act on what the person said, in this reason or in the message that follows it: for a change, write version ${spec.version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${spec.version} up again.`, isError: true };
 }
 
 /** The same proposal on demand, for the newest version. */

@@ -22,7 +22,7 @@ Check. Errors are `application/problem+json` (RFC 9457) unless the house convent
 Check. A JSON object at the top level, never a bare array. Treat objects as open for extension; clients ignore unknown fields. Use `id` as an opaque string. Dates are RFC 3339.
 
 ### compatibility
-Check. These break callers: removing or renaming a field (optional ones too), adding a required request field, changing any type (widening included, since generated code changes), changing a default, narrowing an enum or loosening it in a response without extensible semantics, tightening validation, renaming a resource, changing auth, adding paging later. Adding optional response fields, new operations and loosened input validation are safe. A breaking change names its callers.
+Check. These break callers: removing or renaming a field (optional ones too), adding a required request field, changing any type (widening included, since generated code changes), changing a default, narrowing an enum or loosening it in a response without extensible semantics, tightening validation, renaming a resource, changing auth, adding paging later. Adding optional response fields, new operations and loosened input validation are safe. Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers and one migration: what they change to keep working.
 
 ### deprecation
 Check. `deprecated: true` plus a description saying where callers go. Signal with `Deprecation` and `Sunset` headers. Watch usage before sunset; get consent from known callers first.

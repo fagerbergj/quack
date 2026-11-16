@@ -75,6 +75,24 @@ test('version 2 lists what changed, why, and the caller it breaks', async () => 
   expect(screen.getByRole('dialog', { name: 'Why: Done runs link to their result' })).toHaveTextContent('v1/packages/web/src/extensions/sleeper/Sleeper.tsx:212');
 });
 
+test('the changes name their baseline and each break its migration', () => {
+  const breaking = [{ ...v2.compatibility.breaking[0], migration: 'Read the run marked next' }];
+  render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, baseline: 'shipped', compatibility: { ...v2.compatibility, breaking } })))}</>);
+  expect(screen.getByText('Changed from the shipped code')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Compatibility' })).getByText('Read the run marked next')).toBeInTheDocument();
+});
+
+// Real stored shapes: `change` for what, callers in one string, no migration.
+test('a break sealed before the migration rule still draws', () => {
+  const breaking = [{ change: 'agent.json is closed', callers: 'The 13 bundles under agents/*/agent.json', migration: 'Delete unknown keys' }, { choice: 'errors', was: 'a', now: 'b', callers: ['repo/packages/web/src/api.ts:28'] }];
+  render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, baseline: 4, compatibility: { breaking, safe: [] } })))}</>);
+  expect(screen.getByText('Changed from version 4')).toBeInTheDocument();
+  const compat = screen.getByRole('region', { name: 'Compatibility' });
+  expect(within(compat).getByText('agent.json is closed')).toBeInTheDocument();
+  expect(within(compat).getByText('The 13 bundles under agents/*/agent.json')).toBeInTheDocument();
+  expect(within(compat).getByText('repo/packages/web/src/api.ts:28')).toBeInTheDocument();
+});
+
 test('several routes list under their tag and switch the detail', async () => {
   const spec = JSON.parse(raw(1)) as ContractSpec & { document: { paths: Record<string, unknown> } };
   spec.document.paths['/leagues/{league}/jobs/{job}'] = { post: { tags: ['Jobs'], summary: 'Starts one job.', parameters: [{ name: 'job', in: 'path', required: true, schema: { type: 'string' } }], responses: { '202': { description: 'Accepted' } } } };
