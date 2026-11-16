@@ -89,7 +89,7 @@ type Queued = {
   sessionKey: string; agent: string; requestId: string; input: string; title: string; owner: string; repo: string; number: number; at: number;
   /** The opening-card data computed for the first submission. */ meta?: object;
   role: Trigger['role'];
-  /** The head the input names; a review of it is dropped once the session's last review covers it. */ head?: string;
+  /** Set for a push input only: it is dropped once the app's last review is on this head. */ pushedHead?: string;
 };
 type WorkQueue = ReturnType<typeof waitingQueue<Queued>>;
 
@@ -139,7 +139,7 @@ async function answerRefusal(app: GithubApp, t: Trigger, upstream: Response, que
 
 // One retry of queued work: done once it started or can never start. A session still busy, or a distributor outage, waits for the next try.
 async function startQueued(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued): Promise<boolean> {
-  const stale = q.role === 'reviewer' ? await staleReason(app, q) : undefined;
+  const stale = q.role === 'reviewer' ? await staleReason(app, { ...q, head: q.pushedHead }) : undefined;
   if (stale) return console.info(`github: dropped queued review of ${q.sessionKey}: ${stale}`), true;
   const before = postedCount(state, q);
   const upstream = await submit(config, q);
@@ -173,10 +173,10 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   if (!trigger || !agent) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run.
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
-  const stale = trigger.role === 'reviewer' ? await staleReason(app, { owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, head: trigger.head }) : undefined;
+  const stale = trigger.role === 'reviewer' ? await staleReason(app, { owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, head: trigger.pushedHead }) : undefined;
   if (stale) return send(res, 200, { session: trigger.sessionKey, dropped: stale });
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
-  const queued: Queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta, role: trigger.role, head: trigger.head };
+  const queued: Queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta, role: trigger.role, pushedHead: trigger.pushedHead };
   const before = postedCount(state, queued);
   const upstream = await submit(config, queued);
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.

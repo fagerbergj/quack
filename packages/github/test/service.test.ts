@@ -344,11 +344,11 @@ function reviewedAt(sha: string) {
   return () => void reviews.splice(reviews.indexOf(mine), 1);
 }
 
-async function busyThen(url: string, svc: { sweep(): Promise<void> }, id: string, event: object, between: () => void) {
+async function busyThen(url: string, svc: { sweep(): Promise<void> }, id: string, event: object, between: () => void, name = 'pull_request') {
   busy = true;
   busyDetail = MID_RUN;
   try {
-    assert.equal(await deliver('pull_request', event, { id, to: url }), 202);
+    assert.equal(await deliver(name, event, { id, to: url }), 202);
     between();
   } finally {
     busy = false;
@@ -369,27 +369,33 @@ test('a push queued mid-review starts no second run once a review is posted on t
   }
 });
 
-test('a label re-trigger on a head the last review covers starts no run; a new head does', async () => {
+test('a label re-trigger starts a run on a reviewed head, since a person asked; a push for that head does not, a new head does', async () => {
   invocations.length = 0;
   const { svc, url } = await queuedService();
   const undo = reviewedAt('abc123');
   try {
-    assert.equal(await deliver('pull_request', labeled, { id: 'd-dup2', to: url }), 200);
-    assert.equal(invocations.length, 0);
+    assert.equal(await deliver('pull_request', labeled, { id: 'd-dup2', to: url }), 202);
+    assert.equal(await deliver('pull_request', pushed('abc123'), { id: 'd-dup5', to: url }), 200);
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-dup2']);
     assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-dup3', to: url }), 202);
-    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-dup3']);
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-dup2', 'github-delivery:d-dup3']);
   } finally {
     undo();
     svc.stop();
   }
 });
 
-test('a review input for a PR that closed or merged before it starts is dropped', async () => {
-  invocations.length = 0;
+test('a label, a push and a /review queued for a PR that closed or merged before they start are all dropped', async () => {
+  const reviewCmd = { action: 'created', issue: { ...pr, pull_request: {} }, comment: { body: '/review', author_association: 'MEMBER', user: { login: 'someone' } }, repository };
   const { svc, url } = await queuedService();
   try {
-    await busyThen(url, svc, 'd-dup4', pushed('def456'), () => { pr7State = 'closed'; });
-    assert.equal(invocations.length, 0);
+    const kinds = [['pull_request', labeled], ['pull_request', pushed('def456')], ['issue_comment', reviewCmd]] as const;
+    for (const [i, [event, payload]] of kinds.entries()) {
+      invocations.length = 0;
+      await busyThen(url, svc, `d-dup4-${i}`, payload, () => { pr7State = 'closed'; }, event);
+      assert.equal(invocations.length, 0, event + i);
+      pr7State = 'open';
+    }
   } finally {
     pr7State = 'open';
     svc.stop();
