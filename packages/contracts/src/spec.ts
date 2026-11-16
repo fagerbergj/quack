@@ -3,7 +3,9 @@
 export type Why = { source: 'answer' | 'guide' | 'code'; text: string; /** A question id, a guide rule anchor, or path:line. */ ref: string };
 export type Choice = { id: string; /** JSON pointer into `document` the choice governs; empty when spec-wide. */ pointer: string; decision: string; why: Why[] };
 export type Change = { choice: string; was: string; now: string; why: string };
-export type Compatibility = { breaking: Array<{ what: string; callers: string[] }>; safe: string[] };
+/** Required at seal since contract.spec v2; a stored entry may lack migration, say change for what, or name its callers in one string. */
+export type Breaking = { what: string; callers: string[]; migration?: string };
+export type Compatibility = { breaking: Breaking[]; safe: string[] };
 export type Intent = { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
 
 export const SPEC_KINDS = ['rest', 'json-schema', 'typescript'] as const;
@@ -17,7 +19,8 @@ export type ContractSpec = {
   /** The kind's standard document; an OpenAPI 3.1 object for rest, a JSON Schema 2020-12 schema for json-schema, the .d.ts source text for typescript. */
   document: unknown;
   choices: Choice[];
-  /** From version 2 on. */
+  /** What changes and compatibility are measured against: the last approved version's number, or 'shipped'; absent on a greenfield surface. */
+  baseline?: number | 'shipped';
   changes?: Change[];
   compatibility?: Compatibility;
 };
@@ -55,15 +58,25 @@ function choiceProblems(c: unknown, i: number): string[] {
   return out;
 }
 
-function laterVersionProblems(s: Record<string, unknown>): string[] {
+const breakingOk = (b: unknown) => isObj(b) && text(b.what) && strings(b.callers) && (b.callers as string[]).length > 0 && text(b.migration);
+
+// A revision of an approved version must change something; a spec of a shipped surface may write it down as it stands.
+function baselinedProblems(s: Record<string, unknown>): string[] {
   const out: string[] = [];
   const changes = Array.isArray(s.changes) ? s.changes : [];
-  if (!changes.length) out.push(`version ${String(s.version)} must list its changes`);
+  if (!Array.isArray(s.changes) || (typeof s.baseline === 'number' && !changes.length)) out.push(`changes must list what this version changes from its baseline (${String(s.baseline)})`);
   for (const c of changes) if (!isObj(c) || !['choice', 'was', 'now', 'why'].every((k) => text(c[k]))) out.push('each change needs choice, was, now and why');
   const c = s.compatibility;
-  if (!isObj(c) || !Array.isArray(c.breaking) || !strings(c.safe)) return [...out, 'compatibility needs breaking (what and callers) and safe'];
-  for (const b of c.breaking) if (!isObj(b) || !text(b.what) || !strings(b.callers) || !(b.callers as string[]).length) out.push('each breaking entry needs what and at least one named caller');
+  if (!isObj(c) || !Array.isArray(c.breaking) || !strings(c.safe)) return [...out, 'compatibility needs breaking (what, callers and migration) and safe'];
+  for (const b of c.breaking) if (!breakingOk(b)) out.push('each breaking entry needs what, at least one named caller, and migration: how those callers keep working');
   return out;
+}
+
+// Both sections exist exactly when a baseline does; whether a numbered baseline is approved is the judge's gate, which reads the approvals.
+function baselineProblems(s: Record<string, unknown>): string[] {
+  if (s.baseline === undefined) return s.changes === undefined && s.compatibility === undefined ? [] : ['changes and compatibility are measured against a baseline: name it in baseline (the last approved version, or "shipped" for a surface already in use), or leave both out of a greenfield contract'];
+  if (s.baseline !== 'shipped' && !(Number.isInteger(s.baseline) && (s.baseline as number) >= 1)) return ['baseline must be the number of the last approved version of this contract, or "shipped" when none is approved and the surface is already in use'];
+  return baselinedProblems(s);
 }
 
 /** Structure problems, all at once; whether refs resolve and the document is sound is the judge's gate. */
@@ -78,7 +91,7 @@ export function validateSpec(content: string): string[] {
   if (s.kind === 'typescript' ? !text(s.document) : !isObj(s.document)) out.push('document must be the OpenAPI object, the JSON Schema, or for typescript the .d.ts source text');
   if (!Array.isArray(s.choices) || !s.choices.length) out.push('choices must list every decision the spec rests on');
   else out.push(...s.choices.flatMap(choiceProblems));
-  if (s.version > 1) out.push(...laterVersionProblems(s as unknown as Record<string, unknown>));
+  out.push(...baselineProblems(s as unknown as Record<string, unknown>));
   return out;
 }
 

@@ -25,7 +25,7 @@ export function Changes({ spec }: { spec: ContractSpec }) {
   if (useContext(DiffContext) || !spec.changes?.length) return null;
   return (
     <section aria-label="What changed" className={`${card} overflow-hidden`}>
-      <h3 className={`m-0 px-4 py-3 font-sans ${label}`}>Changed from version {spec.version - 1}</h3>
+      <h3 className={`m-0 px-4 py-3 font-sans ${label}`}>Changed from {spec.baseline === 'shipped' ? 'the shipped code' : `version ${spec.baseline ?? spec.version - 1}`}</h3>
       <ul className="m-0 list-none p-0">
         {spec.changes.map((c) => {
           const choice = byId.get(c.choice);
@@ -52,13 +52,17 @@ export function Compatibility({ spec }: { spec: ContractSpec }) {
   if (!c) return null;
   return (
     <section aria-label="Compatibility" className="flex flex-col gap-3">
-      {c.breaking.map((b) => (
-        <div key={b.what} className="flex flex-col gap-1.5 rounded-[18px] border border-warning/40 bg-warning-bg px-4 py-3.5">
-          <h3 className="m-0 font-sans text-[14.5px] text-warning">Breaks {b.callers.length === 1 ? 'the current caller' : 'current callers'}</h3>
-          <p className="m-0 text-sm leading-snug text-ink-2">{b.what}</p>
-          <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">{b.callers.map((n) => <li key={n} className="rounded-full bg-surface px-2.5 py-0.5 text-xs text-ink-2">{n}</li>)}</ul>
-        </div>
-      ))}
+      {c.breaking.map((b, i) => {
+        const callers = [b.callers ?? []].flat();
+        return (
+          <div key={i} className="flex flex-col gap-1.5 rounded-[18px] border border-warning/40 bg-warning-bg px-4 py-3.5">
+            <h3 className="m-0 font-sans text-[14.5px] text-warning">Breaks {callers.length === 1 ? 'the current caller' : 'current callers'}</h3>
+            <p className="m-0 text-sm leading-snug text-ink-2">{b.what ?? (b as { change?: string }).change}</p>
+            <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">{callers.map((n) => <li key={n} className="rounded-full bg-surface px-2.5 py-0.5 text-xs text-ink-2">{n}</li>)}</ul>
+            {b.migration && <p className="m-0 text-[12.5px] leading-snug text-ink-2"><span className="font-semibold">Migration:</span> {b.migration}</p>}
+          </div>
+        );
+      })}
       {c.safe.length > 0 && (
         <div className={`${card} flex flex-col gap-2 px-4 py-3.5`}>
           <h3 className={`m-0 font-sans ${label}`}>Checked against what you asked</h3>

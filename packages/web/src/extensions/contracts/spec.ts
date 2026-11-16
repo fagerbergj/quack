@@ -8,8 +8,10 @@ export type ContractSpec = {
   intent: { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
   document: unknown;
   choices: Choice[];
+  baseline?: number | 'shipped';
   changes?: Array<{ choice: string; was: string; now: string; why: string }>;
-  compatibility?: { breaking: Array<{ what: string; callers: string[] }>; safe: string[] };
+  // Specs sealed before contract.spec v2 may say change for what, name callers in one string, and lack migration.
+  compatibility?: { breaking: Array<{ what: string; callers: string[]; migration?: string }>; safe: string[] };
 };
 
 // An OpenAPI document is walked loosely; the backend lane's checks own its validity.

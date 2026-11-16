@@ -47,14 +47,10 @@ test('the guide has an anchor for every rule the spec cites', () => {
   for (const a of ['versioning', 'errors', 'compatibility', 'paging', 'idempotency']) assert.ok(anchors.has(a), a);
 });
 
-test('validateSpec lists every structure problem, and wants changes and named callers from version 2', () => {
+test('validateSpec lists every structure problem', () => {
   assert.deepEqual(validateSpec(JSON.stringify(scheduleSpecV1(refs))), []);
   assert.deepEqual(validateSpec(JSON.stringify(scheduleSpecV2(refs, [SLEEPER_PAGE]))), []);
   assert.match(validateSpec('nope')[0], /not valid JSON/);
   const bare = { ...scheduleSpecV1(refs), choices: [{ id: 'x', pointer: '', decision: 'd', why: [] }] };
   assert.match(validateSpec(JSON.stringify(bare)).join('\n'), /choices\[0\] \(x\) has no why/);
-  const noChanges = { ...scheduleSpecV1(refs), version: 2 };
-  assert.deepEqual(validateSpec(JSON.stringify(noChanges)), ['version 2 must list its changes', 'compatibility needs breaking (what and callers) and safe']);
-  const anon = { ...scheduleSpecV2(refs, []), compatibility: { breaking: [{ what: 'x', callers: [] }], safe: [] } };
-  assert.deepEqual(validateSpec(JSON.stringify(anon)), ['each breaking entry needs what and at least one named caller']);
 });

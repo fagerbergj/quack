@@ -42,11 +42,11 @@ test("a break a rejected version introduced is named again when the next version
   assert.ok(breaking.length > 0, 'v3 is diffed against approved v1, not rejected v2');
 });
 
-// Before any approval the first passing version is what callers were first given, so breaks accumulate against it.
-test('with nothing approved, a break is diffed against the first passing version, not the last', async () => {
+// A passed draft was never given to callers, so with nothing approved there is no spec to diff against.
+test('with nothing approved, no break is diffed against an earlier passing version', async () => {
   const draft = sealed(3, { ...v2, version: 3 }, null, 50);
   const specs = [sealed(1, scheduleSpecV1(refs), true, 20), sealed(2, scheduleSpecV2(refs, [SLEEPER_PAGE]), true, 40), draft];
-  assert.ok((await breaksOf(fakeApi(specs, []), draft)).length > 0);
+  assert.deepEqual(await breaksOf(fakeApi(specs, []), draft), []);
 });
 
 test('a record that names its artifact is exact, even when a later passing draft shares its spec version', () => {

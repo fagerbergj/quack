@@ -84,7 +84,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
   return out;
 }
 
-type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility'] };
+type SpecState = { findings: Finding[]; unresolved: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, its workspace's files, and the
@@ -121,16 +121,16 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const kind = kinds[spec.kind];
   // A revision of a failing attempt is a new sealed version but the same spec version; only passed ones can be proposed, so only they count.
   const cleared = (w.kinds[CONTRACT_KIND]?.versions ?? []).slice(0, sealed.version - 1).filter((v) => (v.verdict as { passed?: boolean } | null)?.passed);
-  // Breaks are against what callers were given: the approved spec, or before any approval the first that passed.
-  const base = approvedSpec(w.kinds, w.approvals, sealed.version) ?? cleared[0];
+  // Breaks are against the approved spec only: a rejected draft is not a baseline, and shipped code has no earlier spec to diff.
+  const base = approvedSpec(w.kinds, w.approvals, sealed.version);
   const prev = base && (parseSpec(base.content) as ContractSpec);
   const [findings, unresolved, breaking] = await Promise.all([
     kind.check(spec.document),
     unresolvedLinks(spec, guideAnchors(kind.skill), w.answered, w),
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
-  const { intent, choices, document, version, compatibility } = spec;
-  const facts = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility };
+  const { intent, choices, document, version, compatibility, baseline } = spec;
+  const facts = { findings, unresolved, breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
   const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
     facts: JSON.stringify(facts),
@@ -224,6 +224,14 @@ function versionMatches(_a: string, ev: Evidence): CodeResult {
   return { met: version === expected ? 1 : 0, detail: version === expected ? undefined : `version is ${version}; this is spec version ${expected} (one more than the last delivered), so set version to ${expected}` };
 }
 
+// The seal checks the baseline's shape; only here are the approvals known. "shipped" is the author's claim, which the reviewer checks.
+function baselineMatches(_a: string, ev: Evidence): CodeResult {
+  const { baseline, approved } = state(ev);
+  if (approved !== undefined) return baseline === approved ? { met: 1 } : { met: 0, detail: `version ${approved} of this contract is approved, so set baseline to ${approved} and write changes and compatibility against it` };
+  if (typeof baseline !== 'number') return { met: 1 };
+  return { met: 0, detail: `baseline is ${baseline}, but no version of this contract is approved: set it to "shipped" if the surface is already in use, else leave baseline, changes and compatibility out` };
+}
+
 function linksResolve(_a: string, ev: Evidence): CodeResult {
   const { unresolved } = state(ev);
   return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
@@ -240,12 +248,13 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 4,
+  version: 5,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
       { id: 'document_clean', label: 'The document breaks a guide rule', weight: 'gate', code: documentSound },
       { id: 'version_matches', label: 'The version number is wrong', weight: 'gate', code: versionMatches },
+      { id: 'baseline_matches', label: 'The baseline is not the approved version', weight: 'gate', code: baselineMatches },
     ] },
     { id: 'justified', checks: [
       { id: 'links_resolve', label: "A choice's link doesn't resolve", weight: 'gate', code: linksResolve },
