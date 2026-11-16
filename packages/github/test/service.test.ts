@@ -37,6 +37,7 @@ const reviews = [
 ];
 let graphqlErrors = false;
 let pr7State = 'open';
+let pr7Merged = false;
 let scopedLifeMs = 3600_000;
 let reviewCommentsDown = false;
 const posted15: any[] = [];
@@ -74,7 +75,7 @@ const github = await listen(
     }
     if (url === '/repos/acme/widgets/pulls/7' && req.method === 'PATCH') return reply(200, { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' });
     if (url === '/repos/acme/widgets/pulls/404' && req.method === 'PATCH') return reply(404, { message: 'Not Found' });
-    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { state: pr7State, number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { state: pr7State, merged: pr7Merged,number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
     const mirrored = { html_url: `https://github.com/acme/widgets/pull/${url.split('/').at(-1)}`, title: 'Fix the cache', base: { repo: { full_name: 'acme/widgets' } } };
     if (url === '/repos/acme/widgets/pulls/9') return reply(200, { ...mirrored, number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z', closed_at: '2026-11-01T00:00:00Z' });
     if (url === '/repos/acme/widgets/pulls/10') return reply(200, { ...mirrored, number: 10, state: 'closed', merged: false, merged_at: null, closed_at: '2026-11-02T00:00:00Z' });
@@ -392,12 +393,18 @@ test('a label, a push and a /review queued for a PR that closed or merged before
     const kinds = [['pull_request', labeled], ['pull_request', pushed('def456')], ['issue_comment', reviewCmd]] as const;
     for (const [i, [event, payload]] of kinds.entries()) {
       invocations.length = 0;
-      await busyThen(url, svc, `d-dup4-${i}`, payload, () => { pr7State = 'closed'; }, event);
+      commented.length = 0;
+      await busyThen(url, svc, `d-dup4-${i}`, payload, () => { pr7State = 'closed'; pr7Merged = true; }, event);
+      await svc.sweep();
       assert.equal(invocations.length, 0, event + i);
+      // A person who asked is told once; an automatic push is dropped silently.
+      assert.deepEqual(commented.filter((c) => !c.includes('queued')), i === 1 ? [] : ['No review started: this pull request is merged.']);
       pr7State = 'open';
+      pr7Merged = false;
     }
   } finally {
     pr7State = 'open';
+    pr7Merged = false;
     svc.stop();
   }
 });

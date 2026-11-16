@@ -137,10 +137,20 @@ async function answerRefusal(app: GithubApp, t: Trigger, upstream: Response, que
   return 202;
 }
 
+// Why a review input is dropped, or undefined. A person's request (no pushedHead) for a finished PR is answered on it; a push is dropped silently.
+// shortcut: a crash between this comment and the queue's removal repeats it once on restart; the queue offers no remove-before-attempt.
+async function dropReason(app: GithubApp, q: Queued): Promise<string | undefined> {
+  if (q.role !== 'reviewer') return undefined;
+  const stale = await staleReason(app, { owner: q.owner, repo: q.repo, number: q.number, head: q.pushedHead });
+  if (!stale) return undefined;
+  console.info(`github: dropped review input for ${q.sessionKey}: ${stale.why}`);
+  if (stale.finished && !q.pushedHead) await comment(app, q, `No review started: this pull request is ${stale.finished}.`).catch((err) => console.warn(`github: could not say on ${q.sessionKey} that no review started: ${String(err)}`));
+  return stale.why;
+}
+
 // One retry of queued work: done once it started or can never start. A session still busy, or a distributor outage, waits for the next try.
 async function startQueued(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued): Promise<boolean> {
-  const stale = q.role === 'reviewer' ? await staleReason(app, { ...q, head: q.pushedHead }) : undefined;
-  if (stale) return console.info(`github: dropped queued review of ${q.sessionKey}: ${stale}`), true;
+  if (await dropReason(app, q)) return true;
   const before = postedCount(state, q);
   const upstream = await submit(config, q);
   if (upstream.ok && q.role === 'reviewer') watchRun(app, config, state, q, before);
@@ -173,10 +183,10 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   if (!trigger || !agent) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run.
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
-  const stale = trigger.role === 'reviewer' ? await staleReason(app, { owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, head: trigger.pushedHead }) : undefined;
-  if (stale) return send(res, 200, { session: trigger.sessionKey, dropped: stale });
-  const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
-  const queued: Queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), meta, role: trigger.role, pushedHead: trigger.pushedHead };
+  const queued: Queued = { sessionKey: trigger.sessionKey, agent, requestId, input: trigger.input, title: trigger.title, owner: trigger.repo.owner, repo: trigger.repo.name, number: trigger.number, at: Date.now(), role: trigger.role, pushedHead: trigger.pushedHead };
+  const dropped = await dropReason(app, queued);
+  if (dropped) return send(res, 200, { session: trigger.sessionKey, dropped });
+  queued.meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const before = postedCount(state, queued);
   const upstream = await submit(config, queued);
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.
