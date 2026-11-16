@@ -65,7 +65,8 @@ export const SDK_V2 = SDK_V1
   .replace('export interface App { handle(req: Request, res: Response): Promise<void>; pages?: PageRoute[] }', 'export interface App { handle(req: Request, res: Response): Promise<void>; stop?(): Promise<void>; pages?: PageRoute[] }');
 
 const why = [{ source: 'answer' as const, text: 'The request describes the manifest surface.', ref: 'request' }];
-export const sdkSpec = (version: number, document: string): ContractSpec => ({
+// A baseline, when given, is the approved version the changes and compatibility are measured against.
+export const sdkSpec = (version: number, document: string, baseline?: number): ContractSpec => ({
   kind: 'typescript',
   title: 'Extension SDK manifest',
   version,
@@ -76,7 +77,8 @@ export const sdkSpec = (version: number, document: string): ContractSpec => ({
     { id: 'json', pointer: '/Json', decision: 'Settings and params are plain JSON.', why },
     ...(version > 1 ? [{ id: 'stop', pointer: '/App', decision: 'An app may stop its background loops.', why }] : []),
   ],
-  ...(version > 1 && {
+  ...(baseline && {
+    baseline,
     changes: [{ choice: 'stop', was: 'Apps had no stop hook', now: 'App has an optional stop()', why: 'The distributor drains apps on shutdown.' }],
     compatibility: { breaking: [], safe: ['stop and maxTokens are optional, so existing extensions still compile'] },
   }),
@@ -85,7 +87,7 @@ export const sdkSpec = (version: number, document: string): ContractSpec => ({
 type Contract = { key: string; title: string; asks: string[]; versions: ContractSpec[]; files?: string[] };
 
 const CONTRACTS: Contract[] = [
-  { key: 'contracts:qa-sdk', title: 'Extension SDK manifest', asks: ['Define the extension SDK manifest types', 'Add an optional stop hook to App and maxTokens to models'], versions: [sdkSpec(1, SDK_V1), sdkSpec(2, SDK_V2)] },
+  { key: 'contracts:qa-sdk', title: 'Extension SDK manifest', asks: ['Define the extension SDK manifest types', 'Add an optional stop hook to App and maxTokens to models'], versions: [sdkSpec(1, SDK_V1), sdkSpec(2, SDK_V2, 1)] },
   {
     key: 'contracts:qa-schedule', title: 'Sleeper schedule endpoint', asks: ['Define GET /apps/sleeper/schedule for the Sleeper page', 'Make the run time Unix seconds'],
     versions: [scheduleSpecV1({ versioning: 'request', time: 'request' }), scheduleSpecV2({ versioning: 'request', time: 'request' }, [SLEEPER_PAGE])],
