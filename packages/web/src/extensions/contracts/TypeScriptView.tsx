@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { unplaced } from './Info.tsx';
-import { Changes, Compatibility, download, Header, Purpose, type ViewProps } from './RestView.tsx';
+import { download, Header, type ViewProps } from './RestView.tsx';
+import { Purpose, Summary } from './Sections.tsx';
 import type { Model } from './spec.ts';
 
 // The parser and the diagram layout load only when a TypeScript contract opens, side by side rather than one after the other.
@@ -26,7 +27,7 @@ const count = (src: string) => {
 const file = (src: string) => ({ label: 'contract.d.ts', save: () => download(src.endsWith('\n') ? src : `${src}\n`, 'text/plain', 'contract.d.ts') });
 const code = 'm-0 overflow-x-auto rounded-xl border border-line bg-canvas p-3 font-mono text-xs leading-relaxed whitespace-pre text-ink-2';
 
-export function TypeScriptView({ spec, verdict }: ViewProps) {
+export function TypeScriptView({ spec, verdict, told }: ViewProps) {
   const src = spec.document as string;
   const model = useModel(src);
   useEffect(() => void loadCode(), []);
@@ -36,9 +37,8 @@ export function TypeScriptView({ spec, verdict }: ViewProps) {
   return (
     <div className="@container flex min-w-0 flex-col gap-4">
       <Header spec={spec} count={count(src)} file={file(src)} verdict={verdict} info={unplaced(spec.choices, drawn)} />
-      <Changes spec={spec} />
-      <Compatibility spec={spec} />
       <Purpose spec={spec} />
+      <Summary spec={spec} told={told} />
       {model ? <Suspense fallback={plain}><CodeContract model={model} source={src} choices={spec.choices} /></Suspense> : plain}
     </div>
   );

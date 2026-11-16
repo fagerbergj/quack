@@ -22,7 +22,7 @@ type Item =
   | { k: 'prose'; key: string; text: string }
   | { k: 'error'; key: string; text: string }
   | { k: 'work'; key: string; start: number; steps: Step[] }
-  | { k: 'artifact'; key: string; a: SealedArtifact; round: number }
+  | { k: 'artifact'; key: string; a: SealedArtifact; round: number; draft?: number }
   | { k: 'earlier'; key: string }
   | { k: 'gap'; key: string; after: number; upTo: number };
 
@@ -166,7 +166,7 @@ type RowProps = { item: Item; meta: Meta; load: Load; running: boolean; onOpen: 
 function RowView({ item, meta, load, running, onOpen }: RowProps): ReactNode {
   switch (item.k) {
     case 'user': return <UserRow m={item.m} meta={meta} />;
-    case 'artifact': return <LedgerItem a={item.a} round={item.round} running={running} onOpen={onOpen} />;
+    case 'artifact': return <LedgerItem a={item.a} round={item.round} draft={item.draft} running={running} onOpen={onOpen} />;
     case 'compact': return <Compacted m={item.m} />;
     case 'prose': return <article aria-label="Assistant" className="min-w-0 text-[14.5px] leading-relaxed text-ink"><Markdown text={item.text} /></article>;
     case 'error': return <p className="m-0 text-[13px] text-danger">{`Error: ${item.text}`}</p>;
@@ -217,8 +217,8 @@ function build(view: Pick<View, 'items' | 'partial'>, artifacts: SealedArtifact[
   const waiting = ledger(artifacts);
   const seal = (until: number) => {
     while (waiting.length && waiting[0]!.a.sealedAt < until) {
-      const { a, round } = waiting.shift()!;
-      items.push({ k: 'artifact', key: `artifact:${a.kind}:${a.version}`, a, round });
+      const { a, round, draft } = waiting.shift()!;
+      items.push({ k: 'artifact', key: `artifact:${a.kind}:${a.version}`, a, round, draft });
     }
   };
   for (const x of seq) {

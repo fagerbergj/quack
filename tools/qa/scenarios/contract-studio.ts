@@ -12,10 +12,11 @@ const scenario: Scenario = {
     await eachView(ctx, 'contract beside the chat, changes since v1 highlighted, approvable', async (page, label) => {
       await page.goto(`${ctx.url}/${SCHEDULE}`);
       const pane = paneOf(page, 'Contract');
-      await visible(pane.getByRole('region', { name: 'Approval' }).getByText('Version 2 passed its checks.'));
+      await visible(pane.getByRole('region', { name: 'Approval' }).getByText('Version 2 is up for your approval.'));
       if (!(await pane.getByRole('button', { name: 'Approve', exact: true }).isEnabled())) throw new Error('Approve is disabled');
-      // The page shows what changed since the approved version, each version labelled by its status.
-      await visible(pane.getByRole('heading', { name: /^\d+ changes? since the approved version$/ }));
+      // The card lists the spec's breaks and changes; the text diff since the approved version opens on request.
+      await visible(pane.getByRole('region', { name: 'Breaks' }));
+      await pane.getByText('Text diff from version 1').click();
       await visible(pane.getByText('GET /apps/sleeper/schedule › 200 › runs › at › type'));
       await visible(pane.locator('del').first());
       await ctx.shot(page, `studio-rest-${label}`);
@@ -55,9 +56,9 @@ const scenario: Scenario = {
       const diagram = page.getByRole('region', { name: 'Class diagram' });
       await visible(diagram.getByRole('heading', { name: /around ExtensionManifest/ }));
       const pane = paneOf(page, 'Contract');
-      await visible(pane.getByRole('heading', { name: /^\d+ changes? since the approved version$/ }));
+      await pane.getByText('Text diff from version 1').click();
       await visible(pane.locator('#decl-App').getByText('New').first());
-      await pane.getByRole('region', { name: 'What changed' }).scrollIntoViewIfNeeded();
+      await pane.getByRole('list', { name: 'What changed' }).scrollIntoViewIfNeeded();
       await ctx.shot(page, `studio-ts-changes-${label}`);
       await ctx.shot(page, `studio-ts-${label}`);
       await pane.locator('#decl-App').scrollIntoViewIfNeeded();

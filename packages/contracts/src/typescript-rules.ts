@@ -54,8 +54,16 @@ function describe(n: ts.Statement): Omit<Export, 'node'>[] {
 /** Top-level exported declarations, one entry per name per statement (a type-and-const pair gives two). */
 export const exportsOf = (sf: ts.SourceFile): Export[] => sf.statements.filter((s) => isExported(s) || ts.isExportDeclaration(s)).flatMap((node) => describe(node).map((d) => ({ ...d, node })));
 
-// The probe's module paths are absolute; show them as prev. and next.
-export const oneLine = (m: string | ts.DiagnosticMessageChain) => ts.flattenDiagnosticMessageText(m, ' ').replace(/import\("[^"]*\/(prev|next)"\)\./g, '$1.').replace(/\s+/g, ' ').slice(0, 300);
+const MAX = 300;
+// A cut ends on a word and says so with an ellipsis; the budget keeps an approval's breaks under the event size cap.
+function cut(s: string) {
+  if (s.length <= MAX) return s;
+  const at = s.lastIndexOf(' ', MAX - 1);
+  return `${s.slice(0, at > MAX / 2 ? at : MAX - 1)}…`;
+}
+// The probe's module paths are absolute: show them as prev. and next, and an installed package by its name, not where it sits on disk.
+export const oneLine = (m: string | ts.DiagnosticMessageChain) => cut(ts.flattenDiagnosticMessageText(m, ' ')
+  .replace(/import\("[^"]*\/(prev|next)"\)\./g, '$1.').replace(/import\("[^"]*\/node_modules\/((?:@[^/"]+\/)?[^/"]+)[^"]*"\)\./g, '$1.').replace(/\s+/g, ' '));
 const find = (code: string, message: string, path: string): Finding => ({ code, message, path });
 const line = (sf: ts.SourceFile, pos: number) => sf.getLineAndCharacterOfPosition(pos).line + 1;
 

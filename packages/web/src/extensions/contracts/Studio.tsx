@@ -1,15 +1,16 @@
-import { createElement, useMemo, useState } from 'react';
-import { checkFailed, decideApproval, type Approval, type SealedArtifact, type Verdict } from '../../api.ts';
+import { createElement, useEffect, useMemo, useState } from 'react';
+import { checkFailed, type Approval, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import type { StudioProps } from '../../extension.ts';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
+import { Decision, type Break, type Pending } from './Approval.tsx';
 import { ChangeList } from './ChangeList.tsx';
 import { Decided, Progress } from './Progress.tsx';
 import { DiffContext, diffUnits, units, type Diff } from './diff.ts';
 import { JsonSchemaView } from './JsonSchemaView.tsx';
-import { Inline } from './Info.tsx';
-import { card, RestView } from './RestView.tsx';
+import { RestView } from './RestView.tsx';
+import { card, Fold } from './Sections.tsx';
 import { parseSpec, type ContractSpec } from './spec.ts';
 import { contractVersions, type VersionStatus } from './status.ts';
 import { TypeScriptView, useModel } from './TypeScriptView.tsx';
@@ -52,12 +53,14 @@ export function approvalState(newest: Version | undefined, proposal: Approval | 
   const n = newest.spec.version;
   if (approved === newest.a.version) return { can: false, done: true, text: `Version ${n} is approved.` };
   if (status === 'changes_requested') return { can: false, text: `You asked for changes to version ${n}.` };
-  if (proposal) return { can: true, text: `Version ${n} passed its checks.` };
+  if (proposal) return { can: true, text: `Version ${n} is up for your approval.` };
   return waiting(n, newest.a.verdict, status, running);
 }
 
 const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
-const nameOf = (v: Version, all: Version[]) => `Version ${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` (#${v.a.version})` : ''}`;
+// A person knows a version by its number; when several seals share one, each is a draft of it, counted from 1.
+const draftOf = (v: Version, all: Version[]) => { const same = all.filter((x) => x.spec.version === v.spec.version); return same.length > 1 ? same.indexOf(v) + 1 : undefined; };
+const nameOf = (v: Version, all: Version[]) => `Version ${v.spec.version}${draftOf(v, all) ? `, draft ${draftOf(v, all)}` : ''}`;
 
 // A TypeScript spec is compared through its parsed declarations, which load with the parser; until then there is no comparison.
 function useDiff(from: Version | undefined, to: Version) {
@@ -69,33 +72,16 @@ function useDiff(from: Version | undefined, to: Version) {
   }, [from, to, was, now]);
 }
 
-const btn = 'min-h-11 cursor-pointer rounded-full border-0 bg-ink px-4 text-[14px] font-semibold text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-9';
-type Break = { text: string };
-
-function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionKey: string; state: State; proposal?: Approval; decided: (id: string) => void; breaks?: Break[] }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const approve = async () => {
-    if (!proposal) return;
-    setBusy(true);
-    setError('');
-    try {
-      if (await decideApproval(sessionKey, proposal.id, 'approve')) decided(proposal.id);
-      else setError('This version was already decided, in another tab or by a message you sent. The page shows where it stands now.');
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+/** The approval card: where the newest version stands and, when it is up for approval, what the person decides on. */
+function ApproveBar({ sessionKey, state, proposal, decided, pending, stale }: { sessionKey: string; state: State; proposal?: Approval; decided: (id: string) => void; pending: Pending; stale?: string }) {
   return (
-    <section aria-label="Approval" className={`${card} sticky top-0 z-10 flex flex-col gap-2 px-4 py-3 shadow-card`}>
-      <div className="flex flex-wrap items-center gap-3">
-        <p role="status" className="m-0 min-w-0 flex-1 basis-56 text-[13.5px] text-ink-2">{state.text}</p>
-        <button type="button" disabled={!state.can || busy} onClick={() => void approve()} className={btn}>{busy ? 'Approving…' : 'Approve'}</button>
+    <section aria-label="Approval" className={`${card} flex flex-col overflow-hidden`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
+        <p role="status" className="m-0 min-w-0 flex-1 basis-56 text-[14px] font-semibold text-ink">{state.text}</p>
+        {!state.can && <button type="button" disabled className="min-h-11 cursor-not-allowed rounded-full border-0 bg-ink px-4 text-[14px] font-semibold text-on-ink opacity-50 lg:min-h-9">Approve</button>}
+        {stale && <p className="m-0 basis-full text-[13px] text-muted">{stale}</p>}
       </div>
-      {state.can && breaks && <p className="m-0 text-[12.5px] text-muted">{breaks.length ? <Inline text={`Breaks callers of the approved version, checked in code: ${breaks.map((b) => b.text).join('; ')}`} /> : 'Checked in code: nothing breaks callers of the approved version.'}</p>}
-      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+      {state.can && proposal && <Decision sessionKey={sessionKey} proposal={proposal} pending={pending} decided={decided} />}
     </section>
   );
 }
@@ -103,36 +89,50 @@ function ApproveBar({ sessionKey, state, proposal, decided, breaks }: { sessionK
 const TONE: Record<VersionStatus, [string, string]> = {
   draft: ['draft', 'bg-soft text-muted'], proposed: ['awaiting', 'bg-warning-bg text-warning'], approved: ['approved', 'bg-success-bg text-success'], changes_requested: ['changes asked', 'bg-danger-bg text-danger'],
 };
-const short = (v: Version, all: Version[]) => `v${v.spec.version}${all.filter((x) => x.spec.version === v.spec.version).length > 1 ? ` #${v.a.version}` : ''}`;
+const short = (v: Version, all: Version[]) => `v${v.spec.version}${draftOf(v, all) ? ` draft ${draftOf(v, all)}` : ''}`;
 const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => {
   const s = status?.(v);
-  return { id: v.a.version, short: short(v, versions), name: nameOf(v, versions), status: s && LABEL[s], badge: s && { text: TONE[s][0], cls: TONE[s][1] } };
+  return { id: v.a.version, short: short(v, versions), name: nameOf(v, versions), note: draftOf(v, versions) ? `#${v.a.version}` : undefined, status: s && LABEL[s], badge: s && { text: TONE[s][0], cls: TONE[s][1] } };
 });
 
 // The two versions compared on one row; once the person picks, an icon goes back to following the newest version.
 function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
   const items = itemsOf(versions, status);
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       <VersionMenu name="Compare from" items={items} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
-      <span aria-hidden="true" className="text-muted">→</span>
-      <VersionMenu name="Compare to" items={items} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
+      {/* The arrow wraps with the version it points to. */}
+      <span className="flex items-center gap-1.5"><span aria-hidden="true" className="text-muted">→</span>
+        <VersionMenu name="Compare to" items={items} value={to} onPick={(t) => pick({ from, to: t ?? to })} /></span>
       <span className="flex-1" />
       {auto === undefined && <FollowNewest onClick={() => pick(undefined)} />}
     </div>
   );
 }
 
-function Shown({ from, to, reason }: { from?: Version; to: Version; reason?: string }) {
-  const diff = useDiff(from, to);
+// The word-level diff is computed only once its section opens, or when the person picked the two versions to compare.
+function Shown({ from, to, versions, picked, told }: { from?: Version; to: Version; versions: Version[]; picked: boolean; told: boolean }) {
+  const [want, setWant] = useState(picked);
+  useEffect(() => void (picked && setWant(true)), [picked]);
+  const diff = useDiff(want ? from : undefined, to);
   return (
     <>
-      {from && diff && <ChangeList changes={diff.changes} spec={to.spec} reason={reason} />}
+      {from && (
+        <Fold title={`Text diff from ${nameOf(from, versions).toLowerCase()}`} open={want} onToggle={setWant}>
+          {diff ? <ChangeList changes={diff.changes} spec={to.spec} /> : <p className="m-0 px-4 py-3 text-[13.5px] text-muted">Comparing…</p>}
+        </Fold>
+      )}
       <DiffContext value={diff?.marks}>
-        <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[to.spec.kind], { key: to.a.version, spec: to.spec, verdict: to.a.verdict })}</ArtifactBoundary>
+        <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[to.spec.kind], { key: to.a.version, spec: to.spec, verdict: to.a.verdict, told })}</ArtifactBoundary>
       </DiffContext>
     </>
   );
+}
+
+// A request still open for an older seal than the newest, as the person should read it.
+function staleRequest(approvals: Approval[], versions: Version[], newest: Version): string | undefined {
+  const was = versions.find((v) => v !== newest && approvals.some((a) => offered(a) === v.a.version));
+  return was && `The approval request for ${nameOf(was, versions).toLowerCase()} is out of date: the agent has since written ${nameOf(newest, versions).toLowerCase()}.`;
 }
 
 const layout = 'mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5';
@@ -153,11 +153,13 @@ export function ContractStudio({ sessionKey, artifacts, approvals, running, deci
   // Until the status answers there is no approved version, so nothing is compared.
   const from = versions.find((v) => v.a.version === (picked ? picked.from : approved) && v !== to);
   const auto = picked ? undefined : 'the approved version';
+  const stale = staleRequest(approvals, versions, newest);
+  const pending = { spec: newest.spec, verdict: newest.a.verdict, found: approved === undefined ? undefined : (proposal?.args as { breaks?: Break[] } | null)?.breaks };
   return (
     <div className={layout}>
-      {!state.done && <ApproveBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} breaks={approved === undefined ? undefined : (proposal?.args as { breaks?: Break[] } | null)?.breaks} />}
+      {(!state.done || stale) && <ApproveBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} pending={pending} stale={stale} />}
       <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} auto={auto} pick={pick} />
-      <Shown from={from} to={to} reason={auto} />
+      <Shown from={from} to={to} versions={versions} picked={!!picked} told={state.can && to === newest} />
       {decisions}
     </div>
   );

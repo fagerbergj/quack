@@ -20,10 +20,11 @@ export const choicesAt = (choices: Choice[], ptr: string) => choices.filter((c) 
 /** Choices about the whole contract, or about a part the page does not draw; the title carries them so none is lost. */
 export const unplaced = (choices: Choice[], drawn: Set<string>) => choices.filter((c) => !drawn.has(c.pointer));
 
-function Reasons({ c }: { c: Choice }) {
+/** A decision and its reasons by source; `bare` leaves out the decision where the caller already shows it. */
+export function Reasons({ c, bare }: { c: Choice; bare?: boolean }) {
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="m-0 text-[14.5px] font-semibold [overflow-wrap:anywhere]"><Inline text={c.decision} /></h3>
+      {!bare && <h3 className="m-0 text-[14.5px] font-semibold [overflow-wrap:anywhere]"><Inline text={c.decision} /></h3>}
       <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
         {c.why.map((w, i) => (
           <li key={i} className="flex gap-2.5 text-[13px] leading-snug">

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { guideAnchors, kinds, lintTypeScript, specInputs, typeScriptBreaks, typescriptKind, validateSpec, type ContractSpec } from '../src/index.ts';
+import { oneLine } from '../src/typescript-rules.ts';
 
 const SURFACE = `/** Provided by each extension, read by core at boot. */
 export interface Manifest {
@@ -54,6 +55,15 @@ test('diff reports a narrowed return type against the old provider and a widened
   const narrow = '/** Core provides. */\nexport declare function f(): string;\n';
   assert.deepEqual(await breaks(wide, narrow), ["provided-breaks /f: export \"f\": values extensions already provide no longer fit: Type '() => string | number' is not assignable to type '() => string'. Type 'string | number' is not assignable to type 'string'. Type 'number' is not assignable to type 'string'."]);
   assert.deepEqual(await breaks(narrow, wide), ["produced-breaks /f: export \"f\": values core now produces no longer fit old consumers: Type '() => string | number' is not assignable to type '() => string'. Type 'string | number' is not assignable to type 'string'. Type 'number' is not assignable to type 'string'."]);
+});
+
+test('a long diagnostic is cut on a word boundary with an ellipsis, and names an installed package instead of its path on disk', () => {
+  const long = `Type '(api: import("/app/node_modules/@earendil-works/pi-durable/dist/harness/types").ToolExecutionApi) => void' is not assignable. ${'word '.repeat(80)}`;
+  const s = oneLine(long);
+  assert.ok(s.startsWith("Type '(api: @earendil-works/pi-durable.ToolExecutionApi) => void' is not assignable. word"), s);
+  assert.ok(s.length <= 300, String(s.length));
+  assert.match(s, / word…$/);
+  assert.equal(oneLine('Type  \'a\'\n is short.'), "Type 'a' is short.");
 });
 
 test('diff finds no break in a new optional field or a new export', async () => {
