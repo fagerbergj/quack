@@ -42,7 +42,7 @@ export function Contracts({ rows }: { rows: Row[] | undefined }) {
           <li key={c.key}>
             <a href={`#/s/${encodeURIComponent(c.key)}`} className="flex min-h-16 items-center gap-3 px-3 py-2 text-ink no-underline hover:bg-soft sm:px-4">
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="truncate text-[15px] font-semibold">{c.name}</span>
+                <span className="line-clamp-2 text-[15px] font-semibold [overflow-wrap:anywhere]">{c.name}</span>
                 <span className="truncate text-[13px] text-muted empty:hidden">{[c.kind, c.version && `v${c.version}`, c.note].filter(Boolean).join(' · ')}</span>
               </span>
               <span className={`flex-none rounded-full px-2.5 py-0.5 text-xs font-medium ${TONE[c.tone]}`}>{c.status}</span>

@@ -6,7 +6,8 @@ import { sessionTitle } from './kinds.ts';
 import { searchTerms, type FilterValues } from './SearchFilter.tsx';
 
 /** A session as the lists show it; `failures` are its last run's failed steps, empty while a new run works on them. */
-export type Row = Session & { failures: Failure[]; multiRepo: boolean; spend: Spend };
+/** `storedTitle` is the catalog's title when an extension displays another in `title`. */
+export type Row = Session & { failures: Failure[]; multiRepo: boolean; spend: Spend; storedTitle?: string };
 
 export const rowOf = (s: Session, multiRepo: boolean): Row =>
   ({ ...s, multiRepo, spend: spendOf(s), failures: s.state !== 'running' && s.lastRun?.outcome === 'failed' ? s.lastRun.failedSteps : [] });

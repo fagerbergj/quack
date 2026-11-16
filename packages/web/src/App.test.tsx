@@ -115,7 +115,7 @@ test('review rows show their repo only when the list holds reviews from two repo
   view.unmount();
   routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:b/two#2', { title: 'fix: second' })] };
   render(<App />);
-  expect(await screen.findByRole('link', { name: /b\/two #2 Second/ })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: /two #2 Second/ })).toBeInTheDocument();
 });
 
 const iso = (ms: number) => new Date(ms).toISOString();

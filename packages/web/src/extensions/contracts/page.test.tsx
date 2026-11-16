@@ -72,3 +72,8 @@ test('New contract asks for the description and starts the contracts agent', asy
   expect(JSON.parse(String(calls[0]![1].body))).toMatchObject({ input: 'GET /x for the page', title: 'GET /x for the page' });
   expect(location.hash).toMatch(/^#\/s\/contracts%3A/);
 });
+
+test('a long contract name wraps to two lines beside its status instead of truncating to one', () => {
+  render(<Contracts rows={[row('a')]} />);
+  expect(screen.getByText('Draft a')).toHaveClass('line-clamp-2');
+});

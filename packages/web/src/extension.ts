@@ -63,6 +63,8 @@ export type Extension = {
   wholeUnits?: string[];
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
   scope?: (key: string) => string | undefined;
+  /** Display titles by session key that replace the stored ones in lists and headers (a contract's own name); the stored title is untouched. */
+  titles?: (rows: readonly Pick<Row, 'key'>[]) => Promise<ReadonlyMap<string, string>>;
   /** A nav entry under Apps and the page it opens. */
   nav?: {
     route: string; label: string; icon: string; tint?: string; page: ComponentType<{ rows: Row[] | undefined }>;

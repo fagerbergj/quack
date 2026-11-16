@@ -35,7 +35,7 @@ export function useAction(run: () => Promise<unknown>, done: () => void) {
   return { busy, error, go };
 }
 
-export function RenameDialog({ current, save, onClose }: { current: string; save: (title: string) => Promise<unknown>; onClose: () => void }) {
+export function RenameDialog({ current, listed, save, onClose }: { current: string; listed?: boolean; save: (title: string) => Promise<unknown>; onClose: () => void }) {
   const [title, setTitle] = useState(current);
   const { busy, error, go } = useAction(() => save(title), onClose);
   return (
@@ -45,6 +45,7 @@ export function RenameDialog({ current, save, onClose }: { current: string; save
         <input autoFocus value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} className="focus-ring min-h-11 rounded-xl border border-line bg-surface px-3 text-[15px] text-ink" />
       </label>
       <p className="m-0 text-xs text-muted">Leave it empty to use the first message.</p>
+      {listed && <p className="m-0 text-xs text-muted">Lists show this session&apos;s contract name, not this title.</p>}
     </Modal>
   );
 }

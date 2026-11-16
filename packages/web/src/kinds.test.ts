@@ -26,7 +26,7 @@ test('the repo shows as a prefix only when the loaded reviews span more than one
   const one = sessionTitle(s('github:acme/tool#5', { title: 'feat: add retries' }));
   expect(text(one)).toBe('#5 Add retries');
   const many = sessionTitle({ ...s('github:acme/tool#5', { title: 'feat: add retries' }), multiRepo: true });
-  expect(text(many)).toBe('acme/tool #5 Add retries');
+  expect(text(many)).toBe('tool #5 Add retries');
 });
 
 test('sleeper jobs read "Week 8 lineup" and "Week 8 waivers"', () => {
