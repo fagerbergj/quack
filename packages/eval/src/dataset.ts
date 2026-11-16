@@ -5,10 +5,7 @@ import type { SessionRecord } from './record.ts';
 
 export type Label = 'good' | 'bad';
 
-/**
- * A recorded session as a dataset item: its inputs and pinned outside-world docs in, its sealed artifacts and verdicts out.
- * `served` are the doc kinds an eval service can replay; an extension doc outside it is left unpinned and named in `metadata.unpinned`, and a replay reads the live world for it.
- */
+/** A recorded session as a dataset item. Docs outside `served` (no eval service replays them) stay unpinned, listed in `metadata.unpinned`; a replay reads them live. */
 export function itemFrom(record: SessionRecord, opts: { agent: string; served: ReadonlySet<string>; label?: Label; note?: string }): DatasetItem {
   // Extension docs (the PR a review saw) are pinned so a replay reads the same world; harness and quack bookkeeping are not.
   const world = Object.entries(record.docs).filter(([kind]) => !/^(pi|quack)\./.test(kind));
