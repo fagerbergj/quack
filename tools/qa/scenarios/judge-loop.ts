@@ -48,17 +48,18 @@ const scenario: Scenario = {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-revise', 'qa-judge-2', 'revise');
       expect(JSON.stringify(versions.map((v) => v.verdict?.passed)) === '[false,true]', 'verdicts', versions);
       expect(/cites s2, which this session never fetched/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
-      expect(/research\.report v2: \d+% \(research\.report@\d+\), passed\. Deliver version 2\./.test(results), 'the pass note', results);
+      expect(/research\.report v2: \d+% \(research\.report@\d+\), passed\. Version 2 is final for this run; finish without revising it\./.test(results), 'the pass note', results);
     });
     await ctx.step('limit release: a failing version at the limit goes out with its failures marked', async () => {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-limit', 'qa-judge-0', 'limit');
       expect(versions.length === 1 && versions[0].verdict?.limitReached === true, 'released at the limit', versions);
       expect(/The revision limit is reached\. Deliver version 1 with these failures marked\./.test(results), 'the release note', results);
     });
-    await ctx.step('past the limit: another seal is refused and ends the run', async () => {
+    await ctx.step('past the limit: the released version is final; a change is refused, and a second one ends the run', async () => {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-past', 'qa-judge-0', 'past');
-      expect(versions.length === 2 && versions[1].verdict === null, 'v2 sealed, not judged', versions);
-      expect(/research\.report was already checked 1 times in this run, the most it gets\. Stop: this run is over\./.test(results), 'the refusal', results);
+      expect(versions.length === 1 && versions[0].verdict?.limitReached === true, 'v1 stays the only version', versions);
+      expect(/research\.report v1 is delivered, so it is final for this run and this change to artifacts\/report\.md was not sealed\./.test(results), 'the first refusal', results);
+      expect(/research\.report v1 is delivered\. A second change after it was not sealed either, so this run is over\./.test(results), 'the second refusal', results);
     });
     await ctx.step('the passed report shows its verdict beside the chat', async () => {
       const page = await ctx.browser.newPage({ viewport: { width: 1280, height: 900 } });

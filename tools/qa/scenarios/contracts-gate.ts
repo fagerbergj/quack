@@ -59,7 +59,7 @@ const scenario: Scenario = {
       const { transcript } = (await (await fetch(`${route(ctx.url)}/export`)).json()) as { transcript: unknown[] };
       const results = JSON.stringify(transcript);
       if (!/Rejected by[^"]*Add an optional stop hook to App/.test(results)) throw new Error(`no rejection fed back: ${results.slice(0, 3000)}`);
-      if (!/passed\. Deliver version \d+\.\\nVersion 2 is approved\./.test(results)) throw new Error(`no approval note: ${results.slice(0, 3000)}`);
+      if (!/passed\. Version 2 is final for this run; finish without revising it\.\\nVersion 2 is approved\./.test(results)) throw new Error(`no approval note: ${results.slice(0, 3000)}`);
       console.log(`  v2 approval ${second.id} approved; run: ${outcome.slice(0, 200)}`);
     });
   },
