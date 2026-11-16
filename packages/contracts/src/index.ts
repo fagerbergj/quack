@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { judged } from '@quack/judge';
-import { artifactsExtension, gate, sealedVersion, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { artifactsExtension, gate, sealedVersion, setDefaultSessionTitle, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { awaitingApproval, proposeVersion } from './approval.ts';
 import { contractDeclaration, contractRubric, specInputs } from './rubric.ts';
 import { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec } from './spec.ts';
@@ -32,6 +32,9 @@ async function proposeGate(event: { data: SealedArtifact }, p: { api?: ToolExecu
   if (event.data.kind !== CONTRACT_KIND) return undefined;
   const sealed = (await sealedVersion(p.api!, CONTRACT_KIND, event.data.version, p.ctx!))!;
   const v = sealed.verdict as { passed: boolean } | null;
+  const spec = parseSpec(sealed.content);
+  // A version its checks did not fail names the session, before the person is asked about it: the approval's push carries the name.
+  if (v?.passed !== false && typeof spec !== 'string') await setDefaultSessionTitle(p.api!, spec.title, p.ctx!);
   if (!v) return undefined;
   const out = v.passed ? await proposeVersion(sealed, p.api!, p.ctx!) : { text: 'This version did not pass its checks, so it cannot be put to the person for approval. Tell them what failed and ask how to go on.' };
   return 'isError' in out && out.isError ? { kind: 'continue', feedback: out.text } : { kind: 'pass', note: out.text };

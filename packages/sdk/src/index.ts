@@ -14,3 +14,4 @@ export { PageError, pageCursor } from './page.ts';
 export { isSessionKey, SESSION_KEY } from './session-key.ts';
 export { escapeTerm, unescapeTerm } from './query.ts';
 export { approvalOpenedData, artifactDeliveredData, artifactSealedData, assertSealFits, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
+export { setDefaultSessionTitle } from './title.ts';

@@ -47,6 +47,9 @@ const scenario: Scenario = {
       done = fetch(`${route(ctx.url)}/invocations?agent=qa-contracts`, { method: 'POST', body: JSON.stringify({ input: 'Define the extension SDK manifest types', wait: true }) });
       done.catch(() => undefined);
       const first = await pendingFor(ctx.url, 1);
+      // The passed spec names the session before its approval opens, so the catalog row already carries the spec's title.
+      const { title } = (await (await fetch(route(ctx.url))).json()) as { title?: string };
+      if (title !== 'Extension SDK manifest') throw new Error(`session title is ${JSON.stringify(title)}, not the spec's`);
       const res = await resolve(ctx.url, first.id, 'reject', 'Add an optional stop hook to App');
       if (!res.ok) throw new Error(`reject: ${res.status} ${await res.text()}`);
       console.log(`  v1 approval ${first.id} rejected`);

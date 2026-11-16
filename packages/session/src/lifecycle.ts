@@ -25,8 +25,15 @@ export const LifecycleStream = defineDoc<StreamDoc>({
   initial: () => ({ events: [], signatures: {}, acked: 0, runs: [] }), checkpointWhen: () => false,
 });
 
+// setDefaultSessionTitle's document: the SDK keeps its token off its public surface, so core reads the same kind with its own.
+export const SessionTitle = defineDoc<{ title: string | null; changes: number; at: number }>({
+  kind: 'quack.session-title', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  initial: () => ({ title: null, changes: 0, at: 0 }), checkpointWhen: () => false,
+});
+type SetTitle = ReturnType<typeof SessionTitle.definition.initial>;
+
 /** What the session knows about itself beyond its documents; read the same way by the session and by the distributor's backfill. */
-export type SessionFacts = { agent: string; version: number | null; createdAt: number; title?: string };
+export type SessionFacts = { agent: string; version: number | null; createdAt: number; title?: string; /** A home: standing session, which no title names. */ standing?: boolean };
 
 /** Per-million price of a `provider/modelId` key as the deployment configures it; omitted parts are free. */
 export type PriceOf = (modelKey: string) => { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined;
@@ -70,6 +77,14 @@ function questionEvents(id: string, q: Question, lastRun: number): Logical[] {
   const a = q.answer;
   if (a) return [opened, ev(`ask:resolve:${id}`, 'ask.resolved', a.at, { id, choice: a.choice, ...(a.text && { text: a.text }), ...(a.note && { reason: a.note }), by: principal(a.by) })];
   return q.closed ? [opened, ev(`ask:cancel:${id}`, 'ask.cancelled', q.askedAt, { id, run: Math.max(1, lastRun) })] : [opened];
+}
+
+// A title an extension set beats the derived one. Each change has its own id, the change's count, so it re-derives the same after
+// a restart and a recovered session re-sends only the newest; the derived title's id stays `title`.
+function titleEvents(facts: SessionFacts, set: Readonly<SetTitle> | null | undefined): Logical[] {
+  if (facts.standing) return [];
+  if (set?.title) return [ev(`title:${set.changes}`, 'title.set', set.at, { title: set.title })];
+  return facts.title ? [ev('title', 'title.set', facts.createdAt, { title: facts.title.slice(0, 120) })] : [];
 }
 
 // shortcut: a link stands in for a delivery, dated at the seal, until the SDK's deliver records where and when.
@@ -124,12 +139,13 @@ const spendEvent = (s: Spend, createdAt: number, floor: bigint): Logical => {
 export function currentEvents(rootId: string, facts: SessionFacts, docs: {
   approvals?: Readonly<{ items: Record<string, Approval> }> | null; questions?: Readonly<{ items: Record<string, Question> }> | null;
   artifacts?: Readonly<{ kinds: Record<string, { versions: SealedArtifact[] }> }> | null; runs: RunRecord[]; boots?: number[]; spend: Spend; spentMicros: bigint;
+  title?: Readonly<SetTitle> | null;
 }): Logical[] {
   const cancelledBy = new Map(docs.runs.flatMap((r) => r.cancelled.map((id) => [id, r.n] as const)));
   const lastRun = docs.runs.at(-1)?.n ?? 1;
   return [
     ev(`session:${rootId}`, 'session.created', facts.createdAt, { agent: facts.agent, version: facts.version, createdAt: iso(facts.createdAt) }),
-    ...(facts.title ? [ev('title', 'title.set', facts.createdAt, { title: facts.title.slice(0, 120) })] : []),
+    ...titleEvents(facts, docs.title),
     ...runEvents(docs.runs),
     // A process that comes up without a run is idle, whatever the catalog last held.
     ...(docs.boots ?? []).map((at, i) => ev(`state:boot:${i + 1}`, 'state.changed', at, { state: 'idle' })),
@@ -186,12 +202,12 @@ export function reportedMicros(stream: Readonly<StreamDoc>): bigint {
 export async function readStream(harness: Harness, root: Conversation, facts: SessionFacts, priceOf: PriceOf, ctx: Context) {
   const id = root.id;
   const stream = await harness.snapshot(LifecycleStream, id, ctx);
-  const [approvals, questions, artifacts] = await Promise.all([harness.snapshot(Approvals, id, ctx), harness.snapshot(Questions, id, ctx), harness.snapshot(Artifacts, id, ctx)]);
+  const [approvals, questions, artifacts, title] = await Promise.all([harness.snapshot(Approvals, id, ctx), harness.snapshot(Questions, id, ctx), harness.snapshot(Artifacts, id, ctx), harness.snapshot(SessionTitle, id, ctx)]);
   // A document never written reads as its initial value, so a stream is recorded once it holds its session.created.
   const recorded = (stream?.events.length ?? 0) > 0;
   const doc: StreamDoc = recorded ? stream! : { events: [], signatures: {}, acked: 0, runs: stream?.runs ?? [], ...(stream?.direct && { direct: stream.direct }) };
   const spend = spendOf(await harness.usage(ctx), doc.direct, priceOf);
-  const current = currentEvents(String(root.id), facts, { approvals, questions, artifacts, runs: doc.runs, boots: doc.boots, spend, spentMicros: reportedMicros(doc) });
+  const current = currentEvents(String(root.id), facts, { approvals, questions, artifacts, title, runs: doc.runs, boots: doc.boots, spend, spentMicros: reportedMicros(doc) });
   return { doc, recorded, fresh: revisions(doc, current) };
 }
 
