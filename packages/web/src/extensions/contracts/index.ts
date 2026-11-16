@@ -3,7 +3,6 @@ import type { SealedArtifact } from '../../api.ts';
 import { BLUE, plain, type Extension } from '../../extension.ts';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec } from './spec.ts';
-import { contractRecords } from './status.ts';
 import { ContractStudio, VIEWS } from './Studio.tsx';
 
 const KIND = 'contract.spec';
@@ -24,8 +23,6 @@ export const contracts: Extension = {
   // The contract is drawn beside its conversation, and approved there.
   studio: { match: (key) => key.startsWith('contracts:'), label: 'Contract', owns: (a) => a.tool === 'propose_contract', Pane: ContractStudio },
   nav: { route: 'contracts', label: 'Contracts', icon: ICON, page: Contracts },
-  // A session's stored title is its opening request; the sealed spec's own title says which contract it is.
-  titles: async (rows) => (rows.some((r) => r.key.startsWith('contracts:')) ? new Map([...(await contractRecords())].map(([k, c]) => [k, c.title])) : new Map()),
   session: {
     label: 'contract', noun: () => 'Contract', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
     name: (r) => plain(r.title ?? 'New contract'),

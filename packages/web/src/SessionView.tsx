@@ -201,8 +201,7 @@ function Title({ sessionKey, name, status, tone, spend, archived }: Facts) {
   );
 }
 
-// `stored` is the catalog title the rename edits; `listed` is true when lists show another name for the session.
-type Manage = { archived: boolean; changed: () => void; stored: string; listed: boolean };
+type Manage = { archived: boolean; changed: () => void };
 
 type Entry = { label: string; run?: () => void; href?: string; external?: boolean; danger?: boolean };
 type Link = { url: string; label: string };
@@ -423,7 +422,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
       <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} onDetails={details.show}>
         <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
-      {manage && dialog === 'rename' && <RenameDialog current={manage.stored} listed={manage.listed} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
+      {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
       {manage && dialog === 'delete' && <DeleteDialog name={name.full} remove={() => deleteSession(sessionKey)} onClose={() => setDialog(null)} onDone={() => { location.hash = '#/'; manage.changed(); }} />}
       <PaneTabs live={live} />
       <div ref={split.row} style={split.style} className="flex min-h-0 flex-1">

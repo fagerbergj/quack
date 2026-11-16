@@ -1,9 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test, vi } from 'vitest';
+import { expect, test } from 'vitest';
 import { App } from './App.tsx';
-import { EXTENSIONS } from './extensions/index.ts';
-import { loadRows } from './Workspace.tsx';
 import { FakeEventSource, FakeSocket, routes, sess, snapshot, stubViewport, useHarness } from './test-harness.ts';
 
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /artifacts': { artifacts: [] } }));
@@ -67,30 +65,12 @@ test('the bar holds only back, Details and the menu, all labelled icon buttons; 
   expect(within(bar).getByRole('menuitem', { name: 'Open on GitHub' })).toHaveAttribute('href', 'https://github.com/fagerbergj/quack/pull/2243');
 });
 
-const LONG = 'Design the JSON Schema contract (kind json-schema) for the research.report artifact, in its parsed form';
-
-test('a contract session is named by its sealed spec title, not by its long opening request', async () => {
+test("a contract session shows the catalog's title, a person's rename over the spec's name, and Rename edits that title", async () => {
   routes[`GET /sessions/contracts%3Ac9/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
   routes['GET /apps/contracts/contracts'] = { contracts: [{ key: 'contracts:c9', title: 'research.report artifact', kind: 'json-schema', draft: 2, pendingApproval: true }] };
-  const { line1 } = await header('contracts:c9', [sess('contracts:c9', { agent: 'contracts', title: LONG })]);
-  expect(line1.textContent).toBe('research.report artifact');
-});
-
-test('a rejecting titles hook leaves the list loading with stored titles', async () => {
-  const contracts = EXTENSIONS.find((e) => e.titles)!;
-  const spy = vi.spyOn(contracts, 'titles').mockRejectedValue(new Error('boom'));
-  routes['GET /sessions'] = { sessions: [sess('contracts:c9', { agent: 'contracts', title: LONG })] };
-  expect((await loadRows()).map((r) => r.title)).toEqual([LONG]);
-  spy.mockRestore();
-});
-
-test('Rename on a contract session edits the stored title and says lists show the contract name', async () => {
-  routes[`GET /sessions/contracts%3Ac9/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
-  routes['GET /apps/contracts/contracts'] = { contracts: [{ key: 'contracts:c9', title: 'research.report artifact', kind: 'json-schema', draft: 2, pendingApproval: true }] };
-  await header('contracts:c9', [sess('contracts:c9', { agent: 'contracts', title: LONG })]);
+  const { line1 } = await header('contracts:c9', [sess('contracts:c9', { agent: 'contracts', title: 'Report contract' })]);
+  expect(line1.textContent).toBe('Report contract');
   await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
-  const dialog = screen.getByRole('dialog', { name: 'Rename session' });
-  expect(within(dialog).getByLabelText('Title')).toHaveValue(LONG);
-  expect(within(dialog).getByText(/Lists show this session's contract name/)).toBeInTheDocument();
+  expect(within(screen.getByRole('dialog', { name: 'Rename session' })).getByLabelText('Title')).toHaveValue('Report contract');
 });
