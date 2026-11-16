@@ -12,7 +12,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import type { EvalAdapter } from '@quack/sdk';
-import { itemFrom, langfuse, publish, readSession, replay, replayJudge, scoresOf, summarize, type ReplayResult } from '../src/index.ts';
+import { itemFrom, langfuse, publish, readSession, replay, replayJudge, scoresOf, summarize, type ReplayResult, type SessionRecord } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -65,11 +65,11 @@ test('a recorded session reads back without resuming it, and becomes a dataset i
   assert.equal(record.turns, 3);
   assert.deepEqual(record.artifacts['test.note'].map((v) => [v.version, v.content, v.verdict]), [[1, 'v1 note', { score: 0.9, passed: true, limitReached: false }]]);
 
-  const item = itemFrom(record, { agent: 'noter', label: 'bad' });
+  const item = itemFrom(record, { agent: 'noter', served: new Set(['acme.world']), label: 'bad' });
   assert.deepEqual(item.input, { inputs: ['Write the note.'], pins: { 'acme.world': { seen: 'pr head abc' } } }, 'extension docs are pinned; pi and quack bookkeeping are not');
   assert.deepEqual((item.expectedOutput as any).artifacts['test.note'], { version: 1, content: 'v1 note', score: 0.9, passed: true, limitReached: false });
   assert.equal((item.metadata as any).label, 'bad');
-  assert.equal(item.id, itemFrom(record, { agent: 'noter' }).id, 'the id follows the inputs, so re-adding a session replaces its item');
+  assert.equal(item.id, itemFrom(record, { agent: 'noter', served: new Set(['acme.world']) }).id, 'the id follows the inputs, so re-adding a session replaces its item');
 });
 
 test('a judge replay of an earlier version shows its adapter the session only up to that version, so equal content later is not mistaken for it', async () => {
@@ -185,4 +185,16 @@ test('a run summary counts catches and false blocks only over the cases labelled
     { passed: 1, turns: 40, seconds: 400, input_tokens: 1 },
   ];
   assert.equal(summarize(rows), 'caught 1/2 bad, false blocks 1/1 good, passed 3/4, median turns 30, median seconds 300, median input_tokens 7');
+});
+
+test('a researcher session becomes an item that replays against the live web, because no service can serve its recorded fetches', async () => {
+  const sources = { sources: [{ id: 's1', url: 'https://example.com/a', fetchedAt: 5, hash: 'h1', chars: 40 }] };
+  const record = { inputs: ['What is X?'], outcome: { status: 'pending' }, turns: 1, usage: { input: 0, output: 0, cacheRead: 0 }, artifacts: {}, docs: { 'research.sources': sources, 'quack.workflow': {} }, runs: [] } as SessionRecord;
+  const item = itemFrom(record, { agent: 'researcher', served: new Set(['github.pr']) });
+  assert.deepEqual(item.input, { inputs: ['What is X?'], pins: {} });
+  assert.deepEqual((item.metadata as any).unpinned, ['research.sources'], 'the item says plainly what a replay reads live');
+  // The replay gets as far as starting a runtime (which exits on this stub) rather than refusing the item.
+  const stub = encodeURIComponent('process.stderr.write("Error: started\\n");process.exit(1)');
+  const r = await replay(item, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: `--import=data:text/javascript,${stub}` } }, []);
+  assert.match(r.error ?? '', /runtime exited with 1: Error: started/);
 });

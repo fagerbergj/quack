@@ -2,7 +2,7 @@
 //        main.ts run [--concurrency=N] <dataset> <run-name> <deployment.json> <agent.json> [item-id...]
 import { resolve } from 'node:path';
 import { loadManifests } from '@quack/runtime/catalog';
-import { adaptersOf, blocksOf } from './adapters.ts';
+import { adaptersOf, blocksOf, servicesOf } from './adapters.ts';
 import { itemFrom, type Label } from './dataset.ts';
 import { langfuse } from './langfuse.ts';
 import { readSession } from './record.ts';
@@ -12,6 +12,7 @@ import { publish, scoresOf, summarize } from './report.ts';
 
 const adapters = adaptersOf(await loadManifests());
 const blocks = blocksOf(adapters);
+const served = new Set(Object.keys(servicesOf(adapters)));
 const MIN_CASES = 20;
 
 function env(name: string): string {
@@ -34,9 +35,11 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
     const record = await readSession(dir);
     // A wrong path reads as an empty session; it must not become a benchmark case.
     if (!record.inputs.length) throw new Error(`${dir} has no recorded session`);
-    const item = itemFrom(record, { agent, label: label === '-' ? undefined : (label as Label) });
+    // Only docs an eval service replays are pinned; the rest are named in metadata.unpinned and a run reads them live.
+    const item = itemFrom(record, { agent, served, label: label === '-' ? undefined : (label as Label) });
     await lf.upsertItem(dataset, item);
-    console.log(`${item.id} ${label} ${dir}`);
+    const live = (item.metadata as { unpinned: string[] }).unpinned;
+    console.log(`${item.id} ${label} ${dir}${live.length ? ` (replays read the live world for ${live.join(', ')})` : ''}`);
   }
 } else if (command === 'run' && dataset && rest.length >= 3) {
   const [runName, deployment, agent, ...only] = rest;
