@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { openCatalog } from '@quack/catalog';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { CURRENT_AGENT_FILE, withCurrentJudge } from '@quack/session';
 import { createDistributor, sessionDirName, sessionHost, type Launch } from '../src/index.ts';
 
 const cleanups: Array<() => unknown> = [];
@@ -116,3 +117,28 @@ test('a new session checks its agent version against the hash recorded at first 
   assert.deepEqual(await readdir(dataDir), ['agent-versions']);
 });
 
+
+test('a woken session keeps its pinned bundle but judges with its agent\'s current one, and fails clearly once that bundle is removed', async () => {
+  const { driver, launches, agentsDir } = await host();
+  const bundle = async (version: number, judge: object) => {
+    await mkdir(join(agentsDir, 'contracts'), { recursive: true });
+    await writeFile(join(agentsDir, 'contracts', 'agent.json'), JSON.stringify({ name: 'contracts', version, prompt: 'prompt.md', extensions: { judge, contracts: { v: version } } }));
+    await writeFile(join(agentsDir, 'contracts', 'prompt.md'), `prompt v${version}`);
+  };
+  const clef = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  await bundle(6, { maxRevisions: 2 });
+  await driver.ensure('contracts:a', 'contracts');
+  await driver.stop('contracts:a');
+  await bundle(13, { maxRevisions: 2, decisionModel: clef });
+  await driver.ensure('contracts:a');
+  const dir = launches[1].dir;
+  const pinned = JSON.parse(await readFile(join(dir, 'agent-def', 'agent.json'), 'utf8'));
+  const runs = withCurrentJudge(pinned, JSON.parse(await readFile(join(dir, CURRENT_AGENT_FILE), 'utf8')));
+  assert.deepEqual(runs.extensions, { contracts: { v: 6 }, judge: { maxRevisions: 2, decisionModel: clef } }, 'the judge follows v13, everything else stays on v6');
+  assert.equal(await readFile(join(dir, 'agent-def', 'prompt.md'), 'utf8'), 'prompt v6');
+
+  await driver.stop('contracts:a');
+  await rm(join(agentsDir, 'contracts'), { recursive: true });
+  await assert.rejects(driver.ensure('contracts:a'), /runs agent contracts, which is no longer installed/);
+  assert.equal(launches.length, 2, 'nothing starts without the current bundle');
+});

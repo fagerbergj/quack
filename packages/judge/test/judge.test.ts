@@ -78,8 +78,8 @@ function submitThrough(opts: JudgeOptions) {
   return defineExtension({ name: 'judge-under-test', tools: [submit] });
 }
 
-async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[]) {
-  const dir = await mkdtemp(join(tmpdir(), 'quack-judge-'));
+async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[], dir?: string, request = 'review-1') {
+  dir ??= await mkdtemp(join(tmpdir(), 'quack-judge-'));
   dirs.push(dir);
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(responses);
@@ -93,10 +93,10 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
   const decisionModel = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
   const extensions = [CodingTools, artifactsExtension([review]), submitThrough({ kind: review.kind, rubric, evidence: evidence as never, maxRevisions: 2, decisionModel })];
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
-  const done = await session.submit('Review the PR.', 'review-1', true);
+  const done = await session.submit('Review the PR.', request, true);
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   await session.close();
-  return { done, versions: doc!.kinds['github.review'].versions.map((v) => v.verdict as any) };
+  return { dir, done, versions: doc!.kinds['github.review'].versions.map((v) => v.verdict as any) };
 }
 
 const tool = (name: string, args: Record<string, string>) => fauxAssistantMessage(fauxToolCall(name, args), { stopReason: 'toolUse' });
@@ -141,6 +141,18 @@ test('a unit over the decision model cap skips it and every check escalates', as
   assert.equal(clefCalls.length, 0);
   assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
   assert.equal(versions[0].passed, true);
+});
+
+test('a version judged before the session had a decision model keeps its verdict when submitted again with one, asking no model', async () => {
+  clefCalls.length = 0;
+  const content = '## Takeaway\nLooks good.\n## Verdict\napprove\n## Findings\n- nit: src/y.ts:3 rename\n';
+  const first = await run(undefined, 8192, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), yes, yes, fauxAssistantMessage('Done.')]);
+  assert.equal(first.versions[0].passed, true);
+  // The worker's script has no judge answers left, so any escalation would fail the round.
+  const again = await run(await fakeClef(() => 0.95), 8192, [tool('submit_review', {}), fauxAssistantMessage('Still v1.')], first.dir, 'review-2');
+  assert.equal(again.done.status === 'done' && again.done.answer, 'Still v1.');
+  assert.deepEqual(again.versions, first.versions, 'one version, its recorded verdict');
+  assert.equal(clefCalls.length, 0);
 });
 
 const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });

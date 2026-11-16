@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { SESSION_KEY } from '@quack/catalog';
-import { bundleProblems, childPort, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
+import { bundleProblems, CURRENT_AGENT_FILE, childPort, readExport, shellEnv, unrefTimer, type SessionExport, type SetTimer } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 import { forgetProcess, recordProcess } from './orphans.ts';
 import { keepVersion, readBundle, SAFE_NAME, STORE, versionDir, type AgentDetail, type RubricFor } from './agent-bundle.ts';
@@ -242,6 +242,16 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 
   const agentOf = (key: string) => readText(join(sessionDir(key), 'agent'));
 
+  // Before each start the session gets its agent's current agent.json, whose judge settings it runs with (withCurrentJudge).
+  async function followCurrent(key: string) {
+    const dir = sessionDir(key);
+    const name = await agentOf(key);
+    if (!name || !(await exists(join(dir, SNAPSHOT)))) return;
+    const from = await source(name, await defaultName()).catch(() => undefined);
+    if (!from) throw new AgentError(409, `session ${key} runs agent ${name}, which is no longer installed, so it has no current bundle to judge with`);
+    await cp(from, join(dir, CURRENT_AGENT_FILE));
+  }
+
   // Rewrites the snapshot and record the next start reads, so a restart resumes with the role of the latest run.
   const rebind = (key: string, name: string) => inTurn(lifecycle, key, async () => {
     const from = await source(name, await defaultName());
@@ -275,6 +285,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       if (live) return { url: Promise.resolve(live.launched.url) };
       let pending = starting.get(key);
       if (!pending) {
+        await followCurrent(key);
         pending = start(key, path).finally(() => starting.delete(key));
         starting.set(key, pending);
       }
