@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@quack/eval": "*",
-    "@quack/session": "*"
+    "@quack/session": "*",
+    "@quack/workflows": "*"
   }
 }
