@@ -206,7 +206,8 @@ export async function recordedSpecInputs(session: RecordedSession, content: stri
   if (!sealed) throw new Error('the spec is not a version this session sealed, so what stood when it was judged is unknown');
   if (!session.readFile) throw new Error('the recording keeps no workspace to resolve code refs in');
   const kinds = Object.fromEntries(Object.entries(session.artifacts).map(([k, vs]) => [k, { versions: vs.filter((v) => v.sealedAt <= sealed.sealedAt) }]));
-  const approvals = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
+  const all = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
+  const approvals = Object.fromEntries(Object.entries(all).filter(([, a]) => !a.verdict || a.verdict.at <= sealed.sealedAt));
   const questions = (session.docs['quack.questions']?.items ?? {}) as unknown as Record<string, Question>;
   // shortcut: a recording reads files but cannot list them, so its clone is taken to be repo/ as the prompt says; list it if replays need others.
   return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile, roots: ['repo', 'repo/packages'] });

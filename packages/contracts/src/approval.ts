@@ -50,8 +50,10 @@ const passed = (v: SealedArtifact) => (v.verdict as { passed?: boolean } | null)
  * matched as the last passing artifact of its spec version sealed by the time the approval was requested. */
 export function approvedSpec(all: Versions, approvals: Record<string, Approval>, before = Infinity): SealedArtifact | undefined {
   const specs = (all[CONTRACT_KIND]?.versions ?? []).filter((v) => v.version < before && passed(v));
-  for (const r of (all[APPROVED_KIND]?.versions ?? []).toReversed()) {
-    const { version, artifact, approval } = JSON.parse(r.content) as Proposed & { approval?: string };
+  const recorded = (all[APPROVED_KIND]?.versions ?? []).map((r) => JSON.parse(r.content) as Proposed & { approval?: string });
+  // A decided approval not yet written down by `reconcile` counts too, and outranks recorded ones: it was decided after the last reconcile.
+  const pending = Object.entries(approvals).filter(([id, a]) => a.tool === 'propose_contract' && a.verdict?.decision === 'approve' && !recorded.some((r) => r.approval === id));
+  for (const { version, artifact, approval } of [...recorded, ...pending.map(([approval, a]) => ({ ...(a.args as Proposed), approval }))].toReversed()) {
     const asked = (approval && approvals[approval]?.requestedAt) || Infinity;
     const hit = artifact ? specs.find((v) => v.version === artifact) : specs.findLast((v) => v.sealedAt <= asked && (parseSpec(v.content) as ContractSpec).version === version);
     if (hit) return hit;
