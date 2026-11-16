@@ -56,3 +56,13 @@ test('a record that names its artifact is exact, even when a later passing draft
   assert.equal(approvedSpec(all, history.approvals)?.version, 2);
   assert.equal(approvedSpec(all, history.approvals, 2), undefined);
 });
+
+// The person approves v2 (artifact 3) and its record is written later; a judge run between the two must already diff against v2.
+test('an approval decided but not yet recorded is already the base', async () => {
+  const approved = sealed(3, v2, true, 40);
+  const next = sealed(4, { ...v2, version: 3 }, null, 50);
+  const approvals = { ...history.approvals, a3: { ...asked(41, 'approve'), args: { version: 2, artifact: 3, hash: 'h3' } } };
+  const docs = new Map<unknown, unknown>([[Artifacts, { kinds: { 'contract.spec': { versions: [...history.specs.slice(0, 2), approved, next] }, 'contract.approved': { versions: history.approved } } }], [Approvals, { items: approvals }]]);
+  const api = { conversationId: 'c', env: undefined, snapshot: async (def: unknown) => docs.get(def) ?? { items: {} } } as never;
+  assert.deepEqual(await breaksOf(api, next), []);
+});
