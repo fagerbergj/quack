@@ -8,8 +8,8 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { defineExtension, defineTask, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
-import { EVENT_MAX_BYTES, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
-import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, startLifecycleSender } from '../src/index.ts';
+import { EVENT_MAX_BYTES, eventBytes, inProcessFetch, setDefaultSessionTitle } from '@quack/sdk';
+import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, SessionTitle, startLifecycleSender } from '../src/index.ts';
 
 const cleanups: Array<() => Promise<unknown>> = [];
 after(async () => { for (const c of cleanups.reverse()) await c(); });

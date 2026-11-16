@@ -1,7 +1,7 @@
 // A session's lifecycle event stream for the distributor's catalog, derived from its log and kept in it: the log is the outbox.
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
-import { approvalOpenedData, Approvals, artifactDeliveredData, artifactSealedData, Artifacts, eventBytes, EVENT_MAX_BYTES, Questions, SessionTitle, type Approval, type Principal, type Question, type SealedArtifact, type SessionTitleDoc } from '@quack/sdk';
+import { approvalOpenedData, Approvals, artifactDeliveredData, artifactSealedData, Artifacts, eventBytes, EVENT_MAX_BYTES, Questions, type Approval, type Principal, type Question, type SealedArtifact } from '@quack/sdk';
 
 /** One channel event as the lifecycle channel carries it. */
 export type WireEvent = { seq: number; id: string; at: string; type: string; data: JsonObject };
@@ -24,6 +24,13 @@ export const LifecycleStream = defineDoc<StreamDoc>({
   kind: 'quack.lifecycle-stream', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ events: [], signatures: {}, acked: 0, runs: [] }), checkpointWhen: () => false,
 });
+
+// setDefaultSessionTitle's document: the SDK keeps its token off its public surface, so core reads the same kind with its own.
+export const SessionTitle = defineDoc<{ title: string | null; changes: number; at: number }>({
+  kind: 'quack.session-title', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
+  initial: () => ({ title: null, changes: 0, at: 0 }), checkpointWhen: () => false,
+});
+type SetTitle = ReturnType<typeof SessionTitle.definition.initial>;
 
 /** What the session knows about itself beyond its documents; read the same way by the session and by the distributor's backfill. */
 export type SessionFacts = { agent: string; version: number | null; createdAt: number; title?: string; /** A home: standing session, which no title names. */ standing?: boolean };
@@ -74,7 +81,7 @@ function questionEvents(id: string, q: Question, lastRun: number): Logical[] {
 
 // A title an extension set beats the derived one. Each change has its own id, the change's count, so it re-derives the same after
 // a restart and a recovered session re-sends only the newest; the derived title's id stays `title`.
-function titleEvents(facts: SessionFacts, set: Readonly<SessionTitleDoc> | null | undefined): Logical[] {
+function titleEvents(facts: SessionFacts, set: Readonly<SetTitle> | null | undefined): Logical[] {
   if (facts.standing) return [];
   if (set?.title) return [ev(`title:${set.changes}`, 'title.set', set.at, { title: set.title })];
   return facts.title ? [ev('title', 'title.set', facts.createdAt, { title: facts.title.slice(0, 120) })] : [];
@@ -132,7 +139,7 @@ const spendEvent = (s: Spend, createdAt: number, floor: bigint): Logical => {
 export function currentEvents(rootId: string, facts: SessionFacts, docs: {
   approvals?: Readonly<{ items: Record<string, Approval> }> | null; questions?: Readonly<{ items: Record<string, Question> }> | null;
   artifacts?: Readonly<{ kinds: Record<string, { versions: SealedArtifact[] }> }> | null; runs: RunRecord[]; boots?: number[]; spend: Spend; spentMicros: bigint;
-  title?: Readonly<SessionTitleDoc> | null;
+  title?: Readonly<SetTitle> | null;
 }): Logical[] {
   const cancelledBy = new Map(docs.runs.flatMap((r) => r.cancelled.map((id) => [id, r.n] as const)));
   const lastRun = docs.runs.at(-1)?.n ?? 1;

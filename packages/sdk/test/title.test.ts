@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { setDefaultSessionTitle, SessionTitle, type SessionTitleDoc } from '../src/index.ts';
+import { setDefaultSessionTitle } from '../src/index.ts';
+import { SessionTitle, type SessionTitleDoc } from '../src/title.ts';
 
 // One call's view of the session: the title document a replay of the call finds as the crashed call left it.
 function callApi(doc: SessionTitleDoc, now = 0) {

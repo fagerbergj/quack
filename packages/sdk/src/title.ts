@@ -4,7 +4,8 @@ import { defineDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 // The lifecycle channel bounds title.set's title at its source.
 const TITLE_MAX = 120;
 
-/** The default title an extension set for its own session; `changes` counts the times it changed, and names its title.set. */
+/** The default title an extension set for its own session; `changes` counts the times it changed, and names its title.set.
+ * Not on the SDK's public surface: core reads the document by its kind (packages/session/src/lifecycle.ts). */
 export type SessionTitleDoc = { title: string | null; changes: number; at: number };
 
 export const SessionTitle = defineDoc<SessionTitleDoc>({
