@@ -48,6 +48,7 @@ function fakeDocker(sessionUrl: string) {
     }
     if (method === 'POST' && route.endsWith('/start')) return containers.get(name)!.started = true, { status: 204, body: undefined };
     if (method === 'POST' && route.endsWith('/wait')) {
+      if (!containers.has(name)) return { status: 404, body: { message: `No such container: ${name}` } };
       await new Promise<void>((r) => waiters.set(name, [...(waiters.get(name) ?? []), r]));
       return { status: 200, body: { StatusCode: 0 } };
     }
@@ -249,6 +250,38 @@ test('a stopped session loses its token', async () => {
   assert.notEqual(await status(), 401);
   await driver.stop('a');
   assert.equal(await status(), 401);
+});
+
+// #2342: a deploy restarts the docker gate while the old distributor still runs, which drops every removal wait.
+test('a dropped removal wait leaves the running session its token and its container; only the real removal ends them', async () => {
+  const { docker } = await setup();
+  const broker = credentialBroker();
+  let token = '';
+  const mint = broker.mint;
+  broker.mint = (key) => (token = mint(key));
+  let dropWait: (err: Error) => void = () => {};
+  let gateDown = true;
+  const gate: DockerCall = async (method, path, body) => {
+    if (!path.includes('/wait?') || !gateDown) return docker.api(method, path, body);
+    return new Promise((_resolve, reject) => (dropWait = reject));
+  };
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
+  const launch = dockerLauncher({ api: gate, broker, image: 'i', runtime: 'runsc', network: 'n', data: { hostDir: '/h' }, distributorUrl: 'http://d', inherit: () => ({}), urlFor: () => docker.sessionUrl, sleep: async () => {}, startTimeoutMs: 1000 });
+  const exits: string[] = [];
+  const driver = sessionHost({ dataDir, onExit: (key) => exits.push(key) }, launch);
+  await driver.ensure('a');
+  const [container] = [...docker.containers.values()];
+  gateDown = false;
+  dropWait(new Error('socket hang up'));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(broker.sessionOf(token), 'a', 'the session still holds its launch credential');
+  assert.deepEqual(exits, [], 'no exit is reported for a container that is still running');
+  assert.equal(docker.containers.get(container.name), container, 'the running container is not replaced');
+  container.exit();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(broker.sessionOf(token), undefined);
+  assert.deepEqual(exits, ['a']);
 });
 
 test('a container that exits while starting fails the start and leaves no token', async () => {
