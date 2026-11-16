@@ -163,12 +163,14 @@ async function rmfakecloudEnv(parts: Parts, opts: StackOpts): Promise<Record<str
 
 const ATTEMPTS = 3;
 
-/** Launches the distributor on a free port and waits until it serves; another process can take the port (or port+1, its session port) between freePort and listen, so a distributor that exits first is relaunched on a new one. */
+/** Launches the distributor on a free port and waits until it serves; another process can still take either port between freePort and listen, so a distributor that exits first is relaunched on a new one. */
 export async function startDistributor(parts: Parts, env: Record<string, string>, next = freePort): Promise<string> {
   for (let attempt = 1; ; attempt++) {
-    const port = await next();
+    // The distributor defaults its session port to port+1, which nothing proved free, so both are drawn here.
+    const [port, sessionPort] = [await next(), await next()];
+    if (port === sessionPort) continue;
     const url = `http://127.0.0.1:${port}`;
-    const child = launch(parts, ['packages/distributor/src/main.ts'], { ...env, PORT: String(port) });
+    const child = launch(parts, ['packages/distributor/src/main.ts'], { ...env, PORT: String(port), QUACK_SESSION_PORT: String(sessionPort) });
     const exited = () => child.exitCode !== null || child.signalCode !== null;
     // Bounded: whatever holds the port may never answer, and the child's exit must still be noticed.
     await waitFor(async () => exited() || (await fetch(`${url}/version`, { signal: AbortSignal.timeout(1000) })).ok, 'the distributor');

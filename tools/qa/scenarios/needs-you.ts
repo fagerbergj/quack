@@ -7,7 +7,8 @@ const NOTE = 'Only past the free tier.';
 // The first answer stands, so the seeded question is answered once, on a phone.
 const scenario: Scenario = {
   name: 'needs-you',
-  stack: { seed: 'artifacts' },
+  // Home lists contracts too, so that app is mounted; without it the page logs a 404.
+  stack: { seed: 'artifacts', apps: ['contracts'] },
   async run(ctx) {
     await ctx.step('Home answers a waiting question with an option and a note @pixel7-dark', async () => {
       const context = await ctx.browser.newContext({ ...devices['Pixel 7'], colorScheme: 'dark' });
