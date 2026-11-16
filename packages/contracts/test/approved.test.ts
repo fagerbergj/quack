@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { Approvals, Artifacts, type Approval, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from '../src/approval.ts';
-import { specInputs, type ContractSpec } from '../src/index.ts';
+import { recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
 
 const refs = { versioning: 'request', time: 'request' };
@@ -65,4 +65,17 @@ test('an approval decided but not yet recorded is already the base', async () =>
   const docs = new Map<unknown, unknown>([[Artifacts, { kinds: { 'contract.spec': { versions: [...history.specs.slice(0, 2), approved, next] }, 'contract.approved': { versions: history.approved } } }], [Approvals, { items: approvals }]]);
   const api = { conversationId: 'c', env: undefined, snapshot: async (def: unknown) => docs.get(def) ?? { items: {} } } as never;
   assert.deepEqual(await breaksOf(api, next), []);
+});
+
+// A replay shows what stood when the spec was sealed: an approval decided later is not its base.
+test('a replay uses an unrecorded approval only if it was decided before the spec was sealed', async () => {
+  const next = sealed(4, { ...v2, version: 3 }, null, 50);
+  const breaksAt = async (decidedAt: number) => {
+    const approvals = { ...history.approvals, a3: { ...asked(decidedAt - 1, 'approve'), args: { version: 2, artifact: 3, hash: 'h3' }, verdict: { decision: 'approve', by: 'jf', reason: null, at: decidedAt } } };
+    const artifacts = { 'contract.spec': [...history.specs.slice(0, 3), next], 'contract.approved': history.approved };
+    const inputs = await recordedSpecInputs({ docs: { 'quack.approvals': { items: approvals } }, artifacts, readFile: async () => undefined } as never, next.content);
+    return (JSON.parse(inputs.facts) as { breaking: unknown[] }).breaking;
+  };
+  assert.deepEqual(await breaksAt(45), []);
+  assert.ok((await breaksAt(60)).length > 0, 'decided after the seal, so v1 is still the base');
 });
