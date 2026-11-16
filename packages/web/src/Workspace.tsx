@@ -14,8 +14,12 @@ export async function loadRows(q?: string): Promise<Row[]> {
   const sessions = (await listSessions(q)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.key.localeCompare(b.key));
   // A repo prefix only earns its space when reviews come from more than one repo.
   const multiRepo = multiScope(sessions.map((s) => s.key));
-  const shown = new Map((await Promise.all(EXTENSIONS.map((e) => e.titles?.(sessions) ?? []))).flatMap((m) => [...m]));
-  return sessions.map((s) => rowOf({ ...s, title: shown.get(s.key) ?? s.title }, multiRepo));
+  // One extension's failure costs its display titles, not the list.
+  const shown = new Map((await Promise.all(EXTENSIONS.map((e) => e.titles?.(sessions).catch(() => []) ?? []))).flatMap((m) => [...m]));
+  return sessions.map((s) => {
+    const display = shown.get(s.key);
+    return { ...rowOf({ ...s, title: display ?? s.title }, multiRepo), ...(display !== undefined && { storedTitle: s.title ?? '' }) };
+  });
 }
 
 export function useWorkspaceData() {
@@ -51,7 +55,7 @@ export function Workspace({ data, selected, home, list }: { data: WorkspaceData;
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} spend={row?.spend} about={row && { agent: row.agent, created: row.createdAt, activity: row.lastActivity }} manage={row && { archived: row.state === 'archived', changed: data.reload }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '' })} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} spend={row?.spend} about={row && { agent: row.agent, created: row.createdAt, activity: row.lastActivity }} manage={row && { archived: row.state === 'archived', changed: data.reload, stored: row.storedTitle ?? row.title ?? '', listed: row.storedTitle !== undefined }} name={headerName(selected.key, row ?? { key: selected.key, agent: selected.agent ?? '' })} />
       ) : (
         <div className="overflow-y-auto">
           <Home rows={data.rows?.filter((r) => r.state !== 'archived')} error={data.error} now={data.now} reload={data.reload} />
