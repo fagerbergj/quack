@@ -48,6 +48,26 @@ test('an oversize body leaves the kept-alive connection usable for the next requ
   }
 });
 
+test('a large reply is gzipped for a client that accepts it and left plain for one that does not', async () => {
+  const s = await serve({ token: 't' });
+  const body = JSON.stringify({ x: 'a'.repeat(5000) });
+  const get = (encoding: string) => new Promise<{ encoding?: string | string[]; bytes: number }>((resolve, reject) => {
+    request(s.url, { method: 'POST', headers: { 'accept-encoding': encoding, authorization: 'Bearer t' } }, (res) => {
+      let bytes = 0;
+      res.on('data', (c: Buffer) => (bytes += c.length)).on('end', () => resolve({ encoding: res.headers['content-encoding'], bytes }));
+    }).on('error', reject).end(body);
+  });
+  try {
+    const zipped = await get('gzip, br');
+    assert.equal(zipped.encoding, 'gzip');
+    assert.ok(zipped.bytes < 500);
+    assert.equal((await get('identity')).encoding, undefined);
+    assert.deepEqual(await (await fetch(s.url, { method: 'POST', headers: { authorization: 'Bearer t' }, body })).json(), { b: { x: 'a'.repeat(5000) } });
+  } finally {
+    s.close();
+  }
+});
+
 test('safeEqual is false for different lengths and values', () => {
   assert.equal(safeEqual('abc', 'abc'), true);
   assert.equal(safeEqual('abc', 'abd'), false);
