@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { derivations, figures, figuresClash, namesClash, numberWords, recomputes, sameValue } from './claims.ts';
+import { derivations, figures, figuresClash, namesClash, numberWords, recomputes, sameValue, type Figure } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -394,7 +394,9 @@ function derivedInputsTraced(artifact: string, ev: Evidence): CodeResult {
   const derived = stated.flatMap((s) => derivations(s.text));
   // A result whose inputs trace traces too, so a later sentence may restate it; a second pass reaches results built on results.
   for (const d of [...derived, ...derived]) if (recomputes(d) && d.inputs.every(traced)) known.push(d.shown);
-  const all = stated.flatMap((s) => figures(s.text).map((f) => ({ value: f.value, at: s.text })));
+  // "0U" names a mounting style (a zero-U PDU rides the rails), not a quantity taken from anywhere.
+  const zeroU = (f: Figure) => Number(f.value) === 0 && (f.unit.has('u') || f.unit.has('ru'));
+  const all = stated.flatMap((s) => figures(s.text).filter((f) => !zeroU(f)).map((f) => ({ value: f.value, at: s.text })));
   const loose = all.filter((f) => !traced(f.value));
   // The owner's rule counts a figure from the request as untraced too; it is named apart so a reader can tell the two kinds of gap.
   const asked = figures(String(ev.request?.[0]?.state.request ?? '')).map((f) => f.value);

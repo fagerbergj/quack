@@ -79,3 +79,7 @@ test('derived_inputs_traced: a unit hyphened onto its number in a finding ("10-f
 test('derived_inputs_traced: a count a finding writes as a word ("Eight fans") is the figure a derived sentence writes in numerals', () => {
   assert.equal(traced('Run those 8 door fans as intake.', '- Eight high-performance fans are built into the door. [s1]').met, 1);
 });
+
+test('derived_inputs_traced: "0U" names a zero-U PDU, not a figure to trace', () => {
+  assert.equal(traced('Leave room for a vertical 0U PDU on a rail.', '- The cabinet has 4 rails. [s1]').met, 1);
+});
