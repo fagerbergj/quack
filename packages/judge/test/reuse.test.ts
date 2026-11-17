@@ -1,0 +1,204 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { PASS_ONLY, type Declaration, type Question } from '../src/declaration.ts';
+import { rejudge, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
+import { PROMPT_VERSION } from '../src/resolve.ts';
+import { ReuseDoc, reuseKey } from '../src/reuse.ts';
+
+type Clef = (row: string) => number | 'error';
+type Judge = (row: string) => string | 'error';
+
+// One session's api as the judge sees it across rounds: the reuse store survives between calls, while each round
+// uses a memo of its own, as a new tool call does. The decision model answers a lone row by `clef`; the judge model by `judge`.
+function sessionApi(clef: Clef, judge: Judge) {
+  const store = { answers: {} as Record<string, { met: boolean; resolver: string; note?: string; version: number }> };
+  const memos = new Map<string, unknown>();
+  const seen = { clef: [] as string[], judge: [] as string[], commits: 0 };
+  const rowsOf = (text: string) => [...text.matchAll(/"id": "(\w+)"/g)].map((m) => m[1]);
+  const api = {
+    conversationId: 'c',
+    now: () => 0,
+    async memo(name: string, ...rest: unknown[]) {
+      if (rest.length === 2 && !memos.has(name)) memos.set(name, rest[0]);
+      return memos.get(name);
+    },
+    snapshot: async (doc: unknown) => (doc === ReuseDoc ? structuredClone(store) : undefined),
+    commit: async (change: (tx: unknown) => Promise<unknown>) => (seen.commits++, change({ doc: async () => store })),
+    agent: async () => ({}),
+    models: {
+      getAllModels: () => [{ id: 'clef', type: 'classifier' }],
+      classify: async (_m: unknown, req: { state: { row?: { id: string }; items?: Array<{ row: { id: string } }> }; questions: Record<string, unknown> }) => {
+        const rows = req.state.items ? req.state.items.map((it) => it.row.id) : [req.state.row!.id];
+        seen.clef.push(...rows);
+        if (rows.some((r) => clef(r) === 'error')) return { stopReason: 'error', answers: {} };
+        return { stopReason: 'stop', answers: Object.fromEntries(Object.keys(req.questions).map((q, n) => [q, { type: 'bool', probability: clef(rows[n] ?? rows[0]) }])) };
+      },
+      getModel: (provider: string, id: string) => ({ provider, id }),
+      completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+        const prompt = r.messages[0].content;
+        const rows = prompt.startsWith('Evidence:') ? [...prompt.matchAll(/^- q\d+: About items\[\d+\] \(rows (\w+)\)/gm)].map((m) => m[1]) : rowsOf(prompt);
+        seen.judge.push(...rows);
+        const replies = rows.map((row) => judge(row));
+        if (replies.includes('error')) return { stopReason: 'error', content: [] };
+        const text = prompt.startsWith('Evidence:') ? `{${replies.map((t, n) => (t.startsWith('{') ? `"q${n}": ${t}` : '')).filter(Boolean).join(', ')}}` : replies[0];
+        return { stopReason: 'stop', content: [{ type: 'text', text }] };
+      },
+    },
+  };
+  return { api: api as never, store, seen };
+}
+
+const said = (choice: 'yes' | 'no', reason = `the judge says ${choice}`) => JSON.stringify({ choice, confidence: 0.9, reason });
+const question: Question = { type: 'bool', instructions: 'Does it keep the rule?' };
+const lone = { split: { name: 'jsonItems', from: 'rows' }, piece: 'row' };
+const packed = { ...lone, context: { guide: { name: 'json', from: 'guide' } } };
+const declOf = (aggregate: Declaration['checks'][string]['aggregate'], more: Partial<Declaration['checks'][string]> = {}, scope = lone): Declaration => ({ scopes: { rows: scope }, checks: { kept: { scope: 'rows', question, aggregate, ...more } } });
+const rubricOf = (version = 1, extra: Rubric['criteria'][number]['checks'] = []): Rubric => ({ name: 'r', version, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'kept', label: 'kept', weight: 2 }, ...extra] }] });
+const rowsJson = (...rows: Array<string | Record<string, unknown>>) => JSON.stringify(rows.map((r) => (typeof r === 'string' ? { id: r } : r)));
+const optsOf = (declaration: Declaration, inputs: Inputs, rubric = rubricOf()): JudgeOptions => ({
+  kind: 'k', rubric, declaration, inputs: async () => ({ guide: '{"rule":"r"}', ...inputs }), maxRevisions: 2, reuse: true,
+  decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'judge', modelId: 'j' },
+});
+const sealedV = (version: number) => ({ kind: 'k', version, hash: '', content: 'x', sealedAt: 0, verdict: null });
+const round = (api: never, opts: JudgeOptions, version: number, memo = `m${version}`) => rejudge(api, opts, sealedV(version), memo, BACKGROUND_CONTEXT);
+
+test('an identical item on the next version is not asked: it is reused with the version first judged on, and resolvers count this round only', async () => {
+  const { api, seen } = sessionApi(() => 0.95, () => said('yes'));
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b', 'c') });
+  const v1 = await round(api, opts, 1);
+  assert.deepEqual([v1.checks[0].resolvers, v1.checks[0].reused], [{ clef: 3 }, undefined]);
+  const v2 = await round(api, opts, 2);
+  assert.deepEqual(seen.clef, ['a', 'b', 'c'], 'v2 asked nothing');
+  assert.deepEqual([v2.checks[0].met, v2.checks[0].resolvers, v2.checks[0].reused], [1, {}, { 'rows a': 1, 'rows b': 1, 'rows c': 1 }]);
+  const v3 = await round(api, optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', { id: 'b', n: 1 }, 'c') }), 3);
+  assert.deepEqual(seen.clef.slice(3), ['b']);
+  const k = v3.checks[0];
+  assert.deepEqual([k.resolvers, k.reused], [{ clef: 1 }, { 'rows a': 1, 'rows c': 1 }]);
+  assert.equal(Object.values(k.resolvers).reduce((a, b) => a + b, 0) + Object.keys(k.reused!).length, k.units, 'resolvers plus reused cover the settled items');
+});
+
+test('a changed evidence byte or a changed question asks again; a changed rubric version does not', async () => {
+  const { api, seen } = sessionApi(() => 0.95, () => said('yes'));
+  const inputs = { rows: rowsJson('a', { id: 'b', n: 1 }) };
+  await round(api, optsOf(declOf({ name: 'share' }), inputs), 1);
+  await round(api, optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', { id: 'b', n: 2 }) }), 2);
+  assert.deepEqual(seen.clef.splice(0), ['a', 'b', 'b'], 'one changed byte in b');
+  await round(api, optsOf(declOf({ name: 'share' }), inputs), 3);
+  await round(api, optsOf({ ...declOf({ name: 'share' }), checks: { kept: { scope: 'rows', question: { ...question, instructions: 'Does it keep the rules?' }, aggregate: { name: 'share' } } } }, inputs), 4);
+  await round(api, optsOf(declOf({ name: 'share', pass: ['no'] }), inputs), 5);
+  assert.deepEqual(seen.clef.splice(0), ['a', 'b', 'a', 'b'], 'a changed instruction, then a changed pass, asks every item');
+  const v6 = await round(api, optsOf(declOf({ name: 'share' }), inputs, rubricOf(2)), 6);
+  assert.deepEqual([seen.clef, v6.rubric, v6.checks[0].reused], [[], 'r@2', { 'rows a': 1, 'rows b': 1 }]);
+});
+
+test('a failure is reused and its note says which version it was judged on', async () => {
+  const { api, seen } = sessionApi((row) => (row === 'b' ? 0.05 : 0.95), () => said('yes'));
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b', 'c') });
+  const v1 = await round(api, opts, 1);
+  assert.deepEqual(v1.checks[0].notes, ['rows b: flagged by clef (no reason given)']);
+  const v2 = await round(api, opts, 2);
+  assert.equal(seen.clef.length, 3);
+  assert.deepEqual([v2.checks[0].met, v2.checks[0].notes], [2 / 3, ['rows b: flagged by clef (no reason given) (judged on v1)']]);
+});
+
+test('an undecided item and an outage are not stored and are asked next round', async () => {
+  let answering = false;
+  // a: Clef unsure and the judge model's reply unparsed; b: both models down; c: Clef sure.
+  const { api, store, seen } = sessionApi((row) => (row === 'b' && !answering ? 'error' : row === 'a' ? 0.5 : 0.95), (row) => (answering ? said('yes') : row === 'a' ? 'no idea' : 'error'));
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b', 'c') });
+  const v1 = await round(api, opts, 1);
+  assert.deepEqual([v1.checks[0].undecided, Object.keys(store.answers).length], [2, 1], 'only c is kept');
+  answering = true;
+  const v2 = await round(api, opts, 2);
+  assert.deepEqual([seen.clef.slice(3), seen.judge.slice(-1)], [['a', 'b'], ['a']]);
+  assert.deepEqual([v2.checks[0].met, v2.checks[0].reused, v2.checks[0].resolvers], [1, { 'rows c': 1 }, { clef: 1, j: 1 }]);
+});
+
+test('an item over the decision model cap that no model answered is not stored, and is escalated again next round', async () => {
+  let answering = false;
+  const { api, store, seen } = sessionApi(() => 0.95, () => (answering ? said('yes') : 'error'));
+  const opts = { ...optsOf(declOf({ name: 'share' }), { rows: rowsJson('a') }), decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 1 } };
+  const v1 = await round(api, opts, 1);
+  assert.deepEqual([v1.checks[0].undecided, store.answers, seen.clef], [1, {}, []]);
+  answering = true;
+  const v2 = await round(api, opts, 2);
+  assert.deepEqual([seen.judge, v2.checks[0].resolvers, Object.keys(store.answers).length], [['a', 'a'], { j: 1 }, 1]);
+});
+
+test("under pass-only the decision model's failing answer is not stored; the judge model's answer to it is", async () => {
+  let reply = 'no idea';
+  // The check holds on "yes"; Clef passes a and confidently fails b.
+  const { api, store, seen } = sessionApi((row) => (row === 'b' ? 0.05 : 0.95), () => reply);
+  const opts = optsOf(declOf({ name: 'share' }, { decisionModel: PASS_ONLY }), { rows: rowsJson('a', 'b') });
+  const v1 = await round(api, opts, 1);
+  assert.deepEqual([v1.checks[0].undecided, Object.values(store.answers).map((e) => e.resolver)], [1, ['clef']], "Clef's fail on b went to the judge model, which gave nothing");
+  reply = said('no', 'b states two counts');
+  await round(api, opts, 2);
+  assert.deepEqual(Object.values(store.answers).map((e) => [e.resolver, e.met, e.version]), [['clef', true, 1], ['j', false, 2]]);
+  const v3 = await round(api, opts, 3);
+  assert.deepEqual([seen.clef, seen.judge], [['a', 'b', 'b'], ['b', 'b']], 'v3 asked neither model');
+  assert.deepEqual(v3.checks[0].notes, ['rows b: b states two counts (judged on v2)']);
+});
+
+test('code checks rerun every round and are never reused', async () => {
+  let runs = 0;
+  const { api } = sessionApi(() => 0.95, () => said('yes'));
+  const code = { id: 'short', label: 'short', weight: 1, code: () => (runs++, { met: 1 }) };
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a') }, rubricOf(1, [code]));
+  await round(api, opts, 1);
+  const v2 = await round(api, opts, 2);
+  const k = v2.checks.find((c) => c.id === 'short')!;
+  assert.deepEqual([runs, k.resolvers, k.reused], [2, { code: 1 }, undefined]);
+  assert.deepEqual(v2.checks.find((c) => c.id === 'kept')!.reused, { 'rows a': 1 }, 'beside the model check, whose item was reused');
+});
+
+test('the fold is recomputed from reused answers: a check they already decide sends no request, and its other items are not stored', async () => {
+  const { api, store, seen } = sessionApi((row) => (row === 'b' ? 0.05 : 0.95), () => said('yes'));
+  await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'c') }), 1);
+  const v2 = await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'd') }), 2);
+  assert.deepEqual(seen.clef, ['a', 'b', 'c'], 'b failing decides the all fold, so d is never asked');
+  const k = v2.checks[0];
+  assert.deepEqual([k.met, k.notes, k.undecidedItems, k.reused, k.resolvers], [false, ['rows b: flagged by clef (no reason given) (judged on v1)'], ['rows d'], { 'rows a': 1, 'rows b': 1 }, {}]);
+  assert.equal(Object.keys(store.answers).length, 3);
+});
+
+test('a resubmit of the same version after an undecided round asks only the items it left undecided', async () => {
+  let resubmitted = false;
+  // Every row is unsure for Clef; the packed judge-model reply leaves d out, and d's own escalation is unparsed the first time.
+  const { api, seen } = sessionApi((row) => (row === 'd' && resubmitted ? 0.95 : 0.5), (row) => (row !== 'd' ? said('yes') : resubmitted ? said('yes') : 'no idea'));
+  const opts = optsOf(declOf({ name: 'share' }, {}, packed), { rows: rowsJson('a', 'b', 'c', 'd') });
+  const first = await round(api, opts, 1, 'judge:k:v1 call 1');
+  assert.deepEqual(first.undecided, ['c.kept']);
+  resubmitted = true;
+  const again = await round(api, opts, 1, 'judge:k:v1 call 2');
+  assert.deepEqual(seen.clef.slice(4), ['d'], 'only d is asked again');
+  assert.deepEqual([again.checks[0].met, again.checks[0].reused, again.checks[0].resolvers], [1, { 'rows a': 1, 'rows b': 1, 'rows c': 1 }, { clef: 1 }]);
+});
+
+test('rejudge with reuse absent asks every item though the store holds it, and writes nothing to the store', async () => {
+  const { api, store, seen } = sessionApi(() => 0.95, () => said('yes'));
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b') });
+  const { reuse: _, ...fresh } = opts;
+  await round(api, opts, 1);
+  const kept = structuredClone(store.answers);
+  const commits = seen.commits;
+  const v2 = await round(api, fresh, 2);
+  assert.deepEqual([seen.clef, seen.commits, store.answers, v2.checks[0].reused, v2.checks[0].resolvers], [['a', 'b', 'a', 'b'], commits, kept, undefined, { clef: 2 }]);
+  assert.equal(Object.keys(kept).length, 2);
+});
+
+test('a prompt version bump asks every stored item again', async () => {
+  const { api, store, seen } = sessionApi(() => 0.95, () => said('yes'));
+  const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b') });
+  await round(api, opts, 1);
+  const ask = { id: 'c.kept', question, pass: undefined };
+  const unit = (id: string) => ({ id: `rows ${id}`, state: { row: { id } } });
+  const keyed = (v: number) => ['a', 'b'].map((id) => reuseKey(ask, unit(id), { decisionModel: opts.decisionModel, judgeModel: opts.judgeModel }, v));
+  assert.deepEqual(Object.keys(store.answers).sort(), keyed(PROMPT_VERSION).sort(), 'the store is keyed under the current prompt version');
+  // The same answers as a judge with the next prompt version would look them up.
+  const bumped = keyed(PROMPT_VERSION + 1);
+  store.answers = Object.fromEntries(Object.values(store.answers).map((e, i) => [bumped[i], e]));
+  await round(api, opts, 2);
+  assert.deepEqual(seen.clef, ['a', 'b', 'a', 'b']);
+});

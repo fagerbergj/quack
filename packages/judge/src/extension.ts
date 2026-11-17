@@ -36,7 +36,7 @@ async function verdictFor(api: ToolExecutionApi, ctx: Context, how: Judged, conf
   const refused = await how.refuse?.(api, ctx);
   if (refused) return { kind: 'deny', reason: refused };
   const tool = toolOf(sealed.kind) ?? 'the judge';
-  const opts: JudgeOptions = { kind: sealed.kind, rubric: how.rubric, declaration: how.declaration, inputs: how.inputs, maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, escalations: config.escalations };
+  const opts: JudgeOptions = { kind: sealed.kind, rubric: how.rubric, declaration: how.declaration, inputs: how.inputs, maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, escalations: config.escalations, reuse: true };
   const out = await check(api, opts, sealed, tool, ctx);
   if ('deny' in out) return { kind: 'deny', reason: out.deny };
   if ('undecided' in out) return { kind: 'continue', feedback: out.undecided };

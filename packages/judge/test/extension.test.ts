@@ -29,7 +29,7 @@ type Session = Awaited<ReturnType<typeof openSession>>;
 type Step = Reply | ((s: Session) => Promise<Reply>);
 
 // One run of an agent that enables the judge with `config` and registers test.note, the way a feature's session setup does.
-async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse'], inputs = ['Write and submit the note.']) {
+async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse'], inputs = ['Write and submit the note.'], judging = how(refuse)) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   let session: Session;
@@ -38,7 +38,7 @@ async function run(name: string, config: JudgeConfig, script: Step[], refuse?: J
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const judge = await manifest.session!(config, {}, []);
-  judged(note.kind, how(refuse));
+  judged(note.kind, judging);
   session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note])] } });
   let result!: Awaited<ReturnType<Session['submit']>>;
   for (const [i, text] of inputs.entries()) result = await session.submit(text, `${name}-${i + 1}`, true);
@@ -94,6 +94,21 @@ test('a revision after the limit released a version is refused, so the limit hol
   assert.match(r.seen[4], /The revision limit is reached\. Deliver version 2 with these failures marked\./);
   assert.match(r.seen[6], firstRefusal('is delivered'));
   assert.deepEqual(r.versions.map(passed), [false, false], 'nothing past the released version is sealed');
+});
+
+test('the gate judges with item reuse on: a model item unchanged since the last version is not asked again', async () => {
+  const polite = { ...sayOk, criteria: [...sayOk.criteria, { id: 'manner', checks: [{ id: 'polite', label: 'Is polite', weight: 1 }] }] };
+  const judging: Judged = {
+    rubric: polite, inputs: async () => ({ intro: 'Hello there.' }),
+    declaration: { scopes: { intro: { split: { name: 'whole', from: 'intro' } } }, checks: { polite: { scope: 'intro', question: { type: 'bool', instructions: 'Is it polite?' }, aggregate: { name: 'all' } } } },
+  };
+  const yes = fauxAssistantMessage('{"choice": "yes", "confidence": 0.9, "reason": "greets"}');
+  // The agent's model answers the escalation once; asked again on v2, it would read the final reply as the judge's answer.
+  const r = await run('reuse', { maxRevisions: 1 }, [write('no'), submit, yes, write('ok then'), submit, done], undefined, undefined, judging);
+  const checks = r.versions.map((v) => (v.verdict as { checks: Array<{ id: string; resolvers: object; reused?: object }> }).checks.find((c) => c.id === 'polite'));
+  assert.deepEqual(r.versions.map(passed), [false, true]);
+  assert.deepEqual(checks.map((c) => [c?.resolvers, c?.reused]), [[{ 'faux-1': 1 }, undefined], [{}, { intro: 1 }]]);
+  assert.equal(r.answer, 'Done.');
 });
 
 test('a refusal from the registration ends the run before anything is judged', async () => {

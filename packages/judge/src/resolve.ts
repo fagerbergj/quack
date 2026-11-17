@@ -24,6 +24,9 @@ export type Item = { unit: Unit; checks: Ask[] };
 export type Limit = ReturnType<typeof limiter>;
 
 const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
+// Part of every item-reuse key: bump it when request, point, packedPrompt, CRITERIA or the sdk's decide prompt change,
+// so answers given to the old prompts are asked again.
+export const PROMPT_VERSION = 1;
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
 const qid = (ask: Ask, i: number, packed: boolean) => (packed ? `${ask.id}#${i}` : ask.id);
 const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);

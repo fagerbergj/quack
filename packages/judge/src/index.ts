@@ -5,6 +5,7 @@ import { buildEvidence, checkDeclaration, type AggregateDecl, type BuiltEvidence
 import { fold, fractional, metOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
 import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Item, type ModelRef } from './resolve.ts';
+import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
 import { feedback, score, unitsFor, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
@@ -27,6 +28,8 @@ type Common = {
   judgeModel?: ModelRef;
   /** The most judge-model requests in flight at once; 4 by default. A packed group's sub-batch is one request. Decision-model requests stay one at a time. */
   escalations?: number;
+  /** Item reuse: an item whose question and evidence match one this session already decided takes that answer instead of asking; off when absent. */
+  reuse?: boolean;
 };
 
 type Declared = {
@@ -87,15 +90,17 @@ const triOf = (p: Plan, u: Unit): Tri => p.answers.get(u.id)?.met ?? undefined;
 const decided = (p: Plan) => !!p.aggregate && (fractional(p.aggregate) ? p.units.every((u) => triOf(p, u) !== undefined) : fold(p.aggregate, p.units.map((u) => triOf(p, u))) !== undefined);
 
 // Every failing item gets a note, even from a resolver that gives no reason (Clef never does), so the reader sees which failed.
-const noteOf = (u: Unit, a: Answer) => {
-  const why = a.note || `flagged by ${a.resolver} (no reason given)`;
+const noteOf = (p: Plan, u: Unit) => {
+  const a = p.answers.get(u.id)!;
+  const on = p.result.reused?.[u.id];
+  const why = `${a.note || `flagged by ${a.resolver} (no reason given)`}${on ? ` (judged on v${on})` : ''}`;
   return u.whole ? why : `${u.id}: ${why}`;
 };
 
 // A legacy check notes a "no" on a gate or a positive check and a "yes" on a pitfall.
 function legacyFinal(p: Plan, r: CheckResult) {
   const answers = p.units.map((u) => p.answers.get(u.id));
-  r.notes = p.units.flatMap((u, i) => (answers[i] && answers[i]!.met === p.pitfall ? [noteOf(u, answers[i]!)] : []));
+  r.notes = p.units.flatMap((u, i) => (answers[i] && answers[i]!.met === p.pitfall ? [noteOf(p, u)] : []));
   const undecided = answers.filter((a) => !a || a.met === null).length;
   // Met units are counted, not summed as fractions: 23 sums of 1/23 fall short of 1 and would read as a miss.
   r.met = undecided ? null : answers.filter((a) => a?.met).length / p.units.length;
@@ -112,7 +117,7 @@ function finalize(p: Plan): CheckResult {
     return r;
   }
   const tris = p.units.map((u) => triOf(p, u));
-  r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [noteOf(u, p.answers.get(u.id)!)] : []));
+  r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [noteOf(p, u)] : []));
   const open = p.units.filter((_, i) => tris[i] === undefined).map((u) => u.id);
   const value = fold(p.aggregate, tris);
   if (value === undefined || (fractional(p.aggregate) && open.length)) return Object.assign(r, { met: null, undecided: open.length });
@@ -155,9 +160,33 @@ function itemsOf(plans: Plan[]): Item[] {
   return [...byUnit.values()];
 }
 
+function restore(p: Plan, u: Unit, kept: Kept) {
+  p.answers.set(u.id, { met: kept.met, resolver: kept.resolver, note: kept.note });
+  (p.result.reused ??= {})[u.id] = kept.version;
+  p.left--;
+}
+
+// Answers this session already decided stand in for asking; a check they decide asks nothing more, as an escalation would not.
+function reuseItems(items: Item[], byKey: Map<string, Plan>, reuse: Reuse): Item[] {
+  for (const it of items) {
+    for (const ask of it.checks) {
+      const kept = reuse.answers[reuse.key(ask, it.unit)];
+      if (kept) restore(byKey.get(ask.id)!, it.unit, kept);
+    }
+  }
+  const open = (it: Item, ask: Ask) => {
+    const p = byKey.get(ask.id)!;
+    if (p.answers.has(it.unit.id)) return false;
+    if (!p.result.reused || !decided(p)) return true;
+    p.left--;
+    return false;
+  };
+  return items.map((it) => ({ unit: it.unit, checks: it.checks.filter((ask) => open(it, ask)) })).filter((it) => it.checks.length);
+}
+
 // Each stage's requests start as soon as its evidence is built: decision-model requests queue on their own limit (one at
 // a time) and escalations on theirs, so a slow LLM split delays only the checks on its scope.
-async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: Array<Promise<BuiltEvidence>>, memo: string, ctx: Context, code: CheckResult[], report?: Report): Promise<CheckResult[]> {
+async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: Array<Promise<BuiltEvidence>>, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
   const plans: Plan[] = [];
   const byKey = new Map<string, Plan>();
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
@@ -166,8 +195,11 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
     const p = byKey.get(check.id)!;
     p.left--;
     if (answer) p.answers.set(unit.id, answer);
-    // Resolvers count settled items only; an item no model could answer is the check's undecided.
-    if (answer && answer.met !== null) p.result.resolvers[answer.resolver] = (p.result.resolvers[answer.resolver] ?? 0) + 1;
+    // Resolvers count settled items only; an item no model could answer is the check's undecided, and is not kept.
+    if (answer && answer.met !== null) {
+      p.result.resolvers[answer.resolver] = (p.result.resolvers[answer.resolver] ?? 0) + 1;
+      await reuse?.keep(check, unit, answer);
+    }
     if (!p.left) await publish();
   };
   // An unsure item escalates only while its check's fold can still go either way.
@@ -175,8 +207,9 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
   const ask = async (built: BuiltEvidence) => {
     const mine = planChecks(opts.rubric, opts.declaration, built);
     for (const p of mine) plans.push(p), byKey.set(p.key, p);
+    const items = reuse ? reuseItems(itemsOf(mine), byKey, reuse) : itemsOf(mine);
     await publish();
-    await Promise.all(pack(itemsOf(mine), opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
+    await Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
   };
   await Promise.all(stages.map((s) => s.then(ask)));
   const order = opts.rubric.criteria.flatMap((c) => c.checks.map((k) => `${c.id}.${k.id}`));
@@ -206,10 +239,11 @@ async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): P
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
   await report?.(progressOf(opts.rubric, []));
   const stages = await evidenceFor(api, opts, sealed, memo, ctx);
+  const reuse = opts.reuse ? await sessionReuse(api, opts, sealed.version, ctx) : undefined;
   // Code checks may read any scope, so they wait for every stage; until then progress shows them as still checking.
   const code: CheckResult[] = [];
   const all = Promise.all(stages).then((built) => void code.push(...codeResults(opts.rubric, sealed.content, Object.assign({}, ...built.map((b) => b.evidence)))));
-  const [, model] = await Promise.all([all, modelResults(api, opts, stages, memo, ctx, code, report)]);
+  const [, model] = await Promise.all([all, modelResults(api, opts, stages, memo, ctx, code, reuse, report)]);
   const checks = [...code, ...model];
   const s = score(opts.rubric, checks);
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
@@ -219,7 +253,7 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   return { run: await runOf(api, ctx), passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
 }
 
-/** Judges a sealed version again under opts, without attaching the verdict; memo keeps one replay's answers apart from another's. */
+/** Judges a sealed version again under opts, without attaching the verdict; memo keys the per-call memoization only, and item reuse follows opts.reuse. */
 export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context): Promise<Verdict> {
   return judgeVersion(api, opts, sealed, ctx, memo);
 }
@@ -249,7 +283,7 @@ export async function check(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   // A workflow step seals from code, whose task shows no running details.
   const shown = typeof api.details === 'function' ? (p: Progress) => api.details(p, ctx) : undefined;
   const verdict = await judgeVersion(api, opts, sealed, ctx, `judge:${sealed.kind}:v${sealed.version}`, shown);
-  // A verdict missing checks would pass or fail on a model outage; answers are memoized per call, so another submit asks again.
+  // A verdict missing checks would pass or fail on a model outage; another submit asks again what this round left undecided.
   if (verdict.undecided.length) return { undecided: undecidedMessage(verdict.undecided, toolName) };
   await attachVerdict(api, sealed.kind, sealed.version, verdict as never, ctx);
   return { verdict };
