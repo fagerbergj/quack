@@ -83,3 +83,9 @@ test('derived_inputs_traced: a count a finding writes as a word ("Eight fans") i
 test('derived_inputs_traced: "0U" names a zero-U PDU, not a figure to trace', () => {
   assert.equal(traced('Leave room for a vertical 0U PDU on a rail.', '- The cabinet has 4 rails. [s1]').met, 1);
 });
+
+test('derivations: an operand may carry a label, and a traced sum of labelled operands traces its result', () => {
+  assert.deepEqual(derivations('Your tower stack: Define 7 XL 566 mm + Define 5 ~460 mm + mATX ~200 mm = **~1,226 mm** for the three cases alone').map((d) => [d.inputs, d.shown, recomputes(d)]), [[['566', '460', '200'], '1226', true]]);
+  const report = '## Summary\nx\n## Assumptions\n- The mATX case is about 200 mm tall.\n## Findings\n- The Define 7 XL is 566 mm tall and the Define 5 is 460 mm tall. [s1]\n## Analysis\n- Your tower stack: Define 7 XL 566 mm + Define 5 ~460 mm + mATX ~200 mm = ~1,226 mm.\n- The three cases need ~1,226 mm.\n';
+  assert.deepEqual([code('derived_arithmetic', report).met, code('derived_inputs_traced', report).met], [1, 1]);
+});

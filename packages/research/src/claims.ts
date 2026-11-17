@@ -74,17 +74,25 @@ const NUM = String.raw`[~≈]?\$?\d[\d,]*(?:\.\d+)?`;
 const UNIT = String.raw`(?:\s?(?:mm|cm|m|in|ft|lbs|lb|kg|g|RU|U|")(?![\p{L}\d]))?`;
 // An en dash is a range (2–6 U), and a hyphen or an x is an operator only between spaces.
 const OP = String.raw`(?:\s*[+×*/÷−]\s*|\s+[x-]\s+)`;
-const TERMS = `${NUM}${UNIT}(?:${OP}${NUM}${UNIT})*`;
+// An operand may carry a label between the operator and its number ("566 mm + Define 5 ~460 mm + mATX ~200 mm"): up to four words, a
+// word followed by a small model number when another number follows.
+const LABEL = String.raw`(?:\p{L}[\p{L}\d.'’-]*\s+(?:\d{1,2}\s+(?=[~≈$]?\d))?){1,4}`;
+const TERMS = `${NUM}${UNIT}(?:${OP}(?:${LABEL})?${NUM}${UNIT})*`;
 // A chain starts at no operator, so "566 mm (case height) ÷ 44.45 = 12.7U" is no "44.45 = 12.7U"; a value shown as a range
 // ("≈ 31–32U") or as the start of another expression ("= 1,189 × 600 mm") is not one value, so the chain stops before it.
 const CHAIN = new RegExp(String.raw`(?<![\p{L}\d.,])(?<!(?:[+×*/÷−=≈]|\s[x-])\s*)${TERMS}(?:\s*[=≈]\s*${NUM}${UNIT}(?![\d,.]*(?:\s*[–—-]\s*\d|${OP})))+`, 'gu');
 const PAREN = new RegExp(String.raw`(?<![\p{L}\d.,])(${NUM}${UNIT})\s*\(\s*(${TERMS})\s*\)`, 'gu');
-const TERM = new RegExp(String.raw`(${NUM})(?:\s?(mm|cm|m|in|ft|lbs|lb|kg|g|RU|U|")(?![\p{L}\d]))?|([+×*/÷−x-])`, 'gu');
+const TERM = new RegExp(String.raw`(${NUM})(?:\s?(mm|cm|m|in|ft|lbs|lb|kg|g|RU|U|")(?![\p{L}\d]))?`, 'gu');
+const OPS = new RegExp(OP, 'gu');
 
 type Term = { value: string; unit?: string };
+/** An expression's operators and operands; an operand is the last figure of its segment, so a label's model number ("Define 5") is not one. */
 const parse = (s: string) => {
-  const ms = [...s.matchAll(TERM)];
-  return { terms: ms.filter((m) => m[1]).map((m): Term => ({ value: m[1].replace(/[~≈$,]/g, ''), unit: m[2]?.toLowerCase() })), ops: ms.filter((m) => m[3]).map((m) => m[3]) };
+  const terms = s.split(OPS).map((seg): Term => {
+    const m = [...seg.matchAll(TERM)].at(-1)!;
+    return { value: m[1].replace(/[~≈$,]/g, ''), unit: m[2]?.toLowerCase() };
+  });
+  return { terms, ops: [...s.matchAll(OPS)].map((m) => m[0].trim()) };
 };
 
 /** Products and quotients first, then sums and differences, left to right. */
