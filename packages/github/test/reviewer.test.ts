@@ -195,6 +195,28 @@ test('a PR pushed to while it is reviewed is not posted against the old head; re
   await session.close();
 });
 
+test('a re-review after a push may not end on the review posted for the old head: the run is sent back to submit one for the new head', async () => {
+  let push = () => '';
+  const { seen, service, head, session } = await reviewRun((seen, advance) => {
+    push = advance;
+    const step = recorder(seen);
+    return [
+      checkout(), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')),
+      checkout(), step(write(review.replace('approve.', 'approve on the new head.'))),
+      // The model claims the post without calling submit_review, as the reviewer did on fagerbergj/quack#2386.
+      step(fauxAssistantMessage('Re-review posted as approve.')),
+      step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')),
+    ];
+  });
+  const moved = push();
+  const again = await session.submit('Review pull request acme/widgets#7 (new commits pushed)', 'gh-2', true);
+  assert.equal(again.status === 'done' && again.answer, 'Posted.');
+  assert.match(seen[5], new RegExp(`github\\.review v1 was written against ${head}, not ${moved}\\. Write artifacts/review\\.md for ${moved} and call submit_review before you finish\\.`));
+  assert.deepEqual(service.posted.map((p) => p.commitId), [head, moved]);
+  assert.match(service.posted[1].body, /approve on the new head/);
+  await session.close();
+});
+
 test('a request naming an old head reviews the live head and says so', async () => {
   const { seen, service, head, session } = await reviewRun((seen) => [
     call('checkout_pr', { repository: 'acme/widgets', number: 7, head: 'a30f00a' }),
