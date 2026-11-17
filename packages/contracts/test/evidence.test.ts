@@ -85,11 +85,11 @@ test('every choice and definition unit of the approved contracts fits the decisi
     }
   }
   assert.deepEqual(counts, {
-    'lifecycle choice': 23, 'lifecycle definition': 31, 'store-port choice': 19, 'store-port definition': 29, 'sdk choice': 0, 'sdk definition': 83, 'env choice': 0, 'env definition': 20,
+    'lifecycle choice': 23, 'lifecycle definition': 30, 'store-port choice': 19, 'store-port definition': 28, 'sdk choice': 0, 'sdk definition': 82, 'env choice': 0, 'env definition': 19,
   });
 });
 
-test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares only the kind', async () => {
+test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the kind and the purpose', async () => {
   const ev = await evidenceOf(lifecycle);
   const rules = guideRules(kinds.rest.skill);
   const errors = ev.choice.find((u) => u.id === 'choice errors')!;
@@ -97,7 +97,7 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
   assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
   assert.ok(ev.choice.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors.shared)), 'one guide for every choice, so they pack together');
-  assert.deepEqual(ev.definition[0].shared, { kind: 'rest' }, 'every definition shares only the kind, so they pack together');
+  assert.deepEqual(ev.definition[0].shared, { kind: 'rest', purpose: lifecycle.intent.purpose }, 'every definition shares only the kind and the purpose, so they pack together');
   assert.deepEqual(Object.keys(ev.definition[0].state), ['definition', 'consumersAndGuarantees'], 'no definition carries the whole intent');
   const covered = async (spec: ContractSpec, id: string) => {
     const { evidence } = await buildEvidence(metaDecl, await inputsOf(spec));
@@ -198,9 +198,9 @@ test('with Clef on, Clef answers every choice and every definition code did not 
     meets_intent: { met: 1, clef: 0, esc: 1 },
     contradicts_guide: { met: 0, clef: 23, esc: 0 },
     adds_unasked: { met: 0, clef: asked, esc: 0 },
-    implements_non_goal: { met: 0, clef: ev.nonGoal.length, esc: 0 },
+    implements_non_goal: { met: null, clef: 0, esc: 0 },
   });
-  assert.ok(asked > 0 && asked < 31, `code settles the covered definitions: ${asked} of 31 asked`);
+  assert.deepEqual([asked, ev.nonGoal.length], [0, 0], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
   assert.equal(clef.asked.flat().length, 23 + asked + ev.nonGoal.length, 'one question per unit');
   assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
 });

@@ -2,7 +2,7 @@ import ts from 'typescript';
 
 /** One top-level definition of a contract document; `id` is its JSON pointer, or METHOD path for an operation. Text for typescript.
  * `name` is how a choice's decision would mention it (a key, a path, an export), and `pointer` where a choice's pointer would name it. */
-export type Definition = { id: string; definition: unknown; name?: string; pointer?: string };
+export type Definition = { id: string; definition: unknown; name?: string; pointer?: string; /** The rest of the document, which no definition holds. */ rest?: true };
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -15,7 +15,7 @@ function without(doc: Obj, keys: string[]): Obj {
   return Object.fromEntries(Object.entries(doc).filter(([k]) => !keys.includes(k)));
 }
 
-const tail = (rest: Obj): Definition[] => (Object.keys(rest).length ? [{ id: REST, definition: rest }] : []);
+const tail = (rest: Obj): Definition[] => (Object.keys(rest).length ? [{ id: REST, definition: rest, rest: true }] : []);
 
 // Each operation carries its path item's shared fields (path parameters, summary), which apply to it.
 function operations(items: unknown, at: (key: string) => string, base: string): Definition[] {
@@ -81,5 +81,5 @@ export function typeScriptDefinitions(doc: unknown): Definition[] {
   }
   rest = (rest + doc.slice(from)).trim();
   const out = [...byName].map(([name, parts]) => ({ id: `/${name}`, definition: parts.join('\n\n'), name, pointer: `/${name}` }));
-  return rest ? [...out, { id: REST, definition: rest }] : out;
+  return rest ? [...out, { id: REST, definition: rest, rest: true }] : out;
 }
