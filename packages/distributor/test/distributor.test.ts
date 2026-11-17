@@ -351,10 +351,13 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
     s.on('data', (d) => (out += d)).on('close', () => res(out));
   });
   assert.match(raw, /^HTTP\/1.1 404/);
+  const manifest = await fetch(`${base}/manifest.webmanifest`);
+  assert.deepEqual([manifest.headers.get('x-content-type-options'), manifest.headers.get('referrer-policy')], ['nosniff', 'same-origin']);
   const api = await fetch(`${base}/agents`);
   assert.deepEqual(await api.json(), { agents: [] });
   // The shell carries the report-only policy; every static file gets nosniff and a same-origin referrer; API JSON is untouched.
-  assert.match(index.headers.get('content-security-policy-report-only')!, /^default-src 'self'; .*connect-src 'self'; .*base-uri 'self'; form-action 'self'$/);
+  // Written out on purpose, not imported: changing the policy means editing it here too.
+  assert.equal(index.headers.get('content-security-policy-report-only'), "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'");
   assert.equal(index.headers.get('content-security-policy'), null);
   assert.equal(asset.headers.get('content-security-policy-report-only'), null);
   for (const r of [index, asset]) assert.deepEqual([r.headers.get('x-content-type-options'), r.headers.get('referrer-policy')], ['nosniff', 'same-origin']);

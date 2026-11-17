@@ -27,7 +27,7 @@ const TYPES: Record<string, string> = {
 
 // Report-only: violations show in the browser console and nothing is blocked. frame-ancestors is left out because browsers ignore it
 // (with a console warning) in a report-only policy. Add it when this becomes Content-Security-Policy.
-export const SHELL_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
+const SHELL_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
 
 /** Whether an Accept-Encoding header allows a coding: named without q=0. */
 function accepts(header: string | undefined, coding: string): boolean {
