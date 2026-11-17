@@ -25,6 +25,10 @@ const TYPES: Record<string, string> = {
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json','.map': 'application/json',
 };
 
+// Report-only: violations show in the browser console and nothing is blocked. frame-ancestors is left out because browsers ignore it
+// (with a console warning) in a report-only policy. Add it when this becomes Content-Security-Policy.
+export const SHELL_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'";
+
 /** Whether an Accept-Encoding header allows a coding: named without q=0. */
 function accepts(header: string | undefined, coding: string): boolean {
   return (header ?? '').split(',').some((part) => {
@@ -55,9 +59,11 @@ async function serveStatic(root: string, pathname: string, req: IncomingMessage,
     // Only assets/ is content-hashed; everything else (index.html, manifest, icons) must revalidate.
     const hashed = file.startsWith(resolve(root, 'assets') + sep);
     const etag = `"${createHash('sha1').update(data).digest('base64url')}"`;
-    const headers = { etag, vary: 'Accept-Encoding', 'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache', ...(encoding && { 'content-encoding': encoding }) };
+    const type = TYPES[extname(file)] ?? 'application/octet-stream';
+    const security = { 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin', ...(extname(file) === '.html' && { 'content-security-policy-report-only': SHELL_CSP }) };
+    const headers = { ...security, etag, vary: 'Accept-Encoding', 'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache', ...(encoding && { 'content-encoding': encoding }) };
     if (req.headers['if-none-match'] === etag) res.writeHead(304, headers).end();
-    else res.writeHead(200, { ...headers, 'content-length': data.length, 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(data);
+    else res.writeHead(200, { ...headers, 'content-length': data.length, 'content-type': type }).end(data);
     return true;
   } catch {
     return false;

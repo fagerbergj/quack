@@ -351,7 +351,14 @@ test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone
     s.on('data', (d) => (out += d)).on('close', () => res(out));
   });
   assert.match(raw, /^HTTP\/1.1 404/);
-  assert.deepEqual(await (await fetch(`${base}/agents`)).json(), { agents: [] });
+  const api = await fetch(`${base}/agents`);
+  assert.deepEqual(await api.json(), { agents: [] });
+  // The shell carries the report-only policy; every static file gets nosniff and a same-origin referrer; API JSON is untouched.
+  assert.match(index.headers.get('content-security-policy-report-only')!, /^default-src 'self'; .*connect-src 'self'; .*base-uri 'self'; form-action 'self'$/);
+  assert.equal(index.headers.get('content-security-policy'), null);
+  assert.equal(asset.headers.get('content-security-policy-report-only'), null);
+  for (const r of [index, asset]) assert.deepEqual([r.headers.get('x-content-type-options'), r.headers.get('referrer-policy')], ['nosniff', 'same-origin']);
+  assert.deepEqual([api.headers.get('content-security-policy-report-only'), api.headers.get('x-content-type-options'), api.headers.get('referrer-policy')], [null, null, null]);
 });
 
 test('QUACK_WEB_DIR serves the best precompressed variant Accept-Encoding allows', async () => {
