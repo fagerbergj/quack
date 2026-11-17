@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import type { ChildProcess } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { freePort, startDistributor, startStack, teardown, type Parts } from './qa/stack.ts';
+import { startDistributor, startStack, type Parts } from './qa/stack.ts';
 
 const listening = (url: string) => fetch(`${url}/version`).then(() => true, () => false);
 
@@ -22,28 +22,23 @@ test('the stack serves /version and its stub app, then leaves no listeners', asy
   assert.equal(await listening(stack.url), false);
 });
 
-test('a distributor whose free port was taken before it listened is relaunched on another', async () => {
-  // Another test taking the port between freePort and listen is what timed this file out in CI (run 42721150500).
-  const squatter = createServer().listen(0, '127.0.0.1');
-  await new Promise((r) => squatter.once('listening', r));
-  const taken = (squatter.address() as { port: number }).port;
-  const parts: Parts = { children: [], servers: [], tmp: mkdtempSync(join(tmpdir(), 'quack-qa-')) };
-  const web = join(parts.tmp, 'web');
-  mkdirSync(web);
-  writeFileSync(join(web, 'index.html'), '<!doctype html><title>qa</title>');
-  const config = join(parts.tmp, 'deployment.json');
-  writeFileSync(config, JSON.stringify({ defaultModel: 'local/m', providers: { local: { baseUrl: 'http://127.0.0.1:9/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
-  const ports = [taken];
-  try {
-    const env = { QUACK_DATA_DIR: parts.tmp, QUACK_AGENTS_DIR: resolve('agents'), QUACK_CONFIG: config, QUACK_WEB_DIR: web, QUACK_LOCAL_API_KEY: 'x' };
-    const url = await startDistributor(parts, env, async () => ports.shift() ?? freePort());
-    assert.notEqual(url, `http://127.0.0.1:${taken}`);
-    assert.equal(await listening(url), true);
-    // A later free port can be taken too under parallel test files; each loss is one more relaunch.
-    assert.ok(parts.children.length >= 2, 'the first launch lost the port and a later one serves');
-  } finally {
-    await teardown(parts);
-    squatter.closeAllConnections();
-    await new Promise((r) => squatter.close(r));
-  }
+test('a distributor that exits before serving is relaunched on new ports', async () => {
+  // Fakes stand in for the port race and the process: a real squatter's effect depends on the kernel (gVisor lets a wildcard listen share a loopback port).
+  const parts: Parts = { children: [], servers: [], tmp: '' };
+  const ports = [1, 2, 3, 4];
+  const launched: Record<string, string>[] = [];
+  const start = (_parts: Parts, _args: string[], env: Record<string, string>) => {
+    launched.push(env);
+    return (launched.length === 1 ? { exitCode: 1, signalCode: null } : { exitCode: null, signalCode: null }) as ChildProcess;
+  };
+  const url = await startDistributor(parts, {}, { next: async () => ports.shift()!, start, serving: async (u) => u.endsWith(':3') });
+  assert.equal(url, 'http://127.0.0.1:3');
+  assert.deepEqual(launched.map((e) => [e.PORT, e.QUACK_SESSION_PORT]), [['1', '2'], ['3', '4']]);
+});
+
+test('a distributor that keeps exiting fails after three launches', async () => {
+  let n = 0;
+  const start = () => (n++, { exitCode: 1, signalCode: null }) as ChildProcess;
+  await assert.rejects(startDistributor({ children: [], servers: [], tmp: '' }, {}, { start, serving: async () => false }), /3 times/);
+  assert.equal(n, 3);
 });
