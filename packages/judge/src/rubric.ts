@@ -42,8 +42,10 @@ export type CheckResult = {
   weight: number | 'gate';
   met: boolean | number | null;
   units: number;
-  /** Settled items by resolver: `code`, or the modelId of the model that answered (the decision model, or the judge model an escalation reached); they sum to the settled items. */
+  /** This round's settlements by resolver: `code`, or the modelId of the model that answered (the decision model, or the judge model an escalation reached); with `reused` they cover the settled items. */
   resolvers: Record<string, number>;
+  /** Items whose answer was reused from an earlier round in this session, by item id to the version first judged on; absent when none. */
+  reused?: Record<string, number>;
   notes: string[];
   /** The items the fold left undecided while the check decided; listed so the reader sees what was not asked. */
   undecidedItems?: string[];
