@@ -147,10 +147,12 @@ function Compare({ versions, status, from, to, auto, pick }: { versions: Version
   );
 }
 
-// A request still open for an older seal than the newest, as the person should read it.
+// The requests still open for older seals than the newest, as the person should read them: the newest of them, and how many.
 function staleRequest(approvals: Approval[], versions: Version[], newest: Version): string | undefined {
-  const was = versions.find((v) => v !== newest && approvals.some((a) => offered(a) === v.a.version));
-  return was && `The approval request for ${short(was, versions)} is out of date: the agent has since written ${short(newest, versions)}.`;
+  const stale = versions.filter((v) => v !== newest && approvals.some((a) => offered(a) === v.a.version));
+  const was = stale.at(-1);
+  const what = stale.length > 1 ? `${stale.length} approval requests are out of date, the newest for ${short(was!, versions)}` : `The approval request for ${was && short(was, versions)} is out of date`;
+  return was && `${what}: the agent has since written ${short(newest, versions)}.`;
 }
 
 const layout = 'mx-auto flex min-h-full w-full max-w-[1100px] min-w-0 flex-col gap-5 px-4 pt-3 sm:px-5';

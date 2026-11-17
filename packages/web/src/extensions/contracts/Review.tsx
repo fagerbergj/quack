@@ -7,10 +7,11 @@ import { lede, saysMore, shortChange, type Item } from './review.ts';
 import { BeforeAfter, label } from './Sections.tsx';
 import { listedBreaks, since, type ContractSpec } from './spec.ts';
 
-type Ping = { ptr: string; n: number };
+// `look`: the jump came from the spec, so the diagram scrolls into view as well as centring.
+type Ping = { ptr: string; n: number; look?: boolean };
 /** The changes on screen and where the reader is among them: `flash` is the element just jumped to, `aim` where the diagram should centre.
  * `compared` when the page compares two versions, and shows changes only from that comparison. */
-export type Review = { items: Item[]; base?: string; now?: string; compared?: boolean; at: number; flash?: Ping; aim?: Ping; go: (i: number) => void; show: (ptr: string) => void };
+export type Review = { items: Item[]; base?: string; now?: string; compared?: boolean; at: number; flash?: Ping; aim?: Ping; go: (i: number) => void; show: (ptr: string) => void; centre?: (ptr: string) => void };
 
 export const ReviewContext = createContext<Review>({ items: [], at: -1, go: () => {}, show: () => {} });
 export const useReview = () => useContext(ReviewContext);
@@ -23,6 +24,7 @@ export function useStepper(items: Item[], base?: string, now?: string, compared?
   const n = useRef(0);
   useEffect(() => setAt(-1), [items]);
   const show = useCallback((ptr: string) => setFlash({ ptr, n: ++n.current }), []);
+  const centre = useCallback((ptr: string) => setAim({ ptr, n: ++n.current, look: true }), []);
   const go = useCallback((i: number) => {
     setAt(i);
     const it = items[i];
@@ -30,7 +32,7 @@ export function useStepper(items: Item[], base?: string, now?: string, compared?
     setFlash({ ptr: it.target, n: ++n.current });
     setAim({ ptr: it.target, n: n.current });
   }, [items]);
-  return useMemo(() => ({ items, base, now, compared, at, flash, aim, go, show }), [items, base, now, compared, at, flash, aim, go, show]);
+  return useMemo(() => ({ items, base, now, compared, at, flash, aim, go, show, centre }), [items, base, now, compared, at, flash, aim, go, show, centre]);
 }
 
 export const FLASH = 'bg-link-bg shadow-[inset_3px_0_0_var(--color-link)]';

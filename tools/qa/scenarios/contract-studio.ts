@@ -32,7 +32,10 @@ const scenario: Scenario = {
       if (labels.join('|') !== 'None: the whole contract|Version 2awaiting, awaiting approval|Version 1approved, approved') throw new Error(`version labels: ${labels.join(', ')}`);
       await ctx.shot(page, `studio-rest-versions-${label}`);
       await page.keyboard.press('Escape');
-      await pane.getByRole('listitem').filter({ has: page.getByText('Changed', { exact: true }) }).first().scrollIntoViewIfNeeded();
+      // The seeded break names `runs[].at`, so the changed field is marked as breaking a caller.
+      const at = pane.locator('li[data-ptr$="/properties/at"]');
+      await visible(at.getByText('Breaks a caller', { exact: true }));
+      await at.scrollIntoViewIfNeeded();
       await ctx.shot(page, `studio-rest-changed-${label}`);
       if (label.startsWith('400')) {
         await page.getByRole('tab', { name: /^Chat/ }).click();

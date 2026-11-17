@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { ClassDiagram } from './ClassDiagram.tsx';
+import { DRAWN } from './class-model.ts';
 import { choicesAt, Info } from './Info.tsx';
 import { Desc, Glyph, ShortChange, useFlash, useItem, useReview } from './Review.tsx';
 import { itemsUnder, worst } from './review.ts';
@@ -23,7 +24,8 @@ function Refs({ label, list, names }: { label: string; list: string[]; names: Se
 // A declaration's card carries the strongest mark of anything changed in it; its own change, before and after, sits under its description.
 function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; usedBy: string[]; choices: Choice[] }) {
   const ptr = `/${d.name}`;
-  const m = worst(itemsUnder(useReview().items, ptr));
+  const { items, centre } = useReview();
+  const m = worst(itemsUnder(items, ptr));
   const own = useItem(ptr);
   const flash = useFlash<HTMLElement>(ptr);
   const code = (t: string): ReactNode => <Linked text={t} names={names} />;
@@ -44,6 +46,8 @@ function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; used
       {d.rows.length > 0 && <SchemaTree rows={d.rows} whyAt={() => []} code={code} />}
       <Refs label="Uses" list={d.uses} names={names} />
       <Refs label="Used by" list={usedBy} names={names} />
+      {/* Some types sit apart from the rest, where no tap in the diagram reaches them; this does. */}
+      {DRAWN.has(d.kind) && <button type="button" onClick={() => centre?.(ptr)} className="-my-2 min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] text-link underline underline-offset-2 focus-ring">Show in diagram</button>}
     </article>
   );
 }

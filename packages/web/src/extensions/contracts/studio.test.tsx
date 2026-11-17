@@ -6,6 +6,7 @@ import { SUPERSEDED } from '../../SessionView.tsx';
 import type { Approval, SealedArtifact, Verdict } from '../../api.ts';
 import { entry, FakeSocket, fetchMock, live, routes, snapshot, stubViewport, useHarness } from '../../test-harness.ts';
 import { diffUnits, units } from './diff.ts';
+import { changeItems } from './review.ts';
 import v1 from './fixtures/sleeper-schedule-v1.json';
 import v2 from './fixtures/sleeper-schedule-v2.json';
 import settings from './fixtures/sleeper-settings.json';
@@ -95,6 +96,18 @@ test.each([
   await waitFor(() => expect(bar()).toHaveTextContent(sub));
   expect(within(bar()).getByText(/first\s+second/)).not.toHaveTextContent('third');
   expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
+});
+
+test('a REST or JSON Schema break names a field by its own name, and a short or generic one only beside its parent', () => {
+  const runs = (at: string) => ({ type: 'object', properties: { runs: { type: 'array', items: { type: 'object', properties: { at: { type: at } } } } } });
+  const doc = (at: string) => ({ ...v1, document: { paths: { '/runs': { get: { responses: { '200': { description: 'ok', content: { 'application/json': { schema: runs(at) } } } } } } } } });
+  const breaking = (what: string) => {
+    const two = { ...doc('integer'), compatibility: { breaking: [{ what, callers: ['page'] }], safe: [] } } as ContractSpec;
+    return changeItems(diffUnits(units(doc('string') as ContractSpec), units(two)), two).map((i) => `${i.line} ${i.breaking}`);
+  };
+  expect(breaking('runs[].at is an integer now.')).toEqual(['GET /runs › 200 › runs › at: type changed true']);
+  expect(breaking('Runs start at the top of the hour.'), '`at` alone, without its parent, names nothing').toEqual(['GET /runs › 200 › runs › at: type changed false']);
+  expect(breaking('Each report now has its own page.'), 'no whole word').toEqual(['GET /runs › 200 › runs › at: type changed false']);
 });
 
 test('the status line says what is going on and whether anything waits on you, in every state', () => {
@@ -195,6 +208,12 @@ test('a request for an older seal than the newest says it is out of date and off
   expect(within(bar()).queryByRole('button', { name: 'Ask for changes' })).toBeNull();
 });
 
+test('with two requests out of date, the line names the newer and counts them', async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed'], [3, 'proposed'], [4, 'draft']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2), spec(3, v2), spec(4, v2, null)], [proposal(2, 2), { ...proposal(3, 2), id: 'p/2' }]);
+  expect(await within(bar()).findByText('2 approval requests are out of date, the newest for v2 draft 2: the agent has since written v2 draft 3.')).toBeInTheDocument();
+});
+
 test('each sealed draft replaces the shown one live: approved and idle, then checking, then failed, each with its reason', async () => {
   routes[STATUS] = status([1, 'approved']);
   const { ws } = open([spec(1, v1), approvedRec(1, 1)]);
@@ -249,11 +268,15 @@ async function proposeTwo(one: object, two: object) {
   return pane;
 }
 
-test('with no verdicts, a REST contract lists its changes first and marks the operations and fields that changed', async () => {
-  const pane = await proposeTwo(v1, v2);
-  expect(lines(await changesList())).toEqual(['GET /apps/sleeper/schedule: summary changed', 'GET /apps/sleeper/schedule › 200 › runs: description changed', 'New GET /apps/sleeper/schedule › 200 › runs › status', 'New GET /apps/sleeper/schedule › 200 › runs › resultUrl']);
+// The fixture's break, written the way a REST break names the field it changes.
+const v2Runs = { ...v2, compatibility: { ...v2.compatibility, breaking: [{ what: 'runs now start from the start of the week, oldest first.', callers: ['Sleeper page'] }] } };
+
+test('with no verdicts, a REST contract lists its changes first and marks the operations and fields that changed, a break by its field name', async () => {
+  const pane = await proposeTwo(v1, v2Runs);
+  expect(lines(await changesList())).toEqual(['GET /apps/sleeper/schedule: summary changed', 'GET /apps/sleeper/schedule › 200 › runs: description changedBreaks a caller', 'New GET /apps/sleeper/schedule › 200 › runs › status', 'New GET /apps/sleeper/schedule › 200 › runs › resultUrl']);
   const runs = pane.querySelector('[data-ptr$="/schema/properties/runs"]') as HTMLElement;
-  expect(runs).toHaveTextContent('Changed');
+  expect(runs).toHaveTextContent('Breaks a caller');
+  expect(runs).toHaveTextContent('Breaks: Sleeper page');
   expect(runs, 'a changed field shows its first changed sentence on each side').toHaveTextContent('v1Upcoming runs, soonest firstv2Runs from the start of the week, oldest first');
   expect(within(pane).getAllByText('New').length).toBe(2);
   expect(line()).toHaveTextContent('v2 waits on you');

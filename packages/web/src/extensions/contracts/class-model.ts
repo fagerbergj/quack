@@ -9,7 +9,7 @@ export type BoxRow = { name: string; type: string; edges: string[]; chips: strin
 export type Box = { decl: Decl; focus: boolean; rows: BoxRow[] };
 export type Focused = { boxes: Box[]; edges: Array<{ id: string; source: string; row: number; target: string }> };
 
-const DRAWN = new Set<Decl['kind']>(['type', 'interface', 'enum', 'other']);
+export const DRAWN = new Set<Decl['kind']>(['type', 'interface', 'enum', 'other']);
 export const drawn = (decls: Decl[]) => decls.filter((d) => DRAWN.has(d.kind));
 
 /** The declared names a type text mentions, once each, in order; never the declaration itself. */

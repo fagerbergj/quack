@@ -139,14 +139,12 @@ function frameHeight(room: number, w: number, h: number) {
   return Math.min(TALL, Math.ceil(h * k) + 2 * INSET + CONTROLS);
 }
 
-// One finger scrolls the page (the pane is pan-y); a second finger reaches React Flow, whose d3 zoom then pans and pinches with both.
-function useTwoFingerPan(el: RefObject<HTMLDivElement | null>) {
-  useEffect(() => {
-    const node = el.current;
-    const one = (e: TouchEvent) => e.touches.length < 2 && e.stopPropagation();
-    node?.addEventListener('touchstart', one, { capture: true, passive: true });
-    return () => node?.removeEventListener('touchstart', one, { capture: true });
-  }, [el]);
+// Fitted below READABLE the text cannot be read, so a narrow frame opens on the focused box and pans from there.
+function fitting(flow: { nodes: BoxNode[]; width: number; height: number } | undefined, focus: string | undefined, room: number) {
+  const fitAll = !flow || flow.width * READABLE <= room;
+  const opened = flow?.nodes.find((n) => n.id === focus);
+  const height = flow && (fitAll ? frameHeight(room, flow.width, flow.height) : frameHeight(room, opened?.width ?? 0, opened?.height ?? 0));
+  return { fitAll, height };
 }
 
 /** What a selected box is, how many changes it has, and where to go from it. */
@@ -167,11 +165,10 @@ function Strip({ decl, items, centred, onCentre }: { decl: Decl; items: Item[]; 
   );
 }
 
-function Caption({ id, legend }: { id: string; legend: boolean }) {
-  const hover = useMedia('(hover: hover)');
+function Caption({ id, legend, touch }: { id: string; legend: boolean; touch: boolean }) {
   return (
     <p id={id} className="m-0 text-[13px] leading-relaxed text-muted">
-      An arrow leaves from the field that names a type. {hover ? 'Point at a box to see what it is; click it to centre on it.' : 'Tap a box to see what it is; tap again to centre on it. Pan with two fingers.'}
+      An arrow leaves from the field that names a type. {touch ? 'Tap a box to see what it is; tap again to centre on it.' : 'Point at a box to see what it is; click it to centre on it.'}
       {legend && <> <span className="whitespace-nowrap"><span className="inline-flex align-middle"><Glyph m="changed" /></span> changed</span> <span className="whitespace-nowrap"><span className="inline-flex align-middle"><Glyph m="breaking" /></span> breaks a caller</span></>}
     </p>
   );
@@ -198,9 +195,11 @@ export function ClassDiagram({ decls }: { decls: Decl[] }) {
     addEventListener('scroll', hide, true);
     return () => removeEventListener('scroll', hide, true);
   }, [tip]);
+  const section = useRef<HTMLElement>(null);
   useEffect(() => {
     const n = aimAt(decls, review.aim?.ptr);
     if (n) (setFocus(n), setSel(undefined));
+    if (n && review.aim?.look) section.current?.scrollIntoView?.({ block: 'start' });
   }, [review.aim]);
   const view = useMemo(() => (focus ? focusView(decls, focus) : { boxes: [], edges: [] }), [decls, focus]);
   const flow = useFlow(view, review.items);
@@ -219,24 +218,22 @@ export function ClassDiagram({ decls }: { decls: Decl[] }) {
     },
   }), [sel, focus, tip, tipId, review.show]);
   const frame = useRef<HTMLDivElement>(null);
-  useTwoFingerPan(frame);
+  // On a touch screen one finger scrolls the page past the diagram; it moves by taps (select, centre) and the zoom buttons instead.
+  const touch = useMedia('(pointer: coarse)');
   const room = useWidth(frame);
-  // Fitted below READABLE the text cannot be read, so a narrow frame opens on the focused box and pans from there.
-  const fitAll = !flow || flow.width * READABLE <= room;
-  const opened = flow?.nodes.find((n) => n.id === focus);
-  const height = flow && (fitAll ? frameHeight(room, flow.width, flow.height) : frameHeight(room, opened?.width ?? 0, opened?.height ?? 0));
+  const { fitAll, height } = fitting(flow, focus, room);
   const selected = decls.find((d) => d.name === sel);
   if (!view.boxes.length) return null;
   return (
-    <section aria-label="Class diagram" aria-describedby={note} className="flex min-w-0 scroll-mt-16 flex-col gap-3 rounded-[18px] border border-line bg-surface p-4">
+    <section ref={section} aria-label="Class diagram" aria-describedby={note} className="flex min-w-0 scroll-mt-16 flex-col gap-3 rounded-[18px] border border-line bg-surface p-4">
       <h2 className="m-0 text-[17px] font-semibold">Class diagram <span className="font-normal text-muted">around {focus}</span></h2>
-      <div ref={frame} onPointerDownCapture={(e) => void (pointer.current = e.pointerType)} style={height ? { height } : undefined} className="class-diagram h-[420px] overflow-hidden rounded-xl border border-line sm:h-[520px]">
+      <div ref={frame} onPointerDownCapture={(e) => void (pointer.current = e.pointerType)} style={height ? { height } : undefined} className={`class-diagram h-[420px] overflow-hidden rounded-xl border border-line sm:h-[520px] ${touch ? 'diagram-touch' : ''}`}>
         <Acts value={acts}>
           {flow && (
             <ReactFlow
               key={`${focus}:${height ?? ''}`} nodes={flow.nodes} edges={flow.edges} nodeTypes={nodeTypes} fitView minZoom={0.2}
               fitViewOptions={fitAll ? { padding: { x: `${INSET}px`, top: `${INSET}px`, bottom: `${CONTROLS}px` } } : { nodes: [{ id: focus! }], maxZoom: 1, padding: { x: `${INSET}px`, top: `${INSET}px`, bottom: `${CONTROLS}px` } }}
-              nodesDraggable={false} nodesConnectable={false} zoomOnScroll={false} preventScrolling={false} onNodeClick={(_, n) => acts.pick(n.id)}
+              nodesDraggable={false} nodesConnectable={false} panOnDrag={!touch} zoomOnScroll={false} preventScrolling={false} onNodeClick={(_, n) => acts.pick(n.id)}
               proOptions={{ hideAttribution: true }}
             >
               <Background gap={20} size={1} />
@@ -246,7 +243,7 @@ export function ClassDiagram({ decls }: { decls: Decl[] }) {
           )}
         </Acts>
       </div>
-      <div aria-live="polite">{selected ? <Strip decl={selected} items={itemsUnder(review.items, `/${selected.name}`)} centred={selected.name === focus} onCentre={() => setFocus(selected.name)} /> : <Caption id={note} legend={review.items.length > 0} />}</div>
+      <div aria-live="polite">{selected ? <Strip decl={selected} items={itemsUnder(review.items, `/${selected.name}`)} centred={selected.name === focus} onCentre={() => setFocus(selected.name)} /> : <Caption id={note} legend={review.items.length > 0} touch={touch} />}</div>
       {tip && decls.some((d) => d.name === tip.name) && <Tip id={tipId} decl={decls.find((d) => d.name === tip.name)!} at={tip.at} />}
     </section>
   );

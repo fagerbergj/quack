@@ -60,9 +60,9 @@ function lineOf(kind: ContractSpec['kind'], name: string, cs: Change[], unit: Lo
   return `${name}: ${[...new Set(cs.map((x) => PART[x.part!] ?? x.part))].join(' and ')} changed`;
 }
 
-// A removed element is shown where its nearest surviving parent is drawn.
+// A removed element is shown where its nearest surviving parent is drawn; an intent part emptied has no place left, so the list stands in.
 function targetOf(c: Change, unit: Lookup): string {
-  if (c.ptr === '#purpose') return INTENT[c.part!]?.[1] ?? '#purpose';
+  if (c.ptr === '#purpose') return c.rows[0]?.now ? (INTENT[c.part!]?.[1] ?? '#purpose') : '#changes';
   if (c.mark !== 'removed') return c.ptr;
   for (let p = parent(c.ptr); p; p = parent(p)) if (unit(p)) return p;
   return '#changes';
@@ -72,6 +72,17 @@ const parent = (ptr: string) => ptr.slice(0, Math.max(0, ptr.lastIndexOf('/')));
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // A whole name, not the prefix of a longer dotted one: `CheckResult` is not named by `CheckResult.resolvers`.
 const names = (text: string, name: string) => new RegExp(`(^|[^\\w$.])${esc(name)}(?![\\w$]|\\.[A-Za-z_$])`).test(text);
+const word = (text: string, w: string) => new RegExp(`(^|[^\\w$])${esc(w)}(?![\\w$])`).test(text);
+const GENERIC = new Set(['id', 'at', 'name', 'type', 'key', 'value', 'data', 'items', 'body']);
+
+// A REST or JSON Schema breadcrumb never appears whole in prose, so its element's own name counts; a short or generic one only beside its parent's.
+function named(kind: ContractSpec['kind'], text: string, name: string) {
+  if (kind === 'typescript') return names(text, name);
+  const segs = name.split(kind === 'rest' ? ' › ' : '.');
+  const own = segs.at(-1)!, up = segs.at(-2);
+  const loose = own.length < 4 || GENERIC.has(own.toLowerCase());
+  return word(text, own) && (!loose || (!!up && word(text, up)));
+}
 
 /** One change per changed element or intent part: the document's in drawing order, its removals, then the intent's. A change is breaking
  * when a listed break names it or the checker found one at its pointer: a text match, not a proof. */
@@ -80,7 +91,7 @@ export function changeItems(diff: Diff, spec: ContractSpec, found: Array<{ path?
   const groups = Map.groupBy(diff.changes.filter((c) => !implied(c, diff.changes)), keyOf);
   return [...groups.values()].sort((a, b) => Number(a[0]!.ptr.startsWith('#')) - Number(b[0]!.ptr.startsWith('#'))).map((cs) => {
     const c = cs[0]!, name = nameOf(spec.kind, c);
-    const hit = c.ptr.startsWith('#') ? [] : listed.filter((b) => names(b.what, name));
+    const hit = c.ptr.startsWith('#') ? [] : listed.filter((b) => named(spec.kind, b.what, name));
     const rows = c.mark === 'changed' ? cs.map((x) => ({ name: PART[x.part!] ?? x.part, was: x.rows[0]!.was, now: x.rows[0]!.now })) : c.rows;
     // A new element breaks no reader, whatever prose mentions it.
     const breaking = c.mark !== 'added' && (hit.length > 0 || found.some((f) => f.path === c.ptr));

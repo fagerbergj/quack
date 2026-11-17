@@ -139,7 +139,8 @@ export function Header({ spec, count, file, verdict, info = [] }: { spec: Contra
     <header ref={flash.ref} tabIndex={-1} data-ptr="#title" className={`flex flex-wrap items-center gap-3 rounded-lg outline-none ${flash.cls}`}>
       <div className="flex min-w-0 flex-1 basis-48 flex-col">
         <h2 className="m-0 flex items-center gap-2 font-sans text-[17px] leading-snug font-semibold [overflow-wrap:anywhere]">
-          <span className="min-w-0">{spec.title}</span>
+          {/* The session header carries the full title, so a phone keeps this one to two lines. */}
+          <span title={spec.title} className="min-w-0 max-sm:line-clamp-2">{spec.title}</span>
           <MarkTag m={useMark('#title')} />
           {verdict?.passed && <StatusIcon verdict={verdict} />}
           <Info choices={info} label={info.length === 1 ? undefined : `Why: ${info.length} decisions about the whole contract`} />

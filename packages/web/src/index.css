@@ -165,5 +165,5 @@ details[open] > summary > .chev { transform: rotate(90deg); }
   --xy-controls-box-shadow: var(--shadow-float);
 }
 .class-diagram .react-flow__node:focus-visible { outline: 2px solid var(--color-link); outline-offset: 2px; border-radius: 8px; }
-/* One finger scrolls the page past the diagram; two fingers reach React Flow (see useTwoFingerPan). */
-.class-diagram .react-flow__pane { touch-action: pan-y; }
+/* On a touch screen one finger scrolls the page past the diagram; React Flow's own drag is off there (ClassDiagram's panOnDrag). */
+.class-diagram.diagram-touch .react-flow__pane { touch-action: pan-y; }
