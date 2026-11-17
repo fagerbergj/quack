@@ -7,7 +7,7 @@ import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
 import { ApproveSheet, AskSheet, prim, sec, useDecide, type Break, type Pending } from './Approval.tsx';
-import { CommentsProvider, DraftsLine, useComments } from './Comments.tsx';
+import { CommentsProvider, DraftsLine, StrandedLine, useComments } from './Comments.tsx';
 import { reasonText } from './comments.ts';
 import { Decided, Progress } from './Progress.tsx';
 import { DiffContext, diffUnits, units, type Diff } from './diff.ts';
@@ -129,6 +129,7 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
         {state.can && <div className="flex flex-none gap-2">{ask}<button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
       </div>
       {state.can && <DraftsLine />}
+      <StrandedLine />
       {state.detail && <p className="m-0 max-h-24 overflow-y-auto text-[13px] whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">{state.detail}</p>}
       {stale && <p className="m-0 text-[13px] text-muted">{stale}</p>}
       {sheet === 'approve' && <ApproveSheet pending={pending} {...deciding} />}
@@ -197,7 +198,7 @@ function Contract({ sessionKey, versions, newest, spec, status, approvals, runni
   const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
   const versionName = useCallback((n: number) => { const v = versions.find((x) => x.a.version === n); return v ? short(v, versions) : `#${n}`; }, [versions]);
   return (
-    <CommentsProvider sessionKey={sessionKey} pending={commentable} versionName={versionName} decided={decided} deps={[versions.length, approvals.length, running]}>
+    <CommentsProvider sessionKey={sessionKey} pending={commentable} newest={newest.a.version} versionName={versionName} decided={decided} deps={[versions.length, approvals.length, running]}>
     <div ref={top} className={layout}>
       <ReviewContext value={review}>
         {items.length > 0 && <Stepper onTop={() => top.current?.scrollIntoView?.({ block: 'start' })} />}

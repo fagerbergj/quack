@@ -240,9 +240,14 @@ const List = ({ items }: { items: string[] }) => <ul className={ul}>{items.map((
 function FactItem({ f, ptr }: { f: Fact; ptr: string }) {
   const id = typeof f === 'string' ? undefined : f.id;
   const flash = useFlash<HTMLLIElement>(id ? `${ptr}/${id}` : undefined);
+  const text = factText(f);
   const on = ptr === '#guarantees' ? 'guarantee' : 'nonGoal';
-  const target = { anchor: { on, text: factText(f), ...(id && { id }) }, tag: on === 'guarantee' ? 'Guarantee' : 'Out of scope', name: id ?? lede(factText(f)), text: factText(f) } as const;
-  return <li ref={flash.ref} tabIndex={id ? -1 : undefined} className={`group/c rounded outline-none ${flash.cls}`}><Inline text={factText(f)} />{id && <> <code className="font-mono text-[12px] text-muted">{id}</code></>}<CommentButton target={target} /></li>;
+  return (
+    <li ref={flash.ref} tabIndex={id ? -1 : undefined} className={`group/c rounded outline-none ${flash.cls}`}>
+      <Inline text={text} />{id && <> <code className="font-mono text-[12px] text-muted">{id}</code></>}
+      <CommentButton target={{ anchor: { on, text, id }, tag: on === 'guarantee' ? 'Guarantee' : 'Out of scope', name: id ?? lede(text), text }} />
+    </li>
+  );
 }
 
 const prefixOf = (f: Fact) => (typeof f === 'string' || !f.id.includes('.') ? '' : f.id.slice(0, f.id.indexOf('.')));

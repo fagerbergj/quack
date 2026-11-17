@@ -11,34 +11,39 @@ import { Sheet } from './Review.tsx';
 /** A place a person can comment on, as the page names it: `tag` says which part of the page, `text` what it says there. */
 export type Target = { anchor: Anchor; tag: string; name: string; text?: string };
 
-type Open = { kind: 'new'; target: Target } | { kind: 'thread'; target: Target } | { kind: 'review' } | { kind: 'all' };
+type Open = { kind: 'new'; target: Target } | { kind: 'thread'; target: Target } | { kind: 'review' } | { kind: 'all' } | { kind: 'stranded' };
 type Ctx = {
   /** Set while a version waits on the person: the only one that takes comments. */
   pending?: { artifact: number; name: string; proposal: Approval };
   byKey: Map<string, Comment[]>; all: Comment[]; drafts: Comment[]; caller?: Principal;
+  /** The caller's drafts on a version no longer up for approval: they cannot be sent, so the page offers to remove or move them. */
+  stranded: Comment[]; newest: number;
   open: (o: Open) => void; reload: () => void; versionName: (artifact: number) => string;
 };
-const NONE: Ctx = { byKey: new Map(), all: [], drafts: [], open: () => {}, reload: () => {}, versionName: (n) => `#${n}` };
+const NONE: Ctx = { byKey: new Map(), all: [], drafts: [], stranded: [], newest: 0, open: () => {}, reload: () => {}, versionName: (n) => `#${n}` };
 const CommentsContext = createContext<Ctx>(NONE);
 export const useComments = () => useContext(CommentsContext);
 
 const EMPTY: { comments: Comment[]; caller?: Principal } = { comments: [] };
 
 /** The comments on one contract and the sheets that make, send and read them; `deps` reload them as the session moves. */
-export function CommentsProvider({ sessionKey, pending, versionName, decided, deps, children }: { sessionKey: string; pending?: Ctx['pending']; versionName: Ctx['versionName']; decided: (id: string) => void; deps: unknown[]; children: ReactNode }) {
+export function CommentsProvider({ sessionKey, pending, newest, versionName, decided, deps, children }: { sessionKey: string; pending?: Ctx['pending']; newest: number; versionName: Ctx['versionName']; decided: (id: string) => void; deps: unknown[]; children: ReactNode }) {
   const { data, reload } = useLoad(() => listComments(sessionKey).catch(() => EMPTY), [sessionKey, ...deps], EMPTY);
   const [shown, open] = useState<Open>();
   const value = useMemo<Ctx>(() => {
     const byKey = Map.groupBy(data.comments, (c) => anchorKey(c.anchor));
-    const drafts = data.comments.filter((c) => c.state === 'draft' && isMe(c.author, data.caller) && c.artifact === pending?.artifact);
-    return { pending, byKey, all: data.comments, drafts, caller: data.caller, open, reload, versionName };
-  }, [data, pending, versionName, reload]);
+    const mine = data.comments.filter((c) => c.state === 'draft' && isMe(c.author, data.caller));
+    const drafts = mine.filter((c) => c.artifact === pending?.artifact);
+    const stranded = mine.filter((c) => c.artifact !== pending?.artifact);
+    return { pending, byKey, all: data.comments, drafts, stranded, newest, caller: data.caller, open, reload, versionName };
+  }, [data, pending, newest, versionName, reload]);
   const close = () => open(undefined);
   return (
     <CommentsContext value={value}>
       {children}
       {shown?.kind === 'new' && pending && <NewComment sessionKey={sessionKey} target={shown.target} onClose={close} />}
       {shown?.kind === 'thread' && <Thread sessionKey={sessionKey} title={`Comments on ${shown.target.name}`} comments={value.byKey.get(anchorKey(shown.target.anchor)) ?? []} onClose={close} />}
+      {shown?.kind === 'stranded' && <Thread sessionKey={sessionKey} title="Drafts that can't be sent" comments={value.stranded} onClose={close} />}
       {shown?.kind === 'all' && <Thread sessionKey={sessionKey} title="Review comments" comments={value.all.filter((c) => c.state !== 'draft')} onClose={close} />}
       {shown?.kind === 'review' && pending && <ReviewSheet sessionKey={sessionKey} decided={decided} onClose={close} />}
     </CommentsContext>
@@ -267,8 +272,29 @@ const time = (iso: string) => new Date(iso).toLocaleString([], { month: 'short',
 const STATE: Record<Comment['state'], [string, string]> = { draft: ['Draft', 'bg-soft text-muted'], sent: ['Sent', 'bg-link-bg text-link'], answered: ['Answered', 'bg-link-bg text-link'], addressed: ['Addressed', 'bg-success-bg text-success'], resolved: ['Resolved', 'bg-soft text-muted'] };
 const chip = 'rounded px-1.5 py-0.5 text-[12px] font-semibold';
 
+// Why a stranded draft cannot be sent: a newer version replaced its own, or its own is no longer up for approval.
+const strandedWhy = (c: Comment, newest: number, name: string) => `${name} ${c.artifact < newest ? 'was replaced' : 'is no longer up for approval'}, so this can't be sent`;
+
+/** A draft on a version no longer up for approval: Remove it, or move it to the version that is, by the same anchor. */
+function Stranded({ sessionKey, c }: { sessionKey: string; c: Comment }) {
+  const { pending, newest, versionName, reload } = useComments();
+  const [error, setError] = useState('');
+  const run = (p: Promise<unknown>) => void p.then(reload, (e: unknown) => setError(e instanceof AppError && e.status === 400 ? `What this draft is about is not in ${pending?.name}, so it stays on ${versionName(c.artifact)}. Remove it, or copy its text into a new comment.` : (e as Error).message));
+  const move = async () => { await createComment(sessionKey, pending!.artifact, c.anchor, c.body); await deleteComment(sessionKey, c.id); };
+  return (
+    <>
+      <p className="m-0 text-[13px] text-warning">Draft on {versionName(c.artifact)} · {strandedWhy(c, newest, versionName(c.artifact))}</p>
+      <span className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => run(deleteComment(sessionKey, c.id))} className={sec}>Remove</button>
+        {pending && <button type="button" onClick={() => run(move())} className={sec}>Move to {pending.name}</button>}
+      </span>
+      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+    </>
+  );
+}
+
 function CommentCard({ sessionKey, c }: { sessionKey: string; c: Comment }) {
-  const { caller, versionName, reload } = useComments();
+  const { caller, versionName, reload, stranded } = useComments();
   const [error, setError] = useState('');
   const { tag, name } = anchorName(c.anchor);
   const [stateName, stateCls] = STATE[c.state];
@@ -284,6 +310,7 @@ function CommentCard({ sessionKey, c }: { sessionKey: string; c: Comment }) {
       {c.outdated && <blockquote className="m-0 border-l-2 border-line pl-2 text-[13px] whitespace-pre-wrap text-muted [overflow-wrap:anywhere]">On {versionName(c.artifact)}: {c.quote}</blockquote>}
       <div className="flex flex-col gap-0.5"><span className="text-[12.5px] text-muted"><strong className="font-semibold text-ink">{whoName(c.author, caller)}</strong> · {time(c.createdAt)}</span><p className="m-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{c.body}</p></div>
       {c.replies.map((r, i) => <div key={i} className="flex flex-col gap-0.5 border-l-2 border-success pl-2"><span className="text-[12.5px] text-muted"><strong className="font-semibold text-ink">Agent</strong> · {time(r.at)}</span><p className="m-0 whitespace-pre-wrap [overflow-wrap:anywhere]">{r.text}</p></div>)}
+      {stranded.includes(c) && <Stranded sessionKey={sessionKey} c={c} />}
       {resolvable && <button type="button" onClick={() => void resolveComment(sessionKey, c.id).then(reload, (e: Error) => setError(e.message))} className={`${sec} self-start`}>Resolve</button>}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
     </li>
@@ -304,6 +331,15 @@ export function DraftsLine() {
   const n = drafts.length;
   if (!n) return null;
   return <p className="m-0 flex items-center gap-1.5 text-[13px] font-semibold text-warning">{bubble}{n} draft {n === 1 ? 'comment' : 'comments'}{drafts.some((c) => c.review) ? ', ready but not sent' : ''}</p>;
+}
+
+/** The decision bar's notice for drafts that can no longer be sent, which opens them to remove or move; absent while there are none. */
+export function StrandedLine() {
+  const { stranded, newest, open } = useComments();
+  const n = stranded.length;
+  if (!n) return null;
+  const where = stranded.every((c) => c.artifact < newest) ? 'a replaced version' : 'a version no longer up for approval';
+  return <button type="button" onClick={() => open({ kind: 'stranded' })} className="min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] font-semibold text-link underline-offset-2 hover:underline focus-ring">{n} {n === 1 ? 'draft is' : 'drafts are'} on {where}</button>;
 }
 
 /** The More about list's row for the review comments already sent, which opens all their threads; absent while there are none. */

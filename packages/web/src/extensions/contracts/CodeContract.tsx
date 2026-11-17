@@ -39,6 +39,7 @@ function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; used
   const m = worst(itemsUnder(items, ptr));
   const own = useItem(ptr);
   const flash = useFlash<HTMLElement>(ptr);
+  const target = declTarget(d);
   const code = (t: string): ReactNode => <Linked text={t} names={names} />;
   return (
     <article ref={flash.ref} id={`decl-${d.name}`} data-ptr={ptr} tabIndex={-1} aria-label={d.name} className={`-mx-2 flex scroll-mt-16 flex-col gap-2 rounded-lg border-t border-line px-2 pt-3 outline-none first:border-t-0 first:pt-0 ${flash.cls}`}>
@@ -49,7 +50,7 @@ function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; used
         {!d.exported && <span className={pill}>not exported</span>}
         <MarkTag m={own?.breaking ? 'breaking' : own?.mark === 'removed' ? undefined : own?.mark} />
         <span className="flex-1" />
-        {declTarget(d) && <CommentButton target={declTarget(d)!} />}
+        {target && <CommentButton target={target} />}
         <Info choices={choices} />
       </div>
       {d.doc && <p className="m-0 text-[14px] leading-relaxed text-ink-2"><Desc text={d.doc} name="Full description" /></p>}

@@ -205,3 +205,46 @@ test('the diagram strip of the centred box offers Comment, and a TypeScript memb
   expect(within(diagram).getByRole('button', { name: /^A, .*1 comment, go to its declaration$/ }), 'the box counts what is under it').toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'B' })).queryByRole('button', { name: /^Comment on B\.0/ }), 'a union variant does not resolve').toBeNull();
 });
+
+// v2 was replaced by v3, now up for approval, while a draft of the caller's still sits on v2.
+async function stranded() {
+  pointer(false);
+  routes[`GET ${APP}`] = { key: 'contracts:s1', versions: [{ artifact: 1, version: 1, status: 'approved' }, { artifact: 2, version: 2, status: 'draft' }, { artifact: 3, version: 3, status: 'proposed' }] };
+  routes[`GET ${APP}/comments`] = { comments: [draft('cmt_old')], caller: ada };
+  live[KEY] = { artifacts: [seal(1, v1), approved, seal(2, v2), seal(3, { ...v2, version: 3 })], approvals: [{ ...proposal, args: { ...proposal.args, version: 3, artifact: 3 } }] };
+  location.hash = `#/s/${KEY}`;
+  render(<App />);
+  FakeSocket.all[0]!.open();
+  FakeSocket.all[0]!.frame(snapshot());
+  await waitFor(() => expect(bar()).toHaveTextContent('v3 waits on you'));
+  expect(within(bar()).getByRole('button', { name: 'Ask for changes' }), 'a stranded draft is not one the review can send').toBeInTheDocument();
+  await userEvent.click(await within(bar()).findByRole('button', { name: '1 draft is on a replaced version' }));
+  const sheet = screen.getByRole('dialog', { name: "Drafts that can't be sent" });
+  expect(sheet).toHaveTextContent('Draft on v2 · v2 was replaced, so this can\'t be sent');
+  expect(within(sheet).getByText('Body of cmt_old').tagName, 'its text stays readable and selectable').toBe('P');
+  return sheet;
+}
+
+test('a draft left on a replaced version is not stranded: the bar says so, and Remove deletes it', async () => {
+  routes[`DELETE ${APP}/comments/cmt_old`] = {};
+  const sheet = await stranded();
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Remove' }));
+  await waitFor(() => expect(sent('DELETE')).toEqual([[`${APP.slice(1)}/comments/cmt_old`, undefined]]));
+});
+
+test('Move puts the draft on the version up for approval by the same anchor and body, then removes the old one', async () => {
+  routes[`POST ${APP}/comments`] = draft('cmt_new', { artifact: 3, version: 3 });
+  routes[`DELETE ${APP}/comments/cmt_old`] = {};
+  const sheet = await stranded();
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Move to v3' }));
+  await waitFor(() => expect(sent('DELETE')).toEqual([[`${APP.slice(1)}/comments/cmt_old`, undefined]]));
+  expect(sent('POST')).toEqual([[`${APP.slice(1)}/comments`, { artifact: 3, anchor: { on: 'document', ptr: ROUTE }, body: 'Body of cmt_old' }]]);
+});
+
+test('a Move whose anchor is gone from the new version keeps the old draft and says so', async () => {
+  routes[`POST ${APP}/comments`] = new Fail(400, { detail: 'the anchor does not resolve in artifact 3' });
+  const sheet = await stranded();
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Move to v3' }));
+  expect(await within(sheet).findByRole('alert')).toHaveTextContent('What this draft is about is not in v3, so it stays on v2. Remove it, or copy its text into a new comment.');
+  expect(sent('DELETE')).toEqual([]);
+});
