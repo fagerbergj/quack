@@ -21,6 +21,12 @@ test('a test file that leaves a server listening fails and names the handle', ()
   assert.match(r.stdout + r.stderr, /still alive 0\.2s after its tests, held by .*TCPServerWrap/);
 });
 
+test('a child process left running is killed and named, so the runner is not held on its pipes', () => {
+  const r = runFile("import { spawn } from 'node:child_process';\ntest('leaks', () => { spawn('sleep', ['20'], { stdio: 'inherit' }); });");
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /held by .*ProcessWrap.*; killed child \d+ \(sleep 20\)/);
+});
+
 test('a test file that cleans up exits on its own', () => {
   const r = runFile("import { createServer } from 'node:http';\ntest('closes', async () => { const s = createServer().listen(0); await new Promise((r) => s.close(r)); });");
   assert.equal(r.status, 0, r.stdout + r.stderr);

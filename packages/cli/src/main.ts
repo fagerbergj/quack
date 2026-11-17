@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -366,9 +366,19 @@ function completion([shell]: string[]): Result {
 }
 
 const EVAL = fileURLToPath(new URL('../../eval/src/main.ts', import.meta.url));
-// Eval has its own flags, so it gets the raw arguments before this parser sees them.
-const evalPassthrough = (args: string[], env: Record<string, string | undefined>) =>
-  new Promise<number>((resolve) => spawn(process.execPath, [EVAL, ...args], { stdio: 'inherit', env }).on('close', (code) => resolve(code ?? 1)));
+type Spawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+const ENDS = ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+// Eval has its own flags, so it gets the raw arguments before this parser sees them. It reads no stdin, and it
+// ends with this process: a child left holding inherited pipes keeps whoever reads them waiting.
+const evalPassthrough = (args: string[], env: Env, spawnChild: Spawn) => new Promise<number>((resolve) => {
+  const child = spawnChild(process.execPath, [EVAL, ...args], { stdio: ['ignore', 'inherit', 'inherit'], env });
+  const stop = () => child.kill();
+  for (const e of ENDS) process.once(e, stop);
+  child.on('close', (code) => {
+    for (const e of ENDS) process.off(e, stop);
+    resolve(code ?? 1);
+  });
+});
 
 const help = (t: Target) => [
   'usage: quack [--url URL | --server NAME] [--json] <command>', '', ...Object.values(COMMANDS).map((c) => `  quack ${c.usage}`), '',
@@ -390,8 +400,8 @@ function print(result: Result, json: boolean | undefined, out: Out) {
 }
 
 /** Exit codes: 0 ok, 1 API or usage error, 2 not found. */
-export async function run(argv: string[], env: Record<string, string | undefined>, out: Out): Promise<number> {
-  if (argv[0] === 'eval') return evalPassthrough(argv.slice(1), env);
+export async function run(argv: string[], env: Record<string, string | undefined>, out: Out, spawnChild: Spawn = spawn): Promise<number> {
+  if (argv[0] === 'eval') return evalPassthrough(argv.slice(1), env, spawnChild);
   try {
     const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: OPTIONS });
     const [name, ...pos] = positionals;
