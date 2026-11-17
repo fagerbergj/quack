@@ -1,6 +1,6 @@
 // The Sessions API's HTTP adapter (approved v9): the catalog's reads and a person's writes, in the approved wire shapes.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isSessionKey, SESSION_KEY, sendProblem, serviceHttp, tooLarge } from '@quack/sdk';
+import { isSessionKey, SESSION_KEY, sendProblem, serviceHttp, tooLarge, withdrawnText, type Withdrawal } from '@quack/sdk';
 import type { Catalog, ListRequest } from './core.ts';
 import { CursorError } from './keyset.ts';
 import type { ArtifactRow, AskRow, Principal, SessionRow } from './port.ts';
@@ -13,9 +13,9 @@ export type Caller = Principal | { kind: 'session'; key: string; crossSession: b
 export type SessionsApiDeps = {
   /** Deletes the session's directory, stopping its process; refused while it works or sleeps until a wake time. */
   deleteSession(key: string): Promise<'deleted' | 'absent' | { refused: string }>;
-  /** Hands the answer to the session's gate or question, which waits on it: true, false when the session holds it
-   * answered, or the session's reason for refusing a malformed answer. */
-  answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string>;
+  /** Hands the answer to the session's gate or question, which waits on it: true, false when the session holds it answered,
+   * `withdrawn` when the session withdrew the approval, or the session's reason for refusing a malformed answer. */
+  answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
 };
 
 // Re-exported from the sdk, the one definition, so existing @quack/catalog imports keep working.
@@ -126,6 +126,7 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     if (!ask) throw new Problem(404, 'no such ask');
     const taken = ask.state === 'pending' && (await deps.answer(key, ask, { by, ...resolution }));
     if (typeof taken === 'string') throw new Problem(400, taken);
+    if (typeof taken === 'object' || ask.state === 'cancelled') throw new Problem(409, withdrawnText(typeof taken === 'object' ? taken.withdrawn : undefined));
     if (!taken) throw new Problem(409, `the ask is ${ask.state === 'pending' ? 'already answered' : ask.state}`);
     await catalog.resolve(key, id, { by, ...resolution });
     return askWire((await catalog.getAsk(key, id))!);

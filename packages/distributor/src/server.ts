@@ -5,7 +5,7 @@ import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { SESSION_KEY, sessionsApi, type Caller, type Catalog } from '@quack/catalog';
-import { principalName, safeEqual, sendProblem, serviceHttp, type Principal } from '@quack/sdk';
+import { principalName, safeEqual, sendProblem, serviceHttp, type Principal, type Withdrawal } from '@quack/sdk';
 import { PRINCIPAL_HEADER, principalHeader, unrefTimer, type SetTimer } from '@quack/session';
 import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
@@ -431,18 +431,19 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   };
 
   // A person's answer goes to the session's own gate or question, which is what the waiting run reads.
-  async function answer(key: string, ask: { id: string; type: 'approval' | 'question'; prompt?: { options: string[] } }, r: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string }): Promise<boolean | string> {
+  async function answer(key: string, ask: { id: string; type: 'approval' | 'question'; prompt?: { options: string[] } }, r: { by: { kind: 'person'; id: string } | { kind: 'tailnet' }; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }> {
     const who: Principal = r.by.kind === 'person' ? { kind: 'person', name: r.by.id } : r.by;
     const mapped = ask.type === 'approval' ? undefined : questionAnswer(ask, r);
     if (typeof mapped === 'string') return mapped;
     const [path, body] = ask.type === 'approval'
       ? [`/approvals/${encodeURIComponent(ask.id)}`, { decision: r.choice, ...(r.reason !== undefined && { reason: r.reason }) }]
       : [`/questions/${encodeURIComponent(ask.id)}`, mapped];
-    let out: boolean | string = false;
+    let out: boolean | string | { withdrawn: Withdrawal['reason'] } = false;
     await withSession(key, undefined, `POST ${path}`, async (url) => {
       const res = await fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', ...upstream(key, who) }, body: JSON.stringify(body) });
-      const reply = (await res.json().catch(() => ({}))) as { error?: string };
-      out = res.ok || (res.status === 400 ? reply.error ?? 'the session refused the answer' : false);
+      const reply = (await res.json().catch(() => ({}))) as { error?: string; withdrawn?: { reason: Withdrawal['reason'] } };
+      // A withdrawn approval is passed on as one, not as answered.
+      out = res.ok || (res.status === 400 ? reply.error ?? 'the session refused the answer' : reply.withdrawn ? { withdrawn: reply.withdrawn.reason } : false);
     });
     return out;
   }

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineTool, GenerationTask, hook, LiveDoc, type ConversationId, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
-import { Approvals, Artifacts, gated, type Approval, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, gated, withdrawApprovals, type Approval, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
@@ -23,12 +23,13 @@ export function routesOf(document: unknown): string {
 type Proposed = { version: number; artifact?: number; hash?: string };
 
 // Writes the artifact for every decided proposal that has none, keyed by approval id, so a crash between the verdict and the record loses nothing.
+// A withdrawn proposal's verdict never acted, so it is not recorded; a record written before the withdrawal stands.
 async function reconcile(api: ToolExecutionApi, ctx: Context) {
   await api.commit(async (tx) => {
     const { items } = await tx.doc(Approvals, api.conversationId);
     const doc = await tx.doc(Artifacts, api.conversationId);
     for (const [id, a] of Object.entries(items)) {
-      if (a.tool !== 'propose_contract' || !a.verdict) continue;
+      if (a.tool !== 'propose_contract' || !a.verdict || a.withdrawn) continue;
       const { version, artifact, hash } = a.args as Proposed;
       const ok = a.verdict.decision === 'approve';
       const kind = ok ? APPROVED_KIND : CHANGES_KIND;
@@ -52,13 +53,19 @@ export function approvedSpec(all: Versions, approvals: Record<string, Approval>,
   const specs = (all[CONTRACT_KIND]?.versions ?? []).filter((v) => v.version < before && passed(v));
   const recorded = (all[APPROVED_KIND]?.versions ?? []).map((r) => JSON.parse(r.content) as Proposed & { approval?: string });
   // A decided approval not yet written down by `reconcile` counts too, and outranks recorded ones: it was decided after the last reconcile.
-  const pending = Object.entries(approvals).filter(([id, a]) => a.tool === 'propose_contract' && a.verdict?.decision === 'approve' && !recorded.some((r) => r.approval === id));
+  const pending = Object.entries(approvals).filter(([id, a]) => a.tool === 'propose_contract' && a.verdict?.decision === 'approve' && !a.withdrawn && !recorded.some((r) => r.approval === id));
   for (const { version, artifact, approval } of [...recorded, ...pending.map(([approval, a]) => ({ ...(a.args as Proposed), approval }))].toReversed()) {
     const asked = (approval && approvals[approval]?.requestedAt) || Infinity;
     const hit = artifact ? specs.find((v) => v.version === artifact) : specs.findLast((v) => v.sealedAt <= asked && (parseSpec(v.content) as ContractSpec).version === version);
     if (hit) return hit;
   }
   return undefined;
+}
+
+/** Withdraws every open proposal of an artifact older than the newly sealed `version`: approving it would approve a replaced version. */
+export async function supersedeProposals(version: number, api: ToolExecutionApi, ctx: Context): Promise<void> {
+  const older = (a: Approval) => a.tool === 'propose_contract' && ((a.args as Proposed).artifact ?? Infinity) < version;
+  await api.commit(async (tx) => { withdrawApprovals(await tx.doc(Approvals, api.conversationId), (_, a) => older(a), { at: api.now(), reason: 'superseded', supersededBy: `${CONTRACT_KIND}:${version}` }); }, ctx);
 }
 
 const approval = gated(defineTool({

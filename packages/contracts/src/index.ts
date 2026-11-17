@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { judged } from '@quack/judge';
 import { artifactsExtension, gate, sealedVersion, setDefaultSessionTitle, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
-import { awaitingApproval, proposeVersion } from './approval.ts';
+import { awaitingApproval, proposeVersion, supersedeProposals } from './approval.ts';
 import { contractDeclaration, contractRubric, specInputs } from './rubric.ts';
 import { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec } from './spec.ts';
 import { contractTools } from './tools.ts';
@@ -30,6 +30,7 @@ export const specKind: ArtifactKind = { kind: CONTRACT_KIND, path: CONTRACT_PATH
 // The gate runs after the judge's and reads the version back with its verdict; an unjudged version is not proposed.
 async function proposeGate(event: { data: SealedArtifact }, p: { api?: ToolExecutionApi; ctx?: Context }): Promise<GateVerdict | undefined> {
   if (event.data.kind !== CONTRACT_KIND) return undefined;
+  await supersedeProposals(event.data.version, p.api!, p.ctx!);
   const sealed = (await sealedVersion(p.api!, CONTRACT_KIND, event.data.version, p.ctx!))!;
   const v = sealed.verdict as { passed: boolean } | null;
   const spec = parseSpec(sealed.content);

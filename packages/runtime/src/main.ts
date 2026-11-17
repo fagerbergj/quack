@@ -35,7 +35,7 @@ const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: build
 const sender = launch
   ? await startLifecycleSender(session, {
     ...launch, key: env('QUACK_SESSION_KEY'), facts: () => sessionFacts(env('QUACK_SESSION_DIR')), priceOf: priceOf(deployment),
-    lastMessage: async () => (await session.messages(8)).filter((m) => m.role === 'assistant').at(-1)?.text,
+    lastMessage: async () => (await session.messages(8)).filter((m) => m.role === 'assistant').at(-1)?.text, sweep: session.withdrawEnded,
   })
   : undefined;
 // Everything above read what it needs; dropping it keeps child processes (tool shells) from inheriting service secrets.

@@ -935,6 +935,15 @@ test('a decision the session says is unknown or already decided removes the stal
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
 });
 
+test('a decision on a withdrawn approval keeps the card and says why', async () => {
+  const approve = await homeApprovals();
+  const detail = "the request was withdrawn: the call's task ended without acting on it";
+  fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ status: 409, detail }), { status: 409, headers: { 'content-type': 'application/problem+json' } }));
+  await userEvent.click(approve);
+  expect(await screen.findByRole('alert')).toHaveTextContent(detail);
+  expect(screen.getByRole('region', { name: 'Approval' })).toBeInTheDocument();
+});
+
 test('a failed decision keeps the card with its error', async () => {
   const approve = await homeApprovals();
   fetchMock.mockImplementationOnce(async () => new Response(JSON.stringify({ error: 'session is down' }), { status: 503, headers: { 'content-type': 'application/json' } }));

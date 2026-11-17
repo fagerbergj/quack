@@ -12,7 +12,7 @@ const T0 = Date.parse('2026-11-01T00:00:00Z');
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-const deps = { refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true };
+const deps = { refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
 let base = '';
 let catalog: ReturnType<typeof createCatalog>;
 
@@ -121,14 +121,29 @@ test('asks: the needs-you list, one ask, and a nested resolution filled from the
   assert.equal((await call('PATCH', path, { body: { choice: 'approve' } })).status, 400, 'the resolution is nested');
   assert.equal((await call('PATCH', path, { body: { resolution: { choice: 'approve', by: { kind: 'person', id: 'mallory' } } } })).status, 400, 'by comes from the credential');
   deps.sessionSays = false;
-  assert.equal((await call('PATCH', path, { body: { resolution: { choice: 'approve' } } })).status, 409, 'the session holds it answered');
+  const answered = await call('PATCH', path, { body: { resolution: { choice: 'approve' } } });
+  assert.deepEqual([answered.status, answered.body.detail], [409, 'the ask is already answered'], 'the session holds it answered');
   deps.sessionSays = true;
   const done = await call('PATCH', path, { body: { resolution: { choice: 'approve', reason: 'fine' } } });
   assert.equal(done.status, 200);
   assert.deepEqual([done.body.state, done.body.resolution, done.body.toolCall], ['resolved', { by: { kind: 'person', id: 'jason' }, choice: 'approve', reason: 'fine' }, { tool: 'merge', args: { pr: 1 } }]);
   assert.deepEqual(deps.answered.at(-1), { by: { kind: 'person', id: 'jason' }, choice: 'approve', reason: 'fine' });
-  assert.equal((await call('PATCH', path, { body: { resolution: { choice: 'reject' } } })).status, 409, 'not pending any more');
+  const late = await call('PATCH', path, { body: { resolution: { choice: 'reject' } } });
+  assert.deepEqual([late.status, late.body.detail], [409, 'the ask is resolved'], 'not pending any more');
   assert.equal((await call('GET', `/sessions/${k('review:monorepo')}/asks/nope`)).status, 404);
+});
+
+test('a late answer to an ask the session withdrew, or the catalog cancelled, says it was withdrawn and why', async () => {
+  const path = `/sessions/${k('review:monorepo')}/asks/a-1`;
+  deps.sessionSays = { withdrawn: 'superseded' };
+  const refused = await call('PATCH', path, { body: { resolution: { choice: 'approve' } } });
+  assert.deepEqual([refused.status, refused.body.detail], [409, 'the request was withdrawn: it was superseded by a newer request']);
+  assert.equal((await call('GET', path)).body.state, 'pending', 'the lifecycle, not the refusal, cancels it');
+  await catalog.publish('review:monorepo', [ev(8, 'ask.cancelled', { id: 'a-1', run: 1 })]);
+  const asked = deps.answered.length;
+  const cancelled = await call('PATCH', path, { body: { resolution: { choice: 'approve' } } });
+  assert.deepEqual([cancelled.status, cancelled.body.detail], [409, 'the request was withdrawn: the session is no longer waiting for it']);
+  assert.equal(deps.answered.length, asked, 'a cancelled ask is not handed to the session');
 });
 
 test('artifacts: the per-session list carries content and deliveries, the cross-session list metadata; ordered by sealedAt', async () => {

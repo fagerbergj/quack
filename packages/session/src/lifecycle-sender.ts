@@ -33,6 +33,8 @@ export type SenderOptions = {
   priceOf?: PriceOf;
   /** The text of the session's last assistant message, read when a run ends. */
   lastMessage?: () => Promise<string | undefined>;
+  /** Runs before each derivation, so a withdrawal it writes (of approvals whose call ended) goes out in the same flush. */
+  sweep?: () => Promise<void>;
   fetch?: typeof fetch; setTimer?: SetTimer; now?: () => number; log?: (line: string) => void;
   retryMs?: number; pollMs?: number;
 };
@@ -86,6 +88,7 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
   const commit = (fn: (doc: Parameters<Parameters<Conversation['commit']>[0]>[0]) => Promise<void>) => root.commit(fn, ctx);
 
   async function record() {
+    await opts.sweep?.().catch((err) => log(`lifecycle: approval sweep: ${String(err)}`));
     const { fresh } = await readStream(harness, root, await opts.facts(), opts.priceOf ?? (() => undefined), ctx);
     if (!fresh.length) return;
     await commit(async (tx) => append(await tx.doc(LifecycleStream, root.id), fresh));
@@ -142,9 +145,9 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
       if (running && open && booting) open.resumes = [...(open.resumes ?? []), at];
       if (!running && !open && booting) doc.boots = [...(doc.boots ?? []), at];
       if (running || !open) return;
-      // An approval still without a verdict when its run ends is cancelled: nobody waits on it.
+      // An approval still without a verdict when its run ends is cancelled: nobody waits on it. A withdrawn one is cancelled already.
       const approvals = (await tx.doc(Approvals, root.id)).items;
-      Object.assign(open, { endedAt: at, lastMessage, failedSteps: JSON.parse(JSON.stringify(failedRows(await tx.doc(Failures, root.id)))), cancelled: Object.keys(approvals).filter((id) => !approvals[id]!.verdict) });
+      Object.assign(open, { endedAt: at, lastMessage, failedSteps: JSON.parse(JSON.stringify(failedRows(await tx.doc(Failures, root.id)))), cancelled: Object.keys(approvals).filter((id) => !approvals[id]!.verdict && !approvals[id]!.withdrawn) });
     });
   }
 

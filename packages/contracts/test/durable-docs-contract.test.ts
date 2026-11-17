@@ -11,16 +11,16 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { manifest as judgeManifest } from '@quack/judge';
-import { answerQuestion, Approvals, Artifacts, closeQuestions, Failures, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { answerQuestion, Approvals, Artifacts, closeQuestions, Failures, pendingQuestions, Questions, resolveApproval, seal, withdrawApprovals, type ArtifactKind } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { defineWorkflow, outcomeOf, startWorkflow, WorkflowDoc, workflowExtension } from '@quack/workflows';
 import { contractsSessionExtensions } from '../src/index.ts';
 import { settingsSpec } from './fixtures.ts';
-import schema from './fixtures/durable-docs-contract-v7.json' with { type: 'json' };
+import schema from './fixtures/durable-docs-contract-v13.json' with { type: 'json' };
 
 // Lives here because this package's tests already reach the session store, the judge and the workflow engine (a feature package may
 // import sdk and foundation packages), and its own reconcile writes the empty-summary artifacts.
-const CONTRACT = { key: 'contracts:6fc57e77-dd2f-4458-9802-ded98054f946', version: 7 };
+const CONTRACT = { key: 'contracts:6fc57e77-dd2f-4458-9802-ded98054f946', version: 13 };
 const ajv = new Ajv2020({ strict: false, validateFormats: false, allErrors: true });
 ajv.addSchema(schema, 'root');
 const def = (name: string) => ajv.compile({ $ref: `root#/$defs/${name}` });
@@ -110,6 +110,11 @@ test('a contract session writes judged and final artifacts, an empty summary, ap
   assert.ok(Object.values<any>(docs.artifacts.kinds).some((k) => k.versions.some((v: any) => v.summary === '')), 'a rejection with no reason reconciles to an empty summary');
   assert.deepEqual(Object.values<any>(docs.approvals.items).map((a) => a.verdict.by.kind), ['tailnet', 'person']);
   for (const name of ['artifacts', 'approvals', 'questions'] as const) accepts(name, docs[name]);
+  // A withdrawn row as the SDK writes it, beside rows that predate the field.
+  const unanswered = { ...Object.values<any>(docs.approvals.items)[0], verdict: null, executing: false, done: false };
+  const withdrawn = { items: { ...docs.approvals.items, w: unanswered } };
+  assert.deepEqual(withdrawApprovals(withdrawn, (id) => id === 'w', { at: 9, reason: 'superseded', supersededBy: 'contract.spec:2' }), ['w']);
+  accepts('approvals', withdrawn);
   await s.close();
 });
 

@@ -9,7 +9,7 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { eventsRoute, openCatalog } from '@quack/catalog';
-import { inProcessFetch, Questions } from '@quack/sdk';
+import { Approvals, inProcessFetch, Questions } from '@quack/sdk';
 import { createSessionServer, LifecycleStream, openSession, sessionFacts, startLifecycleSender } from '@quack/session';
 import { backfillCatalog } from '../src/catalog-sync.ts';
 import { createDistributor, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
@@ -131,6 +131,32 @@ test('the Sessions API writes a person\'s rename, archive and delete through the
   await catalog.publish('other', [{ seq: 2, id: 'run:1:started', at: 1, type: 'run.started', data: { run: 1 } }]);
   assert.equal((await catalog.getSession('other'))?.state, 'running');
   assert.deepEqual(await catalog.stopped('other'), { applied: true, state: 'stopped' });
+});
+
+test('an approval whose call ended is withdrawn: a late answer is told why, the catalog cancels it, and the session can be deleted', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await temp(), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  cleanups.push(() => session.close());
+  // What a rerun that failed before its gate leaves: a pending row whose task is no longer live.
+  await session.root.commit(async (tx) => { (await tx.doc(Approvals, session.root.id)).items.orphan = { tool: 'post_comment', args: {}, requestedAt: 1, verdict: null, executing: false, done: false }; }, ctx);
+  const { catalog, base } = await distributor(createSessionServer(session));
+  const route = eventsRoute(catalog);
+  const sender = await startLifecycleSender(session, {
+    url: 'http://d', token: 't', key: 'idle', facts: async () => ({ agent: 'quack', version: null, createdAt: 0 }), setTimer: () => () => {},
+    fetch: inProcessFetch(async (req, res) => void ((await route(req, res, 'idle')) || res.writeHead(404).end())),
+  });
+  cleanups.push(() => sender.stop());
+  assert.equal((await catalog.getAsk('idle', 'orphan'))?.state, 'pending');
+  const call = (method: string, path: string, body?: unknown) => fetch(`${base}/sessions/idle${path}`, { method, headers: { ...PERSON, 'content-type': 'application/json' }, ...(body !== undefined && { body: JSON.stringify(body) }) });
+  assert.equal((await call('DELETE', '')).status, 409, 'a pending ask holds the session');
+  const late = await call('PATCH', '/asks/orphan', { resolution: { choice: 'approve' } });
+  assert.deepEqual([late.status, ((await late.json()) as { detail: string }).detail], [409, "the request was withdrawn: the call's task ended without acting on it"]);
+  await sender.flush();
+  assert.deepEqual([(await catalog.getAsk('idle', 'orphan'))?.state, (await catalog.getSession('idle'))?.pendingAsks], ['cancelled', 0]);
+  assert.equal((await call('DELETE', '')).status, 200, 'the withdrawn ask no longer holds it');
 });
 
 test('a question resolves through PATCH with its choice, a free answer, or a choice whose text is its note; no choice is refused', async () => {

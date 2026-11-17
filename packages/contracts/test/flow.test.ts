@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { manifest as judgeManifest } from '@quack/judge';
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
@@ -28,14 +28,14 @@ const write = (spec: () => ContractSpec): Step => (c) => call('write', { path: '
 const jf = { kind: 'person', name: 'jf' } as const;
 
 // A stub model: judge questions ("Decision: ...") get "yes", except the pitfall questions; everything else follows the script in order.
-async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof specInputs>) {
+async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof specInputs>, reopen?: string) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });
   const queue = [...script];
   faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /never asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const dir = await mkdtemp(join(tmpdir(), 'quack-contracts-'));
+  const dir = reopen ?? (await mkdtemp(join(tmpdir(), 'quack-contracts-')));
   dirs.push(dir);
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...(await judgeManifest.session!({ maxRevisions }, {}, [])), ...contractsSessionExtensions(inputs)] } });
   for (const f of ['packages/sleeper/src/service.ts', 'packages/web/src/extensions/sleeper/api.ts']) {
@@ -336,4 +336,37 @@ test('a later run gets a fresh revision limit, and a version released at the lim
   assert.deepEqual(verdicts.map((v) => v.limitReached), [false, true, false, true]);
   assert.deepEqual(verdicts[2].gatesFailed, ['justified.links_resolve'], 'still spec version 1');
   await s.close();
+});
+
+// #2374: artifact 1 waits, a deploy makes the rerun of submit_contract fail before its gate, and the agent seals artifact 2.
+test('a proposal whose rerun fails before its gate is withdrawn, and the newer artifact is approved over it', async () => {
+  const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {})]);
+  void s.submit('Define the Sleeper settings file', 'r-1');
+  const stale = await nextProposal(s);
+  await s.close();
+  await writeFile(join(s.workspace, 'artifacts/spec.json'), JSON.stringify({ ...settingsSpec(), baseline: 42 }));
+
+  let told = '', again = '';
+  // A passed version counts as delivered for the judge's version check, so the replacement is spec version 2.
+  const retitled = () => ({ ...settingsSpec(), title: 'Sleeper settings, retitled', version: 2 });
+  const steps: Step[] = [(c) => ((told = text(c)), write(retitled)(c)), call('submit_contract', {}), () => fauxAssistantMessage('Version 2 is approved.'), call('propose_contract', {}), (c) => ((again = text(c)), fauxAssistantMessage('Done.'))];
+  const s2 = await open(steps, 2, undefined, dirname(s.workspace));
+  const run = s2.submit('Define the Sleeper settings file', 'r-1', true);
+  const fresh = await nextProposal(s2, [stale.id]);
+  assert.match(told, /does not match contract\.spec/, 'the rerun failed before the gate');
+  assert.deepEqual([stale.args.artifact, fresh.args.artifact, fresh.args.version], [1, 2, 2]);
+  assert.deepEqual((await pendingApprovals(s2.root, ctx)).map((a) => a.id), [fresh.id], 'no pending ask for the replaced version');
+  assert.equal(await resolveApproval(s2.root, stale.id, { decision: 'approve', by: jf }, ctx), false, 'approving the withdrawn ask is refused');
+  assert.equal(await resolveApproval(s2.root, fresh.id, { decision: 'approve', by: jf }, ctx), true);
+  const done = await run;
+  assert.equal(done.status === 'done' && done.answer, 'Version 2 is approved.');
+  const row = (await s2.harness.snapshot(Approvals, s2.root.id, ctx))!.items[stale.id]!;
+  assert.ok(row.withdrawn && ['task_ended', 'superseded'].includes(row.withdrawn.reason), JSON.stringify(row.withdrawn));
+
+  // A person's approve that landed just before the withdrawal stays on the row as a record; the next proposal neither records nor counts it.
+  await s2.root.commit(async (tx) => { (await tx.doc(Approvals, s2.root.id)).items[stale.id]!.verdict = { decision: 'approve', reason: null, by: jf, at: 1 }; }, ctx);
+  await s2.submit('Propose it again', 'r-2', true);
+  assert.match(again, /Version 2 is approved\./, 'the base is artifact 2, not the artifact 1 the late verdict names');
+  assert.deepEqual((await kindOf(s2, 'contract.approved')).map((r) => JSON.parse(r.content).artifact), [2], 'the verdict on artifact 1 is never recorded');
+  await s2.close();
 });
