@@ -91,13 +91,13 @@ test(`a type more than ${HUB} boxes in view name is a chip on each field, not an
   const src = `export type Id = string;\nexport type Root = { ${Array.from({ length: HUB + 1 }, (_, i) => `u${i}: U${i};`).join(' ')} id: Id };\n${users}\nexport type Far = { u: U0 };`;
   const v = focusView(declarations(src).decls, 'Root');
   expect(v.boxes.map((b) => b.decl.name)).not.toContain('Id');
-  expect(v.boxes.find((b) => b.focus)!.rows.at(-1)).toEqual({ name: 'id:', type: 'Id', edges: [], chips: ['Id'] });
+  expect(v.boxes.find((b) => b.focus)!.rows.at(-1)).toEqual({ name: 'id:', type: 'Id', edges: [], chips: ['Id'], ptr: '/Root/id' });
   const u0 = v.boxes.find((b) => b.decl.name === 'U0')!;
   expect(u0.rows.map((r) => [r.name, r.edges, r.chips])).toEqual([['id:', [], ['Id']], ['root:', ['Root'], []]]);
   const hubbed = focusView(declarations(src).decls, 'U0');
   expect(hubbed.boxes.map((b) => b.decl.name).sort()).toEqual(['Far', 'Id', 'Root', 'U0']);
   expect(edgesOf(hubbed)).toEqual(['Far.u:>U0', 'Root.id:>Id', 'Root.u0:>U0', 'U0.id:>Id', 'U0.root:>Root']);
-  expect(hubbed.boxes.find((b) => b.decl.name === 'Root')!.rows[1]).toEqual({ name: 'u1:', type: 'U1', edges: [], chips: ['U1'] });
+  expect(hubbed.boxes.find((b) => b.decl.name === 'Root')!.rows[1]).toEqual({ name: 'u1:', type: 'U1', edges: [], chips: ['U1'], ptr: '/Root/u1' });
 });
 
 test('a TypeScript contract opens as a diagram and a card per declaration, with linked types and the why on its card', async () => {

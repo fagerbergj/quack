@@ -1,10 +1,11 @@
-import type { Decl } from './spec.ts';
+import type { Decl, Field } from './spec.ts';
 
 /** Above this many boxes in view naming one type, it is a chip on each field instead of an arrow from each. */
 export const HUB = 3;
 
-/** One line of a box, `name type` (the name carries its `:`, `=` or `|`): the types it names drawn as arrows from this row (`edges`) or as clickable chips (`chips`). */
-export type BoxRow = { name: string; type: string; edges: string[]; chips: string[] };
+/** One line of a box, `name type` (the name carries its `:`, `=` or `|`): the types it names drawn as arrows from this row (`edges`) or as clickable chips (`chips`).
+ * `ptr` is the field the line draws, where it draws one. */
+export type BoxRow = { name: string; type: string; edges: string[]; chips: string[]; ptr?: string };
 export type Box = { decl: Decl; focus: boolean; rows: BoxRow[] };
 export type Focused = { boxes: Box[]; edges: Array<{ id: string; source: string; row: number; target: string }> };
 
@@ -15,8 +16,9 @@ export const drawn = (decls: Decl[]) => decls.filter((d) => DRAWN.has(d.kind));
 export const namesIn = (type: string, names: Set<string>, self = '') => [...new Set(type.match(/[A-Za-z_$][\w$]*/g) ?? [])].filter((n) => n !== self && names.has(n));
 
 // A box line is a label and a type: the top-level fields, a union's variants as `| …`, an enum's values, an interface's heritage, or the aliased type.
-function lines(d: Decl): Array<[string, string]> {
-  const top = d.rows.filter((r) => r.depth === 0).map((r): [string, string] => (r.where === 'one of' ? [`| ${r.name}`, r.type === 'object' ? '' : r.type] : d.kind === 'enum' ? [`${r.name} =`, r.type] : [`${r.name}${r.required ? '' : '?'}:`, r.type]));
+const labelOf = (d: Decl, r: Field) => (r.where === 'one of' ? `| ${r.name}` : d.kind === 'enum' ? `${r.name} =` : `${r.name}${r.required ? '' : '?'}:`);
+function lines(d: Decl): Array<[string, string, string?]> {
+  const top = d.rows.filter((r) => r.depth === 0).map((r): [string, string, string] => [labelOf(d, r), r.where === 'one of' && r.type === 'object' ? '' : r.type, r.ptr]);
   if (!top.length) return d.text ? [['=', d.text]] : [];
   return d.text ? [['extends', d.text], ...top] : top;
 }
@@ -52,11 +54,18 @@ export function focusView(decls: Decl[], focus: string, hub = HUB): Focused {
   const boxes = inView.map((decl) => ({
     decl,
     focus: decl.name === focus,
-    rows: lines(decl).map(([name, type], row) => {
+    rows: lines(decl).map(([name, type, ptr], row) => {
       const refs = namesIn(type, names, decl.name);
       for (const target of refs.filter(arrow)) edges.push({ id: `${decl.name}:${row}>${target}`, source: decl.name, row, target });
-      return { name, type, edges: refs.filter(arrow), chips: refs.filter((n) => !arrow(n)) };
+      return { name, type, edges: refs.filter(arrow), chips: refs.filter((n) => !arrow(n)), ...(ptr && { ptr }) };
     }),
   }));
   return { boxes, edges };
+}
+
+/** The type the diagram centres on to show a pointer: its declaration when that is drawn, else the first drawn type the declaration names. */
+export function aimAt(decls: Decl[], ptr: string | undefined): string | undefined {
+  const d = ptr ? decls.find((x) => ptr === `/${x.name}` || ptr.startsWith(`/${x.name}/`)) : undefined;
+  const types = new Set(drawn(decls).map((x) => x.name));
+  return d && (types.has(d.name) ? d.name : d.uses.find((u) => types.has(u)));
 }

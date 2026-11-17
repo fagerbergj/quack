@@ -3,7 +3,7 @@ import type { SealedArtifact } from '../../api.ts';
 import { BLUE, plain, type Extension } from '../../extension.ts';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec } from './spec.ts';
-import { ContractStudio, VIEWS } from './Studio.tsx';
+import { ContractStudio, Standalone } from './Studio.tsx';
 
 const KIND = 'contract.spec';
 // Open braces, a contract's declared shape; spaced to the full 24-unit width like the other nav icons.
@@ -13,7 +13,7 @@ const NAMES: Record<string, string> = { 'contract.approved': 'Approval', 'contra
 
 const view = (a: SealedArtifact) => {
   const spec = a.kind === KIND ? parseSpec(a.content) : undefined;
-  return spec && createElement(VIEWS[spec.kind], { key: a.version, spec, verdict: a.verdict });
+  return spec && createElement(Standalone, { key: a.version, spec, verdict: a.verdict });
 };
 
 export const contracts: Extension = {

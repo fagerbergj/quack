@@ -60,83 +60,78 @@ test('every choice can be opened, and the ones on a field sit on that field', as
   expect(within(status).getByRole('button', { name: 'Why: Each run says whether it is done' })).toBeInTheDocument();
 });
 
-// A section's details element, by the title its summary shows.
-const fold = (title: string) => screen.getByText(title, { selector: 'summary span' }).closest('details')!;
+const changes = () => screen.getByRole('region', { name: /^Changes against/ });
+const more = () => screen.getByRole('region', { name: 'More about this contract' });
 
-test('version 2 keeps its breaks, changes and checks to one counted line each, and each row opens on the rest', async () => {
+test('on its own, version 2 leads with its changes one line each, then what could break and what was checked safe', async () => {
   show(2);
-  expect(screen.getByRole('region', { name: 'What it does' })).toHaveTextContent("Gives the Sleeper page this league's upcoming runs");
-  const changes = fold('Changed from version 1');
-  expect(changes).not.toHaveAttribute('open');
-  expect(changes.querySelector('summary')).toHaveTextContent('Changed from version 13');
-  const rows = within(changes).getAllByRole('listitem');
-  expect(rows.map((r) => r.querySelector('summary')!.textContent)).toEqual(['Added · run-statusruns[].status: "done" | "next"', 'Changed · run-orderRuns from the start of the week, oldest first', 'Added · result-linkDone runs link to their result']);
-  await userEvent.click(within(changes).getByText('Changed from version 1'));
-  await userEvent.click(rows[1]!.querySelector('summary')!);
-  expect(rows[1]!.querySelector('details')).toHaveAttribute('open');
-  expect(rows[1]).toHaveTextContent('BeforeUpcoming only, soonest firstAfterRuns from the start of the week, oldest firstSo the strip reads left to right through the week');
-  await userEvent.click(rows[2]!.querySelector('summary')!);
-  await userEvent.click(within(rows[2]!).getByRole('button', { name: 'Why: Done runs link to their result' }));
-  expect(screen.getByRole('dialog', { name: 'Why: Done runs link to their result' })).toHaveTextContent('v1/packages/web/src/extensions/sleeper/Sleeper.tsx:212');
-  const breaks = fold('Breaking changes');
-  expect(within(breaks).getAllByRole('listitem')[0]).toHaveTextContent('The Sleeper page reads the first run as "next".');
-  expect(within(breaks).getByText('1 caller')).toBeInTheDocument();
-  expect(within(breaks).getByText('Sleeper page')).toBeInTheDocument();
-  expect(within(fold('Unchanged, checked')).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['✓Still read-only', '✓Done runs carry where to open them']);
+  expect(screen.getByRole('region', { name: 'What it does' })).toHaveTextContent("Gives the Sleeper page this league's upcoming runs and Sleeper's live week.");
+  const list = changes();
+  expect(within(list).getByRole('heading', { level: 2 })).toHaveTextContent('Changes against v1');
+  const told = within(list).getAllByRole('listitem').slice(0, 3);
+  expect(told.map((r) => r.textContent)).toEqual(['run-statusruns[].status: "done" | "next" More', 'run-orderRuns from the start of the week, oldest first More', 'result-linkDone runs link to their result More']);
+  await userEvent.click(within(told[1]!).getByRole('button', { name: 'More' }));
+  expect(told[1]).toHaveTextContent('Before Upcoming only, soonest firstWhy So the strip reads left to right through the week');
+  expect(within(list).getByRole('heading', { name: 'What could break' })).toBeInTheDocument();
+  expect(list).toHaveTextContent('The Sleeper page reads the first run as "next".');
+  expect(list).toHaveTextContent('Callers: Sleeper page');
+  expect(within(list).getByRole('heading', { name: 'Checked safe' }).nextElementSibling).toHaveTextContent('Still read-onlyDone runs carry where to open them');
 });
 
-test('the intent and every decision with its reasons sit behind their own sections', async () => {
+test('the intent and the decisions are not on the page: each opens in a sheet, as stored', async () => {
   show(2);
-  const intent = fold('Intent');
-  expect(intent).not.toHaveAttribute('open');
-  await userEvent.click(within(intent).getByText('Intent'));
-  expect(intent).toHaveAttribute('open');
-  expect(intent).toHaveTextContent('AudienceThe Sleeper page');
-  expect(intent).toHaveTextContent('GuaranteesRead-onlyCovers a week with no runsFollows the REST guide');
-  expect(intent).toHaveTextContent('Not in scopeStarting or cancelling a job');
-  const decisions = fold('Decisions');
-  expect(decisions.querySelector('summary')).toHaveTextContent('Decisions7');
-  const live = within(decisions).getByText('Live week from Sleeper itself').closest('li')!;
-  await userEvent.click(live.querySelector('summary')!);
-  expect(live).toHaveTextContent('Yes, always');
+  expect(screen.queryByText('Covers a week with no runs')).toBeNull();
+  const rows = within(more()).getAllByRole('button').map((b) => b.textContent);
+  expect(rows).toEqual(['Guarantees3', 'Out of scope1', 'Who it is for', 'Decisions7']);
+  await userEvent.click(within(more()).getByRole('button', { name: /^Guarantees/ }));
+  expect(within(screen.getByRole('dialog', { name: 'Guarantees' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Read-only', 'Covers a week with no runs', 'Follows the REST guide']);
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(within(more()).getByRole('button', { name: /^Decisions/ }));
+  expect(screen.getByRole('dialog', { name: 'Decisions' })).toHaveTextContent('Yes, always');
 });
 
-test('a spec with no breaks, no changes and nothing checked shows only its intent and decisions', () => {
+test('a spec with no breaks and no changes renders no changes section at all', () => {
   show(1);
-  for (const t of ['Breaking changes', 'Unchanged, checked', /^Changed from/]) expect(screen.queryByText(t, { selector: 'summary span' })).toBeNull();
-  expect(fold('Intent')).toBeInTheDocument();
-  expect(fold('Decisions')).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: /^Changes/ })).toBeNull();
+  expect(more()).toBeInTheDocument();
 });
 
-test('a long list of changes stays one line per change, and a was is shown as written', () => {
-  const changes = Array.from({ length: 25 }, (_, i) => ({ choice: `c${i}`, was: 'GET / answered the whole list in one page', now: `Change ${i}`, why: 'Because' }));
-  render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, version: 3, changes })))}</>);
-  const all = fold('Changed from version 2');
-  expect(all.querySelector('summary')).toHaveTextContent('Changed from version 225');
-  const rows = within(all).getAllByRole('listitem');
-  expect(rows).toHaveLength(25);
-  expect(rows.every((r) => !r.querySelector('details')!.hasAttribute('open'))).toBe(true);
-  expect(rows[0]).toHaveTextContent('BeforeGET / answered the whole list in one page');
+test('a purpose too long for one sentence leads with its first one, the rest one press away', async () => {
+  const purpose = 'One way to judge a sealed artifact version: the judge loads as its own extension through its own manifest, enabled per agent, and gates sealed versions through the gate chain. The rest follows.';
+  render(<>{contracts.card!(sealed(JSON.stringify({ ...v1, intent: { ...v1.intent, purpose } })))}</>);
+  const region = screen.getByRole('region', { name: 'What it does' });
+  expect(region).toHaveTextContent(/^One way to judge a sealed artifact version\. Full purpose$/);
+  await userEvent.click(within(region).getByRole('button', { name: 'Full purpose' }));
+  expect(region).toHaveTextContent(`${purpose} Less`);
 });
 
-test('the changes name their baseline and each break its migration', () => {
+test('a long list of changes stays one line per change, and a was is shown as written', async () => {
+  const many = Array.from({ length: 25 }, (_, i) => ({ choice: `c${i}`, was: 'GET / answered the whole list in one page', now: `Change ${i}`, why: 'Because' }));
+  render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, version: 3, changes: many })))}</>);
+  expect(within(changes()).getByRole('heading', { level: 2 })).toHaveTextContent('Changes against v2');
+  const rows = within(changes()).getAllByRole('listitem').slice(0, 25);
+  expect(rows.map((r) => r.textContent)).toEqual(many.map((c) => `${c.choice}${c.now} More`));
+  await userEvent.click(within(rows[0]!).getByRole('button', { name: 'More' }));
+  expect(rows[0]).toHaveTextContent('Before GET / answered the whole list in one page');
+});
+
+test('the changes name their baseline and each break its migration, one press away', async () => {
   const breaking = [{ ...v2.compatibility.breaking[0], migration: 'Read the run marked next' }];
   render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, baseline: 'shipped', compatibility: { ...v2.compatibility, breaking } })))}</>);
-  expect(fold('Changed from the shipped code')).toBeInTheDocument();
-  const breaks = fold('Breaking changes');
-  expect(within(breaks).getByText('1 caller · migration')).toBeInTheDocument();
-  expect(within(breaks).getByText('Read the run marked next')).toBeInTheDocument();
+  expect(within(changes()).getByRole('heading', { level: 2 })).toHaveTextContent('Changes against the shipped code');
+  expect(changes()).not.toHaveTextContent('Read the run marked next');
+  await userEvent.click(within(changes()).getAllByRole('button', { name: 'More' }).at(-1)!);
+  expect(changes()).toHaveTextContent('Migration Read the run marked next');
 });
 
 // Real stored shapes: `change` for what, callers in one string, no migration.
 test('a break sealed before the migration rule still draws', () => {
   const breaking = [{ change: 'agent.json is closed', callers: 'The 13 bundles under agents/*/agent.json', migration: 'Delete unknown keys' }, { choice: 'errors', was: 'a', now: 'b', callers: ['repo/packages/web/src/api.ts:28'] }];
   render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, baseline: 4, compatibility: { breaking, safe: [] } })))}</>);
-  expect(fold('Changed from version 4')).toBeInTheDocument();
-  const breaks = fold('Breaking changes');
-  expect(within(breaks).getByText('agent.json is closed')).toBeInTheDocument();
-  expect(within(breaks).getByText('The 13 bundles under agents/*/agent.json')).toBeInTheDocument();
-  expect(within(breaks).getByText('repo/packages/web/src/api.ts:28')).toBeInTheDocument();
+  expect(within(changes()).getByRole('heading', { level: 2 })).toHaveTextContent('Changes against v4');
+  expect(changes()).toHaveTextContent('agent.json is closed');
+  expect(changes()).toHaveTextContent('Callers: The 13 bundles under agents/*/agent.json');
+  expect(changes()).toHaveTextContent('Callers: repo/packages/web/src/api.ts:28');
 });
 
 test('a text diff shows a short value on one line and prose as before and after blocks, each tinting only its own words', () => {

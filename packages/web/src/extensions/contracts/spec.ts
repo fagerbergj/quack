@@ -151,3 +151,11 @@ export function toYaml(v: unknown, pad = ''): string {
     return leaf(x) ? `${pad}${key}: ${lit(x)}` : `${pad}${key}:\n${toYaml(x, `${pad}  `)}`;
   }).join('\n');
 }
+
+export type Listed = { what: string; callers: string[]; migration?: string };
+// Specs sealed before contract.spec v2 may say `change` for what and name their callers in one string.
+export const listedBreaks = (spec: ContractSpec): Listed[] =>
+  (spec.compatibility?.breaking ?? []).map((b) => ({ what: b.what ?? (b as { change?: string }).change ?? '', callers: [b.callers ?? []].flat(), migration: b.migration }));
+
+/** What the spec's own changes are measured against, as a person names it. */
+export const since = (spec: ContractSpec) => (spec.baseline === 'shipped' ? 'the shipped code' : `v${spec.baseline ?? spec.version - 1}`);
