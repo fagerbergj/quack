@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseFact
 import { num, obj, str } from '@earendil-works/pi-schema';
 import { answerQuestion, Artifacts, Failures, pendingQuestions, Questions, seal, type ArtifactKind } from '@quack/sdk';
 import { manifest as judgeManifest, type JudgeConfig, type Judged } from '@quack/judge';
-import { openSession } from '@quack/session';
+import { openSession, sessionFacts, startLifecycleSender } from '@quack/session';
 import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
 const dirs: string[] = [];
@@ -68,14 +68,22 @@ test('a code, model and code workflow completes, records its steps and seals its
   await s.close();
 });
 
-test('a crash mid-step resumes at that step without rerunning earlier ones', async () => {
+// Prod's runtime mounts the lifecycle sender, and with it a task-graph watch, right after the session opens (runtime/src/main.ts).
+async function withSender(s: Open, dir: string) {
+  const acking = (async (_url, init) => Response.json({ acked: JSON.parse(String(init!.body)).events.at(-1).seq })) as typeof fetch;
+  const sender = await startLifecycleSender(s, { url: 'http://distributor', token: 't', key: 'k', facts: () => sessionFacts(dir), fetch: acking, setTimer: () => () => {}, sweep: s.withdrawEnded });
+  return { ...s, close: async () => { await sender.stop(); await s.close(); } };
+}
+
+for (const sender of [false, true]) test(`a crash mid-step resumes that run at that step without rerunning earlier ones${sender ? ', with the lifecycle sender mounted' : ''}`, async () => {
   const runs = { first: 0, second: 0 };
   let entered: () => void;
   const inStep = new Promise<void>((r) => (entered = r));
   const build = (hang: boolean) => defineWorkflow({
     name: 'resume',
     steps: [
-      { name: 'first', kind: 'code', run: () => ++runs.first },
+      // A side effect outside the session, as a posted message would be.
+      { name: 'first', kind: 'code', run: async () => { await appendFile(posted, 'posted\n'); return ++runs.first; } },
       {
         name: 'second',
         kind: 'code',
@@ -90,16 +98,22 @@ test('a crash mid-step resumes at that step without rerunning earlier ones', asy
     ],
   });
   const dir = await tmp();
-  const a = await open(dir, build(true));
-  const running = runWorkflow(a.harness, a.root, build(true), null).catch(() => undefined);
+  const posted = join(dir, 'posted.txt');
+  const opened = async (hang: boolean) => { const s = await open(dir, build(hang)); return sender ? withSender(s, dir) : s; };
+  const a = await opened(true);
+  const run = await startWorkflow(a.harness, a.root, build(true), null);
+  const running = outcomeOf(a.harness, run).catch(() => undefined);
   await inStep;
   await a.close();
   await running;
 
-  const b = await open(dir, build(false));
-  const outcome = await runWorkflow(b.harness, b.root, build(false), null);
+  // Reopening resumes the run by itself; waiting on that run, not starting one, keeps this independent of when it ends.
+  const b = await opened(false);
+  assert.equal((await doc(b)).task, run);
+  const outcome = await outcomeOf(b.harness, run);
   assert.deepEqual(outcome.status === 'completed' && outcome.result, { first: 1, second: 'finished' });
   assert.deepEqual(runs, { first: 1, second: 2 });
+  assert.equal(await readFile(posted, 'utf8'), 'posted\n');
   assert.deepEqual((await doc(b)).steps.map((r) => r.status), ['done', 'done']);
   await b.close();
 });
