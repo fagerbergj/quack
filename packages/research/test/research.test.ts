@@ -112,13 +112,16 @@ const report = (cite: string) => `## Summary\nDucks fly.\n## Assumptions\nNone.\
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const seeing = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
-// The judge model answers each model check from its question: pitfalls (contradiction, conflict) no, the rest yes.
+// The judge model answers each model check from its question: pitfalls (contradiction, conflict) no, the rest yes; like the 27B in #2369,
+// it reads any evidence that shows both a 10 ft and a 6 ft cord as a conflict.
 function judgeFaux() {
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   const answer = (c: { messages: unknown[] }) => {
     const t = JSON.stringify(c.messages);
-    const pitfall = t.includes('contradict it?') || t.includes('conflict with another passage');
-    return fauxAssistantMessage(JSON.stringify({ choice: pitfall ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+    const conflict = t.includes('conflicting figures');
+    const pitfall = t.includes('contradict it?') || conflict;
+    const flag = conflict && /\b10 ft/.test(t) && /\b6 ft/.test(t);
+    return fauxAssistantMessage(JSON.stringify({ choice: pitfall && !flag ? 'no' : 'yes', confidence: 1, reason: flag ? 'the cord is 10 ft and 6 ft' : 'ok' }));
   };
   faux.setResponses(Array.from({ length: 200 }, () => answer));
   return faux;
@@ -418,7 +421,7 @@ test('quotes_exist: a quote the cited source lacks fails the gate, naming the qu
   assert.equal((await gate('quotes_exist', findings('"Geese never fly south" [s1]'), {})).met, 1);
 });
 
-test('the declaration asks each finding alone with its kept sources\' excerpts, each Summary sentence with every finding shared, and the request and the report whole', async () => {
+test('the declaration asks each finding alone with its kept sources\' excerpts, each Summary sentence with every finding shared, the request whole, and each pair that may conflict with the Summary shared', async () => {
   const report = '## Summary\nKestrel runs 38 electric buses in 2026. [s1]\n## Assumptions\nNone.\n## Findings\n- Kestrel operates 38 electric buses out of a fleet of 112. [s1]\n- All 28 electric buses are the Vantor E12. [s1][s2]\n- Depots are at Northside. [s9]\n';
   const ev = await evidenceFor(report, { s1: 'Kestrel Transit operates 38 battery-electric buses.', s2: 'Vantor E12 page.' }, 'How many electric buses does Kestrel run?');
   assert.deepEqual(ev.claim.map((u) => u.id), ['claim finding-1', 'claim finding-2'], 'a finding citing no kept source is not asked');
@@ -427,7 +430,36 @@ test('the declaration asks each finding alone with its kept sources\' excerpts, 
   assert.deepEqual(ev.summary.map((u) => u.state.sentence), ['Kestrel runs 38 electric buses in 2026.']);
   assert.deepEqual(ev.summary[0].shared, { findings: '- Kestrel operates 38 electric buses out of a fleet of 112.\n- All 28 electric buses are the Vantor E12.\n- Depots are at Northside.' });
   assert.deepEqual(ev.request.map((u) => [u.state.request, (u.shared as { report: string }).report]), [['How many electric buses does Kestrel run?', report]]);
-  assert.deepEqual(ev.report.map((u) => u.state.report), [report], 'self-contradiction is asked once, of the whole report');
+  assert.deepEqual(ev.pairs.map((u) => [u.id, u.state.pair, u.shared]), [['pairs 1|4', { first: { section: 'summary', sentence: 'Kestrel runs 38 electric buses in 2026. [s1]' }, second: { section: 'findings', sentence: 'All 28 electric buses are the Vantor E12. [s1][s2]', context: { before: 'Kestrel operates 38 electric buses out of a fleet of 112. [s1]' } } }, { summary: 'Kestrel runs 38 electric buses in 2026. [s1]' }]], 'only the Summary\'s 38 against a finding\'s 28 is asked');
+});
+
+test('claim pairs: a figure or a name the report gives two ways is one pair; a passage reporting both values, or the same value rounded, is none', async () => {
+  const pairsOf = async (report: string) => (await evidenceFor(report, {})).pairs.map((u) => u.id);
+  const hours = '## Summary\nMarlow Public Library is open Saturday 10am to 5pm and Sunday 1pm to 5pm in 2026.\n## Assumptions\nNone.\n## Findings\n- Hours effective 5 January 2026: Saturday 9am to 5pm and Sunday 1pm to 5pm. [s1]\n';
+  assert.deepEqual(await pairsOf(hours), ['pairs 1|3']);
+  const contractor = '## Summary\nThe contractor, Harbour Works, mobilises on 2 March 2026.\n## Assumptions\nNone.\n## Findings\n- The contractor, Tidewater Marine, mobilises on 2 March 2026 and expects to finish by October 2026. [s1]\n';
+  assert.deepEqual(await pairsOf(contractor), ['pairs 1|3']);
+  assert.deepEqual(await pairsOf('## Summary\nThe fan cord is 10 ft.\n## Assumptions\nNone.\n## Findings\n- The datasheet gives a 10 ft fan cord while Marketek lists a 6 ft fan cord. [s1]\n'), []);
+  assert.deepEqual(await pairsOf('## Summary\n24U is ~1,067 mm of mounting height.\n## Assumptions\nNone.\n## Analysis\n- 24U × 44.45 mm = 1,066.8 mm of mounting height.\n## Findings\n- x [s1]\n'), []);
+});
+
+test('claim pairs: a sentence that opens "It has…" is shown with its line and the sentence before it, kept apart from the sentence compared', async () => {
+  const report = [
+    '## Summary',
+    'The Tripp Lite is the better pick, though its load rating is only 1,000 lb.',
+    '## Assumptions',
+    'None.',
+    '## Findings',
+    '- The Tripp Lite carries a 1,000 lb load rating. [s1]',
+    '- The APC AR3104 is a standard IT enclosure with perforated doors [s2]. It has 14-gauge rails and a 3,000 lb load rating. [s2]',
+  ].join('\n');
+  const pairsOf = async (r: string) => (await evidenceFor(r, {})).pairs;
+  const [pair] = (await pairsOf(report)).filter((u) => JSON.stringify(u.state).includes('It has'));
+  assert.deepEqual((pair.state.pair as any).second, { section: 'findings', sentence: 'It has 14-gauge rails and a 3,000 lb load rating. [s2]', context: { line: 'The APC AR3104 is a standard IT enclosure with perforated doors [s2]. It has 14-gauge rails and a 3,000 lb load rating. [s2]' } });
+  assert.deepEqual((await pairsOf(report)).map((u) => u.id), (await pairsOf(report.replace('IT enclosure', 'IT cabinet'))).map((u) => u.id), 'context never adds or drops a pair');
+  const keyOf = async (r: string) => JSON.stringify((await pairsOf(r)).find((u) => u.id === pair.id));
+  assert.equal(await keyOf(report.replace('None.', 'No budget was given.')), await keyOf(report), 'an edit elsewhere leaves the pair\'s evidence, and so its reuse key, alone');
+  assert.notEqual(await keyOf(report.replace('IT enclosure', 'IT cabinet')), await keyOf(report), 'an edit to its context is a new question');
 });
 
 test('a finding citing many long pages keeps a full excerpt of each, and its claim checks go to the judge model, not Clef', async () => {
@@ -513,23 +545,25 @@ test('missingQuotes: changed words and the writer\'s own phrases in quote marks 
   for (const [quote, page] of cases) assert.deepEqual(missingQuotes(`${quote} [s1]`, [page]), [quote.slice(1, -1)]);
 });
 
-test('a report with a real quote passes all gates; an invented quote and a bare finding fail them, each named in the feedback', async () => {
+/** The last version of a report written after fetching one page, as the judge left it. */
+async function verdictOf(content: string) {
   const base = await web();
-  const verdictOf = async (content: string) => {
-    const { session } = await run({ maxRevisions: 0 }, (step) => [
-      call('web_fetch', { urls: [`${base}/page`] }),
-      step(call('write', { path: 'artifacts/report.md', content })),
-      step(call('submit_report', {})),
-      step(fauxAssistantMessage('Done.')),
-    ], { isPublic: loopbackOk });
-    const last = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['research.report'].versions.at(-1)!;
-    await session.close();
-    return last;
-  };
+  const { session } = await run({ maxRevisions: 0 }, (step) => [
+    call('web_fetch', { urls: [`${base}/page`] }),
+    step(call('write', { path: 'artifacts/report.md', content })),
+    step(call('submit_report', {})),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  const last = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['research.report'].versions.at(-1)!;
+  await session.close();
+  return last;
+}
+
+test('a report with a real quote passes all gates; an invented quote and a bare finding fail them, each named in the feedback', async () => {
   const good = await verdictOf(GOOD);
   assert.equal((good.verdict as any).passed, true);
   const units = Object.fromEntries((good.verdict as any).checks.map((c: any) => [c.id, c.units]));
-  assert.deepEqual([units.supported_by_source, units.answers_every_ask, units.summary_follows_findings, units.no_self_contradiction], [2, 1, 1, 1], 'claim, request, summary and report scopes all reached the judge');
+  assert.deepEqual([units.supported_by_source, units.answers_every_ask, units.summary_follows_findings, units.no_self_contradiction], [2, 1, 1, 0], 'claim, request and summary scopes reached the judge; no two sentences give different figures, so no pair did');
 
   const badContent = GOOD.replace('Ducks are birds. [s1]', 'Ducks swim.').replace('"Ducks & geese fly."', '"Geese never fly south"');
   const bad = await verdictOf(badContent);
@@ -538,6 +572,17 @@ test('a report with a real quote passes all gates; an invented quote and a bare 
   const notes = (bad.verdict as any).checks.flatMap((c: any) => c.notes).join('\n');
   assert.match(notes, /The finding starting "Ducks swim\." cites no source/);
   assert.match(notes, /quotes "Geese never fly south", which isn't on the cited page/);
+});
+
+test('no_self_contradiction: findings that attribute different cord lengths to two sources pass; a Summary asserting one against a finding is flagged', async () => {
+  const selfCheck = async (content: string) => (await verdictOf(content)).verdict as any;
+  const pick = (v: any) => v.checks.find((c: any) => c.id === 'no_self_contradiction');
+  const attributed = '## Summary\nThe fan cord length is unverified: the sources disagree.\n## Assumptions\nNone.\n## Findings\n- The Tripp Lite datasheet gives a 10 ft fan cord. [s1]\n- Marketek\'s spec table lists a 6 ft fan cord. [s1]\n';
+  const clean = pick(await selfCheck(attributed));
+  assert.deepEqual([clean.units, clean.met], [0, null], 'two findings each say what their source says');
+  const asserted = await selfCheck('## Summary\nThe cabinet ships with a 6 ft fan cord.\n## Assumptions\nNone.\n## Findings\n- The Tripp Lite datasheet gives a 10 ft fan cord. [s1]\n');
+  assert.deepEqual([pick(asserted).units, pick(asserted).met, asserted.passed], [1, true, false]);
+  assert.match(pick(asserted).notes.join('\n'), /^pairs 1\|3: the cord is 10 ft and 6 ft/);
 });
 
 test('excerpt keeps the pieces that share the claim\'s figures and words, in page order, and short pages whole', () => {
