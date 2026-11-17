@@ -15,7 +15,7 @@ const reject = (sock: FakeSocket, error: string, i = -1) => sock.frame({ type: '
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /artifacts': { artifacts: [] } }));
 
 // A list read with q, as the route the fake fetch answers.
-const listed = (path: string, q?: string, token?: string) => `GET /${path}?${new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) })}`;
+const listed = (path: string, q?: string, token?: string) => `GET /${path}?${new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(path === 'sessions' && { orderBy: 'lastActivity' }), ...(token && { pageToken: token }) })}`;
 const ACTIVE = 'NOT state:archived';
 const queries = (path: string) => fetchMock.mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === `/${path}`).map((u) => u.searchParams.get('q'));
 
@@ -39,16 +39,43 @@ async function openSession() {
 }
 
 
-test('the list is newest-created first however the server pages it, and labels rows by creation when an older session becomes active', async () => {
-  const older = sess('gh:old', { title: 'Older', state: 'running', createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' });
-  routes['GET /sessions'] = { sessions: [older, sess('gh:a', { title: 'Alpha', state: 'running', createdAt: '2026-11-01T03:00:00.000Z' }), sess('gh:z', { title: 'Zed', createdAt: '2026-11-01T00:00:00.000Z' }), sess('gh:new', { title: 'Newer', createdAt: '2026-11-01T02:00:00.000Z' })] };
+test('the list asks for last-activity order and shows rows as the server ordered them, labelled by activity', async () => {
+  const row = (key: string, title: string, over: object) => sess(key, { title, ...over });
+  routes['GET /sessions'] = { sessions: [
+    row('gh:old', 'Older', { state: 'running', createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' }),
+    row('gh:a', 'Alpha', { state: 'running', createdAt: '2026-11-01T03:00:00.000Z', lastActivity: '2026-11-01T05:00:00.000Z' }),
+    row('gh:new', 'Newer', { createdAt: '2026-11-01T02:00:00.000Z', lastActivity: '2026-11-01T04:00:00.000Z' }),
+    row('gh:z', 'Zed', { createdAt: '2026-11-01T00:00:00.000Z', lastActivity: '2026-11-01T03:00:00.000Z' }),
+  ] };
   stubViewport(false);
   location.hash = '#/sessions';
   render(<App />);
   const running = await screen.findByRole('region', { name: 'Running' });
-  expect(within(running).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Aa', '#/s/gh%3Aold']);
+  expect(within(running).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Aold', '#/s/gh%3Aa']);
   expect(within(screen.getByRole('region', { name: 'Recent' })).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Anew', '#/s/gh%3Az']);
-  expect(within(running).getByRole('link', { name: /Older/ }).querySelector('time')).toHaveAttribute('datetime', '2026-11-01T01:00:00.000Z');
+  const time = within(running).getByRole('link', { name: /Older/ }).querySelector('time');
+  expect(time).toHaveAttribute('datetime', '2026-11-01T09:00:00.000Z');
+  expect(time).toHaveAttribute('title', 'Last activity');
+  expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain(listed('sessions').slice('GET /'.length));
+});
+
+test('a refresh moves a session that worked to the top of its section', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const a = sess('gh:a', { title: 'Alpha', lastActivity: '2026-11-01T02:00:00.000Z' }), b = sess('gh:b', { title: 'Beta', lastActivity: '2026-11-01T01:00:00.000Z' });
+    routes['GET /sessions'] = { sessions: [a, b] };
+    stubViewport(false);
+    location.hash = '#/sessions';
+    render(<App />);
+    const hrefs = () => within(screen.getByRole('region', { name: 'Recent' })).getAllByRole('link').map((l) => l.getAttribute('href'));
+    await screen.findByRole('region', { name: 'Recent' });
+    expect(hrefs()).toEqual(['#/s/gh%3Aa', '#/s/gh%3Ab']);
+    routes['GET /sessions'] = { sessions: [{ ...b, lastActivity: '2026-11-01T03:00:00.000Z' }, a] };
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    expect(hrefs()).toEqual(['#/s/gh%3Ab', '#/s/gh%3Aa']);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('sessions past the first page are listed: the pages are followed to the end', async () => {
@@ -59,6 +86,7 @@ test('sessions past the first page are listed: the pages are followed to the end
   render(<App />);
   expect(await screen.findByRole('link', { name: /First page/ })).toBeInTheDocument();
   expect(await screen.findByRole('link', { name: /Second page/ })).toBeInTheDocument();
+  expect(fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('sessions?')).map((u) => new URLSearchParams(u.split('?')[1]).get('orderBy'))).toEqual(['lastActivity', 'lastActivity']);
 });
 
 test('groups sessions from the row alone: a running session with a pending ask lands in Needs you', async () => {
