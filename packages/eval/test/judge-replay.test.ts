@@ -113,6 +113,18 @@ test('a check the judge model could not answer prints null, not a failed check',
   assert.match(table(rows, ['base']), /\| a \| helpful \| null \| 0\/0 \|/);
 });
 
+test('a reuse arm judges one session\'s cases in version order against a store of their own per repeat; an arm without it asks every case', async () => {
+  // v2 listed first, same evidence as v1; the reuse arm must judge v1 first and reuse its answer for v2.
+  const drafts: Case[] = [2, 1].map((version) => ({ case: `s v${version}`, kind: 'acme.note', session: '/nonexistent/s', version, checks: ['helpful'], content: `v${version}`, evidence: { note: [{ id: 'n', state: { text: 'same' } }] } }));
+  const same = adapter('Is it helpful?');
+  // At concurrency 1, per repeat: cand v1, then base v2 and base v1; the second repeat's store is fresh, so cand v1 is asked again.
+  const { rows } = await replayJudge({ cases: drafts, arms: [{ label: 'cand', adapters: [same], reuse: true }, { label: 'base', adapters: [same] }], repeat: 2, concurrency: 1, models: judgeModels([true, false, false, false, true, true]), judgeModel });
+  const of = (arm: string, c: string) => rows.filter((r) => r.arm === arm && r.case === c).map((r) => [r.rep, r.met, r.esc, r.notes]);
+  assert.deepEqual(of('cand', 's v1'), [[1, 1, 1, []], [2, 0, 1, ['n: because']]]);
+  assert.deepEqual(of('cand', 's v2'), [[1, 1, 0, []], [2, 0, 0, ['n: because (judged on v1)']]], 'v2 reuses the answer v1 got in the same repeat');
+  assert.deepEqual(of('base', 's v2').map((r) => r[2]).concat(of('base', 's v1').map((r) => r[2])), [1, 1, 1, 1], 'without reuse every case is asked');
+});
+
 test('concurrency 2 gives the same table as concurrency 1', async () => {
   const all = [true, true, true, true, true, true, true, true];
   const run = async (concurrency: number) => table(await replayJudge({ cases, arms, repeat: 2, concurrency, models: judgeModels(all), judgeModel }), ['base', 'cand']).split('\n').slice(0, 4);

@@ -166,22 +166,15 @@ function restore(p: Plan, u: Unit, kept: Kept) {
   p.left--;
 }
 
-// Answers this session already decided stand in for asking; a check they decide asks nothing more, as an escalation would not.
+// Answers this session already decided stand in for asking; the rest are asked as in a fresh round, whose need-based
+// skip sees the reused answers, so a verdict reads the same whichever round gave its answers.
 function reuseItems(items: Item[], byKey: Map<string, Plan>, reuse: Reuse): Item[] {
-  for (const it of items) {
-    for (const ask of it.checks) {
-      const kept = reuse.answers[reuse.key(ask, it.unit)];
-      if (kept) restore(byKey.get(ask.id)!, it.unit, kept);
-    }
-  }
-  const open = (it: Item, ask: Ask) => {
-    const p = byKey.get(ask.id)!;
-    if (p.answers.has(it.unit.id)) return false;
-    if (!p.result.reused || !decided(p)) return true;
-    p.left--;
-    return false;
+  const fresh = (it: Item, ask: Ask) => {
+    const kept = reuse.answers[reuse.key(ask, it.unit)];
+    if (kept) restore(byKey.get(ask.id)!, it.unit, kept);
+    return !kept;
   };
-  return items.map((it) => ({ unit: it.unit, checks: it.checks.filter((ask) => open(it, ask)) })).filter((it) => it.checks.length);
+  return items.map((it) => ({ unit: it.unit, checks: it.checks.filter((ask) => fresh(it, ask)) })).filter((it) => it.checks.length);
 }
 
 // Each stage's requests start as soon as its evidence is built: decision-model requests queue on their own limit (one at

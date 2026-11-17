@@ -153,14 +153,15 @@ test('code checks rerun every round and are never reused', async () => {
   assert.deepEqual(v2.checks.find((c) => c.id === 'kept')!.reused, { 'rows a': 1 }, 'beside the model check, whose item was reused');
 });
 
-test('the fold is recomputed from reused answers: a check they already decide sends no request, and its other items are not stored', async () => {
-  const { api, store, seen } = sessionApi((row) => (row === 'b' ? 0.05 : 0.95), () => said('yes'));
+test('the fold is recomputed from reused answers: a check they already decide escalates nothing more, as with fresh answers', async () => {
+  // Clef fails b outright and is unsure of d, which only the next version has.
+  const { api, store, seen } = sessionApi((row) => (row === 'b' ? 0.05 : row === 'd' ? 0.5 : 0.95), () => said('yes'));
   await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'c') }), 1);
   const v2 = await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'd') }), 2);
-  assert.deepEqual(seen.clef, ['a', 'b', 'c'], 'b failing decides the all fold, so d is never asked');
+  assert.deepEqual([seen.clef, seen.judge], [['a', 'b', 'c', 'd'], []], 'the reused failure of b decides the all fold, so unsure d is not escalated');
   const k = v2.checks[0];
   assert.deepEqual([k.met, k.notes, k.undecidedItems, k.reused, k.resolvers], [false, ['rows b: flagged by clef (no reason given) (judged on v1)'], ['rows d'], { 'rows a': 1, 'rows b': 1 }, {}]);
-  assert.equal(Object.keys(store.answers).length, 3);
+  assert.equal(Object.keys(store.answers).length, 3, 'd, skipped, is not stored');
 });
 
 test('a resubmit of the same version after an undecided round asks only the items it left undecided', async () => {

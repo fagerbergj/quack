@@ -17,7 +17,7 @@ import { asJudged, readSession } from './record.ts';
 /** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them; `units` keeps only those evidence units. */
 export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
 /** An arm judges with its adapters' rubrics and evidence, its judge engine (this tree's when unset) and, when it has one, a per-unit decision model before the judge model. */
-export type Arm = { label: string; adapters: EvalAdapter[]; rejudge?: typeof rejudge; decisionModel?: DecisionModelRef };
+export type Arm = { label: string; adapters: EvalAdapter[]; rejudge?: typeof rejudge; decisionModel?: DecisionModelRef; /** Item reuse on: each repeat judges a recorded session's cases in version order against one store of their own. */ reuse?: boolean };
 
 /** A tar of `packages/` as it stood at ref in the repo at `top`; a ref from before the repo-root layout keeps it under v1/. */
 export function packagesTar(top: string, ref: string): Buffer {
@@ -62,10 +62,10 @@ export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency:
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
 const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
 /** The options that route a job's questions; every arm's engine must read them under these names. */
-const ROUTING = ['decisionModel', 'judgeModel', 'escalations'] as const;
+const ROUTING = ['decisionModel', 'judgeModel', 'escalations', 'reuse'] as const;
 /** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
 type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
-type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
+type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; reuse?: boolean; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
 /** The rubric cut to the watched checks (by id or criterion.id), so only those are judged; a name that matches nothing is an error. */
 function watch(rubric: Rubric, names: string[] | undefined): Rubric {
@@ -90,7 +90,7 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> 
     const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
     if (!judged) continue;
     const rubric = watch(a.judge!.rubric as Rubric, c.checks);
-    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
+    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, reuse: arm.reuse, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
@@ -115,8 +115,8 @@ function declared(d: Declaration, rubric: Rubric, units?: string[]): Declaration
 }
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
-  const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const base = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations };
+  const sealed = { kind: j.c.kind, version: j.c.version ?? 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
+  const base = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations, ...(j.reuse && { reuse: true }) };
   const judged = j.judged;
   const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
   const read = new Set<PropertyKey>();
@@ -131,6 +131,24 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), ms, notes: k.notes }));
 }
 
+// A reuse arm's cases of one recorded session, per repeat, are one batch in version order; any other job is a batch of its own.
+function batches(prepared: Array<Omit<Job, 'rep'>>, repeat: number): Job[][] {
+  const out = new Map<string, Job[]>();
+  for (let rep = 1; rep <= repeat; rep++) {
+    for (const p of prepared) {
+      const key = p.reuse ? `${rep}\t${p.arm}\t${p.c.session ?? p.c.case}` : String(out.size);
+      out.set(key, [...(out.get(key) ?? []), { ...p, rep }]);
+    }
+  }
+  return [...out.values()].map((b) => b.sort((x, y) => (x.c.version ?? 0) - (y.c.version ?? 0)));
+}
+
+// A child conversation of the replay's task, so a batch's reuse store holds that batch's answers and no other's.
+async function storeOf(api: ToolExecutionApi, ctx: Context): Promise<ToolExecutionApi> {
+  const id = await api.commit(async (tx) => (await tx.createConversation({ ownership: { kind: 'task', taskId: api.taskId } })).id, ctx);
+  return new Proxy(api, { get: (t, k) => (k === 'conversationId' ? id : typeof Reflect.get(t, k) === 'function' ? Reflect.get(t, k).bind(t) : Reflect.get(t, k)) });
+}
+
 /** Judges every case under every arm `repeat` times and returns one row per check, and the cases an arm declined. */
 export async function replayJudge(o: Options): Promise<Replayed> {
   if (!o.models.getAllModels(o.judgeModel.provider).some((m) => m.id === o.judgeModel.modelId)) throw new Error(`judge ${o.judgeModel.provider}/${o.judgeModel.modelId} is not configured in this deployment`);
@@ -138,7 +156,7 @@ export async function replayJudge(o: Options): Promise<Replayed> {
   const declined = all.filter((p): p is Declined => 'reason' in p);
   const prepared = all.filter((p): p is Omit<Job, 'rep'> => !('reason' in p));
   if (!prepared.length) throw new Error(`every case was declined: ${declined.map((d) => `${d.arm} ${d.case}: ${d.reason}`).join('; ')}`);
-  const queue: Job[] = Array.from({ length: o.repeat }, (_, i) => prepared.map((p) => ({ ...p, rep: i + 1 }))).flat();
+  const queue = batches(prepared, o.repeat);
   const rows: Row[] = [];
   // A tool error only reaches the scripted driver as text, so keep the first one and rethrow it after the run.
   let failure: unknown;
@@ -148,9 +166,10 @@ export async function replayJudge(o: Options): Promise<Replayed> {
     parameters: obj({}, { open: true }),
     async execute(_args, api, ctx) {
       await Promise.all(Array.from({ length: o.concurrency }, async () => {
-        for (let j = queue.shift(); j && !failure; j = queue.shift()) {
+        for (let b = queue.shift(); b && !failure; b = queue.shift()) {
           try {
-            rows.push(...(await judgeJob(api, ctx, o, j)));
+            const on = b[0].reuse ? await storeOf(api, ctx) : api;
+            for (const j of b) rows.push(...(await judgeJob(on, ctx, o, j)));
           } catch (err) {
             failure ??= err;
           }
