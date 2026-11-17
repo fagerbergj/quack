@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import type { SealedArtifact } from '../../api.ts';
 import { BLUE, plain, type Extension } from '../../extension.ts';
+import { ChangesAsked } from './Comments.tsx';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec, specVersion } from './spec.ts';
 import { specNumbers } from './status.ts';
@@ -13,6 +14,7 @@ const ICON = 'M7.5 3.5C5.6 3.5 5 4.6 5 6.2V9.6c0 1.3-.8 2.4-2.2 2.4 1.4 0 2.2 1.
 const NAMES: Record<string, string> = { 'contract.approved': 'Approval', 'contract.changes': 'Changes requested' };
 
 const view = (a: SealedArtifact) => {
+  if (a.kind === 'contract.changes' && a.content !== undefined) return createElement(ChangesAsked, { content: a.content });
   const spec = a.kind === KIND && a.content !== undefined ? parseSpec(a.content) : undefined;
   return spec && createElement(Standalone, { key: a.version, spec, verdict: a.verdict });
 };

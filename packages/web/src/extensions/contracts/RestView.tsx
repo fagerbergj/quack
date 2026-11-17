@@ -3,6 +3,7 @@ import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
 import { opUnits, useAnyMark, useMark } from './diff.ts';
+import { CommentButton, docTarget } from './Comments.tsx';
 import { choicesAt, Info, unplaced } from './Info.tsx';
 import { Changes, Glyph, MoreAbout, Purpose, ShortChange, useFlash, useItem, useReview } from './Review.tsx';
 import { MarkTag, SchemaTree } from './SchemaTree.tsx';
@@ -43,10 +44,11 @@ function Response({ o, code, res, ctx }: { o: Operation; code: string; res: Json
   const flash = useFlash<HTMLDivElement>(at);
   return (
     <div ref={flash.ref} tabIndex={-1} data-ptr={at} className={`flex scroll-mt-16 flex-col gap-2 rounded-xl border border-line px-3 py-2.5 outline-none ${flash.cls}`}>
-      <div className="flex items-center gap-2">
+      <div className="group/c flex items-center gap-2">
         <code className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs ${code.startsWith('2') ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{code}</code>
         <span className="min-w-0 flex-1 text-[13.5px] [overflow-wrap:anywhere]">{res.description}</span>
         <MarkTag m={m} />
+        <CommentButton target={docTarget(at, res.description)} />
         <Info choices={ctx.at(at)} />
       </div>
       {item && <ShortChange item={item} />}
@@ -80,9 +82,10 @@ function Detail({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }
   const flash = useFlash<HTMLDivElement>(o.ptr);
   return (
     <div ref={flash.ref} tabIndex={-1} data-ptr={o.ptr} className={`${card} flex min-w-0 scroll-mt-16 flex-col gap-4 p-4 outline-none ${flash.cls}`}>
-      <h3 className="m-0 flex items-center gap-2.5 font-sans">
+      <h3 className="group/c m-0 flex items-center gap-2.5 font-sans">
         <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto font-mono text-[15px] font-normal whitespace-nowrap">{o.path}</span>
         <MarkTag m={useMark(o.ptr)} />
+        <CommentButton target={docTarget(o.ptr, o.op.summary)} />
         <Info choices={ctx.at(o.ptr)} />
       </h3>
       {item && <ShortChange item={item} />}

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useR
 import { Dialog } from '../../Dialog.tsx';
 import { useMedia } from '../../useDesktop.ts';
 import type { Mark } from './diff.ts';
+import { CommentButton, CommentsRow } from './Comments.tsx';
 import { Inline, Reasons } from './Info.tsx';
 import { lede, saysMore, shortChange, type Item } from './review.ts';
 import { BeforeAfter, label } from './Sections.tsx';
@@ -157,8 +158,8 @@ function Told({ spec }: { spec: ContractSpec }) {
   return (
     <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[14px]">
       {(spec.changes ?? []).map((c) => (
-        <li key={c.choice} className="flex flex-col gap-1 [overflow-wrap:anywhere]">
-          <code className="font-mono text-[12px] text-muted">{c.choice}</code>
+        <li key={c.choice} className="group/c flex flex-col gap-1 [overflow-wrap:anywhere]">
+          <span className="flex items-center gap-1"><code className="min-w-0 flex-1 font-mono text-[12px] text-muted">{c.choice}</code><CommentButton target={{ anchor: { on: 'change', choice: c.choice }, tag: 'Change', name: c.choice, text: lede(c.now) || c.now }} /></span>
           {!!c.facts?.length && <FactLinks spec={spec} ids={c.facts} />}
           <Desc text={c.now} bare="Read the change" extra={<span className="flex flex-col gap-1 text-[13px] text-ink-2">{c.was && <span><span className={label}>Before </span><Inline text={c.was} /></span>}<span><span className={label}>Why </span><Inline text={c.why} /></span></span>} />
         </li>
@@ -239,7 +240,9 @@ const List = ({ items }: { items: string[] }) => <ul className={ul}>{items.map((
 function FactItem({ f, ptr }: { f: Fact; ptr: string }) {
   const id = typeof f === 'string' ? undefined : f.id;
   const flash = useFlash<HTMLLIElement>(id ? `${ptr}/${id}` : undefined);
-  return <li ref={flash.ref} tabIndex={id ? -1 : undefined} className={`rounded outline-none ${flash.cls}`}><Inline text={factText(f)} />{id && <> <code className="font-mono text-[12px] text-muted">{id}</code></>}</li>;
+  const on = ptr === '#guarantees' ? 'guarantee' : 'nonGoal';
+  const target = { anchor: { on, text: factText(f), ...(id && { id }) }, tag: on === 'guarantee' ? 'Guarantee' : 'Out of scope', name: id ?? lede(factText(f)), text: factText(f) } as const;
+  return <li ref={flash.ref} tabIndex={id ? -1 : undefined} className={`group/c rounded outline-none ${flash.cls}`}><Inline text={factText(f)} />{id && <> <code className="font-mono text-[12px] text-muted">{id}</code></>}<CommentButton target={target} /></li>;
 }
 
 const prefixOf = (f: Fact) => (typeof f === 'string' || !f.id.includes('.') ? '' : f.id.slice(0, f.id.indexOf('.')));
@@ -254,6 +257,11 @@ function Facts({ items, ptr }: { items: Fact[]; ptr: string }) {
 
 type Part = { ptr: string; title: string; count?: number; body: ReactNode };
 
+// A decision with its reasons, and a comment on it by its choice id.
+function Decision({ c }: { c: ContractSpec['choices'][number] }) {
+  return <div className="group/c flex items-start gap-1"><div className="min-w-0 flex-1"><Reasons c={c} /></div><CommentButton target={{ anchor: { on: 'choice', id: c.id }, tag: 'Decision', name: c.id, text: c.decision }} /></div>;
+}
+
 function parts(spec: ContractSpec, extra: Part[]): Part[] {
   const i = spec.intent;
   const who = [i.audience && <p key="a" className="m-0"><Inline text={i.audience} /></p>, !!i.consumers?.length && <List key="c" items={i.consumers} />];
@@ -261,7 +269,7 @@ function parts(spec: ContractSpec, extra: Part[]): Part[] {
     ...(i.guarantees?.length ? [{ ptr: '#guarantees', title: 'Guarantees', count: i.guarantees.length, body: <Facts items={i.guarantees} ptr="#guarantees" /> }] : []),
     ...(i.nonGoals?.length ? [{ ptr: '#non-goals', title: 'Out of scope', count: i.nonGoals.length, body: <Facts items={i.nonGoals} ptr="#non-goals" /> }] : []),
     ...(i.audience || i.consumers?.length ? [{ ptr: '#audience', title: 'Who it is for', body: <>{who}</> }] : []),
-    ...(spec.choices.length ? [{ ptr: '#decisions', title: 'Decisions', count: spec.choices.length, body: spec.choices.map((c) => <Reasons key={c.id} c={c} />) }] : []),
+    ...(spec.choices.length ? [{ ptr: '#decisions', title: 'Decisions', count: spec.choices.length, body: spec.choices.map((c) => <Decision key={c.id} c={c} />) }] : []),
     ...extra,
   ];
 }
@@ -297,6 +305,7 @@ export function MoreAbout({ spec, extra = [] }: { spec: ContractSpec; extra?: Pa
       <h2 id={id} className={sectionTitle}>More about this contract</h2>
       <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface p-0">
         {list.map((p) => <PartButton key={p.ptr} p={p} onOpen={() => setOpen(p.ptr)} />)}
+        <CommentsRow />
       </ul>
       {shown && <Sheet title={shown.title} onClose={() => setOpen(undefined)}>{changed && <ShortChange item={changed} />}{shown.body}</Sheet>}
     </section>

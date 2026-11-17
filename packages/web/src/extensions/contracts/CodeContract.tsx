@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import { ClassDiagram } from './ClassDiagram.tsx';
 import { DRAWN } from './class-model.ts';
+import { CommentButton, docTarget, type Target } from './Comments.tsx';
 import { choicesAt, Info } from './Info.tsx';
 import { Desc, Glyph, ShortChange, useFlash, useItem, useReview } from './Review.tsx';
 import { itemsUnder, worst } from './review.ts';
-import { MarkTag, SchemaTree } from './SchemaTree.tsx';
-import type { Choice, Decl, Model } from './spec.ts';
+import { fieldTarget, MarkTag, SchemaTree } from './SchemaTree.tsx';
+import type { Choice, Decl, Field, Model } from './spec.ts';
 
 const GROUPS: Array<[string, Array<Decl['kind']>]> = [['Types', ['type', 'interface', 'enum', 'other']], ['Functions', ['function']], ['Constants', ['const']]];
 const link = 'cursor-pointer border-0 bg-transparent p-0 font-mono text-[length:inherit] text-link underline decoration-link/40 underline-offset-2 hover:decoration-link';
@@ -21,6 +22,16 @@ function Refs({ label, list, names }: { label: string; list: string[]; names: Se
   return <p className="m-0 text-xs text-muted">{label} {list.map((n, i) => <span key={n}>{i > 0 && ', '}<Linked text={n} names={names} /></span>)}</p>;
 }
 
+// The places the contracts app resolves a typescript pointer: an exported declaration, and the members, parameters and enum members under
+// it, never a union's variants or a function's return; a const's own fields are not members.
+const MEMBERED = new Set<Decl['kind']>(['interface', 'type', 'function', 'enum']);
+export const declTarget = (d: Decl): Target | undefined => (d.exported ? docTarget(`/${d.name}`, d.doc) : undefined);
+export function rowTarget(d: Decl, f: Field): Target | undefined {
+  const rest = f.ptr.slice(d.name.length + 2);
+  if (!d.exported || !MEMBERED.has(d.kind) || /(^|\/)\d+(\/|$)/.test(rest) || (d.kind === 'function' && /^returns(\/|$)/.test(rest))) return undefined;
+  return fieldTarget(f);
+}
+
 // A declaration's card carries the strongest mark of anything changed in it; its own change, before and after, sits under its description.
 function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; usedBy: string[]; choices: Choice[] }) {
   const ptr = `/${d.name}`;
@@ -31,19 +42,20 @@ function Card({ d, names, usedBy, choices }: { d: Decl; names: Set<string>; used
   const code = (t: string): ReactNode => <Linked text={t} names={names} />;
   return (
     <article ref={flash.ref} id={`decl-${d.name}`} data-ptr={ptr} tabIndex={-1} aria-label={d.name} className={`-mx-2 flex scroll-mt-16 flex-col gap-2 rounded-lg border-t border-line px-2 pt-3 outline-none first:border-t-0 first:pt-0 ${flash.cls}`}>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="group/c flex flex-wrap items-center gap-2">
         <Glyph m={m} />
         <h3 className="m-0 font-mono text-[15px] font-semibold [overflow-wrap:anywhere]">{d.name}<span className="font-normal text-muted">{d.generics}</span></h3>
         {d.kind !== 'other' && <span className={pill}>{d.kind}</span>}
         {!d.exported && <span className={pill}>not exported</span>}
         <MarkTag m={own?.breaking ? 'breaking' : own?.mark === 'removed' ? undefined : own?.mark} />
         <span className="flex-1" />
+        {declTarget(d) && <CommentButton target={declTarget(d)!} />}
         <Info choices={choices} />
       </div>
       {d.doc && <p className="m-0 text-[14px] leading-relaxed text-ink-2"><Desc text={d.doc} name="Full description" /></p>}
       {own && <ShortChange item={own} />}
       {d.text && <code className="font-mono text-[12.5px] text-success [overflow-wrap:anywhere]">{d.rows.length ? 'includes ' : '= '}{code(d.text)}</code>}
-      {d.rows.length > 0 && <SchemaTree rows={d.rows} whyAt={() => []} code={code} />}
+      {d.rows.length > 0 && <SchemaTree rows={d.rows} whyAt={() => []} code={code} target={(f) => rowTarget(d, f)} />}
       <Refs label="Uses" list={d.uses} names={names} />
       <Refs label="Used by" list={usedBy} names={names} />
       {/* Some types sit apart from the rest, where no tap in the diagram reaches them; this does. */}

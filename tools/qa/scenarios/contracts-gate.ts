@@ -5,7 +5,8 @@ import { sessionDirName } from '@quack/distributor';
 import { lastReviewBlock } from '@quack/contracts';
 import type { FakeScript } from '../fake-model.ts';
 import { answer, SDK_V1, SDK_V2, sdkSpec } from '../seed-contracts.ts';
-import { visible, type Scenario } from '../scenario.ts';
+import type { Locator, Page } from 'playwright';
+import { paneOf, visible, type Ctx, type Scenario } from '../scenario.ts';
 
 // A QA contracts agent with the judge on: the judge's gate passes each version, then the contracts gate puts it to the person and waits.
 const KEY = 'contracts:qa-gate';
@@ -16,7 +17,8 @@ const REVIEWED = 'contracts:qa-review';
 const text = (m: { content?: unknown }) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
 const write = (version: 1 | 2) => ({ tool: { name: 'write', arguments: { path: 'artifacts/spec.json', content: JSON.stringify(sdkSpec(version, version === 1 ? SDK_V1 : SDK_V2), null, 2) } } });
 const writeSpec = (spec: unknown) => ({ tool: { name: 'write', arguments: { path: 'artifacts/spec.json', content: JSON.stringify(spec, null, 2) } } });
-const SDK_V3 = SDK_V2.replace('stop?(): Promise<void>;', '/** Stops the app\'s background loops; the distributor awaits it on shutdown. */ stop?(): Promise<void>;');
+// A JSDoc attaches to a member only on a line of its own, so the member's span changes with it.
+const SDK_V3 = SDK_V2.replace('stop?(): Promise<void>;', '\n  /** Stops the app\'s background loops; the distributor awaits it on shutdown. */\n  stop?(): Promise<void>;');
 
 // The reviewed session's writer: v1, then v2 with a baseline; after the review, a reply to the first comment and a v3 addressing the second.
 function reviewRound(messages: Array<{ role: string; content?: unknown }>) {
@@ -75,30 +77,77 @@ async function ok<T>(res: Promise<Response>, what: string): Promise<T> {
 }
 type Comment = { id: string; state: string; quote: string; replies: Array<{ text: string }>; addressedIn?: number; outdated?: { mark: string; in: number } };
 
-async function reviewStep(url: string) {
+// Shoots the page light, then dark, then goes back to light.
+async function both(ctx: Ctx, page: Page, name: string) {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await ctx.shot(page, `${name}-390-${colorScheme}`);
+  }
+  await page.emulateMedia({ colorScheme: 'light' });
+}
+
+// The person comments on a decision and a member row on a phone, sends both as one review, and reads the agent's answers on v3.
+async function reviewInPage(ctx: Ctx, page: Page) {
+  const pane = paneOf(page, 'Contract');
+  const comment = async (opener: Locator, menu: string, body: string, shot?: string) => {
+    await opener.getByRole('button', { name: `More for ${menu}` }).click();
+    await page.getByRole('menuitem', { name: 'Comment' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Comment' });
+    await sheet.getByRole('textbox', { name: 'Your comment' }).fill(body);
+    if (shot) await both(ctx, page, shot);
+    await sheet.getByRole('button', { name: 'Add to review' }).click();
+    await sheet.waitFor({ state: 'detached' });
+  };
+  await pane.getByRole('button', { name: /^Decisions/ }).click();
+  await comment(page.getByRole('dialog', { name: 'Decisions' }), 'stop', 'Why is stop optional?');
+  await page.getByRole('dialog', { name: 'Decisions' }).getByRole('button', { name: 'Close' }).click();
+  const member = pane.locator('[data-ptr="/App/stop"]');
+  await member.scrollIntoViewIfNeeded();
+  await comment(member, 'App.stop', 'Say what stop must do.', 'review-comment-sheet');
+  const bar = pane.getByRole('region', { name: 'Approval' });
+  await visible(bar.getByText('2 draft comments'));
+  await both(ctx, page, 'review-bar-drafts');
+  await bar.getByRole('button', { name: 'Review · 2' }).click();
+  const review = page.getByRole('dialog', { name: 'Your review of v2' });
+  await review.getByRole('textbox', { name: 'Overall note (optional)' }).fill('Two things on the stop hook.');
+  await both(ctx, page, 'review-sheet');
+  await review.getByRole('button', { name: 'Send 2 comments' }).click();
+  await review.waitFor({ state: 'detached' });
+}
+
+async function reviewStep(ctx: Ctx) {
+  const { url } = ctx;
   const invoke = (input: string) => fetch(`${route(url, REVIEWED)}/invocations?agent=qa-contracts`, { method: 'POST', body: JSON.stringify({ input, wait: true }) });
   const first = invoke('Define the extension SDK manifest types for a review round');
   await resolve(url, (await pendingFor(url, 1, REVIEWED)).id, 'approve', 'fine', REVIEWED);
   await first;
   const second = invoke('Add an optional stop hook to App');
-  const v2 = await pendingFor(url, 2, REVIEWED);
-  const artifact = v2.toolCall!.args!.artifact!;
-  const post = (anchor: unknown, body: string) => ok<Comment>(app(url, '/comments', { method: 'POST', body: JSON.stringify({ artifact, anchor, body }) }), 'comment');
-  const why = await post({ on: 'choice', id: 'stop' }, 'Why is stop optional?');
-  const say = await post({ on: 'document', ptr: '/App' }, 'Say what stop must do.');
-  if (!say.quote.includes('stop?(): Promise<void>')) throw new Error(`the app's quote of /App: ${say.quote}`);
-  const review = await ok<{ reason: string }>(app(url, '/reviews', { method: 'POST', body: JSON.stringify({ note: 'Two things on the stop hook.', comments: [why.id, say.id] }) }), 'prepare');
-  const rejected = await resolve(url, v2.id, 'reject', review.reason, REVIEWED);
-  if (!rejected.ok) throw new Error(`reject: ${rejected.status} ${await rejected.text()}`);
-  const v3 = await pendingFor(url, 3, REVIEWED);
-  await resolve(url, v3.id, 'approve', 'answered', REVIEWED);
-  await second;
-  const { comments } = await ok<{ comments: Comment[] }>(app(url, '/comments'), 'list');
-  const [a, b] = [comments.find((c) => c.id === why.id), comments.find((c) => c.id === say.id)];
-  if (a?.state !== 'answered' || a.replies[0]?.text !== 'Optional, so extensions written before it still compile.' || a.outdated) throw new Error(`the replied comment: ${JSON.stringify(a)}`);
-  const at = v3.toolCall!.args!.artifact!;
-  if (b?.state !== 'addressed' || b.addressedIn !== at || b.outdated?.mark !== 'changed' || b.outdated.in !== at) throw new Error(`the addressed comment: ${JSON.stringify(b)}`);
-  console.log(`  review ${why.id}: answered; ${say.id}: addressed and outdated in artifact ${b.addressedIn}`);
+  await pendingFor(url, 2, REVIEWED);
+  const context = await ctx.browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, colorScheme: 'light' });
+  try {
+    const page = await context.newPage();
+    await page.goto(`${url}/#/s/${encodeURIComponent(REVIEWED)}`);
+    await visible(paneOf(page, 'Contract').getByRole('region', { name: 'Approval' }).getByText('v2 waits on you'));
+    await reviewInPage(ctx, page);
+    const v3 = await pendingFor(url, 3, REVIEWED);
+    await resolve(url, v3.id, 'approve', 'answered', REVIEWED);
+    await second;
+    const { comments } = await ok<{ comments: Comment[] }>(app(url, '/comments'), 'list');
+    const [a, b] = comments;
+    if (a?.state !== 'answered' || a.replies[0]?.text !== 'Optional, so extensions written before it still compile.' || a.outdated) throw new Error(`the replied comment: ${JSON.stringify(a)}`);
+    const at = v3.toolCall!.args!.artifact!;
+    if (b?.state !== 'addressed' || b.addressedIn !== at || b.outdated?.mark !== 'changed' || b.outdated.in !== at) throw new Error(`the addressed comment: ${JSON.stringify(b)}`);
+    await page.reload();
+    await paneOf(page, 'Contract').getByRole('button', { name: /^Review comments/ }).click();
+    const thread = page.getByRole('dialog', { name: 'Review comments' });
+    await visible(thread.getByText('Optional, so extensions written before it still compile.'));
+    await visible(thread.getByText('Addressed in v3'));
+    await visible(thread.getByText('Outdated: changed in v3'));
+    await both(ctx, page, 'review-thread-replies');
+    console.log(`  review ${a.id}: answered; ${b.id}: addressed and outdated in artifact ${b.addressedIn}`);
+  } finally {
+    await context.close();
+  }
 }
 
 const scenario: Scenario = {
@@ -168,7 +217,7 @@ const scenario: Scenario = {
       if (approve(fresh).err !== undefined) throw new Error(`quack approve of the fresh ask ${fresh} failed`);
       console.log(`  stale approval ${stale.id} withdrawn (quack approve: ${late.err!.trim()}); fresh approval ${fresh} approved`);
     });
-    await ctx.step('a review round: comments on v2 go with the rejection, the agent replies to one and addresses the other, and v3 shows them answered and addressed', () => reviewStep(ctx.url));
+    await ctx.step('a review round on a phone: comments on a decision and a member go with the rejection, the agent replies to one and addresses the other, and v3 shows them answered, addressed and outdated', () => reviewStep(ctx));
   },
 };
 export default scenario;

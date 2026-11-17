@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useRef, useState,
 import { createPortal } from 'react-dom';
 import { useMedia } from '../../useDesktop.ts';
 import { aimAt, defaultFocus, focusView, type Box, type Focused } from './class-model.ts';
+import { CommentGlyph, commentsUnder, docTarget, StripComment, useComments } from './Comments.tsx';
 import { DiffContext, type Mark } from './diff.ts';
 import { Glyph, useReview } from './Review.tsx';
 import { itemsUnder, lede, worst, type Item } from './review.ts';
@@ -65,7 +66,9 @@ function BoxView({ data: { box } }: NodeProps<BoxNode>) {
   const under = itemsUnder(items, `/${decl.name}`);
   const m = worst(under);
   const edge = m ? BORDER[m] : box.focus ? 'border-link' : 'border-line-strong';
-  const name = box.focus ? `${decl.name}${changeWords(under)}, go to its declaration` : `Centre the diagram on ${decl.name}${changeWords(under)}`;
+  const said = commentsUnder(useComments().all, `/${decl.name}`).length;
+  const talk = said ? `, ${said} ${said === 1 ? 'comment' : 'comments'}` : '';
+  const name = box.focus ? `${decl.name}${changeWords(under)}${talk}, go to its declaration` : `Centre the diagram on ${decl.name}${changeWords(under)}${talk}`;
   const tip = { onPointerEnter: (e: PointerEvent<HTMLElement>) => e.pointerType === 'mouse' && act.tip(decl.name, e.currentTarget), onPointerLeave: () => act.tip(), onFocus: (e: FocusEvent<HTMLElement>) => e.currentTarget.matches(':focus-visible') && act.tip(decl.name, e.currentTarget), onBlur: () => act.tip() };
   return (
     <div style={size(box)} className={`overflow-hidden rounded-lg border bg-surface font-mono text-[12px] text-ink-2 ${edge} ${box.focus ? 'shadow-ring' : ''} ${decl.exported ? '' : 'border-dashed'} ${act.sel === decl.name ? 'outline-2 outline-offset-2 outline-link' : ''}`}>
@@ -76,7 +79,7 @@ function BoxView({ data: { box } }: NodeProps<BoxNode>) {
       >
         <span>{decl.name}<span className="font-normal text-muted">{decl.generics}</span></span>
         {decl.kind !== 'other' && <span className="text-[10px] font-normal tracking-wide text-muted uppercase">{decl.kind}</span>}
-        {m && <span className="ml-auto flex items-center gap-1 text-[11px] text-ink-2"><Glyph m={m} />{under.length}</span>}
+        {(m || said > 0) && <span className="ml-auto flex items-center gap-2 text-[11px] text-ink-2">{said > 0 && <span className="flex items-center gap-0.5 text-link"><CommentGlyph />{said}</span>}{m && <span className="flex items-center gap-1"><Glyph m={m} />{under.length}</span>}</span>}
       </button>
       {box.rows.map((r, i) => {
         const rm = rowMark(marks, r.ptr);
@@ -160,6 +163,7 @@ function Strip({ decl, items, centred, onCentre }: { decl: Decl; items: Item[]; 
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => show(`/${decl.name}`)} className={btn}>Show in spec</button>
         {!centred && <button type="button" onClick={onCentre} className={btn}>Centre here</button>}
+        {decl.exported && <StripComment target={docTarget(`/${decl.name}`, lede(decl.doc) || decl.doc, 'Diagram')} />}
       </div>
     </div>
   );
@@ -222,7 +226,8 @@ export function ClassDiagram({ decls }: { decls: Decl[] }) {
   const touch = useMedia('(pointer: coarse)');
   const room = useWidth(frame);
   const { fitAll, height } = fitting(flow, focus, room);
-  const selected = decls.find((d) => d.name === sel);
+  // With nothing tapped, the strip is the centred box's, so a mouse reaches its actions too.
+  const selected = decls.find((d) => d.name === (sel ?? focus));
   if (!view.boxes.length) return null;
   return (
     <section ref={section} aria-label="Class diagram" aria-describedby={note} className="flex min-w-0 scroll-mt-16 flex-col gap-3 rounded-[18px] border border-line bg-surface p-4">
@@ -243,7 +248,8 @@ export function ClassDiagram({ decls }: { decls: Decl[] }) {
           )}
         </Acts>
       </div>
-      <div aria-live="polite">{selected ? <Strip decl={selected} items={itemsUnder(review.items, `/${selected.name}`)} centred={selected.name === focus} onCentre={() => setFocus(selected.name)} /> : <Caption id={note} legend={review.items.length > 0} touch={touch} />}</div>
+      <Caption id={note} legend={review.items.length > 0} touch={touch} />
+      <div aria-live="polite">{selected && <Strip decl={selected} items={itemsUnder(review.items, `/${selected.name}`)} centred={selected.name === focus} onCentre={() => setFocus(selected.name)} />}</div>
       {tip && decls.some((d) => d.name === tip.name) && <Tip id={tipId} decl={decls.find((d) => d.name === tip.name)!} at={tip.at} />}
     </section>
   );
