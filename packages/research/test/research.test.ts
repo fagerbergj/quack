@@ -113,14 +113,14 @@ const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessa
 const seeing = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
 // The judge model answers each model check from its question: pitfalls (contradiction, conflict) no, the rest yes; like the 27B in #2369,
-// it reads any evidence that shows both a 10 ft and a 6 ft cord as a conflict, and a derived claim about "anywhere" as not following.
+// it reads any evidence that shows both a 10 ft and a 6 ft cord as a conflict, and a derived claim about "anywhere" as not stated by its findings.
 function judgeFaux() {
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   const answer = (c: { messages: unknown[] }) => {
     const t = JSON.stringify(c.messages);
     const conflict = t.includes('conflicting figures');
     const pitfall = t.includes('contradict it?') || conflict;
-    const flag = (conflict && /\b10 ft/.test(t) && /\b6 ft/.test(t)) || (t.includes('follow from the findings and assumptions') && t.includes('anywhere'));
+    const flag = (conflict && /\b10 ft/.test(t) && /\b6 ft/.test(t)) || (t.includes('says about the figures and sources it shares') && t.includes('anywhere'));
     return fauxAssistantMessage(JSON.stringify({ choice: pitfall === flag ? 'yes' : 'no', confidence: 1, reason: flag ? 'the cord is 10 ft and 6 ft, or no finding says anywhere' : 'ok' }));
   };
   faux.setResponses(Array.from({ length: 200 }, () => answer));
@@ -585,12 +585,12 @@ test('no_self_contradiction: findings that attribute different cord lengths to t
   assert.match(pick(asserted).notes.join('\n'), /^pairs 1\|3: the cord is 10 ft and 6 ft/);
 });
 
-test('the derived checks are reported at weight 0: a Verdict line the judge model says does not follow is noted and costs nothing', async () => {
+test('the derived checks are reported at weight 0: a Verdict line the judge model says its findings do not state is noted and costs nothing', async () => {
   const plain = (await verdictOf(GOOD)).verdict as any;
   const derived = (await verdictOf(`${GOOD}## Verdict\n- Ducks fly farther than any bird anywhere [s1].\n`)).verdict as any;
-  const follows = derived.checks.find((c: any) => c.id === 'derived_follows');
-  assert.deepEqual([follows.weight, follows.units, follows.met], [0, 2, 0.5]);
-  assert.match(follows.notes.join('\n'), /^derived 5: .*no finding says anywhere/);
+  const stated = derived.checks.find((c: any) => c.id === 'derived_facts_stated');
+  assert.deepEqual([stated.weight, stated.units, stated.met], [0, 1, 0], 'the Summary names no finding, so only the Verdict line is asked');
+  assert.match(stated.notes.join('\n'), /^derived 5\.1: .*no finding says anywhere/);
   assert.deepEqual([derived.passed, derived.score], [plain.passed, plain.score]);
 });
 
