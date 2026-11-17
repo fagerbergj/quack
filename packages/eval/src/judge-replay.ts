@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomInt } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -52,12 +53,14 @@ export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'reju
   const engine = (await import(at('judge'))) as typeof import('@quack/judge');
   return { adapters: adaptersOf(await loadManifests(specs)), rejudge: engine.rejudge };
 }
-export type Row = { arm: string; rep: number; case: string; check: string; met: number | null; clef: number; esc: number; ms: number; notes: string[] };
+/** One check of one job: `pos` is the arm's place in its case's order that repeat (1 first); `clef`, `esc` and `reused` count settled items; `ms` and `requests` (by model id) are the job's. */
+export type Row = { arm: string; rep: number; pos: number; case: string; check: string; met: number | null; clef: number; esc: number; reused: number; ms: number; requests: Record<string, number>; notes: string[] };
 /** A case an arm could not judge, with what its recording lacks. */
 export type Declined = { arm: string; case: string; reason: string };
-export type Replayed = { rows: Row[]; declined: Declined[] };
-/** `escalations` bounds each job's concurrent judge-model calls (the judge's default when unset), so the judge model sees at most concurrency × escalations. */
-export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number };
+export type Replayed = { rows: Row[]; declined: Declined[]; seed?: number };
+/** `escalations` bounds each job's concurrent judge-model calls (the judge's default when unset), so the judge model sees at most concurrency × escalations;
+ * `seed` orders the arms within each case and repeat (random when unset); `onRows` gets each job's rows as it finishes. */
+export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number; seed?: number; onRows?: (rows: Row[]) => void };
 
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
 const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
@@ -65,7 +68,8 @@ const escalated = (resolvers: Record<string, number>, decisionModel?: string) =>
 const ROUTING = ['decisionModel', 'judgeModel', 'escalations', 'reuse'] as const;
 /** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
 type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
-type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; reuse?: boolean; rep: number; c: Case; rubric: Rubric; content: string; judged: Judged };
+type Prepared = Omit<Job, 'rep' | 'pos'>;
+type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; reuse?: boolean; rep: number; pos: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
 /** The rubric cut to the watched checks (by id or criterion.id), so only those are judged; a name that matches nothing is an error. */
 function watch(rubric: Rubric, names: string[] | undefined): Rubric {
@@ -79,7 +83,7 @@ function watch(rubric: Rubric, names: string[] | undefined): Rubric {
 }
 
 // An adapter that throws is declining the case for a reason (what the recording lacks); a case file without content is an error.
-async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'> | Declined> {
+async function prepare(arm: Arm, c: Case): Promise<Prepared | Declined> {
   // Adapters find the judged version by content, so they see the session as it was judged: a later version with the same content is not it.
   const record: RecordedSession = c.session ? asJudged(await readSession(c.session), c.kind, c.version) : { docs: {}, artifacts: {} };
   const versions = record.artifacts[c.kind] ?? [];
@@ -114,6 +118,25 @@ function declared(d: Declaration, rubric: Rubric, units?: string[]): Declaration
   return { scopes: Object.fromEntries(Object.entries(d.scopes).map(([n, s]) => [n, watched.has(n) ? { ...s, split: { ...s.split, names: only(n) } } : s])), checks };
 }
 
+/** The api with `key` read as `value`; every other member is the api's own, its methods bound to it. */
+const withKey = <T extends object>(target: T, key: PropertyKey, value: unknown): T =>
+  new Proxy(target, { get: (t, k) => {
+    const v: unknown = Reflect.get(t, k);
+    return k === key ? value : typeof v === 'function' ? v.bind(t) : v;
+  } });
+
+// Counts the job's model requests by model id where the judge sends them, so jobs running at once each count their own.
+function counted(api: ToolExecutionApi): { api: ToolExecutionApi; requests: Record<string, number> } {
+  const requests: Record<string, number> = {};
+  const count = (send: (model: { id: string }, ...rest: unknown[]) => unknown) => (model: { id: string }, ...rest: unknown[]) => ((requests[model.id] = (requests[model.id] ?? 0) + 1), send(model, ...rest));
+  const models = new Proxy(api.models, { get: (t, k) => {
+    const v = Reflect.get(t, k);
+    if (typeof v !== 'function') return v;
+    return k === 'classify' || k === 'completeSimple' ? count(v.bind(t)) : v.bind(t);
+  } });
+  return { api: withKey(api, 'models', models), requests };
+}
+
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: j.c.version ?? 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
   const base = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations, ...(j.reuse && { reuse: true }) };
@@ -121,32 +144,64 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
   const read = new Set<PropertyKey>();
   const watched = new Proxy(opts, { get: (target, key, receiver) => (read.add(key), Reflect.get(target, key, receiver)) });
+  const { api: on, requests } = counted(api);
   const t = Date.now();
-  const v = await j.rejudge(api, watched, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
+  const v = await j.rejudge(on, watched, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;
   // An engine that names a routing option otherwise (before #2290, `classifier`) would judge without it and say nothing.
   const ignored = ROUTING.filter((k) => opts[k] !== undefined && !read.has(k));
   if (ignored.length) throw new Error(`arm ${j.arm}: its judge engine never reads ${ignored.join(', ')}, so it would judge without them; run that arm from a ref whose judge takes these options, or from its own worktree`);
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
-  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), ms, notes: k.notes }));
+  const at = { arm: j.arm, rep: j.rep, pos: j.pos, case: j.c.case, ms, requests };
+  return v.checks.map((k) => ({ ...at, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), reused: Object.keys(k.reused ?? {}).length, notes: k.notes }));
+}
+
+// mulberry32: a small seeded generator, so a seed replays the arm order exactly.
+const seeded = (seed: number) => () => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+
+/** Each arm's place (1 first) per repeat and case, shuffled by the seed: over cases and repeats every arm takes every place about equally. */
+function placesOf(arms: string[], cases: number, repeat: number, seed: number): (rep: number, c: number, arm: string) => number {
+  const random = seeded(seed);
+  const places = new Map<string, number>();
+  for (let rep = 1; rep <= repeat; rep++) {
+    for (let c = 0; c < cases; c++) {
+      const order = [...arms];
+      for (let i = order.length - 1; i > 0; i--) {
+        const k = Math.floor(random() * (i + 1));
+        [order[i], order[k]] = [order[k], order[i]];
+      }
+      order.forEach((a, i) => places.set(`${rep}\t${c}\t${a}`, i + 1));
+    }
+  }
+  return (rep, c, arm) => places.get(`${rep}\t${c}\t${arm}`)!;
 }
 
 // A reuse arm's cases of one recorded session, per repeat, are one batch in version order; any other job is a batch of its own.
-function batches(prepared: Array<Omit<Job, 'rep'>>, repeat: number): Job[][] {
+// Batches run repeat by repeat and case by case, the arms of a case in their seeded places; a reuse batch takes its first case's.
+function batches(prepared: Prepared[], o: Options, seed: number): Job[][] {
+  const place = placesOf(o.arms.map((a) => a.label), o.cases.length, o.repeat, seed);
   const out = new Map<string, Job[]>();
-  for (let rep = 1; rep <= repeat; rep++) {
+  for (let rep = 1; rep <= o.repeat; rep++) {
     for (const p of prepared) {
       const key = p.reuse ? `${rep}\t${p.arm}\t${p.c.session ?? p.c.case}` : String(out.size);
-      out.set(key, [...(out.get(key) ?? []), { ...p, rep }]);
+      out.set(key, [...(out.get(key) ?? []), { ...p, rep, pos: 0 }]);
     }
   }
-  return [...out.values()].map((b) => b.sort((x, y) => (x.c.version ?? 0) - (y.c.version ?? 0)));
+  const at = (b: Job[]) => o.cases.indexOf(b[0].c);
+  const sorted = [...out.values()].map((b) => b.sort((x, y) => (x.c.version ?? 0) - (y.c.version ?? 0)));
+  for (const b of sorted) for (const j of b) j.pos = place(j.rep, at(b), j.arm);
+  return sorted.sort((x, y) => x[0].rep - y[0].rep || at(x) - at(y) || x[0].pos - y[0].pos);
 }
 
 // A child conversation of the replay's task, so a batch's reuse store holds that batch's answers and no other's.
 async function storeOf(api: ToolExecutionApi, ctx: Context): Promise<ToolExecutionApi> {
   const id = await api.commit(async (tx) => (await tx.createConversation({ ownership: { kind: 'task', taskId: api.taskId } })).id, ctx);
-  return new Proxy(api, { get: (t, k) => (k === 'conversationId' ? id : typeof Reflect.get(t, k) === 'function' ? Reflect.get(t, k).bind(t) : Reflect.get(t, k)) });
+  return withKey(api, 'conversationId', id);
 }
 
 /** Judges every case under every arm `repeat` times and returns one row per check, and the cases an arm declined. */
@@ -154,9 +209,10 @@ export async function replayJudge(o: Options): Promise<Replayed> {
   if (!o.models.getAllModels(o.judgeModel.provider).some((m) => m.id === o.judgeModel.modelId)) throw new Error(`judge ${o.judgeModel.provider}/${o.judgeModel.modelId} is not configured in this deployment`);
   const all = await Promise.all(o.arms.flatMap((arm) => o.cases.map((c) => prepare(arm, c))));
   const declined = all.filter((p): p is Declined => 'reason' in p);
-  const prepared = all.filter((p): p is Omit<Job, 'rep'> => !('reason' in p));
+  const prepared = all.filter((p): p is Prepared => !('reason' in p));
   if (!prepared.length) throw new Error(`every case was declined: ${declined.map((d) => `${d.arm} ${d.case}: ${d.reason}`).join('; ')}`);
-  const queue = batches(prepared, o.repeat);
+  const seed = o.seed ?? randomInt(2 ** 31);
+  const queue = batches(prepared, o, seed);
   const rows: Row[] = [];
   // A tool error only reaches the scripted driver as text, so keep the first one and rethrow it after the run.
   let failure: unknown;
@@ -169,7 +225,11 @@ export async function replayJudge(o: Options): Promise<Replayed> {
         for (let b = queue.shift(); b && !failure; b = queue.shift()) {
           try {
             const on = b[0].reuse ? await storeOf(api, ctx) : api;
-            for (const j of b) rows.push(...(await judgeJob(on, ctx, o, j)));
+            for (const j of b) {
+              const done = await judgeJob(on, ctx, o, j);
+              rows.push(...done);
+              o.onRows?.(done);
+            }
           } catch (err) {
             failure ??= err;
           }
@@ -185,7 +245,7 @@ export async function replayJudge(o: Options): Promise<Replayed> {
     rmSync(dir, { recursive: true, force: true });
   }
   if (failure) throw failure;
-  return { rows, declined };
+  return { rows, declined, seed };
 }
 
 const sorted = (xs: number[]) => [...xs].sort((a, b) => a - b);
@@ -195,14 +255,24 @@ const fmt = (m: number | null) => (m === null ? 'null' : String(Math.round(m * 1
 const keyOf = (r: Row) => `${r.case}\t${r.check}`;
 const of = (rows: Row[], arm: string, key: string) => rows.filter((r) => r.arm === arm && keyOf(r) === key).sort((a, b) => a.rep - b.rep);
 
-/** Each arm's judge seconds per case: a job's checks share one wall time, so it counts once per (rep, case). */
-function seconds(rows: Row[], arms: string[]): string {
-  const secs = arms.map((a) => {
-    const jobs = [...new Map(rows.filter((r) => r.arm === a).map((r) => [`${r.rep}:${r.case}`, r.ms])).values()];
-    return `${a} median ${(median(jobs) / 1000).toFixed(1)} p90 ${(p90(jobs) / 1000).toFixed(1)}`;
-  });
-  return `judge seconds per case: ${secs.join(', ')}`;
+const secs = (ms: number[]) => `median ${(median(ms) / 1000).toFixed(1)} p90 ${(p90(ms) / 1000).toFixed(1)}`;
+const sum = (xs: number[]) => xs.reduce((n, x) => n + x, 0);
+
+/** One arm's counts, then its judge seconds per case overall and by place; a job's checks share its time and requests, so a job counts once. */
+function armLine(rows: Row[], arm: string): string {
+  const mine = rows.filter((r) => r.arm === arm);
+  const jobs = [...new Map(mine.map((r) => [`${r.rep}:${r.case}`, r])).values()];
+  const requests: Record<string, number> = {};
+  for (const j of jobs) for (const [m, n] of Object.entries(j.requests)) requests[m] = (requests[m] ?? 0) + n;
+  const byModel = Object.entries(requests).map(([m, n]) => `${m} ${n}`).join(', ');
+  const places = [...new Set(jobs.map((j) => j.pos))].sort((a, b) => a - b);
+  const placed = places.map((p) => `${p}: ${secs(jobs.filter((j) => j.pos === p).map((j) => j.ms))}`).join('; ');
+  const items = `items decision model ${sum(mine.map((r) => r.clef))}, escalated ${sum(mine.map((r) => r.esc))}, reused ${sum(mine.map((r) => r.reused))}`;
+  return `- ${arm}: requests ${sum(Object.values(requests))}${byModel ? ` (${byModel})` : ''}; ${items}; judge seconds per case ${secs(jobs.map((j) => j.ms))}, by place ${placed}`;
 }
+
+/** Per arm, the counts load and prefix caching cannot bias come before the seconds they can. */
+const perArm = (rows: Row[], arms: string[]) => ['per arm (requests and settled items, then judge seconds per case):', ...arms.map((a) => armLine(rows, a))];
 
 /** Every (case, check) whose met values differ between arms (repeat order aside), with each arm's values and the judge's notes, for a person to adjudicate. */
 function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
@@ -217,8 +287,8 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
   return out.length ? ['', 'disagreements (case check: met per repeat by arm, then the notes each arm gave):', ...out] : [];
 }
 
-/** The replay table: per case and check, met per repeat and decision-model/escalation counts for each arm; then judge seconds per arm, the disagreements and the declined cases. */
-export function table({ rows, declined }: Replayed, arms: string[]): string {
+/** The replay table: per case and check, met per repeat and decision-model/escalation counts for each arm; then per-arm counts and seconds, the seed, the disagreements and the declined cases. */
+export function table({ rows, declined, seed }: Replayed, arms: string[]): string {
   const keys = [...new Set(rows.map(keyOf))].sort();
   const cell = (arm: string, key: string) => {
     const rs = of(rows, arm, key);
@@ -231,5 +301,6 @@ export function table({ rows, declined }: Replayed, arms: string[]): string {
   });
   const md = [head, head.map(() => '---'), ...lines].map((l) => `| ${l.join(' | ')} |`);
   const skipped = declined.length ? ['', 'declined:', ...declined.map((d) => `- ${d.arm} ${d.case}: ${d.reason}`)] : [];
-  return [...md, '', seconds(rows, arms), ...disagreements(rows, arms, keys), ...skipped].join('\n');
+  const seedLine = seed === undefined ? [] : [`arm order seed ${seed}`];
+  return [...md, '', ...perArm(rows, arms), ...seedLine, ...disagreements(rows, arms, keys), ...skipped].join('\n');
 }

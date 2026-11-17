@@ -11,7 +11,7 @@ import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, faux
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { DecisionModelRef, Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case } from '../src/index.ts';
+import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
 
 const rubric = (question: string): Rubric => ({
   name: 'acme', version: 1, threshold: 0.5,
@@ -31,9 +31,25 @@ function judgeModels(answers: boolean[]) {
   return models;
 }
 
-test('two cases, two arms and repeat 2 give the met values of each repeat for the watched check', async () => {
-  // At concurrency 1 the judge is asked in order: repeat 1 (base a, base b, cand a, cand b), then repeat 2.
-  const rows = await replayJudge({ cases, arms, repeat: 2, concurrency: 1, models: judgeModels([true, false, true, true, true, false, true, true]), judgeModel });
+/** A judge model that answers by what it is asked, so the arm order does not change the answers; `asked` is each request's arm and case. */
+function judgeBy(answer: (sent: string) => boolean) {
+  const asked: string[] = [];
+  const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  const reply = (context: { messages: Array<{ content: unknown }> }) => {
+    const sent = String(context.messages.at(-1)?.content);
+    asked.push(`${sent.includes('reader act') ? 'cand' : 'base'} ${/"text": "(\w)"/.exec(sent)?.[1]}`);
+    return answer(sent) ? fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'because' })) : fauxAssistantMessage(JSON.stringify({ choice: 'no', confidence: 0.9, reason: 'because' }));
+  };
+  faux.setResponses(Array.from({ length: 64 }, () => reply) as never);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  return { models, asked };
+}
+const baseSaysNoToB = (sent: string) => sent.includes('reader act') || !sent.includes('"text": "b"');
+
+test('two cases, two arms and repeat 2 give the met values of each repeat for the watched check, then counts before seconds per arm', async () => {
+  const { models } = judgeBy(baseSaysNoToB);
+  const rows = await replayJudge({ cases, arms, repeat: 2, concurrency: 1, models, judgeModel, seed: 7 });
   const out = table(rows, ['base', 'cand']).split('\n');
   assert.deepEqual(out.slice(0, 4), [
     '| case | check | met base | met cand | clef/esc base | clef/esc cand |',
@@ -41,8 +57,36 @@ test('two cases, two arms and repeat 2 give the met values of each repeat for th
     '| a | helpful | 1 1 | 1 1 | 0/2 | 0/2 |',
     '| b | helpful | 0 0 | 1 1 | 0/2 | 0/2 |',
   ]);
-  assert.match(out[5], /^judge seconds per case: base median \d+\.\d p90 \d+\.\d, cand median \d+\.\d p90 \d+\.\d$/);
-  assert.deepEqual(out.slice(7), ['disagreements (case check: met per repeat by arm, then the notes each arm gave):', '- b helpful: base 0 0; cand 1 1', '  - base: b: because'], 'a, where the arms agree, is not listed');
+  assert.equal(out[5], 'per arm (requests and settled items, then judge seconds per case):');
+  for (const [i, arm] of [[6, 'base'], [7, 'cand']] as const) {
+    assert.match(out[i], new RegExp(`^- ${arm}: requests 4 \\(j 4\\); items decision model 0, escalated 4, reused 0; judge seconds per case median \\d+\\.\\d p90 \\d+\\.\\d, by place 1: median .*; 2: median `));
+  }
+  assert.equal(out[8], 'arm order seed 7');
+  assert.deepEqual(out.slice(10), ['disagreements (case check: met per repeat by arm, then the notes each arm gave):', '- b helpful: base 0 0; cand 1 1', '  - base: b: because']);
+});
+
+test('arms are interleaved case by case in a seeded order, so each arm takes each place and a seed replays the same order', async () => {
+  const run = async (seed: number) => {
+    const { models, asked } = judgeBy(() => true);
+    const { rows } = await replayJudge({ cases, arms, repeat: 2, concurrency: 1, models, judgeModel, seed });
+    return { asked, rows };
+  };
+  const { asked, rows } = await run(3);
+  // Repeat by repeat and case by case: each pair of requests is one case under both arms, in that case's order.
+  assert.deepEqual(asked.map((a) => a.split(' ')[1]), ['a', 'a', 'b', 'b', 'a', 'a', 'b', 'b']);
+  for (let i = 0; i < 8; i += 2) assert.notEqual(asked[i].split(' ')[0], asked[i + 1].split(' ')[0]);
+  assert.deepEqual(rows.map((r) => `${r.rep} ${r.case} ${r.arm} ${r.pos}`), asked.map((a, i) => `${i < 4 ? 1 : 2} ${a.split(' ')[1]} ${a.split(' ')[0]} ${(i % 2) + 1}`), 'each row says the place its arm judged in');
+  assert.deepEqual((await run(3)).asked, asked, 'the same seed, the same order');
+  const places = new Set<string>();
+  for (let seed = 0; seed < 8; seed++) for (const r of (await run(seed)).rows) places.add(`${r.arm} ${r.pos}`);
+  assert.deepEqual([...places].sort(), ['base 1', 'base 2', 'cand 1', 'cand 2'], 'over seeds, each arm takes each place');
+});
+
+test('each job\'s rows are handed over as it finishes, so a run that fails later keeps them', async () => {
+  const written: Row[][] = [];
+  const later: EvalAdapter = { kind: 'acme.note', judge: { evidence: async () => undefined, rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L', weight: 'gate', code: (a: string) => { if (a === 'b') throw new Error('stopped'); return { met: 1 }; } }] }] } } };
+  await assert.rejects(replayJudge({ cases, arms: [{ label: 'base', adapters: [later] }], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel, seed: 1, onRows: (rows) => written.push(rows) }), /stopped/);
+  assert.deepEqual(written.map((rows) => rows.map((r) => [r.case, r.check, r.met, r.requests])), [[['a', 'helpful', 1, {}]]]);
 });
 
 // A stand-in for Clef on its wire format, so an arm's decision model is really asked.
@@ -67,7 +111,9 @@ test('arms that differ only in decision model: the decision-model arm answers fr
   const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [same] }, { label: 'clef', adapters: [same], decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }], repeat: 1, concurrency: 1, models, judgeModel });
   const out = table(result, ['base', 'clef']).split('\n');
   assert.equal(out[2], '| a | helpful | 1 | 0 | 0/1 | 1/0 |');
-  assert.equal(out[7], '- a helpful: base 1; clef 0');
+  assert.match(out[5], /^- base: requests 1 \(j 1\); items decision model 0, escalated 1, reused 0;/);
+  assert.match(out[6], /^- clef: requests 1 \(clef 1\); items decision model 1, escalated 0, reused 0;/, 'a decision-model request counts under its model');
+  assert.equal(out[10], '- a helpful: base 1; clef 0');
 });
 
 test('an adapter that cannot rebuild a case declines it with its reason, and the other cases are still judged', async () => {
@@ -113,16 +159,20 @@ test('a check the judge model could not answer prints null, not a failed check',
   assert.match(table(rows, ['base']), /\| a \| helpful \| null \| 0\/0 \|/);
 });
 
-test('a reuse arm judges one session\'s cases in version order against a store of their own per repeat; an arm without it asks every case', async () => {
+test('a reuse arm judges one session\'s cases in version order against a store of their own per repeat, interleaved with the other arms; an arm without it asks every case', async () => {
   // v2 listed first, same evidence as v1; the reuse arm must judge v1 first and reuse its answer for v2.
   const drafts: Case[] = [2, 1].map((version) => ({ case: `s v${version}`, kind: 'acme.note', session: '/nonexistent/s', version, checks: ['helpful'], content: `v${version}`, evidence: { note: [{ id: 'n', state: { text: 'same' } }] } }));
-  const same = adapter('Is it helpful?');
-  // At concurrency 1, per repeat: cand v1, then base v2 and base v1; the second repeat's store is fresh, so cand v1 is asked again.
-  const { rows } = await replayJudge({ cases: drafts, arms: [{ label: 'cand', adapters: [same], reuse: true }, { label: 'base', adapters: [same] }], repeat: 2, concurrency: 1, models: judgeModels([true, false, false, false, true, true]), judgeModel });
-  const of = (arm: string, c: string) => rows.filter((r) => r.arm === arm && r.case === c).map((r) => [r.rep, r.met, r.esc, r.notes]);
-  assert.deepEqual(of('cand', 's v1'), [[1, 1, 1, []], [2, 0, 1, ['n: because']]]);
-  assert.deepEqual(of('cand', 's v2'), [[1, 1, 0, []], [2, 0, 0, ['n: because (judged on v1)']]], 'v2 reuses the answer v1 got in the same repeat');
+  // The reuse arm's first ask is met, its second (the next repeat's fresh store) is not; the other arm's answers are not checked.
+  let candAsks = 0;
+  const { models } = judgeBy((sent) => !sent.includes('reader act') || candAsks++ === 0);
+  const { rows } = await replayJudge({ cases: drafts, arms: [{ label: 'cand', adapters: [adapter('Does it help a reader act?')], reuse: true }, { label: 'base', adapters: [adapter('Is it helpful?')] }], repeat: 2, concurrency: 1, models, judgeModel, seed: 5 });
+  const of = (arm: string, c: string) => rows.filter((r) => r.arm === arm && r.case === c).map((r) => [r.rep, r.met, r.esc, r.reused, r.notes]);
+  assert.deepEqual(of('cand', 's v1'), [[1, 1, 1, 0, []], [2, 0, 1, 0, ['n: because']]]);
+  assert.deepEqual(of('cand', 's v2'), [[1, 1, 0, 1, []], [2, 0, 0, 1, ['n: because (judged on v1)']]], 'v2 reuses the answer v1 got in the same repeat');
   assert.deepEqual(of('base', 's v2').map((r) => r[2]).concat(of('base', 's v1').map((r) => r[2])), [1, 1, 1, 1], 'without reuse every case is asked');
+  const cand = rows.filter((r) => r.arm === 'cand');
+  assert.deepEqual(cand.map((r) => `${r.rep} ${r.case}`), ['1 s v1', '1 s v2', '2 s v1', '2 s v2'], 'each repeat\'s drafts run back to back, in version order');
+  assert.deepEqual(new Set(cand.filter((r) => r.rep === 1).map((r) => r.pos)).size, 1, 'the batch takes one place, its first case\'s');
 });
 
 test('concurrency 2 gives the same table as concurrency 1', async () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import type { EvalAdapter } from '@quack/sdk';
-import { itemFrom, langfuse, publish, readSession, replay, replayJudge, scoresOf, summarize, type ReplayResult, type SessionRecord } from '../src/index.ts';
+import { asJudged, itemFrom, langfuse, publish, readSession, replay, replayJudge, scoresOf, summarize, type ReplayResult, type SessionRecord } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -70,6 +71,34 @@ test('a recorded session reads back without resuming it, and becomes a dataset i
   assert.deepEqual((item.expectedOutput as any).artifacts['test.note'], { version: 1, content: 'v1 note', score: 0.9, passed: true, limitReached: false });
   assert.equal((item.metadata as any).label, 'bad');
   assert.equal(item.id, itemFrom(record, { agent: 'noter', served: new Set(['acme.world']) }).id, 'the id follows the inputs, so re-adding a session replaces its item');
+});
+
+test('a judged version reads a clone\'s files as its commit held them at the seal, by the clone\'s reflog; untracked files read from disk', async () => {
+  const dir = await recordedSession();
+  const clone = join(dir, 'workspace', 'repo');
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: clone, env, encoding: 'utf8' }).trim();
+  await mkdir(join(clone, 'src'), { recursive: true });
+  git('init', '-q');
+  await writeFile(join(clone, 'src/a.ts'), 'then\n');
+  await writeFile(join(clone, 'src/gone.ts'), 'removed later\n');
+  git('add', '.');
+  git('commit', '-qm', 'then');
+  const then = git('rev-parse', 'HEAD');
+  await writeFile(join(clone, 'src/a.ts'), 'now\n');
+  git('rm', '-q', 'src/gone.ts');
+  git('commit', '-qam', 'now');
+  const now = git('rev-parse', 'HEAD');
+  await writeFile(join(clone, 'untracked.txt'), 'on disk\n');
+  // The reflog says when HEAD moved: to `then` before the note sealed, to `now` after.
+  const record = await readSession(dir);
+  const sealedAt = record.artifacts['test.note'][0].sealedAt;
+  const at = (ms: number) => `${Math.floor(ms / 1000)} +0000`;
+  await writeFile(join(clone, '.git/logs/HEAD'), `${'0'.repeat(40)} ${then} t <t@t> ${at(sealedAt - 60_000)}\tclone\n${then} ${now} t <t@t> ${at(sealedAt + 60_000)}\tpull\n`);
+  const judged = asJudged(record, 'test.note');
+  assert.deepEqual(await Promise.all(['repo/src/a.ts', 'repo/src/gone.ts', 'repo/untracked.txt', 'repo/src/../src/a.ts'].map((p) => judged.readFile!(p))), ['then\n', 'removed later\n', 'on disk\n', 'then\n']);
+  assert.equal(await record.readFile!('repo/src/a.ts'), 'now\n', 'the whole session reads the workspace as it is');
+  assert.equal(await judged.readFile!('../repo/src/a.ts'), undefined, 'nothing outside the workspace');
 });
 
 test('a judge replay of an earlier version shows its adapter the session only up to that version, so equal content later is not mistaken for it', async () => {
