@@ -13,7 +13,9 @@ import { judged, manifest, type JudgeConfig, type Judged } from '../src/index.ts
 const dir = await mkdtemp(join(tmpdir(), 'quack-judge-ext-'));
 after(() => rm(dir, { recursive: true, force: true }));
 
-const note: ArtifactKind = { kind: 'test.note', path: 'artifacts/note.md', tool: 'submit_note' };
+// What the note is written against, as a review's head commit; undefined leaves the note without a basis.
+let head: string | undefined;
+const note: ArtifactKind = { kind: 'test.note', path: 'artifacts/note.md', tool: 'submit_note', basis: async () => head };
 const sayOk = { name: 'says-ok', version: 1, threshold: 1, criteria: [{ id: 'tone', checks: [{ id: 'says_ok', label: 'Does not say ok', weight: 'gate' as const, code: (a: string) => ({ met: a.includes('ok') ? 1 : 0, detail: 'the text must say ok' }) }] }] };
 const how = (refuse?: Judged['refuse']): Judged => ({ rubric: sayOk, declaration: { scopes: {}, checks: {} }, inputs: async () => ({}), refuse });
 
@@ -27,7 +29,7 @@ type Session = Awaited<ReturnType<typeof openSession>>;
 type Step = Reply | ((s: Session) => Promise<Reply>);
 
 // One run of an agent that enables the judge with `config` and registers test.note, the way a feature's session setup does.
-async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse']) {
+async function run(name: string, config: JudgeConfig, script: Step[], refuse?: Judged['refuse'], inputs = ['Write and submit the note.']) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   let session: Session;
@@ -38,7 +40,8 @@ async function run(name: string, config: JudgeConfig, script: Step[], refuse?: J
   const judge = await manifest.session!(config, {}, []);
   judged(note.kind, how(refuse));
   session = await openSession({ dir: join(dir, name), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note])] } });
-  const result = await session.submit('Write and submit the note.', `${name}-1`, true);
+  let result!: Awaited<ReturnType<Session['submit']>>;
+  for (const [i, text] of inputs.entries()) result = await session.submit(text, `${name}-${i + 1}`, true);
   const versions = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))?.kinds[note.kind]?.versions ?? [];
   await session.close();
   const transcript = JSON.stringify((await readExport(join(dir, name))).transcript);
@@ -110,6 +113,14 @@ test('a run may not finish before its kind is sealed and checked', async () => {
   const r = await run('yield', { maxRevisions: 1 }, [done, write('ok'), submit, done]);
   assert.match(r.seen[1], /Write artifacts\/note\.md and call submit_note before you finish\./);
   assert.deepEqual(r.versions.map(passed), [true]);
+});
+
+test('a later run may not finish on a passed version written against an earlier basis', async () => {
+  head = 'a';
+  const moved = async () => ((head = 'b'), done);
+  const r = await run('basis', {}, [write('ok'), submit, done, moved, write('ok again'), submit, done], undefined, ['Review a.', 'Review b.']).finally(() => (head = undefined));
+  assert.match(r.seen[4], /test\.note v1 was written against a, not b\. Write artifacts\/note\.md for b and call submit_note before you finish\./);
+  assert.deepEqual(r.versions.map((v) => [v.basis, passed(v)]), [['a', true], ['b', true]]);
 });
 
 test('the manifest names the judge and reports what is wrong with an agent\'s judge config', () => {

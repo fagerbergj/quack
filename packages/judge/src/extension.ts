@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, GenerationTask, hook, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { artifactKind, Artifacts, gate, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { artifactKind, Artifacts, gate, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
 import { check, report, type JudgeOptions, type Verdict } from './index.ts';
 import type { DecisionModelRef, ModelRef } from './resolve.ts';
@@ -44,19 +44,28 @@ async function verdictFor(api: ToolExecutionApi, ctx: Context, how: Judged, conf
   return out.verdict.passed || out.verdict.limitReached ? { kind: 'pass', note: text } : { kind: 'continue', feedback: text };
 }
 
+// A version written against another basis (a review of an older head) is overtaken, so it cannot be this run's submission.
+async function overtaken(api: ToolExecutionApi, declared: ArtifactKind, last: SealedArtifact, ctx: Context) {
+  const now = last.basis && (await declared.basis?.(api, ctx));
+  return now && now !== last.basis ? `${declared.kind} v${last.version} was written against ${last.basis}, not ${now}. Write ${declared.path} for ${now} and call ${declared.tool} before you finish.` : undefined;
+}
+
 // A run may not finish before each sealed-by-tool kind's newest version passed or was released at the limit, unless the kind's refuse says there is nothing to submit.
 const yieldHook = () => hook(GenerationTask, {
-  async onYield(_answer, api, ctx) {
+  async onYield(_answer, hookApi, ctx) {
+    // refuse and basis read committed state only, which the hook's api also serves.
+    const api = hookApi as unknown as ToolExecutionApi;
     const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
     for (const [kind, how] of registry) {
       const declared = artifactKind(kind);
       if (!declared?.tool) continue;
       const { path, tool } = declared;
-      // refuse reads committed state only, which the hook's api also serves.
-      if (await how.refuse?.(api as unknown as ToolExecutionApi, ctx)) continue;
+      if (await how.refuse?.(api, ctx)) continue;
       const last = doc?.kinds[kind]?.versions.at(-1);
       const v = last?.verdict as Verdict | null | undefined;
       if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
+      const stale = await overtaken(api, declared, last, ctx);
+      if (stale) return { continue: stale };
       if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
       if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
     }
