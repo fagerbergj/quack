@@ -22,6 +22,8 @@
   --color-accent-ink: light-dark(#17614f, #6fd1b0);
   /* Bill ochre, as a tint. */
   --color-warm: light-dark(#fbf2dc, #2a2414);
+  /* Bill ochre, solid: the change dot, ringed in warning for its 3:1 edge. */
+  --color-mark: light-dark(#e3a92b, #e8b85a);
   /* Wing-patch blue-violet marks running and selected states. */
   --color-info: light-dark(#3446a0, #b4bdff);
   --color-info-bg: light-dark(#ecefff, #1e2347);
@@ -163,3 +165,5 @@ details[open] > summary > .chev { transform: rotate(90deg); }
   --xy-controls-box-shadow: var(--shadow-float);
 }
 .class-diagram .react-flow__node:focus-visible { outline: 2px solid var(--color-link); outline-offset: 2px; border-radius: 8px; }
+/* On a touch screen one finger scrolls the page past the diagram; React Flow's own drag is off there (ClassDiagram's panOnDrag). */
+.class-diagram.diagram-touch .react-flow__pane { touch-action: pan-y; }

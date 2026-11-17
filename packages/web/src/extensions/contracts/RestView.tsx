@@ -1,11 +1,12 @@
-import { useContext, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
-import { DiffContext, opUnits, useAnyMark, useMark } from './diff.ts';
+import { opUnits, useAnyMark, useMark } from './diff.ts';
 import { choicesAt, Info, unplaced } from './Info.tsx';
+import { Changes, Glyph, MoreAbout, Purpose, ShortChange, useFlash, useItem, useReview } from './Review.tsx';
 import { MarkTag, SchemaTree } from './SchemaTree.tsx';
-import { card, label, Purpose, Summary } from './Sections.tsx';
+import { card, label } from './Sections.tsx';
 
 export { card, label };
 import { fields, operations, paramFields, resolve, restPointers, toYaml, type Choice, type ContractSpec, type Json, type Operation } from './spec.ts';
@@ -34,29 +35,28 @@ function Schema({ ctx, schema, at }: { ctx: Ctx; schema: Json | undefined; at: s
   return rows.length ? <SchemaTree rows={rows} whyAt={ctx.at} /> : null;
 }
 
-function Responses({ o, ctx }: { o: Operation; ctx: Ctx }) {
-  const marks = useContext(DiffContext);
+function Response({ o, code, res, ctx }: { o: Operation; code: string; res: Json; ctx: Ctx }) {
+  const at = `${o.ptr}/responses/${code}`;
+  const json = res.content?.['application/json'] as Json | undefined;
+  const schema = resolve(ctx.doc, json?.schema, `${at}/content/application~1json/schema`);
+  const m = useMark(at), item = useItem(at);
+  const flash = useFlash<HTMLDivElement>(at);
   return (
-    <Section title="Responses">
-      {Object.entries((o.op.responses ?? {}) as Json).map(([code, res]) => {
-        const at = `${o.ptr}/responses/${code}`;
-        const json = res.content?.['application/json'] as Json | undefined;
-        const schema = resolve(ctx.doc, json?.schema, `${at}/content/application~1json/schema`);
-        const ok = code.startsWith('2');
-        return (
-          <div key={code} className="rounded-xl border border-line px-3 py-2.5">
-            <div className="flex items-center gap-2">
-              <code className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs ${ok ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{code}</code>
-              <span className="min-w-0 flex-1 text-[13.5px] [overflow-wrap:anywhere]">{res.description}</span>
-              <MarkTag m={marks?.get(at)} />
-              <Info choices={ctx.at(at)} />
-            </div>
-            {schema && <div className="mt-2"><Schema ctx={ctx} schema={schema.schema} at={schema.ptr} /></div>}
-          </div>
-        );
-      })}
-    </Section>
+    <div ref={flash.ref} tabIndex={-1} data-ptr={at} className={`flex scroll-mt-16 flex-col gap-2 rounded-xl border border-line px-3 py-2.5 outline-none ${flash.cls}`}>
+      <div className="flex items-center gap-2">
+        <code className={`flex-none rounded-md px-2 py-0.5 font-mono text-xs ${code.startsWith('2') ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{code}</code>
+        <span className="min-w-0 flex-1 text-[13.5px] [overflow-wrap:anywhere]">{res.description}</span>
+        <MarkTag m={m} />
+        <Info choices={ctx.at(at)} />
+      </div>
+      {item && <ShortChange item={item} />}
+      {schema && <Schema ctx={ctx} schema={schema.schema} at={schema.ptr} />}
+    </div>
   );
+}
+
+function Responses({ o, ctx }: { o: Operation; ctx: Ctx }) {
+  return <Section title="Responses">{Object.entries((o.op.responses ?? {}) as Json).map(([code, res]) => <Response key={code} o={o} code={code} res={res} ctx={ctx} />)}</Section>;
 }
 
 const example = (o: Operation) => Object.values((o.op.responses ?? {}) as Json).map((r) => (r.content?.['application/json'] as Json | undefined)?.example).find((e) => e !== undefined);
@@ -67,7 +67,7 @@ function Meta({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }) 
   return (
     <dl className="m-0 flex flex-col gap-2 text-[13.5px]">
       {auth && <div className="flex items-center gap-3"><dt className={`${dt} ${label}`}>Auth</dt><dd className="m-0 min-w-0 flex-1 [overflow-wrap:anywhere]">{auth}</dd><Info choices={ctx.at(`${o.ptr}/security`)} /></div>}
-      {spec.intent.consumers.length > 0 && <div className="flex items-center gap-3"><dt className={`${dt} ${label}`}>Used by</dt><dd className="m-0">{spec.intent.consumers.join(', ')}</dd></div>}
+      {spec.intent.consumers.length > 0 && <div className="flex items-center gap-3"><dt className={`${dt} ${label}`}>Used by</dt><dd className="m-0 min-w-0 flex-1 [overflow-wrap:anywhere]">{spec.intent.consumers.join(', ')}</dd></div>}
     </dl>
   );
 }
@@ -76,13 +76,16 @@ function Detail({ o, spec, ctx }: { o: Operation; spec: ContractSpec; ctx: Ctx }
   const params = paramFields(ctx.doc, o);
   const body = resolve(ctx.doc, (o.op.requestBody?.content?.['application/json'] as Json | undefined)?.schema, `${o.ptr}/requestBody/content/application~1json/schema`);
   const eg = example(o);
+  const item = useItem(o.ptr);
+  const flash = useFlash<HTMLDivElement>(o.ptr);
   return (
-    <div className={`${card} flex min-w-0 flex-col gap-4 p-4`}>
+    <div ref={flash.ref} tabIndex={-1} data-ptr={o.ptr} className={`${card} flex min-w-0 scroll-mt-16 flex-col gap-4 p-4 outline-none ${flash.cls}`}>
       <h3 className="m-0 flex items-center gap-2.5 font-sans">
         <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto font-mono text-[15px] font-normal whitespace-nowrap">{o.path}</span>
         <MarkTag m={useMark(o.ptr)} />
         <Info choices={ctx.at(o.ptr)} />
       </h3>
+      {item && <ShortChange item={item} />}
       {o.op.summary && <div className="text-sm leading-relaxed"><Markdown text={o.op.summary} /></div>}
       <Meta o={o} spec={spec} ctx={ctx} />
       <Section title="Parameters">{params.length ? <SchemaTree rows={params} whyAt={ctx.at} /> : <p className="m-0 text-[13.5px] text-muted">None</p>}</Section>
@@ -99,7 +102,7 @@ function Route({ o, doc, current, onPick }: { o: Operation; doc: Json; current: 
   return (
     <button type="button" aria-current={current ? 'true' : undefined} onClick={onPick} className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-3 text-left text-[13px] text-ink-2 aria-[current=true]:bg-soft aria-[current=true]:text-ink">
       <Method m={o.method} /><span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono">{o.path}</span>
-      {changed && <span role="img" aria-label="Changed" className="h-2 w-2 flex-none rounded-full bg-warning" />}
+      {changed && <span role="img" aria-label="Changed" className="inline-flex"><Glyph m="changed" /></span>}
     </button>
   );
 }
@@ -127,16 +130,17 @@ export function download(body: string, type: string, filename: string) {
   URL.revokeObjectURL(a.href);
 }
 
-// `told`: the approval card above already shows the breaks and changes.
-export type ViewProps = { spec: ContractSpec; verdict?: Verdict | null; told?: boolean };
+export type ViewProps = { spec: ContractSpec; verdict?: Verdict | null };
 
 // A passed double-check is a tick beside the title; the decisions no element carries sit there too.
 export function Header({ spec, count, file, verdict, info = [] }: { spec: ContractSpec; count: string; file: { label: string; save: () => void }; verdict?: Verdict | null; info?: Choice[] }) {
+  const flash = useFlash<HTMLElement>('#title');
   return (
-    <header className="flex flex-wrap items-center gap-3">
+    <header ref={flash.ref} tabIndex={-1} data-ptr="#title" className={`flex flex-wrap items-center gap-3 rounded-lg outline-none ${flash.cls}`}>
       <div className="flex min-w-0 flex-1 basis-48 flex-col">
-        <h2 className="m-0 flex items-center gap-2 text-xl [overflow-wrap:anywhere]">
-          <span className="min-w-0">{spec.title}</span>
+        <h2 className="m-0 flex items-center gap-2 font-sans text-[17px] leading-snug font-semibold [overflow-wrap:anywhere]">
+          {/* The session header carries the full title, so a phone keeps this one to two lines. */}
+          <span title={spec.title} className="min-w-0 max-sm:line-clamp-2">{spec.title}</span>
           <MarkTag m={useMark('#title')} />
           {verdict?.passed && <StatusIcon verdict={verdict} />}
           <Info choices={info} label={info.length === 1 ? undefined : `Why: ${info.length} decisions about the whole contract`} />
@@ -148,22 +152,29 @@ export function Header({ spec, count, file, verdict, info = [] }: { spec: Contra
   );
 }
 
-export function RestView({ spec, verdict, told }: ViewProps) {
+export function RestView({ spec, verdict }: ViewProps) {
   const [sel, setSel] = useState(0);
   const doc = spec.document as Json;
   const ops = operations(doc);
   const ctx: Ctx = { doc, at: (p) => choicesAt(spec.choices, p) };
+  const { flash } = useReview();
+  // A jump to a change opens the route it is in; the changed element then scrolls itself into view.
+  useEffect(() => {
+    const i = flash ? ops.findIndex((x) => opUnits(doc, x).has(flash.ptr)) : -1;
+    if (i >= 0) setSel(i);
+  }, [flash]);
   const o = ops[sel];
   const many = ops.length > 1;
   return (
-    <div className="@container flex min-w-0 flex-col gap-4">
+    <div className="@container flex min-w-0 flex-col gap-6">
       <Header spec={spec} count={routes(ops)} file={openapiFile(doc)} verdict={verdict} info={unplaced(spec.choices, restPointers(doc, ops))} />
       <Purpose spec={spec} />
-      <Summary spec={spec} told={told} />
+      <Changes spec={spec} />
       <div className={`grid grid-cols-1 items-start gap-4 ${many ? '@[900px]:grid-cols-[280px_minmax(0,1fr)]' : ''}`}>
         {many && <Routes ops={ops} doc={doc} sel={sel} onPick={setSel} />}
         {o && <Detail o={o} spec={spec} ctx={ctx} />}
       </div>
+      <MoreAbout spec={spec} />
     </div>
   );
 }

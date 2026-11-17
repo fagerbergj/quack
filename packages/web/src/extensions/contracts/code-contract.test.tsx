@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { defaultFocus, focusView, HUB } from './class-model.ts';
 import { declarations } from './typescript-model.ts';
 
@@ -91,13 +91,13 @@ test(`a type more than ${HUB} boxes in view name is a chip on each field, not an
   const src = `export type Id = string;\nexport type Root = { ${Array.from({ length: HUB + 1 }, (_, i) => `u${i}: U${i};`).join(' ')} id: Id };\n${users}\nexport type Far = { u: U0 };`;
   const v = focusView(declarations(src).decls, 'Root');
   expect(v.boxes.map((b) => b.decl.name)).not.toContain('Id');
-  expect(v.boxes.find((b) => b.focus)!.rows.at(-1)).toEqual({ name: 'id:', type: 'Id', edges: [], chips: ['Id'] });
+  expect(v.boxes.find((b) => b.focus)!.rows.at(-1)).toEqual({ name: 'id:', type: 'Id', edges: [], chips: ['Id'], ptr: '/Root/id' });
   const u0 = v.boxes.find((b) => b.decl.name === 'U0')!;
   expect(u0.rows.map((r) => [r.name, r.edges, r.chips])).toEqual([['id:', [], ['Id']], ['root:', ['Root'], []]]);
   const hubbed = focusView(declarations(src).decls, 'U0');
   expect(hubbed.boxes.map((b) => b.decl.name).sort()).toEqual(['Far', 'Id', 'Root', 'U0']);
   expect(edgesOf(hubbed)).toEqual(['Far.u:>U0', 'Root.id:>Id', 'Root.u0:>U0', 'U0.id:>Id', 'U0.root:>Root']);
-  expect(hubbed.boxes.find((b) => b.decl.name === 'Root')!.rows[1]).toEqual({ name: 'u1:', type: 'U1', edges: [], chips: ['U1'] });
+  expect(hubbed.boxes.find((b) => b.decl.name === 'Root')!.rows[1]).toEqual({ name: 'u1:', type: 'U1', edges: [], chips: ['U1'], ptr: '/Root/u1' });
 });
 
 test('a TypeScript contract opens as a diagram and a card per declaration, with linked types and the why on its card', async () => {
@@ -175,4 +175,31 @@ test('a press on the focused button does not swallow the next keyboard focus', a
   await userEvent.tab({ shift: true });
   expect(info).toHaveFocus();
   expect(screen.getByRole('dialog', { name: 'Why: X is a string.' })).toBeInTheDocument();
+});
+
+test.each([
+  ['a touch screen', true, 'Tap a box to see what it is; tap again to centre on it.'],
+  ['a mouse', false, 'Point at a box to see what it is; click it to centre on it.'],
+])('on %s the diagram says only what works there, and one finger scrolls the page only on touch', async (_n, coarse, says) => {
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: coarse && q.includes('coarse'), addEventListener() {}, removeEventListener() {} }));
+  const [{ contracts }] = await Promise.all([import('./index.ts'), import('./typescript-model.ts'), import('./CodeContract.tsx')]);
+  const spec = { kind: 'typescript', title: 'Stores', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: dts, choices: [] };
+  render(<>{contracts.card!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
+  const diagram = await screen.findByRole('region', { name: 'Class diagram' });
+  expect(diagram).toHaveAccessibleDescription(`An arrow leaves from the field that names a type. ${says}`);
+  expect(diagram.querySelector('.class-diagram')!.classList.contains('diagram-touch'), 'the pan-y pane').toBe(coarse);
+  await within(diagram).findAllByRole('button', { name: /^Centre the diagram on/ });
+  expect(diagram.querySelector('.react-flow__pane')!.classList.contains('draggable'), 'React Flow drags the pane only with a mouse').toBe(!coarse);
+  vi.unstubAllGlobals();
+});
+
+test('a type card centres the diagram on it, so a type no tap in the diagram reaches is still one press away', async () => {
+  const [{ contracts }] = await Promise.all([import('./index.ts'), import('./typescript-model.ts'), import('./CodeContract.tsx')]);
+  const spec = { kind: 'typescript', title: 'Stores', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: dts, choices: [] };
+  render(<>{contracts.card!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
+  const diagram = await screen.findByRole('region', { name: 'Class diagram' });
+  expect(within(diagram).getByRole('heading')).toHaveTextContent('around Running');
+  await userEvent.click(within(await screen.findByRole('article', { name: 'Limits' })).getByRole('button', { name: 'Show in diagram' }));
+  expect(within(diagram).getByRole('heading')).toHaveTextContent('around Limits');
+  expect(within(screen.getByRole('article', { name: 'start' })).queryByRole('button', { name: 'Show in diagram' }), 'functions are not drawn').toBeNull();
 });

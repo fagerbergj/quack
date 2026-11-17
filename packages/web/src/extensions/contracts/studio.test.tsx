@@ -1,16 +1,17 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from '../../App.tsx';
 import { SUPERSEDED } from '../../SessionView.tsx';
-import type { SealedArtifact, Verdict } from '../../api.ts';
+import type { Approval, SealedArtifact, Verdict } from '../../api.ts';
 import { entry, FakeSocket, fetchMock, live, routes, snapshot, stubViewport, useHarness } from '../../test-harness.ts';
 import { diffUnits, units } from './diff.ts';
+import { changeItems } from './review.ts';
 import v1 from './fixtures/sleeper-schedule-v1.json';
 import v2 from './fixtures/sleeper-schedule-v2.json';
 import settings from './fixtures/sleeper-settings.json';
 import { unnamedBreaks } from './Approval.tsx';
-import { approvalState } from './Studio.tsx';
+import { approvalState, type Standing } from './Studio.tsx';
 import { declarations } from './typescript-model.ts';
 import type { ContractSpec } from './spec.ts';
 
@@ -77,104 +78,117 @@ test('the breadcrumb names where a change is: route › parameter › part, sche
   expect(code.changes[0]!.rows).toEqual([{ was: 'number', now: 'string' }]);
 });
 
+// The status line: the first line says what is going on, the second whether anything waits on the person.
+const line = () => within(bar()).getByRole('status');
+const sheet = (name: string) => screen.getByRole('dialog', { name });
+const changesList = (name = 'Changes against v1') => within(contract()).findByRole('region', { name });
+// The one line per change, in order, as the list shows them.
+const lines = (region: HTMLElement) => within(within(region).getAllByRole('list')[0]!).getAllByRole('button').map((b) => b.textContent);
+
 test.each([
-  ['a person', { kind: 'person', id: 'dana' }, 'dana asked for changes to version 2.'],
-  ['the tailnet', { kind: 'tailnet' }, 'A reviewer asked for changes to version 2.'],
-] as const)('a rejection by %s says who asked, with the first two lines of the reason, and offers no Approve', async (_n, by, text) => {
+  ['a person', { kind: 'person', id: 'dana' }, 'Asked by dana · nothing waits on you'],
+  ['the tailnet', { kind: 'tailnet' }, 'Asked by a reviewer · nothing waits on you'],
+] as const)('a rejection by %s says who asked, with the first two lines of the reason, and offers no Approve', async (_n, by, sub) => {
   routes[STATUS] = status([1, 'approved'], [2, 'changes_requested']);
   routes[`GET /sessions/${KEY}/asks`] = { asks: [{ session: KEY, id: 'p/1', type: 'approval', state: 'resolved', createdAt: '2026-11-01T01:00:00.000Z', toolCall: { tool: 'propose_contract', args: { artifact: 2 } }, resolution: { by, choice: 'reject', reason: 'first\nsecond\nthird' } }] };
   open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
-  await waitFor(() => expect(within(bar()).getByRole('status')).toHaveTextContent(text));
+  await waitFor(() => expect(line()).toHaveTextContent('Changes asked for v2'));
+  await waitFor(() => expect(bar()).toHaveTextContent(sub));
   expect(within(bar()).getByText(/first\s+second/)).not.toHaveTextContent('third');
   expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
 });
 
-test('only a version put up for approval can be approved; every other status says why not, a verdict explaining a draft', () => {
-  const v = (verdict?: Verdict | null) => ({ a: verdict === undefined ? bare(2, v2) : spec(2, v2, verdict), spec: v2 as ContractSpec });
-  expect(approvalState(v(), undefined, undefined, false)).toEqual({ can: false, text: 'Reading where version 2 stands…' });
-  expect(approvalState(v(null), undefined, undefined, true, 'draft')).toEqual({ can: false, text: "Version 2 can't be approved yet: its checks are still running." });
-  expect(approvalState(v(fail), undefined, undefined, true, 'draft').text).toBe("Version 2 can't be approved: it didn't pass its checks (A choice's link doesn't resolve). The agent is revising it.");
-  expect(approvalState(v({ ...fail, limitReached: true }), undefined, undefined, false, 'draft').text).toMatch(/Tell the agent what to change\.$/);
-  expect(approvalState(v(), undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
-  expect(approvalState(v(), undefined, undefined, true, 'proposed').can).toBe(false);
-  expect(approvalState(v(), undefined, undefined, false, 'proposed').text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
-  expect(approvalState(v(), undefined, undefined, false, 'changes_requested').text).toBe('Someone asked for changes to version 2.');
-  expect(approvalState(v(), proposal(2, 2), undefined, true, 'proposed')).toEqual({ can: true, text: 'Version 2 is up for your approval.' });
-  expect(approvalState(v(), undefined, 2, false, 'approved')).toEqual({ can: false, done: true, text: 'Version 2 is approved.' });
+test('a REST or JSON Schema break names a field by its own name, and a short or generic one only beside its parent', () => {
+  const runs = (at: string) => ({ type: 'object', properties: { runs: { type: 'array', items: { type: 'object', properties: { at: { type: at } } } } } });
+  const doc = (at: string) => ({ ...v1, document: { paths: { '/runs': { get: { responses: { '200': { description: 'ok', content: { 'application/json': { schema: runs(at) } } } } } } } } });
+  const breaking = (what: string) => {
+    const two = { ...doc('integer'), compatibility: { breaking: [{ what, callers: ['page'] }], safe: [] } } as ContractSpec;
+    return changeItems(diffUnits(units(doc('string') as ContractSpec), units(two)), two).map((i) => `${i.line} ${i.breaking}`);
+  };
+  expect(breaking('runs[].at is an integer now.')).toEqual(['GET /runs › 200 › runs › at: type changed true']);
+  expect(breaking('Runs start at the top of the hour.'), '`at` alone, without its parent, names nothing').toEqual(['GET /runs › 200 › runs › at: type changed false']);
+  expect(breaking('Each report now has its own page.'), 'no whole word').toEqual(['GET /runs › 200 › runs › at: type changed false']);
+});
+
+test('the status line says what is going on and whether anything waits on you, in every state', () => {
+  const at = (over: Partial<Standing & { isApproved: boolean }>) => approvalState({ name: 'v2', running: false, isApproved: false, status: 'draft', approved: 'v1', ...over });
+  expect(at({ status: undefined })).toEqual({ can: false, title: 'Reading where v2 stands…' });
+  expect(at({ running: true })).toEqual({ can: false, title: 'The agent is drafting v2', sub: 'Nothing waits on you · v1 is approved' });
+  expect(at({ running: true, verdict: null })).toEqual({ can: false, title: 'Checking v2', sub: 'Nothing waits on you yet · v1 is approved' });
+  expect(at({ running: true, verdict: fail })).toEqual({ can: false, title: 'v2 failed its checks', sub: 'The agent is revising it · nothing waits on you · v1 is approved', detail: "Failed: A choice's link doesn't resolve" });
+  expect(at({ verdict: { ...fail, limitReached: true } }).sub).toBe('Tell the agent what to change');
+  expect(at({})).toEqual({ can: false, title: 'v2 is a draft', sub: 'Not up for approval · send a message and the agent goes on' });
+  expect(at({ status: 'proposed', running: true })).toEqual({ can: false, title: 'v2 passed its checks', sub: 'The agent puts it up for approval when this step ends · nothing waits on you yet' });
+  expect(at({ status: 'proposed' })).toEqual({ can: false, title: 'v2 is not up for approval', sub: 'Send a message and the agent puts it up again' });
+  expect(at({ status: 'proposed', proposal: proposal(2, 2) as Approval })).toEqual({ can: true, title: 'v2 waits on you', sub: 'Checks passed' });
+  expect(at({ status: 'changes_requested', running: true })).toEqual({ can: false, title: 'Changes asked for v2', sub: 'Asked by someone · the agent is revising it · nothing waits on you', detail: undefined });
+  expect(at({ status: 'approved', isApproved: true })).toEqual({ can: false, done: true, title: 'v2 is approved', sub: 'Nothing in progress · nothing waits on you' });
+  expect(at({ status: 'approved', isApproved: true, running: true }).sub).toBe('The agent is working · nothing waits on you');
 });
 
 test('until the status answers, nothing is compared and no version carries a status label', async () => {
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`));
-  expect(within(pane).queryByText(/^Text diff from/)).toBeNull();
+  expect(within(pane).queryByRole('region', { name: /^Changes/ })).toBeNull();
   expect(side('from')).toHaveAccessibleName('Compare from version: None: the whole contract');
   expect(await offered('from')).toEqual(['None: the whole contract', 'Version 2', 'Version 1']);
-  expect(within(bar()).getByRole('status')).toHaveTextContent('Reading where version 2 stands…');
+  expect(line()).toHaveTextContent('Reading where v2 stands…');
 });
 
-// The text diff against the compared version, closed until opened.
-const textDiff = () => within(contract()).getByText(/^Text diff from/, { selector: 'summary span' }).closest('details')!;
-async function openDiff() {
-  await userEvent.click(textDiff().querySelector('summary')!);
-  return textDiff();
-}
-
-test('the approval card reads in decision order: the checks, the breaks with the checker beside them, the changes, then the actions', async () => {
+// Version 1 approved and version 2 up for approval, with the code checker's breaks on the proposal.
+async function upForApproval(breaks: object[] = []) {
   routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
   routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
-  const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, [{ text: 'runs are now oldest first' }])]);
-  const card = await waitFor(() => { const c = bar(); expect(within(c).getByRole('status')).toHaveTextContent('Version 2 is up for your approval.'); return c; });
-  expect(within(card).getByText('Automatic checks passed')).toBeInTheDocument();
-  const breaks = within(card).getByRole('region', { name: 'Breaking changes' });
-  expect(breaks).toHaveTextContent('Breaking changes · 1 in the spec');
-  expect(breaks).toHaveTextContent("The code checker found breaks in 1 route not named in the spec's breaks: runs are now oldest first");
-  expect(within(card).getByRole('region', { name: 'What changed' })).toHaveTextContent('Changed from version 1 · 3');
-  const order = [...card.querySelectorAll('p, h4, summary, button')].map((e) => e.textContent);
-  const seen = ['Automatic checks passed', 'Breaking changes · 1 in the spec', 'Changed from version 1 · 3', 'Approve', 'Ask for changes'].map((t) => order.indexOf(t));
-  expect(seen.every((i) => i >= 0)).toBe(true);
-  expect(seen).toEqual(seen.toSorted((x, y) => x - y));
-  expect(within(pane).getAllByText(/^Changed from version 1/), 'the view below does not repeat the card').toHaveLength(1);
-  expect(textDiff()).not.toHaveAttribute('open');
-  expect(within(pane).queryAllByText('New'), 'nothing is diffed until asked').toHaveLength(0);
-  const diff = await openDiff();
-  const item = (await within(diff).findByText('GET /apps/sleeper/schedule › 200 › runs › description')).closest('li')!;
-  expect(item.querySelector('del')).toHaveTextContent('Upcoming runs, soonest');
-  expect(item.querySelector('ins')).toHaveTextContent('Runs from the start of the week, oldest');
-  expect(item, "the agent's why is the secondary line").toHaveTextContent('So the strip reads left to right through the week');
-  expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
+  const opened = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, breaks)]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  return opened;
+}
+
+test('the decision bar leads with what waits on you, and Approve confirms in a sheet: each change, the breaks with their callers, the checks', async () => {
+  const { pane } = await upForApproval([{ text: 'runs are now oldest first' }]);
+  expect(within(bar()).getByRole('button', { name: 'Checks passed' })).toBeInTheDocument();
+  expect(within(pane).getByRole('region', { name: 'Changes against v1' }), 'the changes lead the page').toBeInTheDocument();
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  const s = sheet('Approve v2?');
+  expect(s).toHaveTextContent('REST contract, measured against v1.');
+  expect(within(s).getAllByRole('list')[0]!.textContent).toBe(['GET /apps/sleeper/schedule: summary changed', 'GET /apps/sleeper/schedule › 200 › runs: description changed', 'New GET /apps/sleeper/schedule › 200 › runs › status', 'New GET /apps/sleeper/schedule › 200 › runs › resultUrl'].join(''));
+  expect(within(s).getByRole('heading', { name: 'What could break · 1' })).toBeInTheDocument();
+  expect(s).toHaveTextContent('The Sleeper page reads the first run as "next".Callers: Sleeper page');
+  expect(s).toHaveTextContent("The code checker found breaks in 1 route not named in the spec's breaks: runs are now oldest first");
+  expect(within(s).getByText('Automatic checks passed')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Reject/ }), 'the pane decides it, not a transcript card').toBeNull();
-  await userEvent.click(within(card).getByRole('button', { name: 'Approve' }));
+  await userEvent.click(within(s).getByRole('button', { name: 'Not yet' }));
+  expect(posts()).toEqual([]);
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  await userEvent.click(within(sheet('Approve v2?')).getByRole('button', { name: 'Approve v2' }));
   expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
 });
 
 test('asking for changes needs a reason, and sends it as the rejection the agent reads', async () => {
-  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
-  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
-  open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2)]);
-  await userEvent.click(await within(bar()).findByRole('button', { name: 'Ask for changes' }));
-  const send = within(bar()).getByRole('button', { name: 'Send' });
+  await upForApproval();
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Ask for changes' }));
+  const s = sheet('Ask for changes to v2');
+  const send = within(s).getByRole('button', { name: 'Send to the agent' });
   expect(send).toBeDisabled();
-  expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
-  await userEvent.type(within(bar()).getByRole('textbox', { name: 'What should change?' }), 'Keep soonest first');
+  await userEvent.type(within(s).getByRole('textbox', { name: 'What should change?' }), 'Keep soonest first');
   await userEvent.click(send);
   expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'reject', reason: 'Keep soonest first' } }]]);
 });
 
 test("the checker's breaks show as wrapped blocks per place, a cut one marked, and none found says so", async () => {
-  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
   const long = `export "Judged": values core now produces no longer fit old consumers: ${'x'.repeat(300)}`;
   const found = [{ id: 'produced-breaks', text: long, operation: '', path: '/Judged' }, { id: 'provided-breaks', text: 'export "judged": values extensions already provide no longer fit: Type…', operation: '', path: '/judged' }];
-  const { ws } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)], [proposal(2, 2, found)]);
-  const breaks = await within(await waitFor(bar)).findByRole('region', { name: 'Breaking changes' });
-  expect(breaks).toHaveTextContent("The code checker found breaks in 2 routes not named in the spec's breaks: Judged, judged");
-  await userEvent.click(within(breaks).getByText('Checker output (2)'));
-  const blocks = [...breaks.querySelectorAll('pre')];
-  expect(blocks.map((b) => b.textContent)).toEqual([long, found[1]!.text]);
-  expect(within(breaks).getAllByText('(cut by the checker)')).toHaveLength(2);
+  const { ws } = await upForApproval(found);
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  const s = sheet('Approve v2?');
+  expect(s).toHaveTextContent("The code checker found breaks in 2 routes not named in the spec's breaks: Judged, judged");
+  await userEvent.click(within(s).getByText('Checker output (2)'));
+  expect([...s.querySelectorAll('pre')].map((b) => b.textContent)).toEqual([long, found[1]!.text]);
+  expect(within(s).getAllByText('(cut by the checker)')).toHaveLength(2);
   ws.frame({ type: 'standing', questions: [], failures: [], approvals: [proposal(2, 2, [])] });
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, { ...v2, compatibility: { breaking: [], safe: [] } })] });
-  expect(await within(bar()).findByText('The spec lists no breaks')).toBeInTheDocument();
-  expect(within(bar()).getByText('The code checker found no break against the approved version.')).toBeInTheDocument();
+  expect(await within(sheet('Approve v2?')).findByText('The spec lists no breaks')).toBeInTheDocument();
+  expect(within(sheet('Approve v2?')).getByText('The code checker found no break against the approved version.')).toBeInTheDocument();
 });
 
 test("a checker break counts as listed only when the spec's breaks name it as a whole word", () => {
@@ -187,27 +201,36 @@ test("a checker break counts as listed only when the spec's breaks name it as a 
 test('a request for an older seal than the newest says it is out of date and offers no approval', async () => {
   routes[STATUS] = status([1, 'approved'], [2, 'proposed'], [3, 'draft']);
   open([spec(1, v1), approvedRec(1, 1), spec(2, v2), spec(3, v2, null)], [proposal(2, 2)]);
-  expect(await within(bar()).findByText('The approval request for version 2, draft 1 is out of date: the agent has since written version 2, draft 2.')).toBeInTheDocument();
-  expect(within(bar()).getByRole('status')).toHaveTextContent("Version 2 can't be approved yet: its checks are still running.");
-  expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(await within(bar()).findByText('The approval request for v2 draft 1 is out of date: the agent has since written v2 draft 2.')).toBeInTheDocument();
+  expect(line()).toHaveTextContent('Checking v2 draft 2');
+  expect(bar()).toHaveTextContent('Nothing waits on you yet · v1 is approved');
+  expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
   expect(within(bar()).queryByRole('button', { name: 'Ask for changes' })).toBeNull();
 });
 
-test('each sealed draft replaces the shown one live: checking, then failed, each refused with its reason', async () => {
+test('with two requests out of date, the line names the newer and counts them', async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed'], [3, 'proposed'], [4, 'draft']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, v2), spec(3, v2), spec(4, v2, null)], [proposal(2, 2), { ...proposal(3, 2), id: 'p/2' }]);
+  expect(await within(bar()).findByText('2 approval requests are out of date, the newest for v2 draft 2: the agent has since written v2 draft 3.')).toBeInTheDocument();
+});
+
+test('each sealed draft replaces the shown one live: approved and idle, then checking, then failed, each with its reason', async () => {
   routes[STATUS] = status([1, 'approved']);
   const { ws } = open([spec(1, v1), approvedRec(1, 1)]);
   await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 1, approved'));
-  expect(screen.queryByRole('region', { name: 'Approval' }), 'an approved newest version is a badge, not a bar').toBeNull();
+  expect(line()).toHaveTextContent('v1 is approved');
+  expect(bar()).toHaveTextContent('Nothing in progress · nothing waits on you');
+  expect(within(contract()).queryByRole('region', { name: /^Changes/ }), 'nothing is compared with an approved newest version').toBeNull();
   routes[STATUS] = status([1, 'approved'], [2, 'draft']);
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, null)] });
-  expect(await within(bar()).findByText("Version 2 can't be approved yet: its checks are still running.")).toBeInTheDocument();
-  expect(await within(contract()).findByText('Text diff from version 1')).toBeInTheDocument();
+  expect(await within(bar()).findByText('Checking v2')).toBeInTheDocument();
+  expect(await changesList()).toBeInTheDocument();
   expect(side('from')).toHaveAccessibleName('Compare from version: Version 1, approved');
-  expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
   expect(contract()).toHaveTextContent('Runs from the start of the week');
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, fail)] });
-  expect(within(bar()).getByRole('status')).toHaveTextContent("didn't pass its checks (A choice's link doesn't resolve)");
-  expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(line()).toHaveTextContent('v2 failed its checks');
+  expect(bar()).toHaveTextContent("Failed: A choice's link doesn't resolve");
   expect(posts()).toEqual([]);
 });
 
@@ -226,12 +249,13 @@ test('an approval another tab already decided says so instead of failing silentl
   routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = new (await import('../../test-harness.ts')).Fail(409, { detail: 'unknown or already decided' });
   open([spec(1, v1), spec(2, v2)], [proposal(2, 2)]);
   await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
-  expect(await within(bar()).findByRole('alert')).toHaveTextContent('already decided');
+  await userEvent.click(within(sheet('Approve v2?')).getByRole('button', { name: 'Approve v2' }));
+  expect(await within(sheet('Approve v2?')).findByRole('alert')).toHaveTextContent('already decided');
 });
 
 // A version as the catalog lists it: no verdict at all.
 const bare = (version: number, content: object): SealedArtifact => { const { verdict: _, ...a } = spec(version, content); return a; };
-const tsSpec = (version: number, document: string) => ({ kind: 'typescript', title: 'Shapes', version, intent: { purpose: 'Shapes' }, choices: [], document });
+const tsSpec = (version: number, document: string, over: object = {}) => ({ kind: 'typescript', title: 'Shapes', version, intent: { purpose: 'Shapes' }, choices: [], document, ...over });
 
 // Version 1 approved, then version 2 put up for approval, neither carrying a verdict.
 async function proposeTwo(one: object, two: object) {
@@ -244,40 +268,113 @@ async function proposeTwo(one: object, two: object) {
   return pane;
 }
 
-test('with no verdicts, a REST contract marks the operations that changed since the approved version', async () => {
-  const pane = await proposeTwo(v1, v2);
-  await waitFor(textDiff);
-  await openDiff();
-  expect((await within(pane).findAllByText('Changed')).length).toBeGreaterThan(0);
-  expect(within(pane).getAllByText('New').length).toBeGreaterThan(0);
-  expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 is up for your approval.');
+// The fixture's break, written the way a REST break names the field it changes.
+const v2Runs = { ...v2, compatibility: { ...v2.compatibility, breaking: [{ what: 'runs now start from the start of the week, oldest first.', callers: ['Sleeper page'] }] } };
+
+test('with no verdicts, a REST contract lists its changes first and marks the operations and fields that changed, a break by its field name', async () => {
+  const pane = await proposeTwo(v1, v2Runs);
+  expect(lines(await changesList())).toEqual(['GET /apps/sleeper/schedule: summary changed', 'GET /apps/sleeper/schedule › 200 › runs: description changedBreaks a caller', 'New GET /apps/sleeper/schedule › 200 › runs › status', 'New GET /apps/sleeper/schedule › 200 › runs › resultUrl']);
+  const runs = pane.querySelector('[data-ptr$="/schema/properties/runs"]') as HTMLElement;
+  expect(runs).toHaveTextContent('Breaks a caller');
+  expect(runs).toHaveTextContent('Breaks: Sleeper page');
+  expect(runs, 'a changed field shows its first changed sentence on each side').toHaveTextContent('v1Upcoming runs, soonest firstv2Runs from the start of the week, oldest first');
+  expect(within(pane).getAllByText('New').length).toBe(2);
+  expect(line()).toHaveTextContent('v2 waits on you');
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeEnabled();
 });
 
-test('with no verdicts, a TypeScript contract marks the declarations that changed and the ones added', async () => {
-  const pane = await proposeTwo(tsSpec(1, 'export type A = { n: number };'), tsSpec(2, 'export type A = { n: string; m?: B };\nexport type B = { x: number };'));
-  await waitFor(textDiff);
-  const changes = await openDiff();
-  const n = (await within(changes).findByText('A › n › type')).closest('li')!;
-  expect([n.querySelector('del')?.textContent, n.querySelector('ins')?.textContent]).toEqual(['Removed: number', 'Added: string']);
-  // The cards render once the lazy code-contract chunk and the TypeScript model load, after the summary heading.
-  expect((await within(await within(pane).findByRole('article', { name: 'B' })).findAllByText('New')).length).toBeGreaterThan(0);
-  expect(await within(await within(pane).findByRole('article', { name: 'A' })).findByText('Changed')).toBeInTheDocument();
+const shapes1 = tsSpec(1, 'export type A = { n: number };');
+const shapes2 = tsSpec(2, '/** A thing with a name. More about it. */\nexport type A = { n: string; m?: B };\nexport type B = { x: number };', { compatibility: { breaking: [{ what: 'A.n is a string now.', callers: ['web/src/a.ts:12'] }], safe: [] } });
+
+test('a TypeScript contract marks each change on the diagram and in the spec, a break by a diamond and its own words', async () => {
+  const pane = await proposeTwo(shapes1, shapes2);
+  expect(lines(await changesList())).toEqual(['A: description changed', 'A.n: type changedBreaks a caller', 'New field A.m', 'New type B']);
+  const diagram = await within(pane).findByRole('region', { name: 'Class diagram' });
+  expect(await within(diagram).findByRole('button', { name: 'A, 3 changes, 1 breaks a caller, go to its declaration' })).toBeInTheDocument();
+  expect(within(diagram).getByRole('button', { name: 'Centre the diagram on B, 1 change' })).toBeInTheDocument();
+  expect(within(diagram).getByText('breaks a caller'), 'the legend names both marks').toBeInTheDocument();
+  const a = await within(pane).findByRole('article', { name: 'A' });
+  const n = a.querySelector('[data-ptr="/A/n"]') as HTMLElement;
+  expect(within(n).getByText('Breaks a caller')).toBeInTheDocument();
+  expect(n, 'a short value reads before and after on its own line').toHaveTextContent('v1numberv2string');
+  expect(n).toHaveTextContent('Breaks: web/src/a.ts:12');
+  expect(within(a.querySelector('[data-ptr="/A/m"]') as HTMLElement).getByText('New')).toBeInTheDocument();
+  expect(within(await within(pane).findByRole('article', { name: 'B' })).getAllByText('New'), 'the new type and its field').toHaveLength(2);
 });
 
-test("each version is labelled by where it stands with the person, and the approval bar reads the newest one's status", async () => {
+test('a first tap on a box selects it and says what it is; Show in spec finds and highlights it, and a second tap centres there', async () => {
+  const pane = await proposeTwo(shapes1, shapes2);
+  const diagram = await within(pane).findByRole('region', { name: 'Class diagram' });
+  const b = await within(diagram).findByRole('button', { name: 'Centre the diagram on B, 1 change' });
+  fireEvent.pointerDown(b, { pointerType: 'touch' });
+  fireEvent.click(b);
+  expect(within(diagram).getByRole('heading')).toHaveTextContent('around A');
+  expect(diagram).toHaveTextContent('Btype');
+  expect(diagram).toHaveTextContent('It has no description.');
+  expect(diagram).toHaveTextContent('1 change: B');
+  await userEvent.click(within(diagram).getByRole('button', { name: 'Show in spec' }));
+  const card = within(pane).getByRole('article', { name: 'B' });
+  expect(card).toHaveFocus();
+  expect(card).toHaveClass('bg-link-bg');
+  fireEvent.pointerDown(b, { pointerType: 'touch' });
+  fireEvent.click(b);
+  expect(within(diagram).getByRole('heading')).toHaveTextContent('around B');
+});
+
+test('pointing at a box shows its first sentence as a tooltip', async () => {
+  const pane = await proposeTwo(shapes1, shapes2);
+  const diagram = await within(pane).findByRole('region', { name: 'Class diagram' });
+  const a = await within(diagram).findByRole('button', { name: /^A, 3 changes/ });
+  fireEvent.pointerOver(a, { pointerType: 'mouse' });
+  expect(screen.getByRole('tooltip')).toHaveTextContent(/^A thing with a name\.$/);
+  expect(a).toHaveAccessibleDescription('A thing with a name.');
+  fireEvent.pointerOut(a, { pointerType: 'mouse' });
+  expect(screen.queryByRole('tooltip')).toBeNull();
+});
+
+test('Next change steps through every change in list order, centring the diagram and highlighting the spec together', async () => {
+  const pane = await proposeTwo(shapes1, shapes2);
+  await changesList();
+  // The stepper's live line, which says where the reader is among the changes.
+  const where = () => pane.querySelector('p[aria-live=polite]');
+  expect(where()).toHaveTextContent('4 changes against v1');
+  const diagram = await within(pane).findByRole('region', { name: 'Class diagram' });
+  const seen: string[] = [];
+  await userEvent.click(within(pane).getByRole('button', { name: 'First change' }));
+  for (let i = 0; i < 4; i++) {
+    if (i) await userEvent.click(within(pane).getByRole('button', { name: 'Next change' }));
+    expect(where()).toHaveTextContent(`Change ${i + 1} of 4 against v1`);
+    seen.push(`${(document.activeElement as HTMLElement).dataset.ptr} ${within(diagram).getByRole('heading').textContent}`);
+  }
+  expect(seen).toEqual(['/A Class diagram around A', '/A/n Class diagram around A', '/A/m Class diagram around A', '/B Class diagram around B']);
+  await userEvent.click(within(pane).getByRole('button', { name: 'Back to the top' }));
+  expect(where()).toHaveTextContent('4 changes against v1');
+  await userEvent.click(within(await changesList()).getByRole('button', { name: 'New field A.m' }));
+  expect(document.activeElement).toHaveAttribute('data-ptr', '/A/m');
+  expect(where()).toHaveTextContent('Change 3 of 4 against v1');
+});
+
+test('a JSON Schema contract lists its changes first, marks the fields, and Next change goes to each field', async () => {
+  const doc = settings.document as { properties: Record<string, object> };
+  const two = { ...settings, version: 2, document: { ...doc, properties: { ...doc.properties, mode: { ...doc.properties.mode, description: 'Which job runs.' }, timezone: { type: 'string' } } } };
+  const pane = await proposeTwo(settings, two);
+  expect(lines(await changesList())).toEqual(['mode: description changed', 'New field timezone']);
+  const fields = within(pane).getByRole('region', { name: 'Fields' });
+  expect(within(fields.querySelector('[data-ptr="/properties/mode"]') as HTMLElement).getByText('Changed')).toBeInTheDocument();
+  expect(within(fields.querySelector('[data-ptr="/properties/timezone"]') as HTMLElement).getByText('New')).toBeInTheDocument();
+  await userEvent.click(within(pane).getByRole('button', { name: 'First change' }));
+  await userEvent.click(within(pane).getByRole('button', { name: 'Next change' }));
+  expect(document.activeElement).toHaveAttribute('data-ptr', '/properties/timezone');
+});
+
+test("each version is labelled by where it stands with the person, and the status line reads the newest one's status", async () => {
   routes[STATUS] = status([1, 'approved'], [2, 'changes_requested'], [3, 'proposed'], [4, 'draft']);
   open([bare(1, v1), approvedRec(1, 1), bare(2, v2), bare(3, v2), bare(4, v2)]);
   await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 2, draft 3, draft'));
   expect(side('to').textContent).toBe('v2 draft 3');
   expect(await offered('to')).toEqual(['Version 2, draft 3#4draft, draft', 'Version 2, draft 2#3awaiting, awaiting approval', 'Version 2, draft 1#2changes asked, changes requested', 'Version 1approved, approved']);
-  expect(within(bar()).getByRole('status')).toHaveTextContent('Version 2 is a draft and not up for approval.');
+  expect(line()).toHaveTextContent('v2 draft 3 is a draft');
   expect(side('from')).toHaveAccessibleName('Compare from version: Version 1, approved');
-  const v = { a: bare(2, v2), spec: v2 as ContractSpec };
-  expect(approvalState(v, undefined, undefined, false, 'changes_requested').text).toBe('Someone asked for changes to version 2.');
-  expect(approvalState(v, undefined, undefined, true, 'draft').text).toBe('Version 2 is a draft: the agent puts it up for approval once it passes its checks.');
-  expect(approvalState(v, undefined, undefined, false, 'proposed').text).toBe('Version 2 is not up for approval. Send a message and the agent puts it up again.');
-  expect(approvalState(v, undefined, 2, false, 'approved').done).toBe(true);
 });
 
 test('on a phone the contract and the chat are tabs, and the contract tab counts the questions it shows', async () => {

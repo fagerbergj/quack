@@ -7,7 +7,7 @@ const s = (key: string) => `#/s/${encodeURIComponent(key)}`;
 const PANES = [
   { name: 'review', key: 'github:fagerbergj/quack#2243', pane: 'Review', shows: 'ready to merge' },
   { name: 'research', key: 'research:qa-langfuse', pane: 'Report', shows: 'Short answer' },
-  { name: 'contract', key: 'contracts:qa-schedule', pane: 'Contract', shows: 'Version 2 is up for your approval.' },
+  { name: 'contract', key: 'contracts:qa-schedule', pane: 'Contract', shows: 'v2 waits on you' },
   { name: 'sleeper', key: `sleeper:${LEAGUE}:8:lineup`, pane: 'Week 8 lineup', shows: 'Joe Burrow' },
 ];
 

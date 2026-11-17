@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useMark, type Mark } from './diff.ts';
-import { Info, Inline } from './Info.tsx';
+import { Info } from './Info.tsx';
+import { Desc, Glyph, ShortChange, useFlash, useItem } from './Review.tsx';
 import type { Choice, Field } from './spec.ts';
 
 const fact = 'inline-flex items-start gap-1 rounded bg-soft px-1.5 py-0.5 text-xs text-muted [overflow-wrap:anywhere]';
@@ -8,28 +9,32 @@ const fact = 'inline-flex items-start gap-1 rounded bg-soft px-1.5 py-0.5 text-x
 // A code type is source text: it takes the width it needs, and `code` links the declarations it names.
 type Code = (type: string) => ReactNode;
 
-const TAG: Record<Mark, [string, string]> = { added: ['New', 'bg-success-bg text-success'], changed: ['Changed', 'bg-warning-bg text-warning'] };
-export const MARKED: Record<Mark, string> = { added: 'bg-success-bg/50', changed: 'bg-warning-bg/60' };
+const TAG: Record<Mark, [string, string]> = { added: ['New', 'bg-success-bg text-success'], changed: ['Changed', 'bg-warning-bg text-warning'], breaking: ['Breaks a caller', 'bg-danger-bg text-danger'] };
+export const MARKED: Record<Mark, string> = { added: 'bg-warm', changed: 'bg-warm', breaking: 'bg-danger-bg/60' };
 
 /** A chip naming how an element differs from the version it is compared with. */
 export function MarkTag({ m }: { m: Mark | undefined }) {
-  return m ? <span className={`flex-none self-center rounded px-1.5 text-[10.5px] font-semibold tracking-wide uppercase ${TAG[m][1]}`}>{TAG[m][0]}</span> : null;
+  return m ? <span className={`flex flex-none items-center gap-1 self-center rounded px-1.5 text-[10.5px] font-semibold tracking-wide uppercase ${TAG[m][1]}`}>{m === 'breaking' && <Glyph m={m} />}{TAG[m][0]}</span> : null;
 }
 
 function Row({ f, choices, code }: { f: Field; choices: Choice[]; code?: Code }) {
   const m = useMark(f.ptr);
+  const item = useItem(f.ptr);
+  const flash = useFlash<HTMLLIElement>(f.ptr);
   return (
-    <li style={{ paddingLeft: `${f.depth * 16}px` }} className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-line py-2 text-[13.5px] first:border-t-0 ${m ? MARKED[m] : ''}`}>
+    <li ref={flash.ref} tabIndex={-1} data-ptr={f.ptr} style={{ paddingLeft: `${f.depth * 16 + 14}px` }} className={`relative flex scroll-mt-16 flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-line py-2 pr-1 text-[13.5px] outline-none first:border-t-0 ${m ? MARKED[m] : ''} ${flash.cls}`}>
+      {m && <span className="absolute top-3.5" style={{ left: `${f.depth * 16 + 2}px` }}><Glyph m={m} /></span>}
       <code className={`font-mono [overflow-wrap:anywhere] @xl:flex-none ${code ? '@xl:w-40' : '@xl:w-28'}`}>{f.name}</code>
       <MarkTag m={m} />
       <span className={`font-mono text-[12.5px] text-success ${code ? 'min-w-0 [overflow-wrap:anywhere]' : '@xl:w-24 @xl:flex-none'}`}>{code ? code(f.type) : f.type}</span>
       {f.required && <span className="text-[11px] tracking-wide text-danger">REQUIRED</span>}
       {f.where && <span className={fact}>{f.where}</span>}
       <span className="flex min-w-0 flex-[1_1_8rem] flex-col gap-1 text-[13px] text-muted">
-        {f.desc && <Inline text={f.desc} />}
+        {f.desc && <Desc text={f.desc} />}
         {f.facts.length > 0 && <span className="flex flex-wrap gap-1.5">{f.facts.map(([k, v]) => <span key={k} className={fact}><span className="flex-none whitespace-nowrap">{k}</span><code className="font-mono text-ink-2">{v}</code></span>)}</span>}
       </span>
       <Info choices={choices} />
+      {item && <ShortChange item={item} />}
     </li>
   );
 }
