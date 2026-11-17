@@ -282,28 +282,37 @@ const findingChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => findingItems(in
 registerSplitter('research.findings', findingChunks);
 
 type Statement = { section: string; text: string };
+type Placed = Statement & { line: string; before?: string };
 
-/** Each sentence of the report's own text with the section it sits in (the preamble's is ""): code fences and headings are left out,
- *  and a line ends a sentence. */
-function statements(report: string): Statement[] {
+/** Each sentence of the report's own text with the section it sits in (the preamble's is ""), its whole line and the sentence before it
+ *  in that section: code fences and headings are left out, and a line ends a sentence. */
+function placed(report: string): Placed[] {
   const { preamble, sections } = splitReport(report);
-  return [{ name: '', lines: preamble }, ...sections].flatMap((s) => fenced(s.lines.join('\n'))
-    .filter(([line, code]) => !code && !/^\s*#/.test(line))
-    .flatMap(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').split(/(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u))
-    .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(/\[s\d+\]/g, '')))
-    .map((t) => ({ section: s.name, text: t.trim() })));
+  return [{ name: '', lines: preamble }, ...sections].flatMap((s) => {
+    const lines = fenced(s.lines.join('\n')).filter(([line, code]) => !code && !/^\s*#/.test(line)).map(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').trim());
+    const sentences = lines.flatMap((line) => line.split(/(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u)
+      .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(/\[s\d+\]/g, '')))
+      .map((t) => ({ section: s.name, text: t.trim(), line })));
+    return sentences.map((x, k) => ({ ...x, before: sentences[k - 1]?.text }));
+  });
+}
+
+/** The sentence compared, and apart from it the text around it, so one that opens "It has…" keeps its subject; context is never compared. */
+function side(p: Placed) {
+  const context = { ...(p.line !== p.text && { line: p.line }), ...(p.before && !p.line.includes(p.before) && { before: p.before }) };
+  return { section: p.section, sentence: p.text, ...(Object.keys(context).length && { context }) };
 }
 
 /** Pairs of sentences that may state one thing two ways, at least one of them in the report's own voice. A finding states what the source
  *  it cites says and is checked against that source, so two findings that differ report a disagreement between sources, not the report's own. */
 function claimPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
-  const all = statements(inputs[String(o.from)]);
+  const all = placed(inputs[String(o.from)]);
   const figs = all.map((s) => figures(s.text));
   const own = (s: Statement) => s.section !== 'findings';
   return all.flatMap((a, i) => all.slice(i + 1).flatMap((b, k) => {
     const j = i + 1 + k;
     const ask = (own(a) || own(b)) && (figuresClash(figs[i], figs[j]) || namesClash(a.text, b.text));
-    return ask ? [{ id: `${i + 1}|${j + 1}`, text: JSON.stringify({ first: a, second: b }) }] : [];
+    return ask ? [{ id: `${i + 1}|${j + 1}`, text: JSON.stringify({ first: side(a), second: side(b) }) }] : [];
   }));
 }
 registerSplitter('research.claimPairs', claimPairs);

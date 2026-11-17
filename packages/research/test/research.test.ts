@@ -430,7 +430,7 @@ test('the declaration asks each finding alone with its kept sources\' excerpts, 
   assert.deepEqual(ev.summary.map((u) => u.state.sentence), ['Kestrel runs 38 electric buses in 2026.']);
   assert.deepEqual(ev.summary[0].shared, { findings: '- Kestrel operates 38 electric buses out of a fleet of 112.\n- All 28 electric buses are the Vantor E12.\n- Depots are at Northside.' });
   assert.deepEqual(ev.request.map((u) => [u.state.request, (u.shared as { report: string }).report]), [['How many electric buses does Kestrel run?', report]]);
-  assert.deepEqual(ev.pairs.map((u) => [u.id, u.state.pair, u.shared]), [['pairs 1|4', { first: { section: 'summary', text: 'Kestrel runs 38 electric buses in 2026. [s1]' }, second: { section: 'findings', text: 'All 28 electric buses are the Vantor E12. [s1][s2]' } }, { summary: 'Kestrel runs 38 electric buses in 2026. [s1]' }]], 'only the Summary\'s 38 against a finding\'s 28 is asked');
+  assert.deepEqual(ev.pairs.map((u) => [u.id, u.state.pair, u.shared]), [['pairs 1|4', { first: { section: 'summary', sentence: 'Kestrel runs 38 electric buses in 2026. [s1]' }, second: { section: 'findings', sentence: 'All 28 electric buses are the Vantor E12. [s1][s2]', context: { before: 'Kestrel operates 38 electric buses out of a fleet of 112. [s1]' } } }, { summary: 'Kestrel runs 38 electric buses in 2026. [s1]' }]], 'only the Summary\'s 38 against a finding\'s 28 is asked');
 });
 
 test('claim pairs: a figure or a name the report gives two ways is one pair; a passage reporting both values, or the same value rounded, is none', async () => {
@@ -441,6 +441,25 @@ test('claim pairs: a figure or a name the report gives two ways is one pair; a p
   assert.deepEqual(await pairsOf(contractor), ['pairs 1|3']);
   assert.deepEqual(await pairsOf('## Summary\nThe fan cord is 10 ft.\n## Assumptions\nNone.\n## Findings\n- The datasheet gives a 10 ft fan cord while Marketek lists a 6 ft fan cord. [s1]\n'), []);
   assert.deepEqual(await pairsOf('## Summary\n24U is ~1,067 mm of mounting height.\n## Assumptions\nNone.\n## Analysis\n- 24U × 44.45 mm = 1,066.8 mm of mounting height.\n## Findings\n- x [s1]\n'), []);
+});
+
+test('claim pairs: a sentence that opens "It has…" is shown with its line and the sentence before it, kept apart from the sentence compared', async () => {
+  const report = [
+    '## Summary',
+    'The Tripp Lite is the better pick, though its load rating is only 1,000 lb.',
+    '## Assumptions',
+    'None.',
+    '## Findings',
+    '- The Tripp Lite carries a 1,000 lb load rating. [s1]',
+    '- The APC AR3104 is a standard IT enclosure with perforated doors [s2]. It has 14-gauge rails and a 3,000 lb load rating. [s2]',
+  ].join('\n');
+  const pairsOf = async (r: string) => (await evidenceFor(r, {})).pairs;
+  const [pair] = (await pairsOf(report)).filter((u) => JSON.stringify(u.state).includes('It has'));
+  assert.deepEqual((pair.state.pair as any).second, { section: 'findings', sentence: 'It has 14-gauge rails and a 3,000 lb load rating. [s2]', context: { line: 'The APC AR3104 is a standard IT enclosure with perforated doors [s2]. It has 14-gauge rails and a 3,000 lb load rating. [s2]' } });
+  assert.deepEqual((await pairsOf(report)).map((u) => u.id), (await pairsOf(report.replace('IT enclosure', 'IT cabinet'))).map((u) => u.id), 'context never adds or drops a pair');
+  const keyOf = async (r: string) => JSON.stringify((await pairsOf(r)).find((u) => u.id === pair.id));
+  assert.equal(await keyOf(report.replace('None.', 'No budget was given.')), await keyOf(report), 'an edit elsewhere leaves the pair\'s evidence, and so its reuse key, alone');
+  assert.notEqual(await keyOf(report.replace('IT enclosure', 'IT cabinet')), await keyOf(report), 'an edit to its context is a new question');
 });
 
 test('a finding citing many long pages keeps a full excerpt of each, and its claim checks go to the judge model, not Clef', async () => {
