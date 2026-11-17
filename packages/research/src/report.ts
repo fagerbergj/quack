@@ -321,7 +321,9 @@ function claimPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
 registerSplitter('research.claimPairs', claimPairs);
 
 // Every section but Findings is what the report derives from its findings (#2360); Assumptions lists the inputs it adds.
-const derivedSection = (s: Statement) => s.section !== 'findings' && s.section !== 'assumptions';
+// A label the sentence splitter cut off its line ("**3.", "Ventilation.**") claims nothing, so it is neither asked nor traced.
+const claims = (s: Statement) => (s.text.replace(/\[s\d+\]/g, '').match(/\p{L}{2,}/gu) ?? []).length >= 2;
+const derivedSection = (s: Statement) => s.section !== 'findings' && s.section !== 'assumptions' && claims(s);
 
 /** Each sentence the report derives, numbered as claimPairs numbers it. */
 const derivedChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => statements(inputs[String(o.from)]).flatMap((s, i) => (derivedSection(s) ? [{ id: String(i + 1), text: JSON.stringify(s) }] : []));

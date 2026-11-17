@@ -69,3 +69,10 @@ test('derived_inputs_traced: each false-positive class of the recorded reports t
   assert.equal(asked.detail, '3045 in "The tower is 566 mm tall; the APC is $3,045.…" cite no finding and are not listed under Assumptions. 566 in "The tower is 566 mm tall; the APC is $3,045.…" come from the request, not from a finding or assumption');
   assert.equal(asked.met, 0, 'a figure from the request is still untraced, as the owner decided');
 });
+
+test('derived_follows does not ask the labels the sentence splitter cuts off a line, only the sentence that follows them', async () => {
+  const report = '## Summary\nThe Tripp Lite suits a dusty shop. [s1]\n## Assumptions\nNone.\n## Findings\n- Eight fans pull air through two filters. [s1]\n## Analysis\n- **3. Ventilation.** The door fans pull air in through the filters [s1].\n- **2.**\n';
+  const ev = (await buildEvidence(reportDeclaration, inputsOf(report, undefined, new Map(), ['s1']))).evidence;
+  assert.deepEqual(ev.derived.map((u) => (u.state.statement as { text: string }).text), ['The Tripp Lite suits a dusty shop. [s1]', 'Ventilation.** The door fans pull air in through the filters [s1].']);
+  assert.equal(code('derived_inputs_traced', report).met, 1, 'the "2" of a list label is no figure to trace');
+});
