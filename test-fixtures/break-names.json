@@ -1,0 +1,73 @@
+[
+  {
+    "case": "one entry of six checker breaks names only its root export: the 2026-11-16 incident",
+    "listed": [{ "what": "CheckDecl.decisionModel is extended from false to false | 'pass-only'", "callers": ["ws/quack/packages/judge/src/declaration.ts:203"], "migration": "Accept 'pass-only' in checkDeclaration" }],
+    "found": [
+      { "id": "produced-breaks", "text": "export \"CheckDecl\": values core now produces no longer fit old consumers", "operation": "", "path": "/CheckDecl" },
+      { "id": "produced-breaks", "text": "export \"Declaration\": values core now produces no longer fit old consumers", "operation": "", "path": "/Declaration" },
+      { "id": "produced-breaks", "text": "export \"Judged\": values core now produces no longer fit old consumers", "operation": "", "path": "/Judged" },
+      { "id": "produced-breaks", "text": "export \"JudgeOptions\": values core now produces no longer fit old consumers", "operation": "", "path": "/JudgeOptions" },
+      { "id": "provided-breaks", "text": "export \"judged\": values extensions already provide no longer fit", "operation": "", "path": "/judged" },
+      { "id": "provided-breaks", "text": "export \"rejudge\": values extensions already provide no longer fit", "operation": "", "path": "/rejudge" }
+    ],
+    "unnamed": ["Declaration", "Judged", "JudgeOptions", "judged", "rejudge"]
+  },
+  {
+    "case": "the same entry covers the transitive breaks by naming them in its callers or migration",
+    "listed": [{ "what": "CheckDecl.decisionModel is extended from false to false | 'pass-only'", "callers": ["Declaration, Judged and JudgeOptions carry CheckDecl", "judged(kind, how) and rejudge take them"], "migration": "Accept 'pass-only' in checkDeclaration" }],
+    "found": [
+      { "text": "export \"CheckDecl\": values core now produces no longer fit old consumers", "operation": "", "path": "/CheckDecl" },
+      { "text": "export \"Declaration\": values core now produces no longer fit old consumers", "operation": "", "path": "/Declaration" },
+      { "text": "export \"Judged\": values core now produces no longer fit old consumers", "operation": "", "path": "/Judged" },
+      { "text": "export \"JudgeOptions\": values core now produces no longer fit old consumers", "operation": "", "path": "/JudgeOptions" },
+      { "text": "export \"judged\": values extensions already provide no longer fit", "operation": "", "path": "/judged" },
+      { "text": "export \"rejudge\": values extensions already provide no longer fit", "operation": "", "path": "/rejudge" }
+    ],
+    "unnamed": []
+  },
+  {
+    "case": "a whole word only: Judge is not named by Judged, and a dotted name counts for its head",
+    "listed": [{ "what": "CheckDecl.decisionModel widens; Judged carries it", "callers": ["a"], "migration": "Extend GET /apps/x and declaration.ts" }],
+    "found": [
+      { "text": "/CheckDecl", "path": "/CheckDecl" },
+      { "text": "/Judge", "path": "/Judge" },
+      { "text": "/Judged", "path": "/Judged" },
+      { "text": "/judged", "path": "/judged" },
+      { "text": "/declaration", "path": "/declaration" },
+      { "text": "/apps/x", "operation": "GET", "path": "/apps/x" },
+      { "text": "/apps/y", "operation": "GET", "path": "/apps/y" },
+      { "text": "/", "path": "/" }
+    ],
+    "unnamed": ["Judge", "judged", "GET /apps/y"]
+  },
+  {
+    "case": "a route's break is named by the field the checker quotes",
+    "listed": [{ "what": "artifact.sealed's data gains a required content: a batch without it answers 400", "callers": ["the runtime publisher"], "migration": "Send content" }],
+    "found": [{ "text": "added the new required request property `events/items/oneOf[#/components/schemas/EventArtifactSealed]/data/content`", "operation": "POST", "path": "/sessions/{key}/events" }],
+    "unnamed": []
+  },
+  {
+    "case": "a JSON Schema break is named by the property its text quotes",
+    "listed": [{ "what": "Breaking entries require migration", "callers": ["The sealing gate's entry check"], "migration": "Add migration to the entry check" }],
+    "found": [{ "id": "property-required", "text": "\"migration\" is now required, so documents without it are invalid", "operation": "", "path": "/$defs/breaking/required" }],
+    "unnamed": []
+  },
+  {
+    "case": "a nameless root break is unnamed only when nothing is listed (the whole-word case lists one, which names it)",
+    "listed": [],
+    "found": [{ "id": "additional-properties-closed", "text": "unknown properties are no longer allowed, so documents that carry extra fields are now invalid", "operation": "", "path": "/" }],
+    "unnamed": ["/"]
+  },
+  {
+    "case": "a one-segment route keeps its slash",
+    "listed": [{ "what": "lastRun.outcome gains denied", "callers": ["packages/cli"], "migration": "Handle denied" }],
+    "found": [{ "text": "removed the optional property `artifacts/items/verdict` from the response with the `200` status", "operation": "GET", "path": "/artifacts" }],
+    "unnamed": ["GET /artifacts"]
+  },
+  {
+    "case": "one place, however many diagnostics",
+    "listed": [],
+    "found": [{ "text": "/A", "path": "/A" }, { "text": "/A", "path": "/A" }],
+    "unnamed": ["A"]
+  }
+]

@@ -10,6 +10,7 @@ import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
 import { commentProblems } from './answered.ts';
+import { safeClaims, unnamedBreaks } from './breaks.ts';
 import { FACT_LIMIT, factProblems, type Fact } from './facts.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent } from './spec.ts';
 
@@ -50,13 +51,16 @@ async function locate(read: Reader, roots: string[], path: string): Promise<stri
   return undefined;
 }
 
+const CLONE = 'git clone --depth 1 -b <branch> <url> repo';
 // The exact ref to write, taken from where the file is, else from the session's own clone directory.
 async function missingFile(read: Reader, roots: string[], path: string, line: string): Promise<string> {
   const clone = roots[0];
   if (isAbsolute(path)) return `is an absolute path; refs are paths from the workspace root, as "${clone ?? 'repo'}/<path in the clone>:${line}"`;
   const at = await locate(read, roots, path);
+  // app/ was the session image's own tree, which refs carried from older versions still cite; only the workspace resolves now.
+  if (path.startsWith('app/')) return `cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "${at ?? `${clone ?? 'repo'}/${path.slice(4)}`}:${line}"${clone ? '' : `, once the repository is cloned into repo/ (${CLONE})`}`;
   if (at) return `names no file in the workspace; the file is at ${at}, so cite it as "${at}:${line}"`;
-  if (!clone) return `names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${path} in it as "repo/${path}:${line}"`;
+  if (!clone) return `names no file in the workspace, which holds no clone: clone the repository into repo/ (${CLONE}) and cite a file at ${path} in it as "repo/${path}:${line}"`;
   const rel = path.startsWith(`${clone}/`) ? path.slice(clone.length + 1) : path;
   return `names no file in the workspace. Refs are paths from the workspace root and your clone is ${clone}/, so a file at ${rel} in the clone is cited as "${clone}/${rel}:${line}"; read the clone to find where the file is`;
 }
@@ -86,7 +90,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
   return out;
 }
 
-type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; unanswered?: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
+type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; unanswered?: string[]; breaking: Array<{ id: string; text: string; operation?: string; path?: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, its workspace's files, and the
@@ -197,7 +201,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility, baseline } = spec;
-  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
+  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text, operation, path }) => ({ id, text, operation, path })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
   const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
     facts: JSON.stringify(facts),
@@ -266,12 +270,12 @@ async function workspaceOf(env: NonNullable<ToolExecutionApi['env']>, ctx: Conte
     const r = await env.readTextFile(real.value, ctx);
     return r.ok ? r.value : undefined;
   };
-  const dirs = async (path: string) => {
-    const listed = await env.listDir(path, ctx);
-    return listed.ok ? listed.value.filter((f) => f.kind === 'directory' && !f.name.startsWith('.')).map((f) => f.name).sort() : [];
-  };
-  // The spec is written to artifacts/, so the other directories at the root are clones; theirs (repo/packages) are where a ref may have lost a level.
-  const clones = (await dirs('.')).filter((d) => d !== 'artifacts');
+  const entries = async (path: string) => { const listed = await env.listDir(path, ctx); return listed.ok ? listed.value : []; };
+  const dirs = async (path: string) => (await entries(path)).filter((f) => f.kind === 'directory' && !f.name.startsWith('.')).map((f) => f.name).sort();
+  // A clone is a git repository at the root, never a stray __pycache__ or artifacts/; its subdirectories (repo/packages) are where a ref may have lost a level.
+  const top = await dirs('.');
+  const isRepo = await Promise.all(top.map(async (d) => (await entries(d)).some((f) => f.name === '.git')));
+  const clones = top.filter((_, i) => isRepo[i]);
   const inner = await Promise.all(clones.map(async (c) => (await dirs(c)).map((d) => `${c}/${d}`)));
   return { read, roots: [...clones, ...inner.flat()] };
 }
@@ -324,18 +328,22 @@ function linksResolve(_a: string, ev: Evidence): CodeResult {
   return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
 }
 
+// Break by break: an entry must name each place the kind's diff found, and a safe note that names an unnamed one is reported with it.
 function breakingNamed(_a: string, ev: Evidence): CodeResult {
   const { breaking, compatibility } = state(ev);
   if (!breaking.length) return { met: 1 };
   const named = compatibility?.breaking ?? [];
-  const bare = named.filter((b) => !b.callers?.length);
-  const ok = named.length > 0 && !bare.length;
-  return { met: ok ? 1 : 0, detail: ok ? undefined : `the kind's diff found breaking changes (${list(breaking.map((b) => b.text))}); compatibility.breaking must list each with the callers it breaks, found by reading the code that calls it` };
+  const unnamed = unnamedBreaks(named, breaking);
+  const out: string[] = [];
+  if (!named.length || named.some((b) => !b.callers?.length)) out.push(`the kind's diff found breaking changes (${list(breaking.map((b) => b.text))}); compatibility.breaking must list each with the callers it breaks, found by reading the code that calls it`);
+  else if (unnamed.length) out.push(`the kind's diff found breaks no compatibility.breaking entry names: ${unnamed.join(', ')}. Name each as a whole word in the what, callers or migration of the entry whose change causes it (one entry may name several), or add an entry for it`);
+  for (const c of safeClaims(compatibility?.safe ?? [], breaking, unnamed)) out.push(`compatibility.safe[${c.note}] calls ${c.places.join(', ')} safe, but the kind's diff found ${c.places.length > 1 ? 'them' : 'it'} breaking`);
+  return out.length ? { met: 0, detail: `${out.join('. ')}.` } : { met: 1 };
 }
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 8,
+  version: 9,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [

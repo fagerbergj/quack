@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
@@ -10,10 +12,10 @@ import { changeItems } from './review.ts';
 import v1 from './fixtures/sleeper-schedule-v1.json';
 import v2 from './fixtures/sleeper-schedule-v2.json';
 import settings from './fixtures/sleeper-settings.json';
-import { unnamedBreaks } from './Approval.tsx';
+import { unnamedBreaks, type Break } from './Approval.tsx';
 import { approvalState, type Standing } from './Studio.tsx';
 import { declarations } from './typescript-model.ts';
-import type { ContractSpec } from './spec.ts';
+import type { ContractSpec, Listed } from './spec.ts';
 
 useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/contracts%3As1/asks': { asks: [] } }));
 
@@ -206,11 +208,10 @@ test("the checker's breaks show as wrapped blocks per place, a cut one marked, a
   expect(within(sheet('Approve v2?')).getByText('The code checker found no break against the approved version.')).toBeInTheDocument();
 });
 
-test("a checker break counts as listed only when the spec's breaks name it as a whole word", () => {
-  const listed = [{ what: 'CheckDecl.decisionModel widens; Judged carries it', callers: ['a'], migration: 'Extend GET /apps/x and declaration.ts' }];
-  const at = (path: string, operation = '') => ({ id: 'x', text: path, operation, path });
-  expect(unnamedBreaks(listed, [at('/CheckDecl'), at('/Judge'), at('/Judged'), at('/judged'), at('/declaration'), at('/apps/x', 'GET'), at('/apps/y', 'GET'), at('/')])).toEqual(['Judge', 'judged', 'GET /apps/y', '/']);
-  expect(unnamedBreaks([], [at('/A'), at('/A')]), 'one place, however many diagnostics').toEqual(['A']);
+// Shared with the judge's breaking_named gate (packages/contracts/test/breaks.test.ts): the page warns on exactly the breaks the gate fails.
+const BREAK_NAMES = JSON.parse(readFileSync(join(process.cwd(), '../../test-fixtures/break-names.json'), 'utf8')) as Array<{ case: string; listed: Listed[]; found: Break[]; unnamed: string[] }>;
+test.each(BREAK_NAMES.map((c) => [c.case, c] as const))("a checker break counts as listed only when the spec's breaks name it as a whole word: %s", (_n, c) => {
+  expect(unnamedBreaks(c.listed, c.found)).toEqual(c.unnamed);
 });
 
 test('a request for an older seal than the newest says it is out of date and offers no approval', async () => {
