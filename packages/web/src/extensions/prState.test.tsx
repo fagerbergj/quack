@@ -62,7 +62,7 @@ test('only badges on screen are read; the stream updates the rest, and a badge s
 test('an archived review row is not read; its badge stays neutral and links by number', async () => {
   const live = sess('github:a/one#1', { title: 'fix: live' });
   const shelved = sess('github:a/one#2', { title: 'fix: shelved', state: 'archived' });
-  const listed = (q: string) => `GET /sessions?${new URLSearchParams({ pageSize: '1000', q })}`;
+  const listed = (q: string) => `GET /sessions?${new URLSearchParams({ pageSize: '1000', q, orderBy: 'lastActivity' })}`;
   routes['GET /sessions'] = { sessions: [live, shelved] };
   routes[listed('NOT state:archived')] = { sessions: [live] };
   routes[listed('state:archived')] = { sessions: [shelved] };

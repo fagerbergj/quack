@@ -9,8 +9,8 @@ const REFRESH_MS = 15_000;
 
 // The row carries its pending-ask count and its last run, so the tick is this one list.
 export async function loadRows(q?: string): Promise<Row[]> {
-  // The server pages by last activity; the list stays in creation order so rows do not jump as sessions work.
-  const sessions = (await listSessions(q)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.key.localeCompare(b.key));
+  // The server orders by last activity (key breaks ties); a refresh moves a row that worked, as it inserts a new one.
+  const sessions = await listSessions(q);
   // A repo prefix only earns its space when reviews come from more than one repo.
   const multiRepo = multiScope(sessions.map((s) => s.key));
   return sessions.map((s) => rowOf(s, multiRepo));

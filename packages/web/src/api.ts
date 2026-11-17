@@ -37,17 +37,18 @@ export async function json<T>(res: Response): Promise<T> {
 const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
 /** Every row of a list matching `q` (Lucene, its terms built with escapeTerm): pages are followed to the end, so none is dropped. */
-export async function listAll<T>(path: string, field: string, q?: string): Promise<T[]> {
+export async function listAll<T>(path: string, field: string, q?: string, orderBy?: string): Promise<T[]> {
   const rows: T[] = [];
   for (let token = ''; ;) {
-    const query = new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(token && { pageToken: token }) });
+    const query = new URLSearchParams({ pageSize: '1000', ...(q && { q }), ...(orderBy && { orderBy }), ...(token && { pageToken: token }) });
     const page = await json<Record<string, T[] | undefined> & { nextPageToken?: string }>(await fetch(`${path}?${query}`));
     rows.push(...(page[field] ?? []));
     if (!page.nextPageToken) return rows;
     token = page.nextPageToken;
   }
 }
-export const listSessions = (q?: string) => listAll<Session>('sessions', 'sessions', q);
+// A page token only fits the order it was issued under, so every page of one list carries the same orderBy.
+export const listSessions = (q?: string) => listAll<Session>('sessions', 'sessions', q, 'lastActivity');
 export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
 export const getAgent = async (name: string, version?: number) => json<AgentDetail>(await fetch(`agents/${encodeURIComponent(name)}${version === undefined ? '' : `?version=${version}`}`));
 export const promoteAgent = async (name: string, version: number) =>
