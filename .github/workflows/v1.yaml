@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: ["v1", "main"]
 
+# Each job's timeout is about three times its slowest recent success, so a hung step fails in minutes.
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     # The index tests run against a real Postgres, never a mock (A6).
     services:
       postgres:
@@ -47,6 +49,7 @@ jobs:
   # Every rig scenario that needs no live model, so a change to text or a count a scenario asserts fails here. Not yet a required check.
   qa:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -75,6 +78,7 @@ jobs:
   # Session isolation is only provable against a real image under gVisor, so this job builds one and runs the live test.
   isolation:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -115,6 +119,7 @@ jobs:
     if: github.event_name == 'push'
     needs: [check, isolation]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: write
