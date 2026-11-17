@@ -16,3 +16,9 @@ export async function eachItem<T, R>(items: T[], concurrency: number, work: (ite
   }));
   return { results, failures };
 }
+
+/** Runs every item on each arm in turn, so one item's arms never overlap; `concurrency` items run at once. */
+export async function eachArm<T, A, R>(items: T[], arms: A[], concurrency: number, work: (job: { item: T; arm: A }) => Promise<R>): Promise<{ results: R[]; failures: Failure<{ item: T; arm: A }>[] }> {
+  const { results } = await eachItem(items, concurrency, (item) => eachItem(arms.map((arm) => ({ item, arm })), 1, work));
+  return { results: results.flatMap((r) => r.results), failures: results.flatMap((r) => r.failures) };
+}

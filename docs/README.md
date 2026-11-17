@@ -6,6 +6,18 @@ The operator CLI is described in [cli.md](cli.md) and the QA rig in [qa.md](qa.m
 
 A pull request into the trunk shows green CI (typecheck, tests, sloplint) and, for any change on the model path, a 1-3 item smoke test against local llm-swap, with the commands and output in the PR.
 
+### Evidence for a prompt or guide change
+
+Replay the same case under the baseline's agent definition and the candidate's, one arm after the other, on local models:
+
+```
+QUACK_LOCAL_API_KEY=... node packages/eval/src/main.ts run items.json ab deployment.json agents/contracts/agent.json --arm base=<trunk ref> --arm cand=. --guides packages/contracts/skills --out ab.jsonl
+```
+
+A dataset ending in `.json` is a local file of items, and such a run needs no Langfuse and publishes nothing; any other dataset name is read from Langfuse with the `LANGFUSE_*` variables, and each arm's results are published there as the run `<run-name>-<label>`. `main.ts dataset items.json <agent> <good|bad|-> <session-dir>...` adds recorded sessions to such a file, and an item can also be written by hand: `{ "id": "status", "input": { "inputs": ["Define a REST contract for GET /status ..."], "pins": {} } }`. An arm is `label=ref`: `.` is this tree; another ref replays on the agent bundle's directory (`agent.json` and its prompt) as it stood at that ref and, for each `--guides` directory under `packages/`, that directory from the ref over a copy of this tree's packages, so extension code stays this tree's in both arms. An item's arms run one after another, never at once; `--concurrency` runs that many items together.
+
+Each recorded input is sent once the run before it settles. The replay answers the run's asks: a question takes the item's next recorded answer when it is one of the options (or free text where the question takes it), else its suggested option; an approval takes the item's next recorded verdict, and the replay stops at the first approval past them. `--suggested` drops the recorded answers, and `--verdict approve|stop|reject:<reason>`, repeated, replaces the recorded verdicts; a contracts review round is a rejection whose reason carries the review's `quack-review` block. Each arm prints a line per item with its scores, each kind's sealed versions (pass, or fail with the gates that failed), and the asks it answered, then a summary per arm; `--out` appends each result with its sealed versions' content and verdicts as JSON lines.
+
 ### Evidence for a judge or rubric change
 
 Replay the same recorded cases under the baseline and the candidate, three times each, on local models, the same day:

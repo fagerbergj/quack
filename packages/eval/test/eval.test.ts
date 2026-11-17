@@ -67,7 +67,7 @@ test('a recorded session reads back without resuming it, and becomes a dataset i
   assert.deepEqual(record.artifacts['test.note'].map((v) => [v.version, v.content, v.verdict]), [[1, 'v1 note', { score: 0.9, passed: true, limitReached: false }]]);
 
   const item = itemFrom(record, { agent: 'noter', served: new Set(['acme.world']), label: 'bad' });
-  assert.deepEqual(item.input, { inputs: ['Write the note.'], pins: { 'acme.world': { seen: 'pr head abc' } } }, 'extension docs are pinned; pi and quack bookkeeping are not');
+  assert.deepEqual(item.input, { inputs: ['Write the note.'], pins: { 'acme.world': { seen: 'pr head abc' } }, asks: { answers: [], verdicts: [] } }, 'extension docs are pinned; pi and quack bookkeeping are not');
   assert.deepEqual((item.expectedOutput as any).artifacts['test.note'], { version: 1, content: 'v1 note', score: 0.9, passed: true, limitReached: false });
   assert.equal((item.metadata as any).label, 'bad');
   assert.equal(item.id, itemFrom(record, { agent: 'noter', served: new Set(['acme.world']) }).id, 'the id follows the inputs, so re-adding a session replaces its item');
@@ -150,6 +150,8 @@ const result: ReplayResult = {
     artifacts: { 'github.review': [{ kind: 'github.review', version: 1, hash: 'h', content: 'v1', sealedAt: 0, verdict: { score: 0.6, passed: false } }, { kind: 'github.review', version: 2, hash: 'h2', content: 'v2', sealedAt: 0, verdict: { score: 0.95, passed: true } }] } },
   captured: [{ event: 'APPROVE' }],
   codeScores: {},
+  asks: [],
+  stopped: false,
 };
 
 test('a replay is published as a trace with its scores and linked into the run', async () => {
@@ -220,7 +222,7 @@ test('a researcher session becomes an item that replays against the live web, be
   const sources = { sources: [{ id: 's1', url: 'https://example.com/a', fetchedAt: 5, hash: 'h1', chars: 40 }] };
   const record = { inputs: ['What is X?'], outcome: { status: 'pending' }, turns: 1, usage: { input: 0, output: 0, cacheRead: 0 }, artifacts: {}, docs: { 'research.sources': sources, 'quack.workflow': {} }, runs: [] } as SessionRecord;
   const item = itemFrom(record, { agent: 'researcher', served: new Set(['github.pr']) });
-  assert.deepEqual(item.input, { inputs: ['What is X?'], pins: {} });
+  assert.deepEqual(item.input, { inputs: ['What is X?'], pins: {}, asks: { answers: [], verdicts: [] } });
   assert.deepEqual((item.metadata as any).unpinned, ['research.sources'], 'the item says plainly what a replay reads live');
   // The replay gets as far as starting a runtime (which exits on this stub) rather than refusing the item.
   const stub = encodeURIComponent('process.stderr.write("Error: started\\n");process.exit(1)');

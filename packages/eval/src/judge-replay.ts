@@ -37,8 +37,8 @@ export async function armAt(ref: string): Promise<Pick<Arm, 'adapters' | 'rejudg
   return loadArm(dir);
 }
 
-/** The adapters and engine of the `packages/` tree in dir, whose @quack/* imports resolve inside dir; third-party modules stay this tree's, shared with the harness. */
-export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'rejudge'>> {
+/** Links the `packages/` tree in dir so its @quack/* imports resolve inside dir; third-party modules stay this tree's, shared with the harness. */
+export function linkTree(dir: string): void {
   const modules = fileURLToPath(new URL('../../../node_modules', import.meta.url));
   mkdirSync(join(dir, 'node_modules/@quack'), { recursive: true });
   for (const m of readdirSync(modules).filter((m) => m !== '@quack')) symlinkSync(join(modules, m), join(dir, 'node_modules', m));
@@ -48,6 +48,11 @@ export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'reju
     const nested = join(modules, '../packages', p, 'node_modules');
     if (existsSync(nested)) symlinkSync(nested, join(dir, 'packages', p, 'node_modules'));
   }
+}
+
+/** The adapters and engine of the `packages/` tree in dir. */
+export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'rejudge'>> {
+  linkTree(dir);
   const at = (pkg: string) => pathToFileURL(join(dir, 'packages', pkg, 'src/index.ts')).href;
   const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => at(s.slice(7)));
   const engine = (await import(at('judge'))) as typeof import('@quack/judge');
