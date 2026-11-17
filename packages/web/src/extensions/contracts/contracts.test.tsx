@@ -13,7 +13,9 @@ import { BeforeAfter } from './Sections.tsx';
 import { fields, parseSpec, toYaml, type ContractSpec } from './spec.ts';
 
 const raw = (v: number) => JSON.stringify(v === 1 ? v1 : v2);
-const sealed = (content: string, over: Partial<SealedArtifact> = {}): SealedArtifact => ({ kind: 'contract.spec', version: 1, hash: 'h', content, sealedAt: 1, verdict: null, ...over });
+// The seal stores the spec's own version as the row's outcome.
+const outcomeOf = (content: string) => { try { return `v${(JSON.parse(content) as { version: number }).version}`; } catch { return undefined; } };
+const sealed = (content: string, over: Partial<SealedArtifact> = {}): SealedArtifact => ({ kind: 'contract.spec', version: 1, hash: 'h', content, sealedAt: 1, verdict: null, outcome: outcomeOf(content), ...over });
 const show = (v: number) => render(<>{contracts.card!(sealed(raw(v), { version: v }))}</>);
 
 test('version 1 shows the route, its fields with type and required, and an example', () => {
@@ -175,12 +177,22 @@ test('an answer shows the question as asked and the user\'s answer', async () =>
   expect(within(panel).getByText('No, it only reads')).toBeInTheDocument();
 });
 
-test('the page links to its session and offers versions', async () => {
-  const list = [sealed(raw(1)), sealed(raw(2), { version: 2 })];
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
+// The artifact page lists a kind's versions without content, then reads the shown one alone.
+const pageFetch = (list: SealedArtifact[], numbers: Array<[number, number]> = []) => vi.fn(async (url: string) => {
+  if (url.startsWith('apps/contracts/')) return new Response(JSON.stringify({ versions: numbers.map(([artifact, version]) => ({ artifact, version, status: 'draft' })) }));
+  const n = /version:(\d+)/.exec(decodeURIComponent(url))?.[1];
+  const rows = list.map((a) => ({ session: 'home:main', kind: a.kind, version: a.version, hash: a.hash, sealedAt: new Date(a.sealedAt).toISOString(), ...(n && { content: a.content }) }));
+  return new Response(JSON.stringify({ artifacts: n ? rows.filter((r) => r.version === Number(n)) : rows }));
+});
+
+test('the page links to its session and offers versions, reading only the shown version', async () => {
+  const list = [sealed(raw(1), { hash: 'h1' }), sealed(raw(2), { version: 2, hash: 'h2' })];
+  const fetcher = pageFetch(list);
+  vi.stubGlobal('fetch', fetcher);
   location.hash = '#/artifacts';
   render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={1} rows={undefined} />);
   expect(await screen.findByText('1 route · version 1')).toBeInTheDocument();
+  expect(fetcher.mock.calls.map(([u]) => decodeURIComponent(u)).filter((u) => u.includes('version:'))).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open its session' })).toHaveAttribute('href', '#/s/home%3Amain');
   await userEvent.click(screen.getByRole('button', { name: 'Version: Version 1' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Version 2' }));
@@ -188,7 +200,22 @@ test('the page links to its session and offers versions', async () => {
   vi.unstubAllGlobals();
 });
 
-test('a rejected attempt shares its spec version: the picker and page follow content.version and show the delivered seal', async () => {
+test('the page labels seals by the contracts app, grouping the seals of one version and reading only the shown one', async () => {
+  const list = [sealed(raw(1), { version: 1, hash: 'h1' }), sealed(raw(2), { version: 2, hash: 'h2' }), sealed(raw(2), { version: 3, hash: 'h3' })];
+  const fetcher = pageFetch(list, [[1, 1], [2, 2], [3, 2]]);
+  vi.stubGlobal('fetch', fetcher);
+  // The link names the spec version, as it did when the page read it from the content.
+  render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={2} rows={undefined} />);
+  expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 2' }));
+  expect(screen.getAllByRole('menuitem').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
+  const reads = fetcher.mock.calls.map(([u]) => decodeURIComponent(u)).filter((u) => u.includes('version:'));
+  expect(reads).toHaveLength(1);
+  expect(reads[0]).toMatch(/version:3/);
+  vi.unstubAllGlobals();
+});
+
+test('a spec version sealed more than once groups by the row outcome and shows the delivered seal', () => {
   const ok = { passed: true, gatesFailed: [], score: 1, checks: [] };
   const draft = JSON.stringify({ ...JSON.parse(raw(2)), title: 'Rejected draft' });
   const list = [sealed(raw(1), { version: 1, verdict: ok }), sealed(draft, { version: 2, verdict: { ...ok, passed: false } }), sealed(raw(2), { version: 3, verdict: ok })];
@@ -196,13 +223,15 @@ test('a rejected attempt shares its spec version: the picker and page follow con
   expect(delivered(list.slice(0, 2)).map((a) => a.version)).toEqual([2, 1]);
   const released = [sealed(raw(2), { version: 2, verdict: { ...ok, passed: false, limitReached: true } }), sealed(draft, { version: 3, verdict: { ...ok, passed: false } })];
   expect(delivered(released).map((a) => a.version)).toEqual([2]);
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ artifacts: list }))));
-  render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={2} rows={undefined} />);
-  expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
-  expect(screen.queryByText('Rejected draft')).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 2' }));
-  expect(screen.getAllByRole('menuitem').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
-  vi.unstubAllGlobals();
+});
+
+test('a version is labelled from its outcome without reading content, and from its sealed number when it has none', () => {
+  const { content: _, ...older } = sealed(raw(2), { version: 7, outcome: 'v3 typescript' });
+  expect(versionOf(older)).toBe(3);
+  expect(versionOf({ ...older, outcome: 'v12' })).toBe(12);
+  expect(versionOf({ ...older, outcome: undefined })).toBe(7);
+  expect(versionOf({ ...older, outcome: 'approve', kind: 'github.review' })).toBe(7);
+  expect(contracts.card!(older)).toBeUndefined();
 });
 
 test('a $ref that points back to itself, or round a loop, ends in a named reference', () => {

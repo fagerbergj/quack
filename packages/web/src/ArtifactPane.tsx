@@ -4,6 +4,7 @@ import { CheckResult } from './CheckResult.tsx';
 import { delivered, versionOf } from './delivered.ts';
 import { SessionKeyContext } from './extension.ts';
 import { Content } from './JsonView.tsx';
+import { Loaded } from './useContent.tsx';
 import { FollowNewest, VersionMenu, type VersionItem } from './VersionMenu.tsx';
 
 /** The versions the pane offers and the one it shows: the focused artifact's kind, else the kind sealed last; the focused version, else the newest. */
@@ -27,7 +28,7 @@ function Body({ a, now }: { a: SealedArtifact; now?: { running: boolean; meta: r
   return artifactCard(a, now) ?? (
     <div className="rounded-[22px] border border-line bg-surface p-5 text-sm leading-relaxed text-ink-2 shadow-card [overflow-wrap:anywhere]">
       <p className="m-0 mb-3"><span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{artifactName(a)}</span></p>
-      <Content text={a.content} />
+      <Content text={a.content ?? ''} />
     </div>
   );
 }
@@ -44,7 +45,7 @@ export function ArtifactView({ sessionKey, versions, a, onPick, onFollow, now }:
         <span className="flex-1" />
         {onFollow && <FollowNewest onClick={onFollow} />}
       </div>
-      <SessionKeyContext value={sessionKey}><Body a={a} now={a === versions[0] ? now : undefined} /></SessionKeyContext>
+      <SessionKeyContext value={sessionKey}><Loaded sessionKey={sessionKey} a={a} what={`version ${versionOf(a)}`}>{(full) => <Body a={full} now={a === versions[0] ? now : undefined} />}</Loaded></SessionKeyContext>
       {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} />}
     </div>
   );

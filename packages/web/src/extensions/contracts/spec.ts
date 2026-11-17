@@ -19,6 +19,9 @@ export type Json = { [k: string]: any };
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null;
 
+/** The spec's own version, from the row's outcome ("v3", "v3 typescript") that the seal stores, so no content is read. */
+export const specVersion = (a: { outcome?: string }): number | undefined => Number(/^v(\d+)/.exec(a.outcome ?? '')?.[1]) || undefined;
+
 // A spec whose document has no paths object is not drawable; the card then falls back to plain text.
 export function parseSpec(content: string): ContractSpec | undefined {
   try {

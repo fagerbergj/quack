@@ -1,7 +1,7 @@
-import { listArtifacts, type SealedArtifact } from './api.ts';
+import { listVersions, type SealedArtifact } from './api.ts';
 import { ArtifactView, paneVersions } from './ArtifactPane.tsx';
 import { artifactName } from './Artifacts.tsx';
-import { versionOf } from './delivered.ts';
+import { labelled, versionOf } from './delivered.ts';
 import { artifactHref } from './extension.ts';
 import { sessionTitle } from './kinds.ts';
 import type { Row } from './sessions.ts';
@@ -31,7 +31,7 @@ function IconLink({ href, label, d, className = '' }: { href: string; label: str
 
 /** One artifact on its own page, opened from the Artifacts list: its versions as in the session pane, and a link to the session it came from. */
 export function ArtifactPage({ sessionKey, kind, version, rows }: { sessionKey: string; kind: string; version?: number; rows: Row[] | undefined }) {
-  const { data: items, error } = useLoad(async (): Promise<SealedArtifact[] | undefined> => (await listArtifacts(sessionKey)).filter((a) => a.kind === kind), [sessionKey, kind], undefined);
+  const { data: items, error } = useLoad(async (): Promise<SealedArtifact[] | undefined> => await labelled(sessionKey, kind, await listVersions(sessionKey, kind)), [sessionKey, kind], undefined);
   const shown = items && paneVersions(items, version === undefined ? undefined : items.find((a) => versionOf(a) === version));
   const row = rows?.find((r) => r.key === sessionKey);
   const t = sessionTitle(row ?? { key: sessionKey, agent: '' });

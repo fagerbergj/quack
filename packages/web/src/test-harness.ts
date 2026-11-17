@@ -1,6 +1,7 @@
 import { act, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import { forgetVersion } from './api.ts';
+import { forgetContent } from './useContent.tsx';
 
 /** A route that answers with an error status instead of a JSON body. */
 export class Fail {
@@ -26,6 +27,12 @@ const unexpected: string[] = [];
 /** What each session's socket reports on connect, by its key as the URL encodes it. */
 export const live: Record<string, { artifacts?: object[]; approvals?: object[] }> = {};
 
+/** A per-session artifact list that answers `q=...version:N` with that version alone, as the Sessions API does. */
+export const byVersion = <T extends { version: number }>(rows: T[]) => (url: string) => {
+  const n = /version:(\d+)/.exec(decodeURIComponent(url))?.[1];
+  return { artifacts: n ? rows.filter((r) => r.version === Number(n)) : rows };
+};
+
 const reply = (hit: unknown) => {
   const fail = hit instanceof Fail ? hit : undefined;
   return new Response(JSON.stringify(fail ? fail.body : hit), { status: fail?.status ?? 200, headers: { 'content-type': fail ? 'application/problem+json' : 'application/json' } });
@@ -36,7 +43,7 @@ export const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const route = `${init?.method ?? 'GET'} /${url}`;
   // A list routed without its query answers every query; a test that cares about q reads the call.
   const hit = routes[route] ?? routes[route.replace(/^(GET [^?]+)\?.*/, '$1')] ?? OFF[route];
-  if (hit !== undefined) return reply(hit);
+  if (hit !== undefined) return reply(typeof hit === 'function' ? hit(url) : hit);
   if (QUIET.test(route)) return reply({ [route.split('/').at(-1)!]: [] });
   if (APP.test(route)) return reply(notFound);
   unexpected.push(route);
@@ -139,6 +146,7 @@ export function useHarness(base: () => Routes) {
     unexpected.length = 0;
     fetchMock.mockClear();
     forgetVersion();
+    forgetContent();
     vi.stubGlobal('WebSocket', FakeSocket);
     vi.stubGlobal('EventSource', FakeEventSource);
     vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);

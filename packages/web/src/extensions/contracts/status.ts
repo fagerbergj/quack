@@ -42,8 +42,17 @@ export type VersionStatus = 'draft' | 'proposed' | 'approved' | 'changes_request
 /** Each spec artifact's status by artifact number (GET apps/contracts/contracts/{key}); undefined when the app answers not found or an error,
  * or the request fails, which Studio shows as no answer yet. */
 export async function contractVersions(key: string): Promise<Map<number, VersionStatus> | undefined> {
+  return (await readVersions(key))?.statuses;
+}
+
+/** Each spec artifact's version number by artifact number, from the same read; undefined when there is no answer. */
+export async function specNumbers(key: string): Promise<Map<number, number> | undefined> {
+  return (await readVersions(key))?.numbers;
+}
+
+async function readVersions(key: string) {
   const res = await fetch(`apps/contracts/contracts/${encodeURIComponent(key)}`).catch(() => undefined);
   if (!res?.ok) return undefined;
-  const body = (await res.json().catch(() => ({}))) as { versions?: Array<{ artifact: number; status: VersionStatus }> };
-  return body.versions && new Map(body.versions.map((v) => [v.artifact, v.status]));
+  const body = (await res.json().catch(() => ({}))) as { versions?: Array<{ artifact: number; version: number; status: VersionStatus }> };
+  return body.versions && { statuses: new Map(body.versions.map((v) => [v.artifact, v.status])), numbers: new Map(body.versions.map((v) => [v.artifact, v.version])) };
 }

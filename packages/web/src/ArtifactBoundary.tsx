@@ -13,7 +13,7 @@ export class ArtifactBoundary extends Component<{ artifact: SealedArtifact; chil
   }
   render() {
     if (!this.state.failed) return this.props.children;
-    const json = parseJson(this.props.artifact.content);
+    const json = parseJson(this.props.artifact.content ?? '');
     return (
       <div role="alert" className="flex flex-col gap-2 text-[13px]">
         <p className="m-0 text-danger">This couldn't be drawn. Here is what was saved.</p>

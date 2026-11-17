@@ -112,13 +112,14 @@ function Body({ r, verdict, a, outdated }: { r: Review; verdict: string; a: Seal
       <div className={outdated ? 'opacity-60' : undefined}>{r.items.map((f, i) => <FindingRow key={i} f={f} />)}</div>
       <List label="Verified" items={r.verified} />
       <List label="Notes" items={r.notes} />
-      <Footer a={a} md={a.content} />
+      <Footer a={a} md={a.content ?? ''} />
     </section>
   );
 }
 
 /** The review as a card; undefined for a sealed text that is not a review. */
 export function reviewCard(a: SealedArtifact, outdated = false): ReactNode | undefined {
+  if (a.content === undefined) return undefined;
   const r = parseReview(a.content);
   return r.verdict ? <Body r={r} verdict={r.verdict} a={a} outdated={outdated} /> : undefined;
 }

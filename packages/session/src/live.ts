@@ -70,7 +70,8 @@ async function watchStanding(session: Session, ws: WebSocket) {
     type: 'standing', questions: pendingQuestions(questions?.value), failures: failedRows(failures?.value),
     approvals: Object.entries(approvals?.value?.items ?? {}).filter(([, a]) => !a.verdict && !a.withdrawn).map(([id, a]) => ({ id, tool: a.tool, args: a.args, requestedAt: a.requestedAt })),
   });
-  const ledger = () => send({ type: 'artifacts', artifacts: Object.values(artifacts?.value?.kinds ?? {}).flatMap((k) => k.versions) });
+  // Only a kind's newest version carries content; a reader loads an older one on demand over the Sessions API.
+  const ledger = () => send({ type: 'artifacts', artifacts: Object.values(artifacts?.value?.kinds ?? {}).flatMap((k) => k.versions.map(({ content, ...row }, i) => (i === k.versions.length - 1 ? { ...row, content } : row))) });
   standing();
   ledger();
   for (const watch of [questions, failures, approvals]) watch?.start(async () => void standing());
@@ -120,7 +121,7 @@ async function stream(session: Session, ws: WebSocket, caller: Caller) {
 }
 
 export function liveUpgrade(session: Session) {
-  // The artifacts frame carries every sealed version's document, megabytes for a long contract; deflate takes about 4x off it.
+  // The artifacts frame carries each kind's newest document, a long contract's hundreds of kilobytes; deflate takes about 4x off it.
   const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + MAX_IMAGES * MAX_IMAGE_CHARS + 1024, perMessageDeflate: { threshold: 1024 } });
   return (req: IncomingMessage, socket: Duplex, head: Buffer, who?: Principal) => {
     if (req.url !== '/ws') return socket.destroy();
