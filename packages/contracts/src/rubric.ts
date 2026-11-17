@@ -10,6 +10,7 @@ import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
 import { commentProblems } from './answered.ts';
+import { safeClaims, unnamedBreaks } from './breaks.ts';
 import { FACT_LIMIT, factProblems, type Fact } from './facts.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent } from './spec.ts';
 
@@ -86,7 +87,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
   return out;
 }
 
-type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; unanswered?: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
+type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; unanswered?: string[]; breaking: Array<{ id: string; text: string; operation?: string; path?: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, its workspace's files, and the
@@ -197,7 +198,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility, baseline } = spec;
-  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
+  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text, operation, path }) => ({ id, text, operation, path })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
   const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
     facts: JSON.stringify(facts),
@@ -324,18 +325,22 @@ function linksResolve(_a: string, ev: Evidence): CodeResult {
   return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
 }
 
+// Break by break: an entry must name each place the kind's diff found, and a safe note that names an unnamed one is reported with it.
 function breakingNamed(_a: string, ev: Evidence): CodeResult {
   const { breaking, compatibility } = state(ev);
   if (!breaking.length) return { met: 1 };
   const named = compatibility?.breaking ?? [];
-  const bare = named.filter((b) => !b.callers?.length);
-  const ok = named.length > 0 && !bare.length;
-  return { met: ok ? 1 : 0, detail: ok ? undefined : `the kind's diff found breaking changes (${list(breaking.map((b) => b.text))}); compatibility.breaking must list each with the callers it breaks, found by reading the code that calls it` };
+  const unnamed = unnamedBreaks(named, breaking);
+  const out: string[] = [];
+  if (!named.length || named.some((b) => !b.callers?.length)) out.push(`the kind's diff found breaking changes (${list(breaking.map((b) => b.text))}); compatibility.breaking must list each with the callers it breaks, found by reading the code that calls it`);
+  else if (unnamed.length) out.push(`the kind's diff found breaks no compatibility.breaking entry names: ${unnamed.join(', ')}. Name each as a whole word in the what, callers or migration of the entry whose change causes it (one entry may name several), or add an entry for it`);
+  for (const c of safeClaims(compatibility?.safe ?? [], breaking, unnamed)) out.push(`compatibility.safe[${c.note}] calls ${c.places.join(', ')} safe, but the kind's diff found ${c.places.length > 1 ? 'them' : 'it'} breaking`);
+  return out.length ? { met: 0, detail: `${out.join('. ')}.` } : { met: 1 };
 }
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 8,
+  version: 9,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [

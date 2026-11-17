@@ -10,21 +10,23 @@ import { listedBreaks, type ContractSpec, type Listed } from './spec.ts';
 /** One break the contracts app's code checker found between the approved version and this one. */
 export type Break = { id?: string; text: string; operation?: string; path?: string };
 
-// A TypeScript break's path is `/Export`; the export's name is how a person knows it.
-const where = (b: Break) => `${b.operation ?? ''} ${(b.path ?? '').replace(/^\/(?=[A-Za-z_$][\w$]*$)/, '')}`.trim() || b.text;
+// A route by its method and path, an export by its name (its path is `/Export`), a schema place by its pointer.
+const where = (b: Break) => (b.operation ? `${b.operation} ${b.path ?? ''}` : (b.path ?? '').replace(/^\/(?=[A-Za-z_$][\w$]*$)/, '')).trim() || b.text;
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// The names prose would use for a break's place: its path, and its last segment when that is an identifier (an export, a property).
+const lastIdent = (p: string) => [p.split('/').filter(Boolean).at(-1) ?? ''].filter((s) => /^[A-Za-z_$][\w$]*$/.test(s));
+// The names prose would use for a break: its path, the path's last identifier, and the last identifier of each name the checker quotes.
 function names(b: Break): string[] {
   const path = b.path ?? '';
-  const last = path.split('/').filter(Boolean).at(-1) ?? '';
-  return [...(path.length > 1 ? [path] : []), ...(/^[A-Za-z_$][\w$]*$/.test(last) ? [last] : [])];
+  const quoted = [...b.text.matchAll(/`([^`\s]+)`|"([^"\s]+)"/g)].flatMap((m) => lastIdent(m[1] ?? m[2]!));
+  return [...new Set([...(path.length > 1 ? [path] : []), ...lastIdent(path), ...quoted])];
 }
 
-/** The places the checker found a break that no listed break names, as a whole word in its what or migration. A text match, not a proof. */
+/** The places the checker found a break no listed break names as a whole word in its what, callers or migration (a nameless schema root:
+ * none listed). A text match, not a proof; the judge's packages/contracts/src/breaks.ts mirrors it, both held to test-fixtures/break-names.json. */
 export function unnamedBreaks(listed: Listed[], found: Break[]): string[] {
-  const text = listed.map((b) => `${b.what}\n${b.migration ?? ''}`).join('\n');
+  const text = listed.map((b) => [b.what, ...b.callers, b.migration ?? ''].join('\n')).join('\n');
   const said = (n: string) => new RegExp(`(^|[^\\w$])${esc(n)}($|[^\\w$])`).test(text);
-  return [...new Set(found.filter((b) => !names(b).some(said)).map(where))];
+  return [...new Set(found.filter((b) => { const ns = names(b); return ns.length ? !ns.some(said) : b.path !== '/' || !text.trim(); }).map(where))];
 }
 
 const NOUN: Record<ContractSpec['kind'], [string, string, string]> = { typescript: ['export', 'exports', 'TypeScript'], rest: ['route', 'routes', 'REST'], 'json-schema': ['place', 'places', 'JSON Schema'] };
