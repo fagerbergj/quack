@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { derivations, figures, figuresClash, namesClash, recomputes, sameFigure, sameValue } from './claims.ts';
+import { derivations, figures, figuresClash, namesClash, recomputes, sameValue } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -325,31 +325,6 @@ registerSplitter('research.claimPairs', claimPairs);
 const claims = (s: Statement) => (s.text.replace(/\[s\d+\]/g, '').match(/\p{L}{2,}/gu) ?? []).length >= 2;
 const derivedSection = (s: Statement) => s.section !== 'findings' && s.section !== 'assumptions' && claims(s);
 
-type Take = { statement: Statement; shares: string[]; findings: string[] };
-
-/** What each derived sentence takes from the findings: one take per set of findings that carry a figure (same value and unit) or a source
- *  id the sentence carries, with what links them. A sentence that shares neither with any finding takes nothing code can name. */
-function takes(report: string): Array<{ id: string; take: Take }> {
-  const fs = findingItems(report).map((f) => ({ text: f.text, figs: figures(f.text), ids: citedIds(f.text) }));
-  return statements(report).flatMap((s, i) => {
-    if (!derivedSection(s)) return [];
-    const keys = [
-      ...figures(s.text).map((x) => ({ label: x.value, with: fs.filter((f) => f.figs.some((g) => sameFigure(g, x))) })),
-      ...citedIds(s.text).map((id) => ({ label: `[${id}]`, with: fs.filter((f) => f.ids.includes(id)) })),
-    ].filter((k) => k.with.length);
-    const bySet = new Map<string, Take>();
-    for (const k of keys) {
-      const texts = k.with.map((f) => f.text);
-      const t = bySet.get(texts.join('\n')) ?? bySet.set(texts.join('\n'), { statement: s, shares: [], findings: texts }).get(texts.join('\n'))!;
-      if (!t.shares.includes(k.label)) t.shares.push(k.label);
-    }
-    return [...bySet.values()].map((take, k) => ({ id: `${i + 1}.${k + 1}`, take }));
-  });
-}
-
-// One question per sentence and the findings it names, so the model judges one piece against the findings it takes from.
-const takeChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => takes(inputs[String(o.from)]).map((t) => ({ id: t.id, text: JSON.stringify(t.take) }));
-registerSplitter('research.derivedTakes', takeChunks);
 
 /** The report's parsed form, as the research report artifact contract states it: its sections by name, the ids it cites and its findings. */
 export function parseReport(report: string): { sections: Record<string, string>; citedIds: string[]; findings: Array<{ first: string; text: string }> } {
@@ -436,7 +411,8 @@ const CONTRADICTED_WEIGHT = -4;
 const ASKS_WEIGHT = 0;
 const SUMMARY_WEIGHT = 0;
 const SELF_WEIGHT = -4;
-// Observe-only until a replay shows a clean false-positive record; then a pitfall, never a gate (#2360).
+// Observe-only until a replay shows a clean false-positive record; then a pitfall, never a gate (#2360). Code only: Clef left 70–90% of
+// "does the finding give this figure for the same thing" items unsure in every form tried, so a model check here cost time without settling.
 const DERIVED_WEIGHT = 0;
 
 // The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
@@ -447,8 +423,8 @@ const bool = (instructions: string): Question => ({ type: 'bool', instructions: 
 // a generic "Yes, this holds." beside a question about a defect can be read as the item holding or as the defect being there.
 const defect = (instructions: string, yes: string, no: string): Question => ({ type: 'choice', instructions: `${instructions}${FAIR}`, options: { yes, no } });
 
-/** How each model check of researchRubric is asked: per finding, Summary sentence, request, pair of sentences that may conflict and
- *  derived sentence, each with the context its scope names. */
+/** How each model check of researchRubric is asked: per finding with its sources' excerpts, per Summary sentence with every bullet outside
+ *  the Summary and Assumptions, of the request once with the whole report, and per pair of sentences that may conflict, with the Summary. */
 export const reportDeclaration: Declaration = {
   scopes: {
     fetched: { split: { name: 'whole', from: 'fetched' }, piece: 'ids' },
@@ -465,7 +441,6 @@ export const reportDeclaration: Declaration = {
     // The Summary names what the report compares, so two products' figures read apart; shared, the pairs pack into few decision-model requests.
     pairs: { split: { name: 'research.claimPairs', from: 'report' }, piece: 'pair', context: { summary: { name: 'whole', from: 'summary' } } },
     // Assumptions is the same for every sentence, so the sentences pack into few decision-model requests.
-    derived: { split: { name: 'research.derivedTakes', from: 'report' }, piece: 'take', context: { assumptions: { name: 'sections', from: 'report', names: ['assumptions'] } } },
   },
   checks: {
     // Clef passes findings their source does not state or states differently (a ranking, a figure, an author), so the 27B decides both.
@@ -475,9 +450,6 @@ export const reportDeclaration: Declaration = {
     summary_follows_findings: { scope: 'summary', aggregate: { name: 'all' }, question: bool("Does this sentence of the report's Summary follow from the findings shown with it?") },
     // Clef clears clean reports well but gives no reason, so only a flag goes to the judge model, which says what conflicts.
     no_self_contradiction: { scope: 'pairs', aggregate: { name: 'all', pass: ['no'] }, decisionModel: PASS_ONLY, question: defect('Do these two passages of the report give conflicting figures, dates or names for the same thing?', 'Yes: they describe the same thing, and both cannot be true.', 'No: they describe different things, or both can be true.') },
-    // Whether the findings state what the sentence takes from them, not whether its advice or comparison is sound; only the judge
-    // model's flags count, so each comes with its reason.
-    derived_facts_stated: { scope: 'derived', aggregate: { name: 'share' }, decisionModel: PASS_ONLY, question: bool('Do the findings shown state what this sentence of the report says about the figures and sources it shares with them (listed under "shares")?') },
   },
 };
 
@@ -504,7 +476,6 @@ export const researchRubric: Rubric = {
     { id: 'derived_grounded', checks: [
       { id: 'derived_arithmetic', label: "A derived figure doesn't recompute", weight: DERIVED_WEIGHT, code: derivedArithmetic },
       { id: 'derived_inputs_traced', label: "A derived figure has no cited or assumed input", weight: DERIVED_WEIGHT, code: derivedInputsTraced },
-      { id: 'derived_facts_stated', label: "A derived sentence takes a figure or source fact its findings don't state", weight: DERIVED_WEIGHT },
     ] },
   ],
 };

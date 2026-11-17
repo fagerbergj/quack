@@ -48,16 +48,10 @@ test('derived_inputs_traced: a figure outside Findings is a cited finding\'s, on
   assert.equal(code('derived_inputs_traced', REPORT.replace('- 1U = 44.45 mm (EIA-310).', 'None.')).met, 3 / 13, 'without the listed constant, nothing computed from it traces');
 });
 
-test('derived_facts_stated asks one question per sentence and the findings it names by figure or source id; a sentence naming none is not asked', async () => {
+test('the derived checks are code only, at weight 0: no derived sentence becomes a model question', async () => {
   const ev = (await buildEvidence(reportDeclaration, inputsOf(REPORT, undefined, new Map(), ['s1']))).evidence;
-  assert.deepEqual(ev.derived.map((u) => u.id), ['derived 1.1', 'derived 5.1', 'derived 6.1', 'derived 7.1'], 'the Marketek price names no finding, so it is not asked');
-  assert.deepEqual(ev.derived[0].state.take, { statement: { section: 'summary', text: 'The SR24UBFFD gives 1,066.8 mm of mounting height [s1].' }, shares: ['[s1]'], findings: ['- The cabinet is 24U. [s1]', '- The Define 7 XL is 566 mm tall. [s1]'] });
-  assert.deepEqual(ev.derived[2].state.take, { statement: { section: 'verdict', text: 'Above the tower: 1,066.8 − 566 = 500.8 mm = 11.27 U.' }, shares: ['566'], findings: ['- The Define 7 XL is 566 mm tall. [s1]'] }, 'only the finding with its 566, not every finding');
-  assert.deepEqual(ev.derived.map((u) => u.shared), Array(4).fill({ assumptions: '- 1U = 44.45 mm (EIA-310).' }));
-  const two = '## Summary\nx\n## Assumptions\nNone.\n## Findings\n- The Tripp Lite costs $1,512.61. [s1]\n- The APC costs $2,200. [s2]\n## Verdict\n- At $1,512.61 against $2,200, buy the Tripp Lite.\n- Measure your doorway before ordering.\n';
-  const takes = (await buildEvidence(reportDeclaration, inputsOf(two, undefined, new Map(), ['s1', 's2']))).evidence.derived;
-  assert.deepEqual(takes.map((u) => [u.id, (u.state.take as { shares: string[] }).shares]), [['derived 5.1', ['1512.61']], ['derived 5.2', ['2200']]], 'a sentence taking from two findings is asked of each; advice naming none is not asked');
-  assert.deepEqual(['derived_arithmetic', 'derived_inputs_traced', 'derived_facts_stated'].map((id) => researchRubric.criteria.flatMap((c) => c.checks).find((k) => k.id === id)!.weight), [0, 0, 0]);
+  assert.equal(ev.derived, undefined);
+  assert.deepEqual(researchRubric.criteria.find((c) => c.id === 'derived_grounded')!.checks.map((k) => [k.id, k.weight, !!k.code]), [['derived_arithmetic', 0, true], ['derived_inputs_traced', 0, true]]);
 });
 
 test('derived_inputs_traced: each false-positive class of the recorded reports traces at its cause', () => {
@@ -73,9 +67,7 @@ test('derived_inputs_traced: each false-positive class of the recorded reports t
   assert.equal(asked.met, 0, 'a figure from the request is still untraced, as the owner decided');
 });
 
-test('derived_facts_stated does not ask the labels the sentence splitter cuts off a line, only the sentence that follows them', async () => {
+test('derived_inputs_traced does not trace the labels the sentence splitter cuts off a line', () => {
   const report = '## Summary\nThe Tripp Lite suits a dusty shop. [s1]\n## Assumptions\nNone.\n## Findings\n- Eight fans pull air through two filters. [s1]\n## Analysis\n- **3. Ventilation.** The door fans pull air in through the filters [s1].\n- **2.**\n';
-  const ev = (await buildEvidence(reportDeclaration, inputsOf(report, undefined, new Map(), ['s1']))).evidence;
-  assert.deepEqual(ev.derived.map((u) => (u.state.take as { statement: { text: string } }).statement.text), ['The Tripp Lite suits a dusty shop. [s1]', 'Ventilation.** The door fans pull air in through the filters [s1].']);
   assert.equal(code('derived_inputs_traced', report).met, 1, 'the "2" of a list label is no figure to trace');
 });

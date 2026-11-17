@@ -42,8 +42,6 @@ const yearOf = (v: string) => (/^\d{4}-\d\d-\d\d$/.test(v) ? v.slice(0, 4) : v);
 export const sameValue = (a: string, b: string) => a === b || yearOf(a) === b || a === yearOf(b) || Math.abs(Number(a) - Number(b)) < 10 ** -Math.min(decimals(a), decimals(b)) / 2 + 1e-9;
 
 const meets = (a: Set<string>, b: Set<string>) => [...a].some((w) => b.has(w));
-/** One figure in two passages: the same value at the precision shown, with a unit word in common unless one is written bare ("566 + 460"). */
-export const sameFigure = (a: Figure, b: Figure) => sameValue(a.value, b.value) && (!a.unit.size || !b.unit.size || meets(a.unit, b.unit));
 const NEAR = 2;
 
 /** Two figures of one quantity with different values: a unit word in common and two words nearby in common, and neither passage also
