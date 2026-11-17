@@ -32,7 +32,7 @@ const jf = { kind: 'person', name: 'jf' } as const;
 async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof specInputs>, reopen?: string) {
   const faux = fauxProvider({ models: [{ id: 'stub' }] });
   const queue = [...script];
-  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /never asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
+  faux.setResponses(Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /implement the non-goal|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : queue.shift()!(c))));
   const models = buildModels(parseDeployment({ defaultModel: 'unused/m', providers: { unused: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 1024 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
