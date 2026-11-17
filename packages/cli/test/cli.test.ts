@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
@@ -9,6 +11,7 @@ import { WebSocketServer } from 'ws';
 import { client } from '../src/api.ts';
 import { run } from '../src/main.ts';
 
+const EVAL = fileURLToPath(new URL('../../eval/src/main.ts', import.meta.url));
 const money = { currencyCode: 'USD', amountMicros: '0' };
 const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const row = (key: string, agent: string, state: string, extra: object = {}) => ({ key, agent, state, createdAt: 't', lastActivity: 't', cost: money, tokens, pendingAsks: 0, ...extra });
@@ -403,9 +406,22 @@ describe('quack', () => {
     assert.equal((await cli(['completion', 'fish'])).code, 1);
   });
 
-  it('eval hands its arguments to the eval package untouched', async () => {
-    const r = await cli(['eval', '--concurrency=2', 'dataset'], { LANGFUSE_BASE_URL: '', PATH: process.env.PATH ?? '' });
-    assert.equal(r.code, 1);
+  it('eval hands its arguments to the eval package untouched, with no stdin, and returns its exit code', async () => {
+    const child = new EventEmitter();
+    let seen: unknown[] = [];
+    const code = run(['eval', '--concurrency=2', 'dataset'], { PATH: '/bin' }, { stdout: () => {}, stderr: () => {} }, (...a) => ((seen = a), child as never));
+    child.emit('close', 3);
+    assert.equal(await code, 3);
+    assert.deepEqual(seen, [process.execPath, [EVAL, '--concurrency=2', 'dataset'], { stdio: ['ignore', 'inherit', 'inherit'], env: { PATH: '/bin' } }]);
+  });
+
+  it('eval stops its child when this process is told to end, and leaves no listener behind', async () => {
+    const before = process.listenerCount('SIGHUP');
+    const child = Object.assign(new EventEmitter(), { kill: () => child.emit('close', null) });
+    const code = run(['eval', 'run'], {}, { stdout: () => {}, stderr: () => {} }, () => child as never);
+    process.emit('SIGHUP');
+    assert.equal(await code, 1);
+    assert.equal(process.listenerCount('SIGHUP'), before);
   });
 
   it('export writes the session file, named from the key by default', async () => {

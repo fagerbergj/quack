@@ -3,19 +3,13 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadManifests } from '@quack/runtime/catalog';
-import { adaptersOf, blocksOf, servicesOf } from './adapters.ts';
 import { itemFrom, type Label } from './dataset.ts';
 import type { Policy, Verdict } from './driver.ts';
 import { langfuse, type DatasetItem } from './langfuse.ts';
-import { readSession } from './record.ts';
-import { candidateAt, replay, type ItemInput, type ReplayResult } from './replay.ts';
+import type { ItemInput, ReplayResult } from './replay.ts';
 import { eachArm } from './pool.ts';
 import { publish, scoresOf, summarize } from './report.ts';
 
-const adapters = adaptersOf(await loadManifests());
-const blocks = blocksOf(adapters);
-const served = new Set(Object.keys(servicesOf(adapters)));
 const MIN_CASES = 20;
 const USAGE = 'usage: main.ts dataset <dataset|items.json> <agent> <good|bad|-> <session-dir>... | run [--concurrency N] [--arm label=ref]... [--guides dir]... [--verdict approve|stop|reject:<reason>]... [--suggested] [--out file] <dataset|items.json> <run-name> <deployment.json> <agent.json> [item-id...]';
 
@@ -30,6 +24,12 @@ const { values, positionals } = parseArgs({ allowPositionals: true, options: { c
 const concurrency = Number(values.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error(`--concurrency must be a positive integer, got ${values.concurrency}`);
 const [command, dataset, ...rest] = positionals;
+// Checked before every extension loads, so a usage error exits at once.
+if ((command !== 'dataset' && command !== 'run') || !dataset || rest.length < 3) throw new Error(USAGE);
+const [{ loadManifests }, { adaptersOf, blocksOf, servicesOf }, { readSession }, { candidateAt, replay }] = await Promise.all([import('@quack/runtime/catalog'), import('./adapters.ts'), import('./record.ts'), import('./replay.ts')]);
+const adapters = adaptersOf(await loadManifests());
+const blocks = blocksOf(adapters);
+const served = new Set(Object.keys(servicesOf(adapters)));
 // A .json dataset is a local file of items, so a run needs no Langfuse and publishes nothing.
 const local = dataset?.endsWith('.json');
 const lf = () => langfuse({ baseUrl: env('LANGFUSE_BASE_URL'), publicKey: env('LANGFUSE_PUBLIC_KEY'), secretKey: env('LANGFUSE_SECRET_KEY') });
@@ -96,6 +96,5 @@ async function run(runName: string, deployment: string, agent: string, only: str
   if (failures.length) process.exitCode = 1;
 }
 
-if (command === 'dataset' && dataset && rest.length >= 3) await addItems(rest[0], rest[1], rest.slice(2));
-else if (command === 'run' && dataset && rest.length >= 3) await run(rest[0], rest[1], rest[2], rest.slice(3));
-else throw new Error(USAGE);
+if (command === 'dataset') await addItems(rest[0], rest[1], rest.slice(2));
+else await run(rest[0], rest[1], rest[2], rest.slice(3));

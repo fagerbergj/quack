@@ -1,5 +1,6 @@
 // Preloaded into every node:test file process: a file whose handles keep it alive after its tests fails, naming them.
 // It replaces --test-force-exit, which ended such a process silently and hid the leak.
+import { ChildProcess } from 'node:child_process';
 import { after } from 'node:test';
 import { relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +27,11 @@ if (process.env.NODE_TEST_CONTEXT) {
     setTimeout(() => {
       leaked = true;
       const { code, message } = leakReport(file, process.getActiveResourcesInfo());
-      process.stderr.write(`${message}\n`);
+      // A child left running holds this file's output pipes, and the runner reads them to EOF: it would wait forever.
+      // shortcut: kills direct children only; a grandchild holding the pipes still stalls the run until the CI job timeout.
+      const children = (process as unknown as { _getActiveHandles(): unknown[] })._getActiveHandles().filter((h) => h instanceof ChildProcess);
+      for (const c of children) c.kill('SIGKILL');
+      process.stderr.write(`${message}${children.map((c) => `; killed child ${c.pid} (${c.spawnargs.join(' ')})`).join('')}\n`);
       process.exit(code);
     }, GRACE_MS).unref();
   });
