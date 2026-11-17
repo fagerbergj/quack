@@ -142,12 +142,33 @@ test('a long ledger rides the socket deflated and arrives whole', async () => {
   await nextFrame(ws, (f) => f.type === 'artifacts');
   const sealed = nextFrame(ws, (f) => f.type === 'artifacts' && f.artifacts.length === versions.length);
   await session.root.commit(async (tx) => { (await tx.doc(Artifacts, session.root.id)).kinds['demo.note'] = { versions }; }, BACKGROUND_CONTEXT);
-  assert.deepEqual((await sealed).artifacts, versions);
+  assert.deepEqual((await sealed).artifacts, versions.map(({ content, ...row }, i) => (i === versions.length - 1 ? { ...row, content } : row)));
   const negotiated = ws.extensions;
   ws.close();
   await new Promise((r) => server.close(r));
   await session.close();
   assert.match(negotiated, /permessage-deflate/);
+});
+
+test('the artifacts frame carries content for the newest version of each kind only, and keeps an empty one', async () => {
+  const models = createModels();
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await mkdtemp(join(tmpdir(), 'quack-live-')), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
+  await nextFrame(ws, (f) => f.type === 'artifacts');
+  const row = (kind: string, version: number, content: string) => ({ kind, version, hash: `${kind}${version}`, content, sealedAt: version, verdict: null, outcome: `v${version}` });
+  const kinds = { a: { versions: [row('a', 1, 'old'), row('a', 2, 'new')] }, b: { versions: [row('b', 1, 'old'), row('b', 2, '')] } };
+  const sealed = nextFrame(ws, (f) => f.type === 'artifacts' && f.artifacts.length === 4);
+  await session.root.commit(async (tx) => { Object.assign((await tx.doc(Artifacts, session.root.id)).kinds, kinds); }, BACKGROUND_CONTEXT);
+  const { artifacts } = await sealed;
+  assert.deepEqual(artifacts.map((a: Record<string, unknown>) => [a.kind, a.version, 'content' in a ? a.content : 'absent', a.outcome]), [['a', 1, 'absent', 'v1'], ['a', 2, 'new', 'v2'], ['b', 1, 'absent', 'v1'], ['b', 2, '', 'v2']]);
+  ws.close();
+  await new Promise((r) => server.close(r));
+  await session.close();
 });
 
 test('a gated call\'s approval and each sealed artifact ride the socket the moment they are committed', async () => {

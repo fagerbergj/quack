@@ -3,6 +3,7 @@ import { checkFailed, listAsks, type Approval, type Ask, type SealedArtifact, ty
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import { CheckResult } from '../../CheckResult.tsx';
 import type { StudioProps } from '../../extension.ts';
+import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
 import { ApproveSheet, AskSheet, prim, sec, useDecide, type Break, type Pending } from './Approval.tsx';
@@ -12,7 +13,7 @@ import { JsonSchemaView } from './JsonSchemaView.tsx';
 import { RestView } from './RestView.tsx';
 import { ReviewContext, Sheet, Stepper, useStepper } from './Review.tsx';
 import { changeItems, markBreaks, type Item } from './review.ts';
-import { parseSpec, type ContractSpec } from './spec.ts';
+import { parseSpec, specVersion, type ContractSpec } from './spec.ts';
 import { contractVersions, type VersionStatus } from './status.ts';
 import { TypeScriptView, useModel } from './TypeScriptView.tsx';
 
@@ -24,8 +25,8 @@ export function Standalone({ spec, verdict }: { spec: ContractSpec; verdict?: Ve
 }
 const NO_ITEMS: Item[] = [];
 
-/** One sealed spec artifact and the spec it holds. */
-export type Version = { a: SealedArtifact; spec: ContractSpec };
+/** One sealed spec artifact and the number a person knows it by. Its spec is read from its content, which only the newest version carries. */
+export type Version = { a: SealedArtifact; n: number };
 /** Where a version stands with the person, from the contracts app. */
 export type StatusOf = (v: Version) => VersionStatus;
 const offered = (p: Approval) => (p.tool === 'propose_contract' ? (p.args as { artifact?: number } | null)?.artifact : undefined);
@@ -81,23 +82,31 @@ export function approvalState(s: Standing & { isApproved: boolean }): State {
 
 const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
 // A person knows a version by its number; when several seals share one, each is a draft of it, counted from 1.
-const draftOf = (v: Version, all: Version[]) => { const same = all.filter((x) => x.spec.version === v.spec.version); return same.length > 1 ? same.indexOf(v) + 1 : undefined; };
-const nameOf = (v: Version, all: Version[]) => `Version ${v.spec.version}${draftOf(v, all) ? `, draft ${draftOf(v, all)}` : ''}`;
-const short = (v: Version, all: Version[]) => `v${v.spec.version}${draftOf(v, all) ? ` draft ${draftOf(v, all)}` : ''}`;
+const draftOf = (v: Version, all: Version[]) => { const same = all.filter((x) => x.n === v.n); return same.length > 1 ? same.indexOf(v) + 1 : undefined; };
+const nameOf = (v: Version, all: Version[]) => `Version ${v.n}${draftOf(v, all) ? `, draft ${draftOf(v, all)}` : ''}`;
+const short = (v: Version, all: Version[]) => `v${v.n}${draftOf(v, all) ? ` draft ${draftOf(v, all)}` : ''}`;
 
-// A TypeScript spec is compared through its parsed declarations, which load with the parser; until then there is no comparison.
-function useDiff(from: Version | undefined, to: Version) {
-  const was = useModel(from?.spec.kind === 'typescript' ? (from.spec.document as string) : '');
-  const now = useModel(to.spec.kind === 'typescript' ? (to.spec.document as string) : '');
+/** A version's spec: the newest is already in hand, an older one is loaded on demand (`wait` says how that stands). */
+function useSpec(sessionKey: string, v: Version | undefined, newest: Version, spec: ContractSpec): { spec?: ContractSpec; wait: Content } {
+  const own = v?.a === newest.a;
+  const wait = useContent(sessionKey, own ? undefined : v?.a);
+  const parsed = useMemo(() => (wait.content === undefined ? undefined : parseSpec(wait.content)), [wait.content]);
+  return { spec: own ? spec : parsed, wait };
+}
+
+// A TypeScript spec is compared through its parsed declarations, which load with the parser; until then, or until the older version's content is there, there is no comparison.
+function useDiff(from: ContractSpec | undefined, to: ContractSpec | undefined) {
+  const was = useModel(from?.kind === 'typescript' ? (from.document as string) : '');
+  const now = useModel(to?.kind === 'typescript' ? (to.document as string) : '');
   return useMemo<Diff | undefined>(() => {
-    if (!from || (from.spec.kind === 'typescript' && !was) || (to.spec.kind === 'typescript' && !now)) return undefined;
-    return diffUnits(units(from.spec, was ?? undefined), units(to.spec, now ?? undefined));
+    if (!from || !to || (from.kind === 'typescript' && !was) || (to.kind === 'typescript' && !now)) return undefined;
+    return diffUnits(units(from, was ?? undefined), units(to, now ?? undefined));
   }, [from, to, was, now]);
 }
 
 const NO_BREAKS: Break[] = [];
-function useItems(diff: Diff | undefined, spec: ContractSpec, found: Break[] = NO_BREAKS) {
-  return useMemo(() => (diff ? changeItems(diff, spec, found) : []), [diff, spec, found]);
+function useItems(diff: Diff | undefined, spec: ContractSpec | undefined, found: Break[] = NO_BREAKS) {
+  return useMemo(() => (diff && spec ? changeItems(diff, spec, found) : []), [diff, spec, found]);
 }
 
 /** The status line and, when the newest version waits on the person, Approve and Ask for changes; pinned to the bottom of the pane. */
@@ -157,10 +166,10 @@ function staleRequest(approvals: Approval[], versions: Version[], newest: Versio
 
 const layout = 'mx-auto flex min-h-full w-full max-w-[1100px] min-w-0 flex-col gap-5 px-4 pt-3 sm:px-5';
 
-type Opened = { sessionKey: string; versions: Version[]; newest: Version; status?: StatusOf; approvals: Approval[]; running: boolean; decided: (id: string) => void; rejected?: Rejection; decisions: ReactNode };
+type Opened = { sessionKey: string; versions: Version[]; newest: Version; spec: ContractSpec; status?: StatusOf; approvals: Approval[]; running: boolean; decided: (id: string) => void; rejected?: Rejection; decisions: ReactNode };
 
 /** A contract with at least one version: the changes against the approved version (or any two picked), the view, and the decision bar. */
-function Contract({ sessionKey, versions, newest, status, approvals, running, decided, rejected, decisions }: Opened) {
+function Contract({ sessionKey, versions, newest, spec, status, approvals, running, decided, rejected, decisions }: Opened) {
   const [picked, pick] = useState<{ from?: number; to: number }>();
   const top = useRef<HTMLDivElement>(null);
   const proposal = approvals.find((a) => offered(a) === newest.a.version);
@@ -170,21 +179,24 @@ function Contract({ sessionKey, versions, newest, status, approvals, running, de
   const base = approvedV !== newest ? approvedV : undefined;
   const from = picked ? versions.find((v) => v.a.version === picked.from && v !== to) : base;
   const found = approvedV ? (proposal?.args as { breaks?: Break[] } | null)?.breaks : undefined;
-  const diff = useDiff(from, to), decisionDiff = useDiff(base, newest);
-  const items = useItems(diff, to.spec, to === newest ? found : undefined);
-  const decisionItems = useItems(decisionDiff, newest.spec, found);
+  const toSpec = useSpec(sessionKey, to, newest, spec), fromSpec = useSpec(sessionKey, from, newest, spec), baseSpec = useSpec(sessionKey, base, newest, spec);
+  const diff = useDiff(fromSpec.spec, toSpec.spec), decisionDiff = useDiff(baseSpec.spec, spec);
+  const items = useItems(diff, toSpec.spec, to === newest ? found : undefined);
+  const decisionItems = useItems(decisionDiff, spec, found);
   const review = useStepper(items, from && short(from, versions), short(to, versions), true);
   const marks = useMemo(() => diff && markBreaks(diff.marks, items), [diff, items]);
   const name = short(newest, versions);
   const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest), proposal, approved: approvedV && short(approvedV, versions), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
-  const pending: Pending = { spec: newest.spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base, versions), name };
+  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base, versions), name };
   return (
     <div ref={top} className={layout}>
       <ReviewContext value={review}>
         {items.length > 0 && <Stepper onTop={() => top.current?.scrollIntoView?.({ block: 'start' })} />}
         <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} auto={picked ? undefined : 'the approved version'} pick={pick} />
+        {from && <ContentState what={short(from, versions)} {...fromSpec.wait} />}
         <DiffContext value={marks}>
-          <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[to.spec.kind], { key: to.a.version, spec: to.spec, verdict: to.a.verdict })}</ArtifactBoundary>
+          {toSpec.spec ? <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[toSpec.spec.kind], { key: to.a.version, spec: toSpec.spec, verdict: to.a.verdict })}</ArtifactBoundary>
+            : <ContentState what={short(to, versions)} {...toSpec.wait} />}
         </DiffContext>
       </ReviewContext>
       {decisions}
@@ -196,11 +208,13 @@ function Contract({ sessionKey, versions, newest, status, approvals, running, de
 /** The contract as it stands, live beside the conversation: one status line for where it stands, the changes since the approved version
  * first, the map and the spec beneath it, and Approve or Ask for changes once the judge has passed the newest version and it is up for approval. */
 export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, questions, brief, activity }: StudioProps) {
-  const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
+  const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').map((a) => ({ a, n: specVersion(a) ?? a.version })), [artifacts]);
   const newest = versions.at(-1);
+  // Only the newest version carries its content on the socket; one that cannot be drawn is no contract yet.
+  const spec = useMemo(() => (newest?.a.content === undefined ? undefined : parseSpec(newest.a.content)), [newest?.a.content]);
   const status = useStatus(sessionKey, artifacts, approvals, running);
   const rejected = useRejection(sessionKey, newest?.a.version ?? 0, !!newest && status?.(newest) === 'changes_requested');
-  const decisions = <Decided sessionKey={sessionKey} asked={questions.length} running={running} open={!newest} />;
-  if (!newest) return <div className={`${layout} pb-10`}><Progress activity={activity} brief={brief} waiting={questions.length > 0} />{decisions}</div>;
-  return <Contract sessionKey={sessionKey} versions={versions} newest={newest} status={status} approvals={approvals} running={running} decided={decided} rejected={rejected} decisions={decisions} />;
+  const decisions = <Decided sessionKey={sessionKey} asked={questions.length} running={running} open={!newest || !spec} />;
+  if (!newest || !spec) return <div className={`${layout} pb-10`}><Progress activity={activity} brief={brief} waiting={questions.length > 0} />{decisions}</div>;
+  return <Contract sessionKey={sessionKey} versions={versions} newest={newest} spec={spec} status={status} approvals={approvals} running={running} decided={decided} rejected={rejected} decisions={decisions} />;
 }

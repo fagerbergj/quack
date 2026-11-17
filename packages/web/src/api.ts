@@ -1,4 +1,5 @@
 // Every call to the distributor, so its contract lives in one place.
+import { escapeTerm } from '@quack/sdk/query';
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
 /** What a session has spent: tokens by kind, and `cost` in dollars at the deployment's cloud-equivalent prices (0 when unpriced). */
 export type Spend = { cost: number; tokens: Tokens };
@@ -23,7 +24,7 @@ export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' 
 export type Verdict = { passed: boolean; /** The judge released it unpassed after its revision limit. */ limitReached?: boolean; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
 /** A sealed version as the session socket sends it; `verdict` is null while the judge works and absent when read over REST, which carries none. */
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict?: Verdict | null; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string };
+export type SealedArtifact = { kind: string; version: number; hash: string; /** Only the newest version of a kind carries it on the live socket; see useContent. */ content?: string; sealedAt: number; verdict?: Verdict | null; /** The kind's own reading of the version, stored at seal (a spec's "v3", a review's verdict). */ outcome?: string; links?: ArtifactLink[]; summary?: string; /** What the version was written against (a review's head commit). */ basis?: string };
 
 export async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -61,6 +62,16 @@ export type Artifact = { session: string; kind: string; version: number; hash: s
 /** A session's sealed versions with their content, newest first. */
 export const listArtifacts = async (key: string): Promise<SealedArtifact[]> =>
   (await listAll<Artifact>(`${base(key)}/artifacts`, 'artifacts')).map((a) => ({ kind: a.kind, version: a.version, hash: a.hash, content: a.content ?? '', sealedAt: Date.parse(a.sealedAt), summary: a.summary }));
+/** One sealed version's content, from the Sessions API; the socket carries it for a kind's newest version only. */
+export async function versionContent(key: string, kind: string, version: number): Promise<string> {
+  const q = new URLSearchParams({ q: `kind:${escapeTerm(kind)} AND version:${version}`, pageSize: '1' });
+  const a = (await json<{ artifacts?: Artifact[] }>(await fetch(`${base(key)}/artifacts?${q}`))).artifacts?.[0];
+  if (a?.content === undefined) throw new Error('That version is no longer in its session.');
+  return a.content;
+}
+/** One kind's sealed versions in a session, newest first and without content or verdicts: the list a version menu needs. */
+export const listVersions = async (key: string, kind: string): Promise<SealedArtifact[]> =>
+  (await listAllArtifacts(`session:${escapeTerm(key)} AND kind:${escapeTerm(kind)}`)).map((a) => ({ kind: a.kind, version: a.version, hash: a.hash, sealedAt: Date.parse(a.sealedAt), summary: a.summary }));
 /** Sealed versions across sessions, without content, newest first. */
 export const listAllArtifacts = (q?: string) => listAll<Artifact>('artifacts', 'artifacts', q);
 /** Sealed versions as the session socket sends them, with the judge's verdicts. */

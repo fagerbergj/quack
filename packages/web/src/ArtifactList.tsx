@@ -40,7 +40,7 @@ export function artifactQuery(text: string, f: FilterValues, now: number): strin
 
 // A kind no extension names reads as its words rather than as the generic "Result".
 const kindLabel = (kind: string) => {
-  const name = artifactName({ kind, content: '' } as SealedArtifact);
+  const name = artifactName({ kind } as SealedArtifact);
   return name === 'Result' ? kind.replace(/[._-]+/g, ' ') : name;
 };
 const fieldsOf = (kinds: string[]): FilterField[] => [

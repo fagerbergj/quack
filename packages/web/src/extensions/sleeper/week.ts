@@ -28,7 +28,7 @@ export function wanted(all: Sess[], week: number, current: number): Sess[] {
 function parse(s: Sess, all: SealedArtifact[]): Result | undefined {
   const artifact = all.filter((a) => a.kind === 'sleeper.cards').sort((a, b) => b.version - a.version)[0];
   try {
-    return artifact ? { ...s, artifact, card: JSON.parse(artifact.content) } : undefined;
+    return artifact ? { ...s, artifact, card: JSON.parse(artifact.content ?? '') } : undefined;
   } catch {
     return undefined;
   }

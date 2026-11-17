@@ -10,7 +10,7 @@ import type { Result } from './week.ts';
 export function cardOf(a: SealedArtifact): Record<string, any> | undefined {
   if (a.kind !== 'sleeper.cards') return undefined;
   try {
-    const c = JSON.parse(a.content) as Record<string, any> | null;
+    const c = JSON.parse(a.content ?? '') as Record<string, any> | null;
     return c && Object.hasOwn(JOBS, c.kind) ? c : undefined;
   } catch {
     return undefined;

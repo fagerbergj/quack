@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 import { App } from '../../App.tsx';
 import { SUPERSEDED } from '../../SessionView.tsx';
 import type { Approval, SealedArtifact, Verdict } from '../../api.ts';
-import { entry, FakeSocket, fetchMock, live, routes, snapshot, stubViewport, useHarness } from '../../test-harness.ts';
+import { byVersion, entry, Fail, FakeSocket, fetchMock, live, routes, snapshot, stubViewport, useHarness } from '../../test-harness.ts';
 import { diffUnits, units } from './diff.ts';
 import { changeItems } from './review.ts';
 import v1 from './fixtures/sleeper-schedule-v1.json';
@@ -20,7 +20,7 @@ useHarness(() => ({ 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: 
 const KEY = 'contracts%3As1';
 const pass: Verdict = { passed: true, gatesFailed: [], score: 1, checks: [] };
 const fail: Verdict = { passed: false, gatesFailed: ['justified.links_resolve'], score: 0.5, checks: [{ criterion: 'justified', id: 'links_resolve', label: "A choice's link doesn't resolve", weight: 'gate', met: 0, notes: [] }] };
-const spec = (version: number, content: object, verdict: Verdict | null = pass): SealedArtifact => ({ kind: 'contract.spec', version, hash: `h${version}`, content: JSON.stringify(content), sealedAt: version, verdict });
+const spec = (version: number, content: object, verdict: Verdict | null = pass): SealedArtifact => ({ kind: 'contract.spec', version, hash: `h${version}`, content: JSON.stringify(content), sealedAt: version, verdict, outcome: `v${(content as { version: number }).version}` });
 const approvedRec = (artifact: number, version: number): SealedArtifact => ({ kind: 'contract.approved', version: 1, hash: 'r', content: JSON.stringify({ version, artifact, note: `Approved version ${version}`, approval: 'old' }), sealedAt: 10, verdict: null });
 const proposal = (artifact: number, version: number, breaks: object[] = []) => ({ id: 'p/1', tool: 'propose_contract', args: { summary: `Approve GET /apps/sleeper/schedule v${version}`, version, artifact, hash: `h${artifact}`, findings: [], breaks }, requestedAt: 20 });
 
@@ -419,4 +419,42 @@ test('the chat names each seal by the contract version a person knows, and its d
   const lines = await waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(3); return l; });
   expect(lines.map((l) => l.textContent?.match(/Version \d+( · draft \d)?/)?.[0])).toEqual(['Version 15 · draft 1', 'Version 15 · draft 2', 'Version 16']);
   expect(within(lines[1]!).getByRole('button', { name: 'Open Spec version 15, draft 2' })).toBeInTheDocument();
+});
+
+// What the session sends now: only the newest version of a kind carries its content.
+const thin = (artifacts: SealedArtifact[]) => artifacts.map((a, i) => (a.kind === 'contract.spec' && artifacts.findLastIndex((x) => x.kind === 'contract.spec') !== i ? (({ content: _, ...row }) => row)(a) : a));
+const CONTENT = `sessions/${KEY}/artifacts`;
+const contentReads = () => fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith(CONTENT));
+const olderRows = () => byVersion([{ session: 'contracts:s1', kind: 'contract.spec', version: 1, hash: 'h1', content: JSON.stringify(v1), sealedAt: '2026-01-01T00:00:00Z' }]);
+
+test('an approved idle contract opens without reading any older version', async () => {
+  routes[STATUS] = status([1, 'changes_requested'], [2, 'approved']);
+  routes[`GET /${CONTENT}`] = olderRows();
+  open(thin([spec(1, v1), approvedRec(2, 2), spec(2, v2)]));
+  await waitFor(() => expect(line()).toHaveTextContent('v2 is approved'));
+  // Opening the menu lists the older version by its outcome-derived name, still without reading it.
+  expect(await offered('from')).toEqual(['None: the whole contract', 'Version 2approved, approved', 'Version 1changes asked, changes requested']);
+  expect(contentReads()).toEqual([]);
+});
+
+test('a revision waiting on approval reads exactly the approved baseline, once, and compares against it', async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  routes[`GET /${CONTENT}`] = olderRows();
+  const { pane } = open(thin([spec(1, v1), approvedRec(1, 1), spec(2, v2)]), [proposal(2, 2)]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  expect(await within(pane).findByRole('region', { name: 'Changes against v1' })).toBeInTheDocument();
+  const reads = contentReads().map((u) => decodeURIComponent(u));
+  expect(reads).toHaveLength(1);
+  expect(reads[0]).toMatch(/version:1/);
+});
+
+test('a baseline that cannot be loaded says so and retries', async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  routes[`GET /${CONTENT}`] = new Fail(500, { title: 'Server Error', detail: 'down' });
+  const { pane } = open(thin([spec(1, v1), approvedRec(1, 1), spec(2, v2)]), [proposal(2, 2)]);
+  expect(await within(pane).findByRole('alert')).toHaveTextContent('v1 could not be loaded');
+  routes[`GET /${CONTENT}`] = olderRows();
+  await userEvent.click(within(pane).getByRole('button', { name: 'Retry' }));
+  expect(await within(pane).findByRole('region', { name: 'Changes against v1' })).toBeInTheDocument();
+  expect(within(pane).queryByRole('alert')).toBeNull();
 });

@@ -5,7 +5,7 @@ import { App } from './App.tsx';
 import { parseArtifactRoute } from './ArtifactPage.tsx';
 import { artifactHref } from './extension.ts';
 import { CHAT_DEFAULT, CHAT_MIN, clampChat, PANE_MIN, useSplit } from './Split.tsx';
-import { ask, assistant, entry, failedRun, FakeEventSource, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
+import { ask, assistant, byVersion, entry, failedRun, FakeEventSource, FakeSocket, Fail, fetchMock, item, live, routes, sess, snapshot, stubViewport, useHarness, usage, view } from './test-harness.ts';
 
 const requestOf = (sock: { sent: unknown[] }, i: number) => (sock.sent.at(i) as { requestId: string }).requestId;
 const accept = (sock: FakeSocket, i = -1) => sock.frame({ type: 'accepted', requestId: requestOf(sock, i) });
@@ -1187,10 +1187,10 @@ test('Artifacts opens one on its own page with a real URL: versions to pick, a l
     { session: 'gh:3', kind: 'github.review', version: 2, hash: 'h', sealedAt: iso(2) },
     { session: 'gh:3', kind: 'github.review', version: 1, hash: 'g', sealedAt: iso(1) },
   ] };
-  routes['GET /sessions/gh%3A3/artifacts'] = { artifacts: [
+  routes['GET /sessions/gh%3A3/artifacts'] = byVersion([
     { session: 'gh:3', kind: 'github.review', version: 2, hash: 'h', content: 'final review', sealedAt: iso(2) },
     { session: 'gh:3', kind: 'github.review', version: 1, hash: 'g', content: 'first draft', sealedAt: iso(1) },
-  ] };
+  ]);
   location.hash = '#/artifacts';
   render(<App />);
   const open = await screen.findByRole('link', { name: 'Open Old work' });
@@ -1202,6 +1202,10 @@ test('Artifacts opens one on its own page with a real URL: versions to pick, a l
   await waitFor(() => expect(location.hash).toBe('#/s/gh%3A3/a/github.review'));
   const main = within(screen.getByRole('main'));
   expect(await main.findByText('final review')).toBeInTheDocument();
+  // Only the shown version's content is fetched, never the whole session's list.
+  const reads = () => fetchMock.mock.calls.map(([u]) => decodeURIComponent(String(u))).filter((u) => u.startsWith('sessions/gh:3/artifacts'));
+  expect(reads()).toHaveLength(1);
+  expect(reads()[0]).toMatch(/kind:github.*version:2/);
   expect(main.getByRole('heading', { name: 'Review' })).toBeInTheDocument();
   expect(main.getByText('Old work')).toBeInTheDocument();
   expect(main.getByRole('link', { name: 'Open its session' })).toHaveAttribute('href', '#/s/gh%3A3');
