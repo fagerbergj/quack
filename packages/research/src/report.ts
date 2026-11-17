@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { figures, figuresClash, namesClash } from './claims.ts';
+import { contentWords, derivations, figures, figuresClash, namesClash, recomputes, sameValue } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -289,13 +289,16 @@ type Placed = Statement & { line: string; before?: string };
 function placed(report: string): Placed[] {
   const { preamble, sections } = splitReport(report);
   return [{ name: '', lines: preamble }, ...sections].flatMap((s) => {
-    const lines = fenced(s.lines.join('\n')).filter(([line, code]) => !code && !/^\s*#/.test(line)).map(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').trim());
+    // A line that opens with a source's mark lists that source ("[s3] Seemann, 2021, p. 4"), as a Sources section does: it claims nothing.
+    const lines = fenced(s.lines.join('\n')).filter(([line, code]) => !code && !/^\s*#/.test(line) && !/^\s*(?:[-*]|\d+\.)?\s*\[s\d+\]/.test(line)).map(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').trim());
     const sentences = lines.flatMap((line) => line.split(/(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u)
       .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(/\[s\d+\]/g, '')))
       .map((t) => ({ section: s.name, text: t.trim(), line })));
     return sentences.map((x, k) => ({ ...x, before: sentences[k - 1]?.text }));
   });
 }
+
+const statements = (report: string): Statement[] => placed(report).map(({ section, text }) => ({ section, text }));
 
 /** The sentence compared, and apart from it the text around it, so one that opens "It has…" keeps its subject; context is never compared. */
 function side(p: Placed) {
@@ -316,6 +319,30 @@ function claimPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   }));
 }
 registerSplitter('research.claimPairs', claimPairs);
+
+// Every section but Findings is what the report derives from its findings (#2360); Assumptions lists the inputs it adds.
+const derivedSection = (s: Statement) => s.section !== 'findings' && s.section !== 'assumptions';
+
+/** Each sentence the report derives, numbered as claimPairs numbers it. */
+const derivedChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => statements(inputs[String(o.from)]).flatMap((s, i) => (derivedSection(s) ? [{ id: String(i + 1), text: JSON.stringify(s) }] : []));
+registerSplitter('research.derived', derivedChunks);
+
+const BASIS = 4;
+// A finding the statement names by a figure or a source id weighs more than any number of shared words.
+const NAMED_WEIGHT = 100;
+
+/** The findings a derived sentence names, by a figure or a source id it shares with them, else the ones sharing most words; undefined when none. */
+function basis(inputs: Inputs, chunk: Chunk, o: SelectorDecl): string | undefined {
+  const { text } = JSON.parse(chunk.text) as Statement;
+  const [figs, ids, words] = [figures(text), citedIds(text), contentWords(text)];
+  const scored = findingItems(inputs[(o as { from: string }).from]).map((f) => {
+    const named = figures(f.text).filter((g) => figs.some((x) => sameValue(x.value, g.value))).length + citedIds(f.text).filter((id) => ids.includes(id)).length;
+    return { text: f.text, score: named * NAMED_WEIGHT + [...contentWords(f.text)].filter((w) => words.has(w)).length };
+  });
+  const top = scored.filter((f) => f.score > 0).sort((a, b) => b.score - a.score).slice(0, BASIS);
+  return top.length ? JSON.stringify(top.map((f) => f.text)) : undefined;
+}
+registerSelector('research.basis', basis);
 
 /** The report's parsed form, as the research report artifact contract states it: its sections by name, the ids it cites and its findings. */
 export function parseReport(report: string): { sections: Record<string, string>; citedIds: string[]; findings: Array<{ first: string; text: string }> } {
@@ -365,12 +392,45 @@ function citesFetchedSources(artifact: string, ev: Evidence): CodeResult {
   return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
 }
 
+const shownAt = (d: { computed: number; shown: string }) => d.computed.toFixed((d.shown.split('.')[1]?.length ?? 0) + 1);
+const derivedStatements = (report: string) => statements(report).filter(derivedSection);
+
+/** Every equation and unit conversion outside Findings and Assumptions, recomputed from the inputs it shows. */
+function derivedArithmetic(artifact: string): CodeResult {
+  const all = derivedStatements(artifact).flatMap((s) => derivations(s.text));
+  const wrong = all.filter((d) => !recomputes(d));
+  return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? wrong.map((d) => `"${d.text.trim()}" shows ${d.shown}; its inputs give ${shownAt(d)}`).join('; ') : undefined };
+}
+
+/** Every figure outside Findings and Assumptions is a figure of a cited finding, one Assumptions lists, or one the report recomputes from those.
+ *  A finding is any cited sentence of the Findings section, so a finding written as a paragraph counts as one written as a bullet. */
+function derivedInputsTraced(artifact: string, ev: Evidence): CodeResult {
+  const cited = [...findingItems(artifact).map((f) => f.text), ...statements(artifact).filter((s) => s.section === 'findings').map((s) => s.text)].filter((t) => citedIds(t).length);
+  const known = [...cited.flatMap(figures), ...figures(sectionBody(artifact, ['assumptions']))].map((f) => f.value);
+  const traced = (v: string) => known.some((k) => sameValue(k, v));
+  const stated = derivedStatements(artifact);
+  const derived = stated.flatMap((s) => derivations(s.text));
+  // A result whose inputs trace traces too, so a later sentence may restate it; a second pass reaches results built on results.
+  for (const d of [...derived, ...derived]) if (recomputes(d) && d.inputs.every(traced)) known.push(d.shown);
+  const all = stated.flatMap((s) => figures(s.text).map((f) => ({ value: f.value, at: s.text })));
+  const loose = all.filter((f) => !traced(f.value));
+  // The owner's rule counts a figure from the request as untraced too; it is named apart so a reader can tell the two kinds of gap.
+  const asked = figures(String(ev.request?.[0]?.state.request ?? '')).map((f) => f.value);
+  const fromRequest = loose.filter((f) => asked.some((v) => sameValue(v, f.value)));
+  const named = (fs: typeof loose) => fs.map((f) => `${f.value} in "${f.at.slice(0, 60)}…"`).join('; ');
+  const reasons = [[loose.filter((f) => !fromRequest.includes(f)), 'cite no finding and are not listed under Assumptions'], [fromRequest, 'come from the request, not from a finding or assumption']] as const;
+  const detail = reasons.filter(([fs]) => fs.length).map(([fs, why]) => `${named(fs)} ${why}`).join('. ');
+  return { met: all.length ? (all.length - loose.length) / all.length : 1, detail: detail || undefined };
+}
+
 const SUPPORTED_WEIGHT = 4;
 const CONTRADICTED_WEIGHT = -4;
 // Audit weights are 4 and 3; 0 (observe-only) until their false-block rate on good reports is under 10%.
 const ASKS_WEIGHT = 0;
 const SUMMARY_WEIGHT = 0;
 const SELF_WEIGHT = -4;
+// Observe-only until a replay shows a clean false-positive record; then a pitfall, never a gate (#2360).
+const DERIVED_WEIGHT = 0;
 
 // The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
@@ -380,8 +440,8 @@ const bool = (instructions: string): Question => ({ type: 'bool', instructions: 
 // a generic "Yes, this holds." beside a question about a defect can be read as the item holding or as the defect being there.
 const defect = (instructions: string, yes: string, no: string): Question => ({ type: 'choice', instructions: `${instructions}${FAIR}`, options: { yes, no } });
 
-/** How each model check of researchRubric is asked: per finding with its sources' excerpts, per Summary sentence with every bullet outside
- *  the Summary and Assumptions, of the request once with the whole report, and per pair of sentences that may conflict, with the Summary. */
+/** How each model check of researchRubric is asked: per finding, Summary sentence, request, pair of sentences that may conflict and
+ *  derived sentence, each with the context its scope names. */
 export const reportDeclaration: Declaration = {
   scopes: {
     fetched: { split: { name: 'whole', from: 'fetched' }, piece: 'ids' },
@@ -397,6 +457,8 @@ export const reportDeclaration: Declaration = {
     },
     // The Summary names what the report compares, so two products' figures read apart; shared, the pairs pack into few decision-model requests.
     pairs: { split: { name: 'research.claimPairs', from: 'report' }, piece: 'pair', context: { summary: { name: 'whole', from: 'summary' } } },
+    // Assumptions is the same for every sentence, so the sentences pack into few decision-model requests.
+    derived: { split: { name: 'research.derived', from: 'report' }, piece: 'statement', context: { assumptions: { name: 'sections', from: 'report', names: ['assumptions'] }, findings: { name: 'research.basis', from: 'report' } } },
   },
   checks: {
     // Clef passes findings their source does not state or states differently (a ranking, a figure, an author), so the 27B decides both.
@@ -406,13 +468,15 @@ export const reportDeclaration: Declaration = {
     summary_follows_findings: { scope: 'summary', aggregate: { name: 'all' }, question: bool("Does this sentence of the report's Summary follow from the findings shown with it?") },
     // Clef clears clean reports well but gives no reason, so only a flag goes to the judge model, which says what conflicts.
     no_self_contradiction: { scope: 'pairs', aggregate: { name: 'all', pass: ['no'] }, decisionModel: PASS_ONLY, question: defect('Do these two passages of the report give conflicting figures, dates or names for the same thing?', 'Yes: they describe the same thing, and both cannot be true.', 'No: they describe different things, or both can be true.') },
+    // Only the judge model's flags count, so each comes with its reason for adjudicating the replay.
+    derived_follows: { scope: 'derived', aggregate: { name: 'share' }, decisionModel: PASS_ONLY, question: bool('Does this statement of the report follow from the findings and assumptions shown with it?') },
   },
 };
 
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 8,
+  version: 9,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
@@ -428,6 +492,11 @@ export const researchRubric: Rubric = {
     { id: 'internally_consistent', checks: [
       { id: 'summary_follows_findings', label: "Summary says more than the findings", weight: SUMMARY_WEIGHT },
       { id: 'no_self_contradiction', label: "Report contradicts itself", weight: SELF_WEIGHT },
+    ] },
+    { id: 'derived_grounded', checks: [
+      { id: 'derived_arithmetic', label: "A derived figure doesn't recompute", weight: DERIVED_WEIGHT, code: derivedArithmetic },
+      { id: 'derived_inputs_traced', label: "A derived figure has no cited or assumed input", weight: DERIVED_WEIGHT, code: derivedInputsTraced },
+      { id: 'derived_follows', label: "A derived statement doesn't follow from the findings", weight: DERIVED_WEIGHT },
     ] },
   ],
 };
