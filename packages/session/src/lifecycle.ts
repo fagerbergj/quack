@@ -55,12 +55,14 @@ function runEvents(runs: RunRecord[]): Logical[] {
   ]);
 }
 
-function approvalEvents(id: string, a: Approval, cancelledBy: Map<string, number>): Logical[] {
+// A withdrawn approval is cancelled under the same event id a run's end uses, dated when it was withdrawn and in the run open then.
+function approvalEvents(id: string, a: Approval, cancelledBy: Map<string, number>, runs: RunRecord[]): Logical[] {
   const opened = ev(`ask:open:${id}`, 'ask.opened', a.requestedAt, approvalOpenedData(id, a.tool, a.args, a.requestedAt));
   const v = a.verdict;
   if (v) return [opened, ev(`ask:resolve:${id}`, 'ask.resolved', v.at, { id, choice: v.decision, ...(v.reason !== null && { reason: v.reason }), by: principal(v.by) })];
-  const run = cancelledBy.get(id);
-  return run === undefined ? [opened] : [opened, ev(`ask:cancel:${id}`, 'ask.cancelled', a.requestedAt, { id, run })];
+  const w = a.withdrawn;
+  const run = cancelledBy.get(id) ?? (w ? (runs.findLast((r) => r.startedAt <= w.at)?.n ?? 1) : undefined);
+  return run === undefined ? [opened] : [opened, ev(`ask:cancel:${id}`, 'ask.cancelled', cancelledBy.has(id) ? a.requestedAt : w!.at, { id, run })];
 }
 
 function questionEvents(id: string, q: Question, lastRun: number): Logical[] {
@@ -144,7 +146,7 @@ export function currentEvents(rootId: string, facts: SessionFacts, docs: {
     ...runEvents(docs.runs),
     // A process that comes up without a run is idle, whatever the catalog last held.
     ...(docs.boots ?? []).map((at, i) => ev(`state:boot:${i + 1}`, 'state.changed', at, { state: 'idle' })),
-    ...Object.entries(docs.approvals?.items ?? {}).flatMap(([id, a]) => approvalEvents(id, a, cancelledBy)),
+    ...Object.entries(docs.approvals?.items ?? {}).flatMap(([id, a]) => approvalEvents(id, a, cancelledBy, docs.runs)),
     ...Object.entries(docs.questions?.items ?? {}).flatMap(([id, q]) => questionEvents(id, q, lastRun)),
     ...Object.entries(docs.artifacts?.kinds ?? {}).flatMap(([kind, { versions }]) => versions.flatMap((v) => artifactEvents(kind, v))),
     ...((docs.spend.input + docs.spend.output + docs.spend.cacheRead + docs.spend.cacheWrite > 0 || docs.spend.cost > 0) ? [spendEvent(docs.spend, facts.createdAt, docs.spentMicros)] : []),

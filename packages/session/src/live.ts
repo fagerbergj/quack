@@ -68,7 +68,7 @@ async function watchStanding(session: Session, ws: WebSocket) {
   const send = (frame: object) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(frame));
   const standing = () => send({
     type: 'standing', questions: pendingQuestions(questions?.value), failures: failedRows(failures?.value),
-    approvals: Object.entries(approvals?.value?.items ?? {}).filter(([, a]) => !a.verdict).map(([id, a]) => ({ id, tool: a.tool, args: a.args, requestedAt: a.requestedAt })),
+    approvals: Object.entries(approvals?.value?.items ?? {}).filter(([, a]) => !a.verdict && !a.withdrawn).map(([id, a]) => ({ id, tool: a.tool, args: a.args, requestedAt: a.requestedAt })),
   });
   const ledger = () => send({ type: 'artifacts', artifacts: Object.values(artifacts?.value?.kinds ?? {}).flatMap((k) => k.versions) });
   standing();

@@ -9,28 +9,35 @@ import { fileURLToPath } from 'node:url';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { gated } from '@quack/sdk';
-import { createSessionServer, openSession, PRINCIPAL_HEADER, principalHeader } from '../src/index.ts';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { Approvals, gated, withdrawApprovals } from '@quack/sdk';
+import { createSessionServer, currentEvents, openSession, PRINCIPAL_HEADER, principalHeader } from '../src/index.ts';
+import { nextFrame } from './ws-helpers.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
 
 const posted: string[] = [];
+const post = gated(defineTool({
+  name: 'post_comment',
+  description: 'post_comment',
+  parameters: obj({ body: str() }, { open: true }),
+  execute: async (args) => {
+    posted.push(args.body);
+    return { output: [{ type: 'text', text: 'posted' }] };
+  },
+}));
+// What the tool checks before its gate and adds to the gate's arguments; a test changes them between boots, as a deploy changes code.
+const code = { refuse: '', suffix: '' };
 const extension = defineExtension({
   name: 'test-github',
-  tools: [
-    gated(
-      defineTool({
-        name: 'post_comment',
-        description: 'Post a comment to the pull request',
-        parameters: obj({ body: str() }, { open: true }),
-        execute: async (args) => {
-          posted.push(args.body);
-          return { output: [{ type: 'text', text: 'posted' }] };
-        },
-      }),
-    ),
-  ],
+  tools: [defineTool({
+    name: 'post_comment',
+    description: 'Post a comment to the pull request',
+    parameters: obj({ body: str() }, { open: true }),
+    replay: 'safe',
+    execute: async (args, api, ctx) => (code.refuse ? { output: [{ type: 'text', text: code.refuse }], isError: true } : post.execute({ body: `${args.body}${code.suffix}` }, api, ctx)),
+  })],
 });
 
 function agentWith(...responses: Parameters<ReturnType<typeof fauxProvider>['setResponses']>[0]) {
@@ -86,7 +93,9 @@ test('a gated call waits across a restart, then runs once when approved', async 
 
   const second = await openSession({ dir, ...agentWith(fauxAssistantMessage('Posted the review.')) });
   const http = await serve(second);
-  assert.equal((await http.json('/approvals')).body.approvals.length, 1, 'the approval survived the restart');
+  const kept = (await http.json('/approvals')).body.approvals;
+  assert.deepEqual(kept.map((a: { id: string }) => a.id), [pending[0].id], 'the rerun reached the gate with the same arguments, so it keeps its approval');
+  assert.equal((await second.harness.snapshot(Approvals, second.root.id, BACKGROUND_CONTEXT))!.items[pending[0].id]!.withdrawn, undefined);
 
   const bad = await http.json(`/approvals/${pending[0].id}`, { decision: 'maybe', by: 'jf' });
   assert.equal(bad.status, 400);
@@ -172,6 +181,122 @@ test('the session server answers only its launch token, and a decision only with
     assert.notEqual((await http.json(`/approvals/${item.id}`, { decision: 'approve' }, headers)).status, 200);
   }
   assert.equal((await http.json('/approvals')).body.approvals.length, 1, 'still pending');
+  await http.stop();
+  await session.close();
+});
+
+const ctx = BACKGROUND_CONTEXT;
+type Open = Awaited<ReturnType<typeof openSession>>;
+const rowOf = async (s: Open, id: string) => (await s.harness.snapshot(Approvals, s.root.id, ctx))!.items[id]!;
+const approvalsOf = async (s: Open) => (await serve(s).then(async (h) => { const r = await h.json('/approvals'); await h.stop(); return r.body.approvals; })) as Array<{ id: string; args: unknown }>;
+const firstAsk = (s: Open, seen: string[] = []) => until(async () => (await approvalsOf(s)).find((a) => !seen.includes(a.id)));
+
+// The incident in #2374: the session restarts under code that refuses the call before its gate, so nothing will ever act on the ask.
+test('a rerun that fails before its gate withdraws the approval, and a late answer is refused with why', async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  const first = await openSession({ dir, ...agentWith(callPost()) });
+  await first.submit('Approve this PR', 'run-5');
+  const { id } = await firstAsk(first);
+  await first.close();
+
+  code.refuse = 'the body must cite a line';
+  try {
+    const second = await openSession({ dir, ...agentWith(fauxAssistantMessage('Could not post.')) });
+    assert.equal((await second.submit('Approve this PR', 'run-5', true)).status, 'done');
+    const http = await serve(second);
+    assert.deepEqual((await http.json('/approvals')).body.approvals, []);
+    const late = await http.json(`/approvals/${id}`, { decision: 'approve' });
+    assert.equal(late.status, 409);
+    assert.deepEqual(late.body.withdrawn, { reason: 'task_ended', supersededBy: null });
+    assert.equal(late.body.detail, "the request was withdrawn: the call's task ended without acting on it");
+    const row = await rowOf(second, id);
+    assert.deepEqual([row.verdict, row.withdrawn?.reason], [null, 'task_ended'], 'the answer was not recorded');
+    const events = currentEvents('root', { agent: 'a', version: 1, createdAt: 0 }, { approvals: { items: { [id]: row } }, runs: [], spend: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, at: 0 }, spentMicros: 0n });
+    assert.deepEqual(events.filter((e) => e.type.startsWith('ask.')).map((e) => e.type), ['ask.opened', 'ask.cancelled'], 'the catalog is told the ask is cancelled');
+    assert.deepEqual(posted, []);
+    await http.stop();
+    await second.close();
+  } finally {
+    code.refuse = '';
+  }
+});
+
+test('a rerun that reaches the gate with other arguments withdraws its approval, and the next call asks about the new ones', async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  const first = await openSession({ dir, ...agentWith(callPost()) });
+  await first.submit('Approve this PR', 'run-6');
+  const old = await firstAsk(first);
+  await first.close();
+
+  code.suffix = ' (edited)';
+  try {
+    let told = '';
+    const second = await openSession({ dir, ...agentWith((context) => ((told = JSON.stringify(context.messages.at(-1))), callPost()), fauxAssistantMessage('Posted.')) });
+    const asked = await firstAsk(second, [old.id]);
+    assert.deepEqual(asked.args, { body: 'LGTM (edited)' });
+    assert.match(told, /post_comment was not run: the request was withdrawn: the call's arguments changed\. Call post_comment again/);
+    assert.equal((await rowOf(second, old.id)).withdrawn?.reason, 'arguments_changed');
+    const http = await serve(second);
+    assert.equal((await http.json(`/approvals/${old.id}`, { decision: 'approve' })).body.withdrawn.reason, 'arguments_changed');
+    assert.equal((await http.json(`/approvals/${asked.id}`, { decision: 'approve' })).status, 200);
+    assert.equal((await second.submit('Approve this PR', 'run-6', true)).status, 'done');
+    assert.deepEqual(posted, ['LGTM (edited)'], 'only the arguments the person saw ran');
+    await http.stop();
+    await second.close();
+  } finally {
+    code.suffix = '';
+  }
+});
+
+test('a waiting gate an extension withdraws returns at once without running, and leaves the standing frame', async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  let told = '';
+  const session = await openSession({ dir, ...agentWith(callPost(), (context) => ((told = JSON.stringify(context.messages.at(-1))), fauxAssistantMessage('Superseded.'))) });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
+  const shown = nextFrame(ws, (f) => f.type === 'standing' && f.approvals.length === 1);
+  await session.submit('Approve this PR', 'run-7');
+  const [{ id }] = (await shown).approvals;
+  const cleared = nextFrame(ws, (f) => f.type === 'standing' && f.approvals.length === 0);
+  await session.root.commit(async (tx) => { withdrawApprovals(await tx.doc(Approvals, session.root.id), (k) => k === id, { at: 5, reason: 'superseded', supersededBy: 'contract.spec:2' }); }, ctx);
+  await cleared;
+  assert.equal((await session.submit('Approve this PR', 'run-7', true)).status, 'done');
+  assert.match(told, /post_comment was not run: the request was withdrawn: it was superseded by a newer request \(contract\.spec:2\)\./);
+  const http = await serve(session);
+  assert.deepEqual((await http.json(`/approvals/${id}`, { decision: 'approve' })).body.withdrawn, { reason: 'superseded', supersededBy: 'contract.spec:2' });
+  assert.deepEqual(posted, []);
+  ws.close();
+  await http.stop();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});
+
+// Rows written before withdrawal existed lack the field; a decided row whose call ended keeps its verdict as a record that never acts.
+test('the sweep leaves old and consumed rows alone, and a verdict on an ended call stays recorded but is withdrawn', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  const session = await openSession({ dir, ...agentWith() });
+  const verdict = (decision: 'approve' | 'reject') => ({ decision, reason: null, by: 'jf', at: 2 });
+  const old = {
+    done: { tool: 'post_comment', args: {}, requestedAt: 1, verdict: verdict('approve'), executing: true, done: true },
+    rejected: { tool: 'post_comment', args: {}, requestedAt: 1, verdict: verdict('reject'), executing: false, done: false },
+    approved: { tool: 'post_comment', args: {}, requestedAt: 1, verdict: verdict('approve'), executing: false, done: false },
+  };
+  await session.root.commit(async (tx) => { Object.assign((await tx.doc(Approvals, session.root.id)).items, JSON.parse(JSON.stringify(old))); }, ctx);
+  const http = await serve(session);
+  assert.deepEqual((await http.json('/approvals')).body.approvals, []);
+  const items = (await session.harness.snapshot(Approvals, session.root.id, ctx))!.items;
+  assert.deepEqual([items.done, items.rejected], [old.done, old.rejected], 'a consumed or rejected row is read as before');
+  assert.deepEqual([items.approved!.verdict, items.approved!.withdrawn?.reason], [old.approved.verdict, 'task_ended']);
+  const late = await http.json('/approvals/approved', { decision: 'reject' });
+  assert.deepEqual([late.status, late.body.detail, late.body.withdrawn], [409, 'unknown or already decided', undefined], 'withdrawn after a verdict, it reads as decided');
   await http.stop();
   await session.close();
 });

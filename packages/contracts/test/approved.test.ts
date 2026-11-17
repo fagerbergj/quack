@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { Approvals, Artifacts, type Approval, type SealedArtifact } from '@quack/sdk';
-import { approvedSpec } from '../src/approval.ts';
+import { approvedSpec, supersedeProposals } from '../src/approval.ts';
 import { recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
 
@@ -78,4 +78,21 @@ test('a replay uses an unrecorded approval only if it was decided before the spe
   };
   assert.deepEqual(await breaksAt(45), []);
   assert.ok((await breaksAt(60)).length > 0, 'decided after the seal, so v1 is still the base');
+});
+
+test('a verdict on a withdrawn proposal is never the base, while a record written before its withdrawal stands', () => {
+  const withdrawn = { at: 50, reason: 'task_ended', supersededBy: null } as const;
+  const late = { ...asked(41, 'approve'), args: { version: 2, artifact: 3, hash: 'h3' }, withdrawn };
+  assert.equal(approvedSpec(kindsOf(history.specs), { ...history.approvals, a3: late })?.version, 2, 'artifact 3 was never approved; artifact 2 stays the base');
+  assert.equal(approvedSpec(kindsOf(history.specs), { ...history.approvals, a1: { ...history.approvals.a1, withdrawn } })?.version, 2, 'a1 was recorded first');
+});
+
+test('a newer seal withdraws the open proposals of older artifacts only', async () => {
+  const proposal = (artifact: number | undefined, more: Partial<Approval> = {}): Approval => ({ tool: 'propose_contract', args: artifact ? { version: 1, artifact } : { version: 1 }, requestedAt: 1, verdict: null, executing: false, done: false, ...more });
+  const items: Record<string, Approval> = { older: proposal(1), same: proposal(2), legacy: proposal(undefined), ran: proposal(1, { verdict: asked(1, 'approve').verdict, executing: true }), other: { ...proposal(1), tool: 'start' } };
+  const before = structuredClone(items);
+  const api = { conversationId: 'c', now: () => 7, commit: async (fn: (tx: unknown) => Promise<unknown>) => fn({ doc: async () => ({ items }) }) } as never;
+  await supersedeProposals(2, api, ctx);
+  assert.deepEqual(items.older!.withdrawn, { at: 7, reason: 'superseded', supersededBy: 'contract.spec:2' });
+  assert.deepEqual({ ...items, older: before.older }, before, 'the same artifact, a row without one, an executed one and another tool are left');
 });

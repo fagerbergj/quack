@@ -295,7 +295,7 @@
     },
     "approvalVerdict": {
       "type": "object",
-      "description": "A person's decision on a gated tool call; recorded once, never overwritten — resolving an unknown or already-decided approval is refused.",
+      "description": "A person's decision on a gated tool call; recorded once, never overwritten - resolving an unknown or already-decided approval is refused, and so is a decision on a withdrawn one; a verdict recorded after the call ended may sit beside withdrawn as a record: the call will never act on it, but a record written before the withdrawal stands.",
       "required": [
         "decision",
         "reason",
@@ -341,7 +341,7 @@
     },
     "approval": {
       "type": "object",
-      "description": "A gated tool call and its state: opened with the call's arguments, decided by a person, then executed exactly once.",
+      "description": "A gated tool call and its state: opened with the call's arguments, decided by a person, then executed exactly once - unless withdrawn: the session withdraws an approval whose call can no longer act on it, and a withdrawn row is never pending, a decision on it is refused, and the call will never act on it.",
       "required": [
         "tool",
         "args",
@@ -384,6 +384,17 @@
         "done": {
           "type": "boolean",
           "description": "True once the approved call has finished."
+        },
+        "withdrawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/approvalWithdrawal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set, and only set, when the session has withdrawn the approval because its call can no longer act on it; null or absent until then - a row written before the field existed lacks it and reads as null, which is why it is optional and not in required (the rule fields added after the store existed follow). A withdrawn row is never pending and a decision on it is refused: nothing executes on it. A row already marked withdrawn is never recorded or counted, and a record written before the withdrawal stands - a verdict can land while the task is live, and reconcile (run from repo/packages/contracts/src/approval.ts:78 and :92) or approvedSpec's pending branch (repo/packages/contracts/src/approval.ts:55) can record or count it before the sweep marks the row withdrawn."
         }
       },
       "examples": [
@@ -415,6 +426,23 @@
           },
           "executing": true,
           "done": false
+        },
+        {
+          "tool": "propose_contract",
+          "args": {
+            "summary": "Approve v2",
+            "version": 2,
+            "artifact": 3
+          },
+          "requestedAt": 1763161200000,
+          "verdict": null,
+          "executing": false,
+          "done": false,
+          "withdrawn": {
+            "at": 1763161300000,
+            "reason": "task_ended",
+            "supersededBy": null
+          }
         }
       ]
     },
@@ -1026,6 +1054,49 @@
         }
       },
       "additionalProperties": true
+    },
+    "approvalWithdrawal": {
+      "type": "object",
+      "description": "Why the session withdrew an approval whose call can no longer act on it. There is no 'by': the session withdraws, not a person, and no new principal kind is added. Its fields ride the row's convention of present with null standing in for absent, as the verdict's reason does.",
+      "required": [
+        "at",
+        "reason",
+        "supersededBy"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/epochMillis",
+          "description": "When the approval was withdrawn, in epoch milliseconds."
+        },
+        "reason": {
+          "enum": [
+            "task_ended",
+            "superseded",
+            "arguments_changed"
+          ],
+          "description": "Exactly three, each the one way the call stopped being able to act on the approval: 'task_ended' - the gated call's task left the live task graph without consuming the verdict, that is while executing is false: a rerun after a restart that fails before reaching the gate, an abort, or an interruption; the approval id is String(api.taskId), so the id names the task. 'superseded' - the contracts extension's rule: a newer contract.spec is sealed while an older version's proposal is open; extension policy, not core's. 'arguments_changed' - a rerun reached the gate with different arguments: the row keeps the first arguments (doc.items[id] ??= ...), so a verdict on arguments A would run arguments B. Core writes task_ended and arguments_changed; an extension may withdraw with superseded - the contracts extension does, with supersededBy naming the newer sealed version. The session HTTP revision uses these three values, and the Sessions API names the same three causes in prose only, with no identifiers and no supersededBy (contracts:eda8542f proposed v16)."
+        },
+        "supersededBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What replaced the approval, for example 'contract.spec:12' for a superseded proposal; null otherwise."
+        }
+      },
+      "examples": [
+        {
+          "at": 1763161300000,
+          "reason": "task_ended",
+          "supersededBy": null
+        },
+        {
+          "at": 1763161300000,
+          "reason": "superseded",
+          "supersededBy": "contract.spec:12"
+        }
+      ]
     }
   }
 }

@@ -1,14 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { answerQuestion, type AnswerInput, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp } from '@quack/sdk';
+import { answerQuestion, type AnswerInput, Approvals, failedRows, Failures, pendingApprovals, pendingQuestions, type Principal, Questions, resolveApproval, safeEqual, serviceHttp, withdrawnText } from '@quack/sdk';
 import { sealedOf, sessionExport } from './export.ts';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
 const { send, problem, json: readJson } = serviceHttp();
-// Routes say { error }; the wire speaks RFC 9457.
-const reply = (res: ServerResponse, status: number, body: unknown) => (status >= 400 ? problem(res, status, (body as { error: string }).error) : send(res, status, body));
+// Routes say { error, ...members }; the wire speaks RFC 9457.
+const reply = (res: ServerResponse, status: number, body: unknown) => (status >= 400 ? problem(res, status, (body as { error: string }).error, body as Record<string, unknown>) : send(res, status, body));
 
 /** Names who decided on a request from the distributor; the session trusts it only beside the launch token. */
 export const PRINCIPAL_HEADER = 'x-quack-principal';
@@ -90,8 +90,12 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   } catch {
     return [400, { error: 'malformed approval id' }];
   }
-  const ok = await resolveApproval(session.root, id, { ...verdict, by: who }, ctx);
-  return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
+  // Swept first, so an answer to a call that has already ended is refused rather than recorded.
+  await session.withdrawEnded();
+  if (await resolveApproval(session.root, id, { ...verdict, by: who }, ctx)) return [200, { resolved: true }];
+  const item = (await session.harness.snapshot(Approvals, session.root.id, ctx))?.items[id];
+  const w = !item?.verdict && item?.withdrawn;
+  return w ? [409, { error: withdrawnText(w.reason), withdrawn: { reason: w.reason, supersededBy: w.supersededBy } }] : [409, { error: 'unknown or already decided' }];
 }
 
 // An unknown id and an unreadable one answer alike, so a guessed id does not reveal that it exists.
@@ -128,7 +132,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['POST', /^\/invocations$/, invoke],
   ['GET', /^\/messages$/, messages],
   ['GET', /^\/meta$/, async (s) => [200, { meta: await s.meta() }]],
-  ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
+  ['GET', /^\/approvals$/, async (s) => (await s.withdrawEnded(), [200, { approvals: await pendingApprovals(s.root, ctx) }])],
   ['GET', /^\/artifacts$/, artifacts],
   ['GET', /^\/export$/, exported],
   ['POST', /^\/abort$/, abort],

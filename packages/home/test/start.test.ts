@@ -41,14 +41,31 @@ async function homeSessionWith(doFetch: typeof fetch, ...responses: Responses) {
 const callStart = () => fauxAssistantMessage(fauxToolCall('start', { action: 'ping_thing', params: { thing: 'x' } }), { stopReason: 'toolUse' });
 
 // Waits for the run to stop on the approval; the deadline only matters when the code is broken.
-async function pending(session: Awaited<ReturnType<typeof homeSession>>) {
+async function pendingAll(session: Awaited<ReturnType<typeof homeSession>>, count: number) {
   for (let i = 0; i < 1500; i++) {
-    const [item] = await pendingApprovals(session.root, BACKGROUND_CONTEXT);
-    if (item) return item;
+    const items = await pendingApprovals(session.root, BACKGROUND_CONTEXT);
+    if (items.length >= count) return items;
     await new Promise((r) => setTimeout(r, 10));
   }
   throw new Error('no approval was requested');
 }
+const pending = async (session: Awaited<ReturnType<typeof homeSession>>) => (await pendingAll(session, 1))[0]!;
+
+// Prod home:main held asks opened 2 ms apart; each call is live while it waits, so none withdraws another.
+test('parallel starts each keep their own open ask', async () => {
+  started.length = 0;
+  const call = (thing: string) => fauxToolCall('start', { action: 'ping_thing', params: { thing } });
+  const session = await homeSession(fauxAssistantMessage([call('a'), call('b'), call('c')], { stopReason: 'toolUse' }), fauxAssistantMessage('Started all three.'));
+  await session.submit('ping a, b and c', 'r4');
+  const asks = await pendingAll(session, 3);
+  await session.withdrawEnded();
+  assert.deepEqual((await pendingApprovals(session.root, BACKGROUND_CONTEXT)).map((a) => a.id), asks.map((a) => a.id));
+  assert.ok(asks.every((a) => !a.withdrawn));
+  for (const a of asks) await resolveApproval(session.root, a.id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, BACKGROUND_CONTEXT);
+  assert.equal((await session.submit('ping a, b and c', 'r4', true)).status, 'done');
+  assert.deepEqual(started.map((p) => (p as { thing: string }).thing).sort(), ['a', 'b', 'c']);
+  await session.close();
+});
 
 test('start asks first, showing the summary and filled params, and runs the action only once approved', async () => {
   started.length = 0;

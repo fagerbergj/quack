@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { Failures, MODEL_RETRY, pendingApprovals, Questions, statusNote, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
+import { actionable, Approvals, Failures, MODEL_RETRY, pendingApprovals, Questions, statusNote, withdrawApprovals, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -153,6 +153,19 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     return message ? contentText(message.content) : '';
   }
 
+  // Withdraws each approval whose task left the live tasks unconsumed. The rows are read before the tasks: a task exists
+  // before its approval, so an id read first and missing from the tasks read after names a task that has ended.
+  async function withdrawEnded(): Promise<void> {
+    const open = Object.entries((await harness.snapshot(Approvals, root.id, ctx))?.items ?? {}).filter(([, a]) => actionable(a)).map(([id]) => id);
+    if (!open.length) return;
+    const live = new Set((await harness.inspect(ctx)).tasks.map((t) => String(t.record.id)));
+    const ended = new Set(open.filter((id) => !live.has(id)));
+    if (!ended.size) return;
+    const at = +(opts.now?.() ?? Date.now());
+    const gone = await root.commit(async (tx) => withdrawApprovals(await tx.doc(Approvals, root.id), (id) => ended.has(id), { at, reason: 'task_ended', supersededBy: null }), ctx);
+    if (gone.length) note('withdraw-approvals', { reason: 'task_ended', approvals: gone });
+  }
+
   // True when every task that can run is a gated tool waiting for a verdict; a verdict wakes the process through the normal request path.
   async function onlyAwaitingHumans(): Promise<boolean> {
     const live = (await harness.inspect(ctx)).tasks.filter((t) => t.state.kind === 'running' || t.state.kind === 'pending');
@@ -165,6 +178,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     harness,
     workspace,
     root,
+    withdrawEnded,
     // For the idle sweep: `busy` is work that must keep the process, `wakeAt` the earliest sleep to be woken for.
     async standing() {
       const { active, at: wakeAt } = harness.wake();

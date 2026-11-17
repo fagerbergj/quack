@@ -101,12 +101,17 @@ const resolveAsk = (key: string, id: string, resolution: Resolution) =>
   fetch(`${base(key)}/asks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resolution }) });
 export const answerQuestion = async (key: string, id: string, resolution: Resolution) => void (await json(await resolveAsk(key, id, resolution)));
 
-/** False when the session answers 409: the approval is already decided or cancelled, so the caller's view of it is stale. */
+/** False when the server answers 409 because the approval is already decided, so the caller's view of it is stale;
+ * a withdrawn one throws its reason, which the person is shown. */
 export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string): Promise<boolean> {
   const res = await resolveAsk(key, id, { choice: decision, ...(reason ? { reason } : {}) });
-  if (res.status === 409) return false;
-  await json(res);
-  return true;
+  if (res.status !== 409) {
+    await json(res);
+    return true;
+  }
+  const p = (await res.json().catch(() => null)) as { detail?: string } | null;
+  if (p?.detail?.startsWith('the request was withdrawn')) throw new Error(p.detail);
+  return false;
 }
 
 // Starts the contracts agent on a description as the define_contract action does; the distributor creates the session on first use.

@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { defineExtension, defineTask, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { obj } from '@earendil-works/pi-schema';
 import { createCatalog, eventsRoute, fileJournal, sqliteCatalog } from '@quack/catalog';
-import { EVENT_MAX_BYTES, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
+import { Approvals, EVENT_MAX_BYTES, eventBytes, inProcessFetch, SessionTitle, setDefaultSessionTitle } from '@quack/sdk';
 import { currentEvents, LifecycleStream, openSession, readStream, revisions, sessionFacts, startLifecycleSender } from '../src/index.ts';
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -94,7 +94,7 @@ async function harness(key = KEY, setup: Setup = {}) {
   const fire = () => timers.splice(0).forEach((fn) => fn());
   const sender = await startLifecycleSender(session, {
     url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: (fn) => (timers.push(fn), () => {}),
-    lastMessage: async () => (await session.messages(4)).filter((x) => x.role === 'assistant').at(-1)?.text, ...(setup.now && { now: () => +setup.now!() }),
+    lastMessage: async () => (await session.messages(4)).filter((x) => x.role === 'assistant').at(-1)?.text, ...(setup.now && { now: () => +setup.now!() }), sweep: session.withdrawEnded,
   });
   cleanups.push(async () => { await sender.stop(); await session.close(); await store.close(); });
   const stream = () => session.harness.snapshot(LifecycleStream, session.root.id, ctx);
@@ -102,6 +102,15 @@ async function harness(key = KEY, setup: Setup = {}) {
   const settle = async () => { for (let i = 0; i < 50; i++) { await sender.flush(); await new Promise((r) => setImmediate(r)); } };
   return { dir, session, catalog, store, gate, fire, timers, sender, stream, settle, restart: () => startLifecycleSender(session, { url: 'http://distributor', token: 't', key, facts: () => sessionFacts(dir), fetch: fetcher, setTimer: () => () => {} }) };
 }
+
+// What a rerun that failed before its gate leaves: a pending row whose task is gone. The next flush withdraws and cancels it.
+test('a flush withdraws an approval whose call ended, and the catalog cancels its ask', async () => {
+  const h = await harness();
+  await h.session.root.commit(async (tx) => { (await tx.doc(Approvals, h.session.root.id)).items.orphan = { tool: 'post_comment', args: {}, requestedAt: 1, verdict: null, executing: false, done: false }; }, ctx);
+  await h.sender.flush();
+  assert.deepEqual([(await h.catalog.getAsk(KEY, 'orphan'))?.state, (await h.catalog.getSession(KEY))?.pendingAsks], ['cancelled', 0]);
+  assert.equal((await h.session.harness.snapshot(Approvals, h.session.root.id, ctx))!.items.orphan!.withdrawn?.reason, 'task_ended');
+});
 
 test('a home: conversation is never titled from its first message', async () => {
   const h = await harness('home:main');
