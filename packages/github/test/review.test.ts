@@ -160,43 +160,50 @@ test('commentable lines are the added and context lines of the new file', () => 
   assert.deepEqual([...commentableLines(DIFF).get('src/a.ts')!], [1, 2, 3, 4]);
 });
 
-test('findings in the diff go inline; the rest and the sections stay in the body', () => {
-  const text = `## Takeaway
-Two things.
-## Verdict
-comment
-## Findings
-- suggestion (design): a.ts:2 — Rename it. The new name says what it holds.
-  \`\`\`ts
-  const kept = 1;
-  \`\`\`
-- blocking (defect): src/a.ts:90 — Off the diff.
-## Verified
-- read it
-`;
-  const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
-  assert.deepEqual(comments, [{ path: 'src/a.ts', line: 2, body: '**suggestion (design)**: Rename it.\n\nThe new name says what it holds.\n  ```ts\n  const kept = 1;\n  ```' }]);
-  assert.equal(body, `## Takeaway
-Two things.
-## Verdict
-comment
-## Findings
-- blocking (defect): src/a.ts:90 — Off the diff.
+const wrap = (findings: string, extra = '## Verified\n- read it\n\n## Notes\n- remember it\n') => `## Takeaway\nTwo things.\n\n## Verdict\ncomment\n\n## Findings\n${findings}\n${extra}`;
+const EVIDENCE = '<details><summary>What I checked</summary>\n\n**Verified**\n\n- read it\n\n**Notes**\n\n- remember it\n\n</details>';
 
-Posted inline on the diff:
-- suggestion: Rename it.
-## Verified
-- read it
-`);
-  assert.equal(splitReview(text, '', ['src/a.ts'], 'repo').comments.length, 0);
+test('a review with only inline findings keeps the takeaway, a count line and the collapsed evidence, with no Verdict or Findings sections', () => {
+  const text = wrap('- suggestion (design): a.ts:2 — Rename it. The new name says what it holds.\n  ```ts\n  const kept = 1;\n  ```\n- nit: src/a.ts:3 — Trim it.\n- nit: src/a.ts:4 — Drop it.\n');
+  const { body, fallbackBody, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
+  assert.deepEqual(comments, [
+    { path: 'src/a.ts', line: 2, body: '**suggestion (design)**: Rename it.\n\nThe new name says what it holds.\n  ```ts\n  const kept = 1;\n  ```' },
+    { path: 'src/a.ts', line: 3, body: '**nit**: Trim it.' },
+    { path: 'src/a.ts', line: 4, body: '**nit**: Drop it.' },
+  ]);
+  assert.equal(body, `Two things.\n\n1 suggestion, 2 nits inline.\n\n${EVIDENCE}`);
+  assert.doesNotMatch(body, /## |Posted inline|…/);
+  assert.match(fallbackBody, /Not anchored to a diff line:\n- suggestion \(design\): a\.ts:2 — Rename it\./, 'when GitHub refuses the inline comments every finding is in the body');
 });
 
-test('a long first sentence stays whole in the inline comment and is shortened only in the body list', () => {
+test('a finding GitHub cannot anchor is listed once in full in the body, and a long inline sentence is never truncated', () => {
   const long = `Rename ${'the thing that holds the value '.repeat(6)}so it reads well.`;
-  const text = `## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- nit: src/a.ts:2 — ${long} Then more.\n## Verified\n- y\n`;
+  const text = wrap(`- blocking (defect): src/a.ts:90 — Off the diff.\n  more detail\n- nit: src/a.ts:2 — ${long} Then more.\n`);
   const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
   assert.equal(comments[0].body, `**nit**: ${long}\n\nThen more.`);
-  assert.match(body, /- nit: Rename .*…\n## Verified/);
+  assert.equal(body, `Two things.\n\n1 nit inline.\n\nNot anchored to a diff line:\n- blocking (defect): src/a.ts:90 — Off the diff.\n  more detail\n\n${EVIDENCE}`);
+});
+
+test('empty Verified and Notes leave no section and no empty details block', () => {
+  const none = splitReview(wrap('- nit: src/a.ts:2 — Trim it.\n', '## Verified\n\n## Notes\n'), DIFF, ['src/a.ts'], 'repo');
+  assert.equal(none.body, 'Two things.\n\n1 nit inline.');
+  const one = splitReview(wrap('- nit: src/a.ts:2 — Trim it.\n', '## Verified\n- read it\n\n## Notes\n\n'), DIFF, ['src/a.ts'], 'repo');
+  assert.equal(one.body, 'Two things.\n\n1 nit inline.\n\n<details><summary>What I checked</summary>\n\n**Verified**\n\n- read it\n\n</details>');
+});
+
+test('an approve with no findings is the takeaway and the collapsed evidence', () => {
+  const text = `## Takeaway\nClean change; approve.\n\n## Verdict\napprove\n\n## Findings\n\n## Verified\n- read it\n\n## Notes\n- remember it\n`;
+  const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
+  assert.deepEqual(comments, []);
+  assert.equal(body, `Clean change; approve.\n\n${EVIDENCE}`);
+});
+
+test('a re-review does not repeat a finding already posted on the same line, and says what changed since', () => {
+  const first = wrap('- nit: src/a.ts:2 — Trim it.\n- nit: src/a.ts:3 — Drop it.\n');
+  const second = wrap('- nit: src/a.ts:2 — Trim it.\n- suggestion: src/a.ts:4 — New idea.\n');
+  const { body, comments } = splitReview(second, DIFF, ['src/a.ts'], 'repo', first);
+  assert.deepEqual(comments.map((c) => c.body), ['**suggestion**: New idea.']);
+  assert.equal(body, `Two things.\n\n1 suggestion inline. Since the last review: 1 no longer raised, 1 still open in their threads.\n\n${EVIDENCE}`);
 });
 
 test('the review kind reads its outcome from the verdict, as the review is posted', () => {
@@ -221,9 +228,3 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual(reviewDeclaration.checks.verified_names_evidence.aggregate, { name: 'share', by: 'either' }, 'a named source settles the item; the rest go to Clef');
 });
 
-test('an inline finding takes its whole fenced diff with it, and a fenced "- nit:" line is not a finding of its own', () => {
-  const text = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- suggestion: src/a.ts:2 — Swap it.\n```diff\n- two\n+ two!\n\n- nit: not a finding\n```\n- blocking (defect): src/a.ts:90 — Off the diff.\n## Verified\n- y\n';
-  const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
-  assert.deepEqual(comments.map((c) => c.line), [2]);
-  assert.equal(body, '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- blocking (defect): src/a.ts:90 — Off the diff.\n\nPosted inline on the diff:\n- suggestion: Swap it.\n## Verified\n- y\n');
-});

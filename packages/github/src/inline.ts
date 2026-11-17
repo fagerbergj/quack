@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { BULLET, diffOf, FENCE, FINDING, parseReview, resolveCitedPath, trackedFiles } from './review.ts';
+import { countFindings, diffOf, type Finding, type ParsedReview, parseReview, resolveCitedPath, trackedFiles } from './review.ts';
 
 export type InlineComment = { path: string; line: number; body: string };
 
@@ -21,59 +21,53 @@ export function commentableLines(diff: string): Map<string, Set<number>> {
 }
 
 const SENTENCE = /^.*?[.!?](?=\s|$)/;
-const MAX_TITLE = 120;
 
 function firstSentence(text: string): string {
   const first = text.split('\n')[0];
   return SENTENCE.exec(first)?.[0] ?? first;
 }
 
-const shorten = (s: string) => (s.length > MAX_TITLE ? `${s.slice(0, MAX_TITLE - 1)}…` : s);
+const keyOf = (f: Finding) => `${f.label}|${f.path}|${f.line}|${f.text}`;
+const unanchored = (f: Finding) => `- ${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${f.path ? `${f.path}:${f.line} — ` : ''}${f.text}`;
+const EVIDENCE_SKIP = new Set(['takeaway', 'verdict', 'findings']);
 
-// The finding each line of the Findings section belongs to (0 elsewhere), following parseReview's continuation rule, and where the section ends.
-function lineOwners(lines: string[]) {
-  let section = '';
-  let current = 0;
-  let count = 0;
-  let end = -1;
-  let fenced = false;
-  const owner = lines.map((line, i) => {
-    const heading = /^## (\w+)/.exec(line);
-    if (heading) { section = heading[1].toLowerCase(); current = 0; fenced = false; return 0; }
-    if (section !== 'findings') return 0;
-    if (line.trim()) end = i;
-    const fence = FENCE.test(line);
-    const inside = fenced || fence;
-    if (fence) fenced = !fenced;
-    if (!inside && FINDING.test(line)) return (current = ++count);
-    return !inside && BULLET.test(line) ? 0 : current;
-  });
-  return { owner, end };
+type Rendered = { inline: Finding[]; unposted: Finding[]; open: number; resolved?: number };
+
+// GitHub already shows the verdict (the review state) and each inline finding, so the body keeps the takeaway, what is not inline, and the evidence collapsed.
+function render(r: ParsedReview, x: Rendered): string {
+  const out = [r.sections.takeaway?.trim() || `Verdict: ${r.verdict}.`];
+  const notes = [x.inline.length ? `${countFindings(x.inline)} inline.` : '', x.resolved === undefined ? '' : `Since the last review: ${x.resolved} no longer raised, ${x.open} still open in their threads.`].filter(Boolean);
+  if (notes.length) out.push(notes.join(' '));
+  if (x.unposted.length) out.push(['Not anchored to a diff line:', ...x.unposted.map(unanchored)].join('\n'));
+  const evidence = Object.entries(r.sections).filter(([k, v]) => !EVIDENCE_SKIP.has(k) && v.trim()).map(([k, v]) => `**${k[0].toUpperCase()}${k.slice(1)}**\n\n${v.trim()}`);
+  if (evidence.length) out.push(`<details><summary>What I checked</summary>\n\n${evidence.join('\n\n')}\n\n</details>`);
+  return out.join('\n\n');
 }
 
-/** Findings whose cited line is in the diff become inline comments; the body keeps the rest and lists those by title. */
-export function splitReview(content: string, diff: string, files: string[], repoName: string): { body: string; comments: InlineComment[] } {
+// In-diff findings become inline comments unless `prior` posted them unchanged; `fallbackBody` lists every finding, for when GitHub refuses the comments.
+export function splitReview(content: string, diff: string, files: string[], repoName: string, prior?: string): { body: string; fallbackBody: string; comments: InlineComment[] } {
   const shown = commentableLines(diff);
-  const inline = new Map<number, { label: string; title: string }>();
+  const r = parseReview(content);
+  const before = prior === undefined ? undefined : parseReview(prior).findings.map(keyOf);
   const comments: InlineComment[] = [];
-  for (const f of parseReview(content).findings) {
+  const inline: Finding[] = [];
+  const unposted: Finding[] = [];
+  let open = 0;
+  for (const f of r.findings) {
     const path = f.path && f.line ? resolveCitedPath(files, repoName, f.path) : undefined;
-    if (!path || !shown.get(path)?.has(f.line!)) continue;
+    if (before?.includes(keyOf(f))) { open++; continue; }
+    if (!path || !shown.get(path)?.has(f.line!)) { unposted.push(f); continue; }
     const first = firstSentence(f.text);
     const rest = f.text.slice(first.length).trim();
-    inline.set(f.index, { label: f.label, title: shorten(first) });
+    inline.push(f);
     comments.push({ path, line: f.line!, body: `**${f.label}${f.anchor ? ` (${f.anchor})` : ''}**: ${first}${rest ? `\n\n${rest}` : ''}` });
   }
-  if (!comments.length) return { body: content, comments };
-  const lines = content.split('\n');
-  const { owner, end } = lineOwners(lines);
-  const listed = ['', 'Posted inline on the diff:', ...[...inline.values()].map((f) => `- ${f.label}: ${f.title}`)];
-  const kept = lines.flatMap((line, i) => [...(inline.has(owner[i]) ? [] : [line]), ...(i === end ? listed : [])]);
-  return { body: kept.join('\n'), comments };
+  const resolved = before && before.filter((k) => !r.findings.some((f) => keyOf(f) === k)).length;
+  return { body: render(r, { inline, unposted, open, resolved }), fallbackBody: render(r, { inline: [], unposted: [...inline, ...unposted], open, resolved }), comments };
 }
 
-/** The review as it posts: in-diff findings inline, judged against the checkout's own diff. */
-export async function postable(api: ToolExecutionApi, repoDir: string, baseRef: string, content: string, ctx: Context) {
+/** The review as it posts: in-diff findings inline, judged against the checkout's own diff; `prior` is the session's last posted review. */
+export async function postable(api: ToolExecutionApi, repoDir: string, baseRef: string, content: string, ctx: Context, prior?: string) {
   const diff = await diffOf(api, repoDir, baseRef, ctx);
-  return diff ? splitReview(content, diff, await trackedFiles(api, repoDir, ctx), repoDir.split('/').pop()!) : { body: content, comments: [] };
+  return splitReview(content, diff, diff ? await trackedFiles(api, repoDir, ctx) : [], repoDir.split('/').pop()!, prior);
 }

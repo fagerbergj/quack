@@ -67,14 +67,18 @@ export function validateReview(text: string): string[] {
 const VERDICT_NAMES: Record<string, string> = { approve: 'Approve', comment: 'Comment', request_changes: 'Request changes' };
 const PLURAL: Record<string, string> = { blocking: 'blocking', suggestion: 'suggestions', nit: 'nits', question: 'questions' };
 
+/** "1 suggestion, 2 nits": finding counts by severity, empty when there are none. */
+export function countFindings(findings: Finding[]): string {
+  return LABELS.flatMap((l) => {
+    const n = findings.filter((f) => f.label === l).length;
+    return n ? [`${n} ${n === 1 ? l : PLURAL[l]}`] : [];
+  }).join(', ');
+}
+
 /** "Approve · 1 nit": the verdict, then finding counts by severity. */
 export function summarizeReview(text: string): string {
   const r = parseReview(text);
-  const counts = LABELS.flatMap((l) => {
-    const n = r.findings.filter((f) => f.label === l).length;
-    return n ? [`${n} ${n === 1 ? l : PLURAL[l]}`] : [];
-  });
-  return [VERDICT_NAMES[r.verdict ?? ''] ?? 'Review', counts.join(', ') || 'no findings'].join(' · ');
+  return [VERDICT_NAMES[r.verdict ?? ''] ?? 'Review', countFindings(r.findings) || 'no findings'].join(' · ');
 }
 
 export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', tool: 'submit_review', validate: validateReview, outcome: (text) => parseReview(text).verdict, summarize: summarizeReview, basis: async (api, ctx) => (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr?.headSha };
