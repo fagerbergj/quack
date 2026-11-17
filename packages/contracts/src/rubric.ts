@@ -117,7 +117,9 @@ function definitionsIn(inputs: Inputs, o: SplitDecl) {
   const { choices, document } = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'choices' | 'document'>;
   const defs = kinds[inputs[kindInput] as ContractSpec['kind']].definitions(document);
   // The rest of the document still counts as a user, but is no definition of its own: a header cannot add or implement anything.
-  return defs.filter((d) => !d.rest).map((d) => ({ d, covered: { decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) } satisfies Covered }));
+  // A definition with no letter or digit ({} or []) is no item of the judge's either, so both checks leave it out alike.
+  const judged = (d: Definition) => !d.rest && /[\p{L}\p{N}]/u.test(textOf(d));
+  return defs.filter(judged).map((d) => ({ d, covered: { decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) } satisfies Covered }));
 }
 
 // A contract document splits on its kind's own structure: each top-level definition, carrying the choices that decide it and the definitions that use it.
@@ -167,15 +169,18 @@ registerSelector('contract.intentEntries', (inputs, c, o) => {
   return JSON.stringify((related.length ? related : all).map(shown));
 });
 
-// One item per definition code did not settle and non-goal that plausibly concerns it; none when no non-goal does.
+// One item per definition code did not settle and non-goal that plausibly concerns it. Every other definition is one item code settles
+// as held, so the share is over the definitions (a definition with two pairs counts twice) and one flag never costs the whole weight.
 function nonGoalPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   const goals = entriesOf(intentOf(inputs, [o.from].flat()[0]), ['nonGoals']);
-  return definitionsIn(inputs, o).filter(({ covered }) => !coveredBy(covered)).flatMap(({ d }) => relatedEntries(d.name, textOf(d), goals, o.top ?? 2, o.minShared ?? 1).map((g) => ({
-    id: `${d.id} ~ ${g.label ?? g.at}`,
-    text: JSON.stringify({ definition: d.definition, nonGoal: g.text }),
-  })));
+  return definitionsIn(inputs, o).flatMap(({ d, covered }) => {
+    const pairs = coveredBy(covered) ? [] : relatedEntries(d.name, textOf(d), goals, o.top ?? 2, o.minShared ?? 1);
+    if (!pairs.length) return [{ id: d.id, text: d.id, meta: { held: 1 } }];
+    return pairs.map((g) => ({ id: `${d.id} ~ ${g.label ?? g.at}`, text: JSON.stringify({ definition: d.definition, nonGoal: g.text }), meta: { held: 0 } }));
+  });
 }
 registerSplitter('contract.nonGoalPairs', nonGoalPairs);
+registerSelector('contract.held', (_i, c) => ({ value: '', matches: Number(c.meta?.held ?? 0) }));
 
 // The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
@@ -203,8 +208,8 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   };
 }
 
-// A pitfall asks about the departure itself and its claim holds on "no": a question worded as the claim
-// cost Clef its confidence (61% of choices and 74% of definitions answered at 0.8, against 97% and 98% asked this way).
+// A pitfall asks about the departure and holds on "no": worded as the claim cost Clef confidence (61% of choices, 74% of definitions at 0.8; 97%, 98% this way).
+// adds_unasked is the owner's exception, worded as the claim and holding on "yes"; the replay's clef and esc columns track its cost.
 const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
 // Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
@@ -221,7 +226,7 @@ export const contractDeclaration: Declaration = {
       // The purpose is the intent's own statement of scope, shared by every definition, so it packs and only a purpose edit re-asks them all.
       context: { kind: { name: 'whole', from: 'kind' }, purpose: { name: 'json', from: 'spec', pointer: '/intent/purpose' }, covered: { name: 'contract.covered' }, consumersAndGuarantees: { name: 'contract.intentEntries', from: 'spec', lists: ['consumers', 'guarantees'], top: 3, minShared: 2 } },
     },
-    nonGoal: { split: { name: 'contract.nonGoalPairs', from: ['spec', 'kind'], top: 2, minShared: 1 }, piece: 'pair', context: { kind: { name: 'whole', from: 'kind' } } },
+    nonGoal: { split: { name: 'contract.nonGoalPairs', from: ['spec', 'kind'], top: 2, minShared: 1 }, piece: 'pair', context: { kind: { name: 'whole', from: 'kind' }, held: { name: 'contract.held' } } },
   },
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
@@ -229,7 +234,7 @@ export const contractDeclaration: Declaration = {
     meets_intent: { scope: 'spec', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' } },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
-    implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
+    implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
   },
 };
 

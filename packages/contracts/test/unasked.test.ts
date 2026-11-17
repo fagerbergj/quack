@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { createModels, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
-import { buildEvidence, rejudge, type Unit, type Verdict } from '@quack/judge';
-import { contractDeclaration, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
+import { buildEvidence, rejudge, score, type CheckResult, type Unit, type Verdict } from '@quack/judge';
+import { contractDeclaration, contractRubric, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
 import { reuseKey } from '../../judge/src/reuse.ts';
 import { fakeClef } from './clef.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
@@ -66,7 +66,7 @@ test('an uncovered definition is asked the narrow questions with only the intent
   assert.equal(contractDeclaration.checks.adds_unasked.question.instructions, 'Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?');
   // One pair per related non-goal: past runs relates to the history operation, editing schedules does not.
   assert.deepEqual(ev.nonGoal.filter((u) => u.id.startsWith(`nonGoal GET /apps/sleeper/history`)).map((u) => [u.id, (u.state.pair as { nonGoal: string }).nonGoal]), [['nonGoal GET /apps/sleeper/history ~ no-history', 'Past runs']]);
-  assert.ok(!ev.nonGoal.some((u) => u.id.includes('/apps/sleeper/schedule') || u.id.includes('Problem')), 'code-settled definitions get no non-goal pair');
+  assert.deepEqual(ev.nonGoal.filter((u) => u.related?.held).map((u) => u.id), ['nonGoal GET /apps/sleeper/schedule', 'nonGoal /components/schemas/Problem'], 'a code-settled definition is one held item, asked nothing');
 });
 
 test('an intent edit that touches none of a definition\'s related entries leaves its evidence and its reuse key as they were', async () => {
@@ -123,4 +123,52 @@ test('the fold: an unnamed definition and one implementing a non-goal are each a
   assert.equal(nonGoal.met, 1 / nonGoal.units);
   assert.deepEqual(nonGoal.notes.map((n) => n.slice(0, n.indexOf(': '))), ['nonGoal GET /apps/sleeper/history ~ no-history']);
   assert.deepEqual([unasked.weight, nonGoal.weight], [-2, -1], 'the two halves share the weight adds_unasked had alone');
+});
+
+// The spec's score with meets_intent met and every gate and contradicts_guide clean, so only the two unasked checks cost anything.
+const scoreWith = (...checks: CheckResult[]) => score(contractRubric, [{ criterion: 'matches_intent', id: 'meets_intent', label: '', weight: 4, met: true, units: 1, resolvers: {}, notes: [] }, ...checks]).score;
+const yes = () => 'yes';
+
+test('one definition of three implementing its one non-goal costs a third of the weight, not all of it', async (t) => {
+  const { check } = await judged(t, withHistory(), yes);
+  const nonGoal = check('implements_non_goal');
+  // Three definitions, one pair: the two code-settled definitions are held items, so the share is 1/3, not 1/1.
+  assert.deepEqual([nonGoal.units, nonGoal.resolvers.code, nonGoal.met], [3, 2, 1 / 3]);
+  assert.equal(scoreWith(check('adds_unasked'), nonGoal), (4 - 1 / 3) / 4, '0.917 passes the 0.8 threshold; a share over the one pair would score 0.75 and fail');
+});
+
+test('several definitions implementing a non-goal cost in proportion to how many do', async (t) => {
+  const spec = withHistory();
+  (spec.document as { paths: Record<string, unknown> }).paths['/apps/sleeper/jobs/{job}'] = { put: { operationId: 'editJobSchedule', summary: 'Edit the schedules of a job', responses: { 204: { description: 'Edited' } } } };
+  const pairs = (await evidenceOf(spec)).nonGoal.filter((u) => !u.related?.held);
+  assert.ok(pairs.length >= 2, `pairs: ${pairs.map((u) => u.id).join(', ')}`);
+  const all = (await judged(t, spec, yes)).check('implements_non_goal');
+  const one = (await judged(t, spec, (q) => (q.includes(IMPLEMENTS) && !q.includes('history') ? 'no' : 'yes'))).check('implements_non_goal');
+  assert.equal(all.met, pairs.length / all.units);
+  assert.equal(one.met, 1 / one.units);
+});
+
+test('with no non-goal related to any definition, implements_non_goal asks nothing and costs nothing', async (t) => {
+  const spec = withHistory();
+  spec.intent.nonGoals = [];
+  const { check, asked } = await judged(t, spec, yes);
+  const nonGoal = check('implements_non_goal');
+  assert.deepEqual([nonGoal.units, nonGoal.resolvers, nonGoal.met], [3, { code: 3 }, 0]);
+  assert.ok(!asked.some((q) => q.includes(IMPLEMENTS)));
+});
+
+test('a definition with no letter or digit is an item of neither check', async () => {
+  const spec = withHistory();
+  (spec.document as { components: { schemas: Record<string, unknown> } }).components.schemas.Empty = {};
+  // A non-goal that names it would otherwise pair with it by name, though (a) never sees it.
+  spec.intent.nonGoals.push({ id: 'no-empty', text: 'An Empty placeholder schema' });
+  const ev = await evidenceOf(spec);
+  assert.ok(![...ev.definition, ...ev.nonGoal].some((u) => u.id.includes('Empty')));
+});
+
+test('a long consumer is matched sentence by sentence', async () => {
+  const spec = withHistory();
+  spec.intent.consumers[0] = 'The Sleeper page renders the live week exactly as the schedules report it, once per render, with no extra calls. It lists past runs, newest first, in the history pane.';
+  const history = unit((await evidenceOf(spec)).definition, HISTORY);
+  assert.deepEqual(history.state.consumersAndGuarantees, ['It lists past runs, newest first, in the history pane.', 'errors.problem-json: Errors say why in problem+json']);
 });

@@ -198,9 +198,10 @@ test('with Clef on, Clef answers every choice and every definition code did not 
     meets_intent: { met: 1, clef: 0, esc: 1 },
     contradicts_guide: { met: 0, clef: 23, esc: 0 },
     adds_unasked: { met: 0, clef: asked, esc: 0 },
-    implements_non_goal: { met: null, clef: 0, esc: 0 },
+    implements_non_goal: { met: 0, clef: 0, esc: 0 },
   });
-  assert.deepEqual([asked, ev.nonGoal.length], [0, 0], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, 23 + asked + ev.nonGoal.length, 'one question per unit');
+  const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
+  assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
+  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit');
   assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
 });
