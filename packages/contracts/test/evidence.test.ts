@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -11,12 +9,12 @@ import ts from 'typescript';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
+import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
-import { buildEvidence, decisionModelTokens, type Evidence, type Unit } from '@quack/judge';
+import { buildEvidence, decisionModelTokens, registerSelector, type Declaration, type Evidence, type Unit } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
 import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
+import { fakeClef } from './clef.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -38,6 +36,9 @@ const inputsOf = (spec: ContractSpec, session: Partial<RecordedSession> = {}) =>
 const evidenceOf = async (spec: ContractSpec): Promise<Evidence> => (await buildEvidence(contractDeclaration, await inputsOf(spec))).evidence;
 const checksOf = (scope: string) => Object.entries(contractDeclaration.checks).filter(([, d]) => d.scope === scope).map(([id, d]) => ({ id: `matches_intent.${id}`, question: d.question }));
 const ids = (units: Unit[]) => units.map((u) => u.id);
+// The definition splitter's chunk metadata, shown as context, to read what code settles a definition by.
+registerSelector('test.meta', (_i, c) => JSON.stringify(c.meta));
+const metaDecl: Declaration = { scopes: { definition: { split: contractDeclaration.scopes.definition.split, context: { meta: { name: 'test.meta' } } } }, checks: {} };
 const noSpace = (s: string) => s.replace(/\s+/g, '');
 
 test('openapi: one definition per operation and per named component, and the rest of the document apart', () => {
@@ -84,11 +85,11 @@ test('every choice and definition unit of the approved contracts fits the decisi
     }
   }
   assert.deepEqual(counts, {
-    'lifecycle choice': 23, 'lifecycle definition': 31, 'store-port choice': 19, 'store-port definition': 29, 'sdk choice': 0, 'sdk definition': 83, 'env choice': 0, 'env definition': 20,
+    'lifecycle choice': 23, 'lifecycle definition': 30, 'store-port choice': 19, 'store-port definition': 28, 'sdk choice': 0, 'sdk definition': 82, 'env choice': 0, 'env definition': 19,
   });
 });
 
-test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the intent', async () => {
+test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the kind and the purpose', async () => {
   const ev = await evidenceOf(lifecycle);
   const rules = guideRules(kinds.rest.skill);
   const errors = ev.choice.find((u) => u.id === 'choice errors')!;
@@ -96,20 +97,20 @@ test('a choice unit holds its decision and the rules it cites, with the whole gu
   assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
   assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
   assert.ok(ev.choice.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors.shared)), 'one guide for every choice, so they pack together');
-  assert.deepEqual(ev.definition[0].shared, { intent: lifecycle.intent });
-  assert.deepEqual(Object.keys(ev.definition[0].state), ['definition'], 'the intent is sent once per request, not per definition');
-  type Def = { text: unknown; decided: Array<{ choice: string }>; usedBy: string[] };
-  const def = (e: Evidence, id: string) => e.definition.find((u) => u.id === `definition ${id}`)!.state.definition as unknown as Def;
-  // A definition carries the choices that decide it: by pointer, or by naming it in the decision.
-  const decided = (id: string) => def(ev, id).decided.map((d) => d.choice);
-  assert.ok(decided('/components/schemas/Problem').includes('errors'));
-  assert.ok(decided('POST /sessions/{key}/events').includes('transport'), 'an operation is decided by a choice on its path');
-  const port = await evidenceOf(storePort);
-  const money = def(port, '/Money');
-  assert.ok(money.decided.some((d) => d.choice === 'money'));
+  assert.deepEqual(ev.definition[0].shared, { kind: 'rest', purpose: lifecycle.intent.purpose }, 'every definition shares only the kind and the purpose, so they pack together');
+  assert.deepEqual(Object.keys(ev.definition[0].state), ['definition', 'consumersAndGuarantees'], 'no definition carries the whole intent');
+  const covered = async (spec: ContractSpec, id: string) => {
+    const { evidence } = await buildEvidence(metaDecl, await inputsOf(spec));
+    return evidence.definition.find((u) => u.id === `definition ${id}`)!.state.meta as unknown as { decided: string[]; usedBy: string[] };
+  };
+  // A definition's chunk carries the choices that decide it: by pointer, or by naming it in the decision.
+  const problem = await covered(lifecycle, '/components/schemas/Problem');
+  assert.ok(problem.decided.includes('errors'));
+  assert.ok((await covered(lifecycle, 'POST /sessions/{key}/events')).decided.includes('transport'), 'an operation is decided by a choice on its path');
+  const money = await covered(storePort, '/Money');
+  assert.ok(money.decided.includes('money'));
   // And the definitions that use it, so a shared shape reads as asked for: a local $ref, or a TypeScript name.
-  const usedBy = (id: string) => def(ev, id).usedBy;
-  assert.ok(usedBy('/components/schemas/Problem').includes('POST /sessions/{key}/events'));
+  assert.ok(problem.usedBy.includes('POST /sessions/{key}/events'));
   assert.ok(money.usedBy.includes('/SessionCatalogStore'));
 });
 
@@ -174,52 +175,33 @@ test('a ref to no file gives the exact form from the clone directory, or says to
   assert.equal(empty, `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`);
 });
 
-// A stand-in for Clef on its wire format: a confident yes to every bool and no to every choice, so the intent is met and no pitfall is present.
-async function fakeClef(t: TestContext) {
-  const asked: string[][] = [];
-  const server = createServer(async (req, res) => {
-    let body = '';
-    for await (const chunk of req) body += chunk;
-    const sent = JSON.parse(body).questions as Record<string, { type: string; criteria: Record<string, string> }>;
-    const questions = Object.keys(sent);
-    asked.push(questions);
-    const choice = (q: { criteria: Record<string, string> }) => {
-      const [first, ...rest] = Object.keys(q.criteria).sort();
-      return { type: 'choice', choice: first, confidence: 0.95, probabilities: Object.fromEntries([[first, 0.95], ...rest.map((k) => [k, 0.05 / rest.length])]) };
-    };
-    const answers = Object.fromEntries(questions.map((q) => [q, sent[q].type === 'choice' ? choice(sent[q]) : { type: 'noul', noul: 0.95 }]));
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 1, output_tokens: 0 } }));
-  }).listen(0);
-  await new Promise((r) => server.once('listening', r));
-  const key = process.env.QUACK_CLEF_KEY;
-  process.env.QUACK_CLEF_KEY = 'none';
-  t.after(() => (server.close(), key === undefined ? delete process.env.QUACK_CLEF_KEY : (process.env.QUACK_CLEF_KEY = key)));
-  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
-  const clef = { id: 'clef', name: 'clef', type: 'classifier', api: 'typesafe-system-one', provider: 'clef', baseUrl, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192 };
-  return { asked, provider: createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clef] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }) };
-}
-
-test('with Clef on, Clef answers every choice and definition unit and only meets_intent escalates to the judge model', async (t) => {
+test('with Clef on, Clef answers every choice and every definition code did not settle, and only meets_intent escalates to the judge model', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   judge.setResponses([fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'every guarantee has a mechanism' }))]);
   const models = createModels();
   models.setProvider(judge.provider);
-  const clef = await fakeClef(t);
+  // Every definition is named by an intent entry and no choice or definition departs, so no pitfall is present.
+  const clef = await fakeClef(t, (q) => (q.includes('named or implied') ? 'yes' : 'no'));
   models.setProvider(clef.provider);
   const adapters = manifest.evalAdapters!;
   const content = JSON.stringify(lifecycle);
   const inputs = await inputsOf(lifecycle);
   const { rows } = await replayJudge({
-    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked'], content, inputs }],
+    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked', 'implements_non_goal'], content, inputs }],
     arms: [{ label: 'clef', adapters, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });
   const by = Object.fromEntries(rows.map((r) => [r.check, { met: r.met, clef: r.clef, esc: r.esc }]));
+  const ev = await evidenceOf(lifecycle);
+  const asked = ev.definition.filter((u) => !u.related?.covered).length;
   assert.deepEqual(by, {
     meets_intent: { met: 1, clef: 0, esc: 1 },
     contradicts_guide: { met: 0, clef: 23, esc: 0 },
-    adds_unasked: { met: 0, clef: 31, esc: 0 },
+    adds_unasked: { met: 0, clef: asked, esc: 0 },
+    implements_non_goal: { met: 0, clef: 0, esc: 0 },
   });
-  assert.equal(clef.asked.flat().length, 23 + 31, 'one question per unit');
-  assert.ok(clef.asked.length <= 6, `units sharing a guide or an intent are packed: ${clef.asked.length} requests`);
+  const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
+  assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
+  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit');
+  assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
 });

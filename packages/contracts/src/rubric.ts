@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { isAbsolute, relative, sep } from 'node:path';
 import ts from 'typescript';
-import { registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
+import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
@@ -10,8 +10,8 @@ import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
 import { commentProblems } from './answered.ts';
-import { factProblems } from './facts.ts';
-import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
+import { FACT_LIMIT, factProblems, type Fact } from './facts.ts';
+import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
 /** Each guide rule's text by its anchor (a ### heading), up to the next heading. */
@@ -94,28 +94,93 @@ const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined; roots: string[] };
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const mentions = (name: string) => new RegExp(`(?<![\\w$])${escRe(name)}(?![\\w$])`);
 // The choices that decide a definition: their pointer is at or under it, or their decision names it; what the person or code asked for shows there.
 function decisionsOn(d: Definition, choices: ContractSpec['choices']) {
-  const named = d.name && new RegExp(`(?<![\\w$])${escRe(d.name)}(?![\\w$])`);
+  const named = d.name && mentions(d.name);
   const on = (c: ContractSpec['choices'][number]) => (d.pointer && (c.pointer === d.pointer || c.pointer.startsWith(`${d.pointer}/`))) || (named && named.test(c.decision));
-  return choices.filter(on).map((c) => ({ choice: c.id, decision: c.decision }));
+  return choices.filter(on).map((c) => c.id);
 }
 
 // The definitions that use one: a local $ref to it, or for TypeScript its name in their text; a shared shape is asked for by its users.
 function usersOf(d: Definition, defs: Definition[]): string[] {
-  const named = typeof d.definition === 'string' && d.name && new RegExp(`(?<![\\w$])${escRe(d.name)}(?![\\w$])`);
+  const named = typeof d.definition === 'string' && d.name && mentions(d.name);
   const uses = (o: Definition) => (named ? typeof o.definition === 'string' && named.test(o.definition) : !!d.pointer && JSON.stringify(o.definition).includes(`"#${d.pointer}"`));
   return defs.filter((o) => o !== d && uses(o)).map((o) => o.id);
 }
 
-// A contract document splits on its kind's own structure: each top-level definition, with the choices that decide it and the definitions that use it.
-function definitionChunks(inputs: Inputs, o: SplitDecl) {
+type Covered = { decided: string[]; usedBy: string[] };
+const textOf = (d: Definition) => (typeof d.definition === 'string' ? d.definition : JSON.stringify(d.definition));
+
+function definitionsIn(inputs: Inputs, o: SplitDecl) {
   const [specInput, kindInput] = [o.from].flat();
   const { choices, document } = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'choices' | 'document'>;
   const defs = kinds[inputs[kindInput] as ContractSpec['kind']].definitions(document);
-  return defs.map((d) => ({ id: d.id, key: d.name, text: JSON.stringify({ text: d.definition, decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) }) }));
+  // The rest of the document still counts as a user, but is no definition of its own: a header cannot add or implement anything.
+  // A definition with no letter or digit ({} or []) is no item of the judge's either, so both checks leave it out alike.
+  const judged = (d: Definition) => !d.rest && /[\p{L}\p{N}]/u.test(textOf(d));
+  return defs.filter(judged).map((d) => ({ d, covered: { decided: decisionsOn(d, choices), usedBy: usersOf(d, defs) } satisfies Covered }));
 }
+
+// A contract document splits on its kind's own structure: each top-level definition, carrying the choices that decide it and the definitions that use it.
+const definitionChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => definitionsIn(inputs, o).map(({ d, covered }) => ({ id: d.id, key: d.name, text: textOf(d), meta: covered }));
 registerSplitter('contract.definitions', definitionChunks);
+
+// The question's own terms count a definition a decided choice covers, or a shape another definition uses, as asked for: code settles
+// it, and an unasked definition is flagged where nothing uses it.
+const coveredBy = (c: Covered) => c.decided.length + c.usedBy.length;
+registerSelector('contract.covered', (_i, c) => ({ value: '', matches: coveredBy(c.meta as Covered) }));
+
+/** `label` is a fact's id; `at` is where the entry sits, naming an item when it has no id. */
+type Entry = { label?: string; at: string; text: string };
+type IntentList = 'consumers' | 'guarantees' | 'nonGoals';
+// An entry is matched as one fact; a pre-v7 string entry over the fact limit holds several, so each of its sentences is matched alone.
+function entriesOf(intent: Partial<Intent>, lists: IntentList[]): Entry[] {
+  return lists.flatMap((list) => (intent[list] ?? []).flatMap((f: Fact, i): Entry[] => {
+    if (typeof f !== 'string') return [{ label: f.id, at: `${list}[${i}]`, text: f.text }];
+    const parts = f.length <= FACT_LIMIT ? [f] : f.split(/(?<=[.;])\s+(?=[A-Z`"(])/);
+    return parts.map((text, n) => ({ at: parts.length > 1 ? `${list}[${i}].${n + 1}` : `${list}[${i}]`, text }));
+  }));
+}
+
+const STOP = new Set(['that', 'this', 'with', 'from', 'have', 'which', 'what', 'when', 'will', 'does', 'into', 'also', 'than', 'then', 'there', 'their', 'each', 'only', 'more', 'over', 'such', 'both', 'been', 'they', 'them', 'where', 'while', 'about', 'after', 'before', 'never', 'other', 'same', 'must', 'every', 'none', 'unless', 'through', 'string', 'number', 'boolean', 'type', 'export', 'readonly', 'true', 'false', 'null', 'undefined', 'description', 'properties', 'required', 'object', 'array', 'items']);
+const termRe = /[a-z][a-z0-9]{3,}/g;
+// Whole identifiers and their camelCase parts both count, so "JudgeConfig" meets "judge config"; a plural meets its singular.
+const termsOf = (s: string) => new Set([...(s.toLowerCase().match(termRe) ?? []), ...(s.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().match(termRe) ?? [])].filter((w) => !STOP.has(w)).map((w) => w.replace(/(?<!s)s$/, '')));
+
+// The entries that plausibly concern a definition, best first: one that names it outranks any count of shared terms.
+function relatedEntries(name: string | undefined, text: string, entries: Entry[], top: number, minShared: number): Entry[] {
+  const terms = termsOf(text);
+  const named = name ? mentions(name) : undefined;
+  const scored = entries.map((e, i) => ({ e, i, s: (named?.test(e.text) ? 1000 : 0) + [...termsOf(e.text)].filter((t) => terms.has(t)).length }));
+  return scored.filter((x) => x.s >= minShared).sort((a, b) => b.s - a.s || a.i - b.i).slice(0, top).map((x) => x.e);
+}
+
+const intentOf = (inputs: Inputs, from: string) => (JSON.parse(inputs[from]) as Pick<ContractSpec, 'intent'>).intent;
+const shown = (e: Entry) => (e.label ? `${e.label}: ${e.text}` : e.text);
+type EntriesDecl = { from: string; lists: IntentList[]; top?: number; minShared?: number };
+
+// Only the consumers and guarantees that relate, so an edit elsewhere in the intent leaves the item's evidence as it was;
+// with none related, all of them, since a "no" on too little context would flag what the intent does ask for.
+registerSelector('contract.intentEntries', (inputs, c, o) => {
+  const { from, lists, top = 3, minShared = 2 } = o as unknown as EntriesDecl;
+  const all = entriesOf(intentOf(inputs, from), lists);
+  const related = relatedEntries(c.key, c.text, all, top, minShared);
+  return JSON.stringify((related.length ? related : all).map(shown));
+});
+
+// One item per definition code did not settle and non-goal that plausibly concerns it. Every other definition is one item code settles
+// as held, so the share is over the definitions (a definition with two pairs counts twice) and one flag never costs the whole weight.
+function nonGoalPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const goals = entriesOf(intentOf(inputs, [o.from].flat()[0]), ['nonGoals']);
+  return definitionsIn(inputs, o).flatMap(({ d, covered }) => {
+    const pairs = coveredBy(covered) ? [] : relatedEntries(d.name, textOf(d), goals, o.top ?? 2, o.minShared ?? 1);
+    if (!pairs.length) return [{ id: d.id, text: d.id, meta: { held: 1 } }];
+    return pairs.map((g) => ({ id: `${d.id} ~ ${g.label ?? g.at}`, text: JSON.stringify({ definition: d.definition, nonGoal: g.text }), meta: { held: 0 } }));
+  });
+}
+registerSplitter('contract.nonGoalPairs', nonGoalPairs);
+registerSelector('contract.held', (_i, c) => ({ value: '', matches: Number(c.meta?.held ?? 0) }));
 
 // The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
@@ -143,9 +208,9 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   };
 }
 
-// A pitfall asks about the departure itself and its claim holds on "no": a question worded as the claim
-// cost Clef its confidence (61% of choices and 74% of definitions answered at 0.8, against 97% and 98% asked this way).
-const departure = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
+// A pitfall asks about the departure and holds on "no": worded as the claim cost Clef confidence (61% of choices, 74% of definitions at 0.8; 97%, 98% this way).
+// adds_unasked is the owner's exception, worded as the claim and holding on "yes"; the replay's clef and esc columns track its cost.
+const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
 // Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
 // and a departure nobody cited is what the check is for. The document itself is meets_intent's to read.
@@ -154,13 +219,22 @@ export const contractDeclaration: Declaration = {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     spec: { split: { name: 'whole', from: 'spec' }, piece: 'spec' },
     choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
-    definition: { split: { name: 'contract.definitions', from: ['spec', 'kind'] }, piece: 'definition', context: { intent: { name: 'json', from: 'spec', pointer: '/intent' } } },
+    // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
+    definition: {
+      split: { name: 'contract.definitions', from: ['spec', 'kind'] },
+      piece: 'definition',
+      // The purpose is the intent's own statement of scope, shared by every definition, so it packs and only a purpose edit re-asks them all.
+      context: { kind: { name: 'whole', from: 'kind' }, purpose: { name: 'json', from: 'spec', pointer: '/intent/purpose' }, covered: { name: 'contract.covered' }, consumersAndGuarantees: { name: 'contract.intentEntries', from: 'spec', lists: ['consumers', 'guarantees'], top: 3, minShared: 2 } },
+    },
+    nonGoal: { split: { name: 'contract.nonGoalPairs', from: ['spec', 'kind'], top: 2, minShared: 1 }, piece: 'pair', context: { kind: { name: 'whole', from: 'kind' }, held: { name: 'contract.held' } } },
   },
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
+  // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
     meets_intent: { scope: 'spec', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' } },
-    contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: departure('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
-    adds_unasked: { scope: 'definition', aggregate: { name: 'share', pass: ['no'] }, question: departure('Does this definition add an operation, field or guarantee that the intent never asked for, or that one of its non-goals excludes? A definition that serves what the intent asks for (a shared schema, an error shape, a field a guarantee needs), or that a decided choice covers, was asked for.') },
+    contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
+    adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
+    implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
   },
 };
 
@@ -261,7 +335,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 7,
+  version: 8,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -280,7 +354,9 @@ export const contractRubric: Rubric = {
     { id: 'matches_intent', checks: [
       { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4 },
       { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },
-      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -3 },
+      // The two halves of "unasked" share the weight it had alone.
+      { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -2 },
+      { id: 'implements_non_goal', label: 'The spec implements a non-goal', weight: -1 },
     ] },
   ],
 };
