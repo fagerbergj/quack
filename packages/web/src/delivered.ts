@@ -4,6 +4,13 @@ import { EXTENSIONS } from './extensions/index.ts';
 /** The version a person knows an artifact by: its content's own, else the sealed one. */
 export const versionOf = (a: SealedArtifact): number => EXTENSIONS.map((e) => e.versionOf?.(a)).find((v) => v !== undefined) ?? a.version;
 
+/** Rows listed over the Sessions API, labelled by whichever extension owns their kind. */
+export async function labelled(sessionKey: string, kind: string, rows: SealedArtifact[]): Promise<SealedArtifact[]> {
+  let out = rows;
+  for (const e of EXTENSIONS) out = (await e.label?.(sessionKey, kind, out)) ?? out;
+  return out;
+}
+
 // A draft the judge sends back is sealed again under the same version, so each version shows its newest delivered seal (passed, or released at the revision limit), else its newest (still judging).
 export function delivered(all: SealedArtifact[]): SealedArtifact[] {
   const groups = Map.groupBy([...all].sort((a, b) => b.version - a.version), versionOf);

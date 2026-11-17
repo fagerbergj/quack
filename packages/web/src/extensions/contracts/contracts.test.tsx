@@ -178,7 +178,8 @@ test('an answer shows the question as asked and the user\'s answer', async () =>
 });
 
 // The artifact page lists a kind's versions without content, then reads the shown one alone.
-const pageFetch = (list: SealedArtifact[]) => vi.fn(async (url: string) => {
+const pageFetch = (list: SealedArtifact[], numbers: Array<[number, number]> = []) => vi.fn(async (url: string) => {
+  if (url.startsWith('apps/contracts/')) return new Response(JSON.stringify({ versions: numbers.map(([artifact, version]) => ({ artifact, version, status: 'draft' })) }));
   const n = /version:(\d+)/.exec(decodeURIComponent(url))?.[1];
   const rows = list.map((a) => ({ session: 'home:main', kind: a.kind, version: a.version, hash: a.hash, sealedAt: new Date(a.sealedAt).toISOString(), ...(n && { content: a.content }) }));
   return new Response(JSON.stringify({ artifacts: n ? rows.filter((r) => r.version === Number(n)) : rows }));
@@ -196,6 +197,21 @@ test('the page links to its session and offers versions, reading only the shown 
   await userEvent.click(screen.getByRole('button', { name: 'Version: Version 1' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Version 2' }));
   expect(location.hash).toBe('#/s/home%3Amain/a/contract.spec?v=2');
+  vi.unstubAllGlobals();
+});
+
+test('the page labels seals by the contracts app, grouping the seals of one version and reading only the shown one', async () => {
+  const list = [sealed(raw(1), { version: 1, hash: 'h1' }), sealed(raw(2), { version: 2, hash: 'h2' }), sealed(raw(2), { version: 3, hash: 'h3' })];
+  const fetcher = pageFetch(list, [[1, 1], [2, 2], [3, 2]]);
+  vi.stubGlobal('fetch', fetcher);
+  // The link names the spec version, as it did when the page read it from the content.
+  render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={2} rows={undefined} />);
+  expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 2' }));
+  expect(screen.getAllByRole('menuitem').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
+  const reads = fetcher.mock.calls.map(([u]) => decodeURIComponent(u)).filter((u) => u.includes('version:'));
+  expect(reads).toHaveLength(1);
+  expect(reads[0]).toMatch(/version:3/);
   vi.unstubAllGlobals();
 });
 

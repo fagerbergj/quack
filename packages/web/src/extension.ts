@@ -42,6 +42,8 @@ export type Extension = {
   card?: (a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) => ReactNode | undefined;
   /** The version a kind's content calls itself, when sealed versions repeat it (a revised draft); undefined otherwise. */
   versionOf?: (a: SealedArtifact) => number | undefined;
+  /** Reads rows that came without their `outcome` (the Sessions API has none), so a kind's own data can label them; rows it cannot label come back as they were. */
+  label?: (sessionKey: string, kind: string, rows: SealedArtifact[]) => Promise<SealedArtifact[]>;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */

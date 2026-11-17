@@ -3,6 +3,7 @@ import type { SealedArtifact } from '../../api.ts';
 import { BLUE, plain, type Extension } from '../../extension.ts';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec, specVersion } from './spec.ts';
+import { specNumbers } from './status.ts';
 import { ContractStudio, Standalone } from './Studio.tsx';
 
 const KIND = 'contract.spec';
@@ -21,6 +22,11 @@ export const contracts: Extension = {
   card: view,
   // The seal stores the spec's own version as the row's outcome ("v3", "v3 typescript"), so no content is read; a row without one reads as its sealed number.
   versionOf: (a) => (a.kind === KIND ? specVersion(a) : undefined),
+  // The Sessions API rows carry no outcome, so the contracts app's own artifact-to-version list supplies it.
+  label: async (key, kind, rows) => {
+    const numbers = kind === KIND ? await specNumbers(key) : undefined;
+    return numbers ? rows.map((a) => (numbers.has(a.version) ? { ...a, outcome: `v${numbers.get(a.version)}` } : a)) : rows;
+  },
   // The contract is drawn beside its conversation, and approved there.
   studio: { match: (key) => key.startsWith('contracts:'), label: 'Contract', owns: (a) => a.tool === 'propose_contract', Pane: ContractStudio },
   nav: { route: 'contracts', label: 'Contracts', icon: ICON, page: Contracts },
