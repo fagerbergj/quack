@@ -62,7 +62,8 @@ test('an uncovered definition is asked the narrow questions with only the intent
   const history = unit(ev.definition, HISTORY);
   assert.deepEqual(history.shared, { kind: 'rest', purpose: 'Show the Sleeper page the live week and when each job runs next.' });
   assert.deepEqual(history.state.consumersAndGuarantees, ['errors.problem-json: Errors say why in problem+json'], 'not the other guarantee, the consumer or the non-goals');
-  assert.equal(contractDeclaration.checks.adds_unasked.question.instructions, 'Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it?');
+  // A definition a consumer needs in order to work was asked for, though no entry names it (the distributor mounts apps through inProcessFetch).
+  assert.equal(contractDeclaration.checks.adds_unasked.question.instructions, 'Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?');
   // One pair per related non-goal: past runs relates to the history operation, editing schedules does not.
   assert.deepEqual(ev.nonGoal.filter((u) => u.id.startsWith(`nonGoal GET /apps/sleeper/history`)).map((u) => [u.id, (u.state.pair as { nonGoal: string }).nonGoal]), [['nonGoal GET /apps/sleeper/history ~ no-history', 'Past runs']]);
   assert.ok(!ev.nonGoal.some((u) => u.id.includes('/apps/sleeper/schedule') || u.id.includes('Problem')), 'code-settled definitions get no non-goal pair');
