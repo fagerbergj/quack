@@ -71,3 +71,7 @@ test('derived_inputs_traced does not trace the labels the sentence splitter cuts
   const report = '## Summary\nThe Tripp Lite suits a dusty shop. [s1]\n## Assumptions\nNone.\n## Findings\n- Eight fans pull air through two filters. [s1]\n## Analysis\n- **3. Ventilation.** The door fans pull air in through the filters [s1].\n- **2.**\n';
   assert.equal(code('derived_inputs_traced', report).met, 1, 'the "2" of a list label is no figure to trace');
 });
+
+test('derived_inputs_traced: a unit hyphened onto its number in a finding ("10-ft.") is that figure', () => {
+  assert.equal(traced('The fans have their own 10 ft cord.', '- The package includes a C13 power cord, 10-ft. (3.05 m) [s1]').met, 1);
+});

@@ -6,8 +6,8 @@ export type Figure = { value: string; unit: Set<string>; near: Set<string> };
 const STOP = new Set('the and for per of to a an in at on or vs is are by it its as be with that this from have has which what when will does into also than then there their each only more most over such both been were they them where while about after before your these those would could should other under being every using used make made need very much many same just like within without here not no can may all any one'.split(' '));
 const UNITS = /(\d)(am|pm|mm|cm|in|ft|lb|lbs|kg|u|ru|k|m|gb|tb|mb|w|v|hz|%|")(?![\p{L}\d])/giu;
 const wordsOf = (ts: string[]) => new Set(ts.flatMap((t) => t.toLowerCase().split(/[-/]/)).map((w) => w.replace(/[^\p{L}%$"]/gu, '')).filter((w) => w && !STOP.has(w)));
-// Marks and emphasis are not words of the claim; a unit written onto its number ("24U", "10am") is a word of its own.
-const tokens = (text: string) => text.replace(/\[s\d+\]/g, ' ').replace(/[*_`]/g, '').replace(UNITS, '$1 $2').split(/[\s;:()[\]]+|,(?!\d)/).filter(Boolean);
+// Marks and emphasis are not words of the claim; a unit written onto its number ("24U", "10am", "10-ft") is a word of its own.
+const tokens = (text: string) => text.replace(/\[s\d+\]/g, ' ').replace(/[*_`]/g, '').replace(/(\d)-(?=\p{L})/gu, '$1 ').replace(UNITS, '$1 $2').split(/[\s;:()[\]]+|,(?!\d)/).filter(Boolean);
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const MONTH = String.raw`(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?`;
