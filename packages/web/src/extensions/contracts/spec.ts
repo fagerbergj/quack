@@ -12,7 +12,7 @@ export type ContractSpec = {
   choices: Choice[];
   baseline?: number | 'shipped';
   // `facts` names the fact ids the row adds, changes or removes.
-  changes?: Array<{ choice: string; was: string; now: string; why: string; facts?: string[] }>;
+  changes?: Array<{ choice: string; was: string; now: string; why: string; facts?: string[]; addresses?: string[] }>;
   // Specs sealed before contract.spec v2 may say change for what, name callers in one string, and lack migration.
   compatibility?: { breaking: Array<{ what: string; callers: string[]; migration?: string }>; safe: string[] };
 };

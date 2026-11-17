@@ -1,4 +1,4 @@
-import { createElement, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createElement, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { checkFailed, listAsks, type Approval, type Ask, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import { CheckResult } from '../../CheckResult.tsx';
@@ -7,6 +7,8 @@ import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
 import { ApproveSheet, AskSheet, prim, sec, useDecide, type Break, type Pending } from './Approval.tsx';
+import { CommentsProvider, DraftsLine, StrandedLine, useComments } from './Comments.tsx';
+import { reasonText } from './comments.ts';
 import { Decided, Progress } from './Progress.tsx';
 import { DiffContext, diffUnits, units, type Diff } from './diff.ts';
 import { JsonSchemaView } from './JsonSchemaView.tsx';
@@ -74,7 +76,7 @@ export function approvalState(s: Standing & { isApproved: boolean }): State {
   if (s.isApproved) return { can: false, done: true, title: `${name} is approved`, sub: running ? 'The agent is working · nothing waits on you' : 'Nothing in progress · nothing waits on you' };
   if (s.status === 'changes_requested') {
     const who = !rejection ? 'someone' : rejection.by.kind === 'person' ? rejection.by.id : 'a reviewer';
-    return { can: false, title: `Changes asked for ${name}`, sub: `Asked by ${who}${running ? ' · the agent is revising it' : ''} · nothing waits on you`, detail: rejection?.reason?.split('\n').filter(Boolean).slice(0, 2).join('\n') };
+    return { can: false, title: `Changes asked for ${name}`, sub: `Asked by ${who}${running ? ' · the agent is revising it' : ''} · nothing waits on you`, detail: rejection?.reason && reasonText(rejection.reason).split('\n').filter(Boolean).slice(0, 2).join('\n') };
   }
   if (s.proposal) return { can: true, title: `${name} waits on you`, sub: 'Checks passed' };
   return waiting(s);
@@ -109,11 +111,13 @@ function useItems(diff: Diff | undefined, spec: ContractSpec | undefined, found:
   return useMemo(() => (diff && spec ? changeItems(diff, spec, found) : []), [diff, spec, found]);
 }
 
-/** The status line and, when the newest version waits on the person, Approve and Ask for changes; pinned to the bottom of the pane. */
+/** The status line and, when the newest version waits on the person, Approve and Ask for changes (Review, with draft comments in hand); pinned to the bottom of the pane. */
 function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: { sessionKey: string; state: State; proposal?: Approval; decided: (id: string) => void; pending: Pending; stale?: string }) {
   const [sheet, setSheet] = useState<'approve' | 'ask' | 'checks'>();
   const deciding = { ...useDecide(sessionKey, proposal, decided), onClose: () => setSheet(undefined) };
+  const { drafts, open } = useComments();
   const checks = state.can && pending.verdict;
+  const ask = drafts.length ? <button type="button" onClick={() => open({ kind: 'review' })} className={sec}>Review · {drafts.length}</button> : <button type="button" onClick={() => setSheet('ask')} className={sec}>Ask for changes</button>;
   return (
     <section aria-label="Approval" className="sticky bottom-0 z-10 -mx-4 mt-auto flex flex-col gap-1 border-t border-line bg-canvas/95 px-4 pt-2.5 pb-[max(0.625rem,var(--safe-b))] backdrop-blur sm:-mx-5 sm:px-5">
       <div className="flex items-center gap-2">
@@ -122,8 +126,10 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
           {checks ? <button type="button" onClick={() => setSheet('checks')} className="min-h-6 cursor-pointer self-start border-0 bg-transparent p-0 text-left text-[13px] whitespace-nowrap text-link underline-offset-2 hover:underline focus-ring">Checks passed</button>
             : state.sub && <p className="m-0 text-[13px] text-muted">{state.sub}</p>}
         </div>
-        {state.can && <div className="flex flex-none gap-2"><button type="button" onClick={() => setSheet('ask')} className={sec}>Ask for changes</button><button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
+        {state.can && <div className="flex flex-none gap-2">{ask}<button type="button" onClick={() => setSheet('approve')} className={prim}>Approve</button></div>}
       </div>
+      {state.can && <DraftsLine />}
+      <StrandedLine />
       {state.detail && <p className="m-0 max-h-24 overflow-y-auto text-[13px] whitespace-pre-line text-ink-2 [overflow-wrap:anywhere]">{state.detail}</p>}
       {stale && <p className="m-0 text-[13px] text-muted">{stale}</p>}
       {sheet === 'approve' && <ApproveSheet pending={pending} {...deciding} />}
@@ -188,7 +194,11 @@ function Contract({ sessionKey, versions, newest, spec, status, approvals, runni
   const name = short(newest, versions);
   const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest), proposal, approved: approvedV && short(approvedV, versions), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
   const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base, versions), name };
+  // Comments are made only on the version up for approval; a sent one's versions are named as the person knows them.
+  const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
+  const versionName = useCallback((n: number) => { const v = versions.find((x) => x.a.version === n); return v ? short(v, versions) : `#${n}`; }, [versions]);
   return (
+    <CommentsProvider sessionKey={sessionKey} pending={commentable} newest={newest.a.version} versionName={versionName} decided={decided} deps={[versions.length, approvals.length, running]}>
     <div ref={top} className={layout}>
       <ReviewContext value={review}>
         {items.length > 0 && <Stepper onTop={() => top.current?.scrollIntoView?.({ block: 'start' })} />}
@@ -202,6 +212,7 @@ function Contract({ sessionKey, versions, newest, spec, status, approvals, runni
       {decisions}
       <DecisionBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} pending={pending} stale={staleRequest(approvals, versions, newest)} />
     </div>
+    </CommentsProvider>
   );
 }
 
