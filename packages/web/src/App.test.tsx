@@ -1965,14 +1965,14 @@ describe('the session context rail', () => {
   const sealed = (version: number, over: object = {}) => ({ kind: 'github.review', version, hash: `h${version}`, content: '## Takeaway\nx\n\n## Verdict\napprove', sealedAt: Date.parse('2026-11-01T14:00:00Z') + version, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, ...over });
   const check = (name: string, status: string, conclusion: string | null) => ({ name, status, conclusion });
 
-  async function openReview(wide: boolean, over: { checks?: object[]; artifacts?: object[]; approvals?: object[] } = {}) {
+  async function openReview(wide: boolean, over: { checks?: object[]; files?: object[]; artifacts?: object[]; approvals?: object[] } = {}) {
     stubViewport(true, wide);
     Element.prototype.scrollIntoView = vi.fn();
     routes['GET /sessions'] = { sessions: [sess('github:o/r#1', { agent: 'reviewer', createdAt: '2026-11-01T13:00:00Z', lastActivity: '2026-11-01T15:00:00Z' })] };
     routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 3, status: 'promoted', model: 'qwen3.8-27b' }] };
     (live[`${key}`] ??= {}).artifacts = over.artifacts ?? [sealed(1, { verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [] } }), sealed(2, { links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#r' }] })];
     (live[`${key}`] ??= {}).approvals = over.approvals ?? [];
-    routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 200, deletions: 10 }, { path: 'b.ts', additions: 12, deletions: 4 }], checks: over.checks ?? [check('test', 'completed', 'success'), check('image', 'completed', 'skipped')] }] };
+    routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: over.files ?? [{ path: 'a.ts', additions: 200, deletions: 10 }, { path: 'b.ts', additions: 12, deletions: 4 }], checks: over.checks ?? [check('test', 'completed', 'success'), check('image', 'completed', 'skipped')] }] };
     location.hash = `#/s/${key}`;
     render(<App />);
     const ws = FakeSocket.all[0];
@@ -2000,26 +2000,43 @@ describe('the session context rail', () => {
     const pr = within(rail).getByRole('region', { name: 'Pull request' });
     expect(await within(pr).findByText('#1 Cost per run')).toBeInTheDocument();
     expect(within(pr).getByText('feat/x → v1')).toBeInTheDocument();
-    expect(within(pr).getByText('✓ All passed')).toBeInTheDocument();
+    expect(within(pr).queryByText(/passed|checks|CI/i)).toBeNull();
     expect(within(pr).queryByText(/image|skipped/i)).toBeNull();
-    expect(within(pr).getByText(/2 files changed/)).toHaveTextContent('2 files changed +212 −14');
+    expect(within(pr).getByText('2 files changed')).toBeInTheDocument();
+    expect(within(pr).getByLabelText('212 added, 14 removed')).toHaveTextContent('+212 −14');
     expect(within(pr).getByRole('link', { name: 'Open on GitHub ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
     const versions = within(rail).getByRole('region', { name: 'Versions' });
     expect(await within(versions).findByText('Review v1')).toBeInTheDocument();
     expect(within(versions).getByText("Didn't pass its checks, 50%")).toBeInTheDocument();
     expect(within(versions).getByText('Double-checked · Posted to GitHub as Approve')).toBeInTheDocument();
-    expect(within(rail).getByText('Nothing is waiting on you.')).toBeInTheDocument();
+    expect(within(rail).queryByRole('region', { name: 'Needs you' })).toBeNull();
     expect(within(rail).queryByRole('region', { name: 'Cost' })).toBeNull();
-    expect(await within(rail).findByText('Agent reviewer on qwen3.8-27b')).toBeInTheDocument();
-    expect(within(rail).getByText(/^Started .* · Last activity /)).toBeInTheDocument();
+    const info = within(rail).getByRole('region', { name: 'Session' });
+    expect((await within(info).findByText('Agent')).nextElementSibling).toHaveTextContent(/^reviewer$/);
+    expect(within(info).getByText('Model').nextElementSibling).toHaveTextContent(/^qwen3\.8-27b$/);
+    expect(within(info).getByText('Started').nextElementSibling).toHaveTextContent(/\d/);
+    expect(within(info).getByText('Last activity').nextElementSibling).toHaveTextContent(/\d/);
   });
 
-  test('failed and running checks are named and skipped ones never show', async () => {
-    await openReview(true, { checks: [check('test', 'completed', 'failure'), check('lint', 'in_progress', null), check('build', 'completed', 'success'), check('image', 'completed', 'skipped')] });
+  test('the card shows no checks row even when checks are recorded', async () => {
+    await openReview(true, { checks: [check('test', 'completed', 'failure'), check('qa', 'in_progress', null), check('b', 'completed', 'success')] });
     const pr = within(await details()).getByRole('region', { name: 'Pull request' });
-    expect(await within(pr).findByText('✗ test failed')).toBeInTheDocument();
-    expect(within(pr).getByText('… lint running')).toBeInTheDocument();
-    expect(within(pr).queryByText(/All passed|image|build/)).toBeNull();
+    expect(await within(pr).findByText('2 files changed')).toBeInTheDocument();
+    expect(within(pr).queryByText(/failed|running|passed|Checks|CI when/)).toBeNull();
+  });
+
+  test('one file reads singular and a zero side keeps its sign', async () => {
+    await openReview(true, { files: [{ path: 'a.ts', additions: 5, deletions: 0 }] });
+    const pr = within(await details()).getByRole('region', { name: 'Pull request' });
+    expect(await within(pr).findByText('1 file changed')).toBeInTheDocument();
+    expect(within(pr).getByLabelText('5 added, 0 removed')).toHaveTextContent('+5 −0');
+  });
+
+  test('a card with no files has no list of rows', async () => {
+    await openReview(true, { files: [] });
+    const pr = within(await details()).getByRole('region', { name: 'Pull request' });
+    expect(await within(pr).findByText('#1 Cost per run')).toBeInTheDocument();
+    expect(pr.querySelector('dl')).toBeNull();
   });
 
   test('a version row scrolls the ledger to that version, and a pending approval to its card', async () => {
@@ -2041,9 +2058,23 @@ describe('the session context rail', () => {
     await user.click(await screen.findByRole('button', { name: 'Details' }));
     const sheet = screen.getByRole('dialog', { name: 'Details' });
     expect(await within(sheet).findByText('#1 Cost per run')).toBeInTheDocument();
-    expect(within(sheet).getByText('Nothing is waiting on you.')).toBeInTheDocument();
+    expect(within(sheet).queryByRole('region', { name: 'Needs you' })).toBeNull();
+    expect(within(sheet).queryByText('Nothing is waiting on you.')).toBeNull();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: 'Details' })).toBeNull();
+  });
+
+  test('a session whose agent records no model has no Model row, and the provider shows beside the model', async () => {
+    stubViewport(true, true);
+    routes['GET /sessions'] = { sessions: [sess('github:o/r#1', { agent: 'reviewer', createdAt: '2026-11-01T13:00:00Z' })] };
+    routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 3, status: 'promoted' }] };
+    location.hash = `#/s/${key}`;
+    render(<App />);
+    FakeSocket.all[0].open();
+    FakeSocket.all[0].frame(snapshot());
+    const info = within(await screen.findByRole('region', { name: 'Session' }));
+    expect(await info.findByText('Agent')).toBeInTheDocument();
+    expect(info.queryByText('Model')).toBeNull();
   });
 
   test('a session that is not a pull request has no Pull request section', async () => {
@@ -2052,7 +2083,7 @@ describe('the session context rail', () => {
     ws.frame(snapshot());
     const rail = await screen.findByRole('complementary', { name: 'Context' });
     expect(within(rail).queryByRole('region', { name: 'Pull request' })).toBeNull();
-    expect(within(rail).getByText('Nothing is waiting on you.')).toBeInTheDocument();
+    expect(within(rail).queryByRole('region', { name: 'Needs you' })).toBeNull();
   });
 });
 

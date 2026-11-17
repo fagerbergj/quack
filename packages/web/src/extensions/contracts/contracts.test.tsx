@@ -29,7 +29,7 @@ test('version 1 shows the route, its fields with type and required, and an examp
   expect(within(ok).getByText('at').closest('li')).toHaveTextContent('date-time');
   expect(within(ok).getByText('job').closest('li')).toHaveTextContent('lineup · waivers');
   expect(screen.getByText(/"week": 9/)).toBeInTheDocument();
-  expect(screen.queryByText('Breaks callers')).toBeNull();
+  expect(screen.queryByText('Breaking changes')).toBeNull();
   expect(screen.queryByText(/^Changed from/)).toBeNull();
 });
 
@@ -78,7 +78,7 @@ test('version 2 keeps its breaks, changes and checks to one counted line each, a
   await userEvent.click(rows[2]!.querySelector('summary')!);
   await userEvent.click(within(rows[2]!).getByRole('button', { name: 'Why: Done runs link to their result' }));
   expect(screen.getByRole('dialog', { name: 'Why: Done runs link to their result' })).toHaveTextContent('v1/packages/web/src/extensions/sleeper/Sleeper.tsx:212');
-  const breaks = fold('Breaks callers');
+  const breaks = fold('Breaking changes');
   expect(within(breaks).getAllByRole('listitem')[0]).toHaveTextContent('The Sleeper page reads the first run as "next".');
   expect(within(breaks).getByText('1 caller')).toBeInTheDocument();
   expect(within(breaks).getByText('Sleeper page')).toBeInTheDocument();
@@ -103,7 +103,7 @@ test('the intent and every decision with its reasons sit behind their own sectio
 
 test('a spec with no breaks, no changes and nothing checked shows only its intent and decisions', () => {
   show(1);
-  for (const t of ['Breaks callers', 'Unchanged, checked', /^Changed from/]) expect(screen.queryByText(t, { selector: 'summary span' })).toBeNull();
+  for (const t of ['Breaking changes', 'Unchanged, checked', /^Changed from/]) expect(screen.queryByText(t, { selector: 'summary span' })).toBeNull();
   expect(fold('Intent')).toBeInTheDocument();
   expect(fold('Decisions')).toBeInTheDocument();
 });
@@ -123,7 +123,7 @@ test('the changes name their baseline and each break its migration', () => {
   const breaking = [{ ...v2.compatibility.breaking[0], migration: 'Read the run marked next' }];
   render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, baseline: 'shipped', compatibility: { ...v2.compatibility, breaking } })))}</>);
   expect(fold('Changed from the shipped code')).toBeInTheDocument();
-  const breaks = fold('Breaks callers');
+  const breaks = fold('Breaking changes');
   expect(within(breaks).getByText('1 caller · migration')).toBeInTheDocument();
   expect(within(breaks).getByText('Read the run marked next')).toBeInTheDocument();
 });
@@ -133,7 +133,7 @@ test('a break sealed before the migration rule still draws', () => {
   const breaking = [{ change: 'agent.json is closed', callers: 'The 13 bundles under agents/*/agent.json', migration: 'Delete unknown keys' }, { choice: 'errors', was: 'a', now: 'b', callers: ['repo/packages/web/src/api.ts:28'] }];
   render(<>{contracts.card!(sealed(JSON.stringify({ ...v2, baseline: 4, compatibility: { breaking, safe: [] } })))}</>);
   expect(fold('Changed from version 4')).toBeInTheDocument();
-  const breaks = fold('Breaks callers');
+  const breaks = fold('Breaking changes');
   expect(within(breaks).getByText('agent.json is closed')).toBeInTheDocument();
   expect(within(breaks).getByText('The 13 bundles under agents/*/agent.json')).toBeInTheDocument();
   expect(within(breaks).getByText('repo/packages/web/src/api.ts:28')).toBeInTheDocument();

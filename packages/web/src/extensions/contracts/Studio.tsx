@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useState } from 'react';
-import { checkFailed, type Approval, type SealedArtifact, type Verdict } from '../../api.ts';
+import { checkFailed, listAsks, type Approval, type Ask, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import type { StudioProps } from '../../extension.ts';
 import { useLoad } from '../../useLoad.ts';
@@ -33,7 +33,15 @@ function useStatus(sessionKey: string, artifacts: SealedArtifact[], approvals: A
   return (v) => { const s = data.get(v.a.version) ?? 'draft'; return s === 'draft' && asked.includes(v.a.version) ? 'proposed' : s; };
 }
 
-type State = { can: boolean; done?: boolean; text: string };
+type State = { can: boolean; done?: boolean; text: string; detail?: string; asked?: boolean };
+type Rejection = NonNullable<Ask['resolution']>;
+const NO_ASKS: Ask[] = [];
+
+/** Who turned down the newest version and why, from its answered proposal; read only while it stands at changes requested. */
+function useRejection(sessionKey: string, artifact: number, on: boolean): Rejection | undefined {
+  const { data } = useLoad(() => (on ? listAsks('tool:propose_contract state:resolved', sessionKey).catch(() => NO_ASKS) : Promise.resolve(NO_ASKS)), [sessionKey, artifact, on], NO_ASKS);
+  return data.findLast((a) => a.resolution?.choice === 'reject' && Number((a.toolCall?.args as { artifact?: unknown } | null)?.artifact) === artifact)?.resolution;
+}
 
 // A version not up for approval, by its status; a verdict the socket carries only explains a draft the judge failed or is still checking.
 function waiting(n: number, v: Verdict | null | undefined, status: VersionStatus | undefined, running: boolean): State {
@@ -48,11 +56,14 @@ function waiting(n: number, v: Verdict | null | undefined, status: VersionStatus
 }
 
 /** Whether the newest version can be approved now, and the reason shown either way. Only one the judge passed is ever put up for approval. */
-export function approvalState(newest: Version | undefined, proposal: Approval | undefined, approved: number | undefined, running: boolean, status?: VersionStatus): State {
+export function approvalState(newest: Version | undefined, proposal: Approval | undefined, approved: number | undefined, running: boolean, status?: VersionStatus, rejection?: Rejection): State {
   if (!newest) return { can: false, text: 'Nothing to approve yet: the agent has not written a version.' };
   const n = newest.spec.version;
   if (approved === newest.a.version) return { can: false, done: true, text: `Version ${n} is approved.` };
-  if (status === 'changes_requested') return { can: false, text: `You asked for changes to version ${n}.` };
+  if (status === 'changes_requested') {
+    const who = !rejection ? 'Someone' : rejection.by.kind === 'person' ? rejection.by.id : 'A reviewer';
+    return { can: false, asked: true, text: `${who} asked for changes to version ${n}.`, detail: rejection?.reason?.split('\n').filter(Boolean).slice(0, 2).join('\n') };
+  }
   if (proposal) return { can: true, text: `Version ${n} is up for your approval.` };
   return waiting(n, newest.a.verdict, status, running);
 }
@@ -78,7 +89,8 @@ function ApproveBar({ sessionKey, state, proposal, decided, pending, stale }: { 
     <section aria-label="Approval" className={`${card} flex flex-col overflow-hidden`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
         <p role="status" className="m-0 min-w-0 flex-1 basis-56 text-[14px] font-semibold text-ink">{state.text}</p>
-        {!state.can && <button type="button" disabled className="min-h-11 cursor-not-allowed rounded-full border-0 bg-ink px-4 text-[14px] font-semibold text-on-ink opacity-50 lg:min-h-9">Approve</button>}
+        {!state.can && !state.asked && <button type="button" disabled className="min-h-11 cursor-not-allowed rounded-full border-0 bg-ink px-4 text-[14px] font-semibold text-on-ink opacity-50 lg:min-h-9">Approve</button>}
+        {state.detail && <p className="m-0 basis-full text-[13px] whitespace-pre-line text-muted">{state.detail}</p>}
         {stale && <p className="m-0 basis-full text-[13px] text-muted">{stale}</p>}
       </div>
       {state.can && proposal && <Decision sessionKey={sessionKey} proposal={proposal} pending={pending} decided={decided} />}
@@ -99,11 +111,11 @@ const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versi
 function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
   const items = itemsOf(versions, status);
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <VersionMenu name="Compare from" items={items} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
-      {/* The arrow wraps with the version it points to. */}
-      <span className="flex items-center gap-1.5"><span aria-hidden="true" className="text-muted">→</span>
-        <VersionMenu name="Compare to" items={items} value={to} onPick={(t) => pick({ from, to: t ?? to })} /></span>
+    <div className="flex items-center gap-0.5 text-[13px] text-muted">
+      <span className="hidden min-[480px]:inline">Comparing</span>
+      <VersionMenu quiet name="Compare from version" items={items} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
+      <span aria-hidden="true">→</span>
+      <VersionMenu quiet name="Compare to version" items={items} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
       <span className="flex-1" />
       {auto === undefined && <FollowNewest onClick={() => pick(undefined)} />}
     </div>
@@ -143,12 +155,13 @@ export function ContractStudio({ sessionKey, artifacts, approvals, running, deci
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').flatMap((a) => { const spec = parseSpec(a.content); return spec ? [{ a, spec }] : []; }), [artifacts]);
   const newest = versions.at(-1);
   const status = useStatus(sessionKey, artifacts, approvals, running);
+  const rejected = useRejection(sessionKey, newest?.a.version ?? 0, !!newest && status?.(newest) === 'changes_requested');
   const [picked, pick] = useState<{ from?: number; to: number }>();
   const decisions = <Decided sessionKey={sessionKey} asked={questions.length} running={running} open={!newest} />;
   if (!newest) return <div className={layout}><Progress activity={activity} brief={brief} waiting={questions.length > 0} />{decisions}</div>;
   const proposal = approvals.find((a) => offered(a) === newest.a.version);
   const approved = status && versions.findLast((v) => status(v) === 'approved')?.a.version;
-  const state = approvalState(newest, proposal, approved, running, status?.(newest));
+  const state = approvalState(newest, proposal, approved, running, status?.(newest), rejected);
   const to = versions.find((v) => v.a.version === (picked?.to ?? newest.a.version)) ?? newest;
   // Until the status answers there is no approved version, so nothing is compared.
   const from = versions.find((v) => v.a.version === (picked ? picked.from : approved) && v !== to);

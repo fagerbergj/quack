@@ -13,14 +13,14 @@ function Badge({ b }: { b?: VersionItem['badge'] }) {
 const spoken = (v: VersionItem) => `${v.name}${v.status ? `, ${v.status}` : ''}`;
 
 /** A compact version button and its menu of every version, newest first; `none` offers no version at all as the first entry. */
-export function VersionMenu({ name, items, value, none, title, onPick }: { name: string; items: VersionItem[]; value?: number; none?: string; title?: string; onPick: (id?: number) => void }) {
+export function VersionMenu({ name, items, value, none, title, quiet, onPick }: { quiet?: boolean; name: string; items: VersionItem[]; value?: number; none?: string; title?: string; onPick: (id?: number) => void }) {
   const menu = useMenu();
   const v = items.find((x) => x.id === value);
   const choose = (n?: number) => { menu.close(); onPick(n); };
   return (
     <div ref={menu.root} onKeyDown={menu.keys} className="relative">
-      <button ref={menu.button} type="button" aria-haspopup="menu" aria-expanded={menu.open} aria-label={`${name}: ${v ? spoken(v) : none}`} title={title} onClick={menu.toggle} className="flex h-11 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-soft px-3 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
-        <span className="font-mono font-semibold whitespace-nowrap">{v ? v.short : 'none'}</span><Badge b={v?.badge} />{chevron}
+      <button ref={menu.button} type="button" aria-haspopup="menu" aria-expanded={menu.open} aria-label={`${name}: ${v ? spoken(v) : none}`} title={title} onClick={menu.toggle} className={`flex cursor-pointer items-center gap-1 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link ${quiet ? 'min-h-11 rounded-lg border-0 bg-transparent px-1.5 hover:bg-soft lg:min-h-9' : 'h-11 gap-1.5 rounded-full border border-line bg-soft px-3'}`}>
+        <span className="font-mono font-semibold whitespace-nowrap">{v ? v.short : 'none'}</span>{!quiet && <Badge b={v?.badge} />}{chevron}
       </button>
       {menu.open && (
         <div role="menu" aria-label={name} className="absolute left-0 z-20 mt-1 min-w-60 rounded-xl border border-line-strong bg-surface py-1 shadow-float">

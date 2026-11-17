@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { artifactName, ledger, ledgerId } from './Artifacts.tsx';
 import { versionOf } from './delivered.ts';
@@ -63,14 +63,13 @@ function NeedsYou({ approvals, questions }: { approvals: Approval[]; questions: 
     ...questions.map((q) => ({ id: q.id, text: q.title ?? q.question })),
     ...approvals.map((a) => ({ id: a.id, text: describe(a.args) ?? a.tool })),
   ];
+  if (lines.length === 0) return null;
   return (
     <section aria-labelledby="rail-needs">
       <h2 id="rail-needs" className={head}>Needs you</h2>
-      {lines.length === 0 ? <p className="m-0 text-[13px] text-muted">Nothing is waiting on you.</p> : (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0">
-          {lines.map((l) => <li key={l.id}><button type="button" onClick={() => jump(needId(l.id))} className={`${jumpBtn} text-warning`}>{l.text}</button></li>)}
-        </ul>
-      )}
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {lines.map((l) => <li key={l.id}><button type="button" onClick={() => jump(needId(l.id))} className={`${jumpBtn} text-warning`}>{l.text}</button></li>)}
+      </ul>
     </section>
   );
 }
@@ -105,13 +104,19 @@ function SessionInfo({ agent, created, activity }: { agent?: string; created?: s
   const { data: agents } = useLoad(listAgents, [], NO_AGENTS);
   const model = agents.find((a) => a.name === agent)?.model;
   if (!agent && !created) return null;
+  const [provider, id] = model?.includes('/') ? [model.slice(0, model.indexOf('/')), model.slice(model.indexOf('/') + 1)] : [undefined, model];
+  const rows: Array<[string, ReactNode]> = [
+    ...(agent ? [['Agent', agent] as [string, ReactNode]] : []),
+    ...(id ? [['Model', <>{id}{provider && <span className="text-muted"> · {provider}</span>}</>] as [string, ReactNode]] : []),
+    ...(created ? [['Started', clock(created)] as [string, ReactNode]] : []),
+    ...(created && activity ? [['Last activity', clock(activity)] as [string, ReactNode]] : []),
+  ];
   return (
     <section aria-labelledby="rail-session" className="border-t border-line pt-7">
       <h2 id="rail-session" className={head}>Session</h2>
-      <div className="flex flex-col gap-1.5 text-[13px] text-muted">
-        {agent && <p className="m-0">{`Agent ${agent}${model ? ` on ${model}` : ''}`}</p>}
-        {created && <p className="m-0">{`Started ${clock(created)}${activity ? ` · Last activity ${clock(activity)}` : ''}`}</p>}
-      </div>
+      <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-[13px]">
+        {rows.map(([label, value]) => <Fragment key={label}><dt className="text-muted">{label}</dt><dd className="m-0 [overflow-wrap:anywhere]">{value}</dd></Fragment>)}
+      </dl>
     </section>
   );
 }

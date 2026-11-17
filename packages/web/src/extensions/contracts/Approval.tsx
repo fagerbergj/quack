@@ -127,8 +127,8 @@ export function Decision({ sessionKey, proposal, pending, decided }: { sessionKe
         <p className="m-0 -mt-2 text-[13px] text-muted">{NOUN[spec.kind][2]} contract · changes measured against {since(spec)}</p>
         {verdict ? <CheckResult verdict={verdict} open={false} summary="Automatic checks passed" /> : <p className="m-0 flex min-h-11 items-center text-[13px] text-success">Automatic checks passed</p>}
       </div>
-      <section aria-label="Breaks" className="flex flex-col border-t border-line">
-        <h4 className={`m-0 px-4 pt-3 pb-1 font-sans ${label}`}>{listed ? `Breaks callers · ${listed} in the spec` : 'The spec lists no breaks'}</h4>
+      <section aria-label="Breaking changes" className="flex flex-col border-t border-line">
+        <h4 className={`m-0 px-4 pt-3 pb-1 font-sans ${label}`}>{listed ? `Breaking changes · ${listed} in the spec` : 'The spec lists no breaks'}</h4>
         <BreakRows spec={spec} />
         {found && <div className="px-4 py-2"><Checker spec={spec} found={found} /></div>}
       </section>
