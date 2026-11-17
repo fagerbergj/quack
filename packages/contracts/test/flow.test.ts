@@ -38,12 +38,12 @@ async function open(script: Step[], maxRevisions = 2, inputs?: ReturnType<typeof
   const m = faux.getModel();
   const dir = reopen ?? (await mkdtemp(join(tmpdir(), 'quack-contracts-')));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...(await judgeManifest.session!({ maxRevisions }, {}, [])), ...contractsSessionExtensions(inputs)] } });
+  // Before the open: a reopened session resumes its run at once, and a judge reading a file mid-copy finds no line to cite.
   for (const f of ['packages/sleeper/src/service.ts', 'packages/web/src/extensions/sleeper/api.ts']) {
-    await mkdir(dirname(join(session.workspace, f)), { recursive: true });
-    await cp(join(repo, f), join(session.workspace, f));
+    await mkdir(dirname(join(dir, 'workspace', f)), { recursive: true });
+    await cp(join(repo, f), join(dir, 'workspace', f));
   }
-  return session;
+  return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...(await judgeManifest.session!({ maxRevisions }, {}, [])), ...contractsSessionExtensions(inputs)] } });
 }
 type Open = Awaited<ReturnType<typeof open>>;
 
