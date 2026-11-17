@@ -3,6 +3,7 @@ import { defineTool } from '@earendil-works/pi-durable';
 import { proposeContractTool } from './approval.ts';
 import { askQuestionTool } from './ask.ts';
 import { kinds } from './kinds.ts';
+import { replyCommentTool } from './reply.ts';
 
 const kind = oneOf(Object.keys(kinds), { default: 'rest', description: 'The contract kind' });
 
@@ -29,4 +30,4 @@ const guideTool = defineTool({
   },
 });
 
-export const contractTools = [askQuestionTool, extractTool, guideTool, proposeContractTool];
+export const contractTools = [askQuestionTool, extractTool, guideTool, proposeContractTool, replyCommentTool];

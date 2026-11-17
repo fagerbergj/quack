@@ -9,6 +9,7 @@ import type { Definition } from './definitions.ts';
 import { kinds } from './kinds.ts';
 import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
+import { commentProblems } from './answered.ts';
 import { factProblems } from './facts.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
@@ -85,7 +86,7 @@ async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answere
   return out;
 }
 
-type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
+type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; unanswered?: string[]; breaking: Array<{ id: string; text: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
 /** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, its workspace's files, and the
@@ -131,7 +132,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility, baseline } = spec;
-  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
+  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text }) => ({ id, text })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
   const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
     facts: JSON.stringify(facts),
@@ -239,6 +240,11 @@ function factsDecomposed(_a: string, ev: Evidence): CodeResult {
   return { met: undecomposed.length ? 0 : 1, detail: undecomposed.length ? `${list(undecomposed)}.` : undefined };
 }
 
+function commentsAnswered(_a: string, ev: Evidence): CodeResult {
+  const { unanswered = [] } = state(ev);
+  return { met: unanswered.length ? 0 : 1, detail: unanswered.length ? unanswered.join('\n') : undefined };
+}
+
 function linksResolve(_a: string, ev: Evidence): CodeResult {
   const { unresolved } = state(ev);
   return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
@@ -255,7 +261,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 6,
+  version: 7,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -263,6 +269,7 @@ export const contractRubric: Rubric = {
       { id: 'version_matches', label: 'The version number is wrong', weight: 'gate', code: versionMatches },
       { id: 'baseline_matches', label: 'The baseline is not the approved version', weight: 'gate', code: baselineMatches },
       { id: 'facts_decomposed', label: 'A guarantee or non-goal is not one checkable fact', weight: 'gate', code: factsDecomposed },
+      { id: 'comments_answered', label: 'A sent review comment is neither addressed nor answered', weight: 'gate', code: commentsAnswered },
     ] },
     { id: 'justified', checks: [
       { id: 'links_resolve', label: "A choice's link doesn't resolve", weight: 'gate', code: linksResolve },

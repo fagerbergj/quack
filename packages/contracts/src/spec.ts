@@ -3,8 +3,8 @@ import { factShapeProblems, type Fact } from './facts.ts';
 
 export type Why = { source: 'answer' | 'guide' | 'code'; text: string; /** A question id, a guide rule anchor, or path:line. */ ref: string };
 export type Choice = { id: string; /** JSON pointer into `document` the choice governs; empty when spec-wide. */ pointer: string; decision: string; why: Why[] };
-/** `facts` names the fact ids the row adds, changes or removes. */
-export type Change = { choice: string; was: string; now: string; why: string; facts?: string[] };
+/** `facts` names the fact ids the row adds, changes or removes; `addresses` the review comment ids the row addresses. */
+export type Change = { choice: string; was: string; now: string; why: string; facts?: string[]; addresses?: string[] };
 /** Required at seal since contract.spec v2; a stored entry may lack migration, say change for what, or name its callers in one string. */
 export type Breaking = { what: string; callers: string[]; migration?: string };
 export type Compatibility = { breaking: Breaking[]; safe: string[] };
@@ -63,6 +63,11 @@ function choiceProblems(c: unknown, i: number): string[] {
   return out;
 }
 
+const addressesOk = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'string' && x !== '') && new Set(v).size === v.length;
+function rowProblems(c: unknown): string[] {
+  if (!isObj(c) || !['choice', 'was', 'now', 'why'].every((k) => text(c[k]))) return ['each change needs choice, was, now and why'];
+  return c.addresses === undefined || addressesOk(c.addresses) ? [] : [`changes row ${String(c.choice)}: addresses must be a list of distinct, non-empty comment ids`];
+}
 const breakingOk = (b: unknown) => isObj(b) && text(b.what) && strings(b.callers) && (b.callers as string[]).length > 0 && text(b.migration);
 
 // A revision of an approved version must change something; a spec of a shipped surface may write it down as it stands.
@@ -70,7 +75,7 @@ function baselinedProblems(s: Record<string, unknown>): string[] {
   const out: string[] = [];
   const changes = Array.isArray(s.changes) ? s.changes : [];
   if (!Array.isArray(s.changes) || (typeof s.baseline === 'number' && !changes.length)) out.push(`changes must list what this version changes from its baseline (${String(s.baseline)})`);
-  for (const c of changes) if (!isObj(c) || !['choice', 'was', 'now', 'why'].every((k) => text(c[k]))) out.push('each change needs choice, was, now and why');
+  out.push(...changes.flatMap(rowProblems));
   const c = s.compatibility;
   if (!isObj(c) || !Array.isArray(c.breaking) || !strings(c.safe)) return [...out, 'compatibility needs breaking (what, callers and migration) and safe'];
   for (const b of c.breaking) if (!breakingOk(b)) out.push('each breaking entry needs what, at least one named caller, and migration: how those callers keep working');
