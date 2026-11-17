@@ -4,6 +4,7 @@ import { obj } from '@earendil-works/pi-schema';
 import { defineTool, GenerationTask, hook, LiveDoc, type ConversationId, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { Approvals, Artifacts, gated, withdrawApprovals, type Approval, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
+import { lastReviewBlock, reasonSummary } from './reason.ts';
 import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
 
 export const APPROVED_KIND = 'contract.approved';
@@ -38,7 +39,7 @@ async function reconcile(api: ToolExecutionApi, ctx: Context) {
       if (entry.versions.some((v) => (JSON.parse(v.content) as { approval?: string }).approval === id)) continue;
       const note = ok ? `Approved version ${version}` : (a.verdict.reason ?? '');
       const content = JSON.stringify({ version, ...(artifact ? { artifact, hash } : {}), note, approval: id });
-      const sealed: SealedArtifact = { kind, version: entry.versions.length + 1, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, outcome: `v${version}`, summary: note.slice(0, 80) };
+      const sealed: SealedArtifact = { kind, version: entry.versions.length + 1, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, outcome: `v${version}`, summary: reasonSummary(note).slice(0, 80) };
       entry.versions.push(sealed);
     }
   }, ctx);
@@ -79,6 +80,15 @@ type Outcome = { text: string; isError?: boolean };
 const NOT_NEWEST: Outcome = { text: 'Only the newest sealed version can be put up for approval, once it passes its checks; write artifacts/spec.json and call submit_contract.', isError: true };
 const textOf = (r: { output?: Array<{ type: string; text?: string }> }) => r.output?.map((p) => p.text ?? '').join('') ?? '';
 
+// What the agent is told after a rejection; a review's block ends the reason, so what follows starts on a line of its own.
+function rejectedText(text: string, version: number, was: ContractSpec | undefined): Outcome {
+  const against = was ? `with baseline ${was.version} and its changes and compatibility measured against that approved version` : 'with changes and compatibility only if its baseline is "shipped", never measured against this rejected version';
+  // The gate says "Rejected by <who>: <reason>", and a reason with no note opens with its block.
+  const review = !!lastReviewBlock(text.replace(/^Rejected by [^:\n]*: /, ''));
+  const comments = review ? ' The reason ends in a ```quack-review block of review comments: for each comment, name its id in the addresses of the changes row that changes what it is about, or call reply_comment with its id, before you submit, to say why you left it; the check fails a version that does neither for any of them.' : '';
+  return { text: `${text}${review ? '\n\n' : '. '}Act on what the person said, in this reason or in the message that follows it: for a change, write version ${version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${version} up again.${comments}`, isError: true };
+}
+
 /** Puts one sealed version before the person and waits: only the newest, only once it passed, never one already approved. The facts the
  * approver reads (lint findings, breaks against the approved version) are computed here in code, not taken from the agent's account. */
 export async function proposeVersion(sealed: SealedArtifact, api: ToolExecutionApi, ctx: Context): Promise<Outcome> {
@@ -100,8 +110,7 @@ export async function proposeVersion(sealed: SealedArtifact, api: ToolExecutionA
   if (!verdict.isError) return { text: `Version ${spec.version} is approved.` };
   const text = textOf(verdict as never);
   if (!text.startsWith('Rejected by')) return { text, isError: true };
-  const against = was ? `with baseline ${was.version} and its changes and compatibility measured against that approved version` : 'with changes and compatibility only if its baseline is "shipped", never measured against this rejected version';
-  return { text: `${text}. Act on what the person said, in this reason or in the message that follows it: for a change, write version ${spec.version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${spec.version} up again.`, isError: true };
+  return rejectedText(text, spec.version, was);
 }
 
 /** The same proposal on demand, for the newest version. */

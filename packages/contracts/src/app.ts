@@ -1,9 +1,10 @@
 // The contracts extension's own read: each Contract Studio session's contract, from its sealed artifacts in the catalog.
-import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { escapeTerm, sendProblem, serviceHttp, type App, type AppContext } from '@quack/sdk';
 import { APPROVED_KIND, CHANGES_KIND } from './approval.ts';
+import { commentRoutes, type Facts } from './comments.ts';
 import { parseFilter, QueryError } from './filter.ts';
+import { BadRequest, cursorOf, sizeOf, tokenOf } from './paging.ts';
 import { CONTRACT_KIND, SPEC_KINDS } from './spec.ts';
 
 /** One contract as the Contracts page shows it. Versions are the contract's own spec versions, not artifact numbers. */
@@ -27,27 +28,8 @@ const { send } = serviceHttp();
 export const PAGE = /^\/contracts(?:\/[^/]+)?$/;
 const ONE = /^\/contracts\/([^/]+)$/;
 const keyOf = (path: string) => { try { return decodeURIComponent(ONE.exec(path)?.[1] ?? ''); } catch { return ''; } };
-// A pageSize or pageToken the list cannot read, including a token the catalog refuses: the 400.
-class BadRequest extends Error {}
-function sizeOf(param: string | null): number {
-  const size = param === null ? 100 : /^\d+$/.test(param) ? Number(param) : 0;
-  if (size < 1 || size > 1000) throw new BadRequest('pageSize must be an integer from 1 to 1000');
-  return size;
-}
 // A filter that matches little would otherwise walk the whole catalog in one request; a short page with a token is allowed.
 const MAX_CATALOG_PAGES = 10;
-// The page token is the catalog's cursor bound to the whole q, so a token sent with any other q is refused (AIP-158).
-const digestOf = (q: string) => createHash('sha256').update(q.trim()).digest('base64url').slice(0, 22);
-const tokenOf = (cursor: string, q: string) => Buffer.from(JSON.stringify([cursor, digestOf(q)])).toString('base64url');
-function cursorOf(token: string | null, q: string): string {
-  if (!token) return '';
-  let parsed: unknown;
-  try { parsed = JSON.parse(Buffer.from(token, 'base64url').toString()); } catch { parsed = undefined; }
-  const [cursor, digest] = Array.isArray(parsed) ? parsed : [];
-  if (typeof cursor !== 'string' || !cursor) throw new BadRequest('pageToken is not one this list issued');
-  if (digest !== digestOf(q)) throw new BadRequest('pageToken was issued for a different q');
-  return cursor;
-}
 const parse =(content: string | undefined): Record<string, unknown> => { try { return JSON.parse(content ?? '') ?? {}; } catch { return {}; } };
 const newest = (all: Artifact[], kind: string) => all.filter((a) => a.kind === kind).sort((a, b) => a.version - b.version).at(-1);
 const versionOf = (a: Artifact | undefined) => (typeof parse(a?.content).version === 'number' ? (parse(a?.content).version as number) : undefined);
@@ -88,8 +70,9 @@ export function versionsOf(artifacts: Artifact[], all: Ask[]): SpecVersion[] {
   return specs.map((s) => ({ ...s, status: statusOf(s.artifact) }));
 }
 
-/** The app: GET /contracts reads every live Contract Studio session, and GET /contracts/{key} one with its versions, through the catalog, never starting a process. */
-export function contractsApp(ctx: AppContext): App {
+/** The app: GET /contracts reads every live Contract Studio session, and GET /contracts/{key} one with its versions, through the catalog, never starting a process;
+ * the comment and review routes keep review comments in the app's own database. `now` and `newId` are seams for tests. */
+export function contractsApp(ctx: AppContext, seams: { now?: () => number; newId?: (prefix: string) => string } = {}): App {
   async function all<T>(path: string, field: string): Promise<T[]> {
     const rows: T[] = [];
     for (let token = ''; ;) {
@@ -130,15 +113,21 @@ export function contractsApp(ctx: AppContext): App {
     }
     return { contracts, ...(cursor && { nextPageToken: tokenOf(cursor, asked) }) };
   }
-  // One contract with every spec version's status; undefined when the catalog has no such session.
-  async function one(key: string): Promise<(ContractRecord & { versions: SpecVersion[] }) | undefined> {
+  // A session's catalog row, or undefined when the catalog has no such session.
+  async function session(key: string): Promise<{ title?: string } | undefined> {
     const row = await ctx.fetch(`${ctx.distributorUrl}/sessions/${encodeURIComponent(key)}`);
     if (row.status === 404) return undefined;
     if (!row.ok) throw new Error(`/sessions/${key} answered ${row.status}`);
-    const { title } = (await row.json()) as { title?: string };
-    const { artifacts, asks } = await records(key);
-    return { ...contractOf(key, title, artifacts, asks), versions: versionsOf(artifacts, asks) };
+    return (await row.json()) as { title?: string };
   }
+  // One contract with every spec version's status; undefined when the catalog has no such session.
+  async function one(key: string): Promise<(ContractRecord & { versions: SpecVersion[] }) | undefined> {
+    const row = await session(key);
+    if (!row) return undefined;
+    const { artifacts, asks } = await records(key);
+    return { ...contractOf(key, row.title, artifacts, asks), versions: versionsOf(artifacts, asks) };
+  }
+  const comments = commentRoutes({ ...seams, dbPath: ctx.dbPath, facts: async (key) => ((await session(key)) ? ((await records(key)) as Facts) : undefined) });
   async function route(url: URL, res: ServerResponse) {
     if (url.pathname === '/contracts') return send(res, 200, await list(url.searchParams));
     const key = keyOf(url.pathname);
@@ -148,6 +137,7 @@ export function contractsApp(ctx: AppContext): App {
   return {
     async handle(req: IncomingMessage, res: ServerResponse) {
       const url = new URL(req.url ?? '', 'http://x');
+      if (await comments.handle(req, res, url)) return;
       if (req.method !== 'GET' || !PAGE.test(url.pathname)) return sendProblem(res, 404, 'not found');
       try {
         await route(url, res);
@@ -156,5 +146,6 @@ export function contractsApp(ctx: AppContext): App {
         sendProblem(res, 503, `the catalog is unavailable: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
+    stop: () => comments.close(),
   };
 }

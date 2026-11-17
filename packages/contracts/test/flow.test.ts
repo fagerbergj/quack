@@ -13,6 +13,7 @@ import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession } from '@quack/eval';
 import type { Inputs } from '@quack/judge';
 import { contractsSessionExtensions, manifest, specInputs, type ContractSpec } from '../src/index.ts';
+import { lastReviewBlock, reviewReason } from '../src/reason.ts';
 import { scheduleSpecV1, scheduleSpecV2, settingsSpec, SLEEPER_PAGE } from './fixtures.ts';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -369,4 +370,42 @@ test('a proposal whose rerun fails before its gate is withdrawn, and the newer a
   assert.match(again, /Version 2 is approved\./, 'the base is artifact 2, not the artifact 1 the late verdict names');
   assert.deepEqual((await kindOf(s2, 'contract.approved')).map((r) => JSON.parse(r.content).artifact), [2], 'the verdict on artifact 1 is never recorded');
   await s2.close();
+});
+
+test('a review in the rejection reaches the agent with how to answer it; a version that leaves a comment unanswered fails, and reply_comment answers it', async () => {
+  const said: string[] = [];
+  const v2 = () => ({ ...settingsSpec(), version: 2 });
+  const s = await open([
+    call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}),
+    (c) => ((said.push(text(c)), write(v2)(c))), call('submit_contract', {}),
+    (c) => ((said.push(text(c)), call('reply_comment', { id: 'cmt_1', text: 'Kept closed: a typo must fail loudly.' })(c))),
+    // A reply counts for a version sealed after it, so the same spec is written again; any change makes a new seal.
+    (c) => ((said.push(text(c)), call('write', { path: 'artifacts/spec.json', content: JSON.stringify(v2()) })(c))),
+    call('submit_contract', {}),
+    () => fauxAssistantMessage('Version 2 is approved.'),
+  ]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1', true);
+  const reason = reviewReason('One thing.', { review: 'rev_1', artifact: 1, comments: [{ id: 'cmt_1', anchor: { on: 'choice', id: 'closed' }, body: 'Why closed?' }] });
+  await resolveApproval(s.root, (await nextProposal(s)).id, { decision: 'reject', reason, by: jf }, ctx);
+  await approve(s);
+  await run;
+  assert.match(said[0]!, /ends in a ```quack-review block of review comments: for each comment, name its id in the addresses/);
+  assert.deepEqual(lastReviewBlock(said[0]!.replace(/^Rejected by [^:]*: /, ''))?.block.comments.map((c) => c.id), ['cmt_1'], 'the agent reads the block whole');
+  assert.match(said[1]!, /comment 'cmt_1' from the last Ask for changes is neither addressed nor answered/);
+  assert.match(said[2]!, /Replied to comment cmt_1\./);
+  const [first, second] = (await versions(s)).slice(1);
+  assert.deepEqual([(first!.verdict as { gatesFailed: string[] }).gatesFailed, (second!.verdict as { passed: boolean }).passed], [['sound.comments_answered'], true]);
+  assert.deepEqual((await kindOf(s, 'contract.reply')).map((r) => JSON.parse(r.content)), [{ comment: 'cmt_1', text: 'Kept closed: a typo must fail loudly.' }]);
+  assert.deepEqual((await kindOf(s, 'contract.changes')).map((r) => r.summary), ['One thing. · 1 review comment']);
+  await s.close();
+});
+
+test('reply_comment refuses a 21st reply to one comment with an error the agent reads', async () => {
+  const replies = Array.from({ length: 21 }, (_, i) => call('reply_comment', { id: 'cmt_1', text: `reply ${i}` }));
+  let last = '';
+  const s = await open([...replies, (c) => ((last = text(c)), fauxAssistantMessage('done'))]);
+  await s.submit('Reply a lot', 'r-1', true);
+  assert.equal((await kindOf(s, 'contract.reply')).length, 20);
+  assert.match(last, /already has 20 replies/);
+  await s.close();
 });

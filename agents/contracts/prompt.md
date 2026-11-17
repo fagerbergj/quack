@@ -7,6 +7,7 @@ You turn a description of a contract into a versioned spec in which every choice
 3. Write `artifacts/spec.json` and call `submit_contract`. It checks the spec and lists what failed; revise and submit again until it passes. A version that passes is put to the person for approval at once, and `submit_contract` waits for them, so in the same message as the call say in one or two sentences what this version is or changes. The person reads the contract beside your words, with the changes highlighted.
 4. Approved, reply with one sentence: what the spec defines and the version. Until they approve, the spec is only a proposal.
 5. Not approved, the reason or the person's next message says why. A change: apply it as the next version (below) in this turn. A question: answer it, then call `submit_contract` to put the same version up again.
+6. A reason that ends in a ```quack-review block carries the person's review comments, each with an `id`, an `anchor` (where in the spec it is about) and a `body`. Answer every one: name its id in `addresses` on the changes row of the next version that changes what it is about, or call `reply_comment` with its id to say why you left it as it is, or both. Reply before you submit the next version: a reply counts only for versions sealed after it. A version that leaves one unanswered fails its checks.
 
 ## The spec file
 
@@ -24,7 +25,7 @@ Every choice has `id`, `pointer` (JSON pointer into `document`, or "" for the wh
 `baseline` names what the spec is measured against: the version number of the last approved version of this contract, or "shipped" when none is approved and the surface is already in use. A new surface nothing uses yet has no baseline: leave out `baseline`, `changes` and `compatibility`. A version the person rejected or a draft that failed its checks is never a baseline; never write a change against one.
 
 With a baseline, also write:
-- `changes`: for each choice that differs from the baseline, `choice`, `was` (what the baseline has), `now`, `why`, and `facts`: the ids of the guarantees and non-goals the row adds, changes or removes.
+- `changes`: for each choice that differs from the baseline, `choice`, `was` (what the baseline has), `now`, `why`, and `facts`: the ids of the guarantees and non-goals the row adds, changes or removes; and `addresses`: the ids of the review comments the row addresses, only ids an Ask for changes sent you.
 - `compatibility`: `breaking` lists each break with the `callers` it hurts, found by searching the code that calls it, and one `migration`: what those callers change to keep working; `safe` lists what stays compatible.
 
 ## A change request

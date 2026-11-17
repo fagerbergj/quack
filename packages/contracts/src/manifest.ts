@@ -1,6 +1,7 @@
 import type { ExtensionManifest } from '@quack/sdk';
 import { defineContract } from './action.ts';
 import { contractsApp, PAGE } from './app.ts';
+import { COMMENT_PAGES } from './comments.ts';
 import { contractsSessionExtensions } from './index.ts';
 import { contractDeclaration, contractRubric, recordedSpecInputs } from './rubric.ts';
 import { CONTRACT_KIND } from './spec.ts';
@@ -12,7 +13,7 @@ export const manifest: ExtensionManifest = {
   actions: [defineContract],
   evalAdapters: [{ kind: CONTRACT_KIND, judge: { rubric: contractRubric, declaration: contractDeclaration, inputs: recordedSpecInputs } }],
   session: () => contractsSessionExtensions(),
-  // The page reads it through the proxy like any page route; it reads only the catalog.
+  // The page reaches it through the proxy like any page route: it reads the catalog, and writes only review comments to its own database.
   app: (ctx) => contractsApp(ctx),
-  pages: [{ method: 'GET', path: PAGE }],
+  pages: [{ method: 'GET', path: PAGE }, ...COMMENT_PAGES],
 };

@@ -20,6 +20,8 @@ export { typeScriptBreaks } from './typescript-diff.ts';
 export { contractDeclaration, contractRubric, guideAnchors, guideRules, recordedSpecInputs, specInputs } from './rubric.ts';
 export { CONTRACT_KIND, CONTRACT_PATH, parseSpec, summarizeSpec, validateSpec, type Breaking, type Change, type Choice, type Compatibility, type ContractSpec, type Intent, type Why } from './spec.ts';
 export { factProblems, type Fact } from './facts.ts';
+export { lastReviewBlock, reviewReason, type Anchor, type ReviewBlock } from './reason.ts';
+export { REPLY_KIND } from './reply.ts';
 export { manifest } from './manifest.ts';
 
 // The version is data on the artifact: the summary is cut at 80 characters, which a long title would take it with.
