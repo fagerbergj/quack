@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Markdown } from '../../Markdown.tsx';
 import { StatusIcon } from '../../StatusIcon.tsx';
 import type { Verdict } from '../../api.ts';
@@ -135,6 +135,46 @@ export function download(body: string, type: string, filename: string) {
 
 export type ViewProps = { spec: ContractSpec; verdict?: Verdict | null };
 
+// A phone keeps the title to two lines; when that cuts it, the title becomes a control that shows the rest in place.
+export function ClampedTitle({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [clamped, setClamped] = useState(false);
+  const [open, setOpen] = useState(false);
+  // Measured only while clamped: an open title has nothing cut, but must stay a button to collapse again.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || open) return;
+    const measure = () => setClamped(el.scrollHeight > el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, open]);
+  const toggle = () => setOpen(!open);
+  // One element whether or not it is a control: swapping it for a button would remount it and drop the observer's target.
+  const control = clamped || open;
+  return (
+    <span
+      ref={ref}
+      title={control ? undefined : text}
+      {...(control && {
+        role: 'button',
+        tabIndex: 0,
+        'aria-expanded': open,
+        onClick: toggle,
+        onKeyDown: (e: KeyboardEvent<HTMLSpanElement>) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          toggle();
+        },
+      })}
+      className={`min-w-0 ${open ? '' : 'max-sm:line-clamp-2'} ${control ? 'cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link' : ''}`}
+    >
+      {text}
+    </span>
+  );
+}
+
 // A passed double-check is a tick beside the title; the decisions no element carries sit there too.
 export function Header({ spec, count, file, verdict, info = [] }: { spec: ContractSpec; count: string; file: { label: string; save: () => void }; verdict?: Verdict | null; info?: Choice[] }) {
   const flash = useFlash<HTMLElement>('#title');
@@ -142,8 +182,7 @@ export function Header({ spec, count, file, verdict, info = [] }: { spec: Contra
     <header ref={flash.ref} tabIndex={-1} data-ptr="#title" className={`flex flex-wrap items-center gap-3 rounded-lg outline-none ${flash.cls}`}>
       <div className="flex min-w-0 flex-1 basis-48 flex-col">
         <h2 className="m-0 flex items-center gap-2 font-sans text-[17px] leading-snug font-semibold [overflow-wrap:anywhere]">
-          {/* The session header carries the full title, so a phone keeps this one to two lines. */}
-          <span title={spec.title} className="min-w-0 max-sm:line-clamp-2">{spec.title}</span>
+          <ClampedTitle text={spec.title} />
           <MarkTag m={useMark('#title')} />
           {verdict?.passed && <StatusIcon verdict={verdict} />}
           <Info choices={info} label={info.length === 1 ? undefined : `Why: ${info.length} decisions about the whole contract`} />

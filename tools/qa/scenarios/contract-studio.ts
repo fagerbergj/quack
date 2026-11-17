@@ -84,6 +84,24 @@ const scenario: Scenario = {
       await visible(diagram.getByRole('heading', { name: /around App$/ }));
       await diagram.screenshot({ path: await ctx.shot(page, `studio-ts-app-${label}`).then((p) => p.replace(/\.png$/, '-diagram.png')) });
     });
+    await eachView(ctx, 'a long contract title is clamped on a phone and expands in place on a tap, and is plain text on a desktop', async (page, label) => {
+      await page.goto(`${ctx.url}/${SDK}`);
+      const title = paneOf(page, 'Contract').getByRole('heading', { level: 2, name: /^Extension SDK manifest: / });
+      if (label.startsWith('1280')) {
+        await visible(title);
+        if (await title.getByRole('button', { name: /^Extension SDK manifest/ }).count()) throw new Error('the title is a control on a desktop');
+        return;
+      }
+      const toggle = title.getByRole('button', { name: /^Extension SDK manifest/ });
+      await visible(toggle);
+      if ((await toggle.getAttribute('aria-expanded')) !== 'false') throw new Error('the title starts open');
+      await ctx.shot(page, `studio-title-collapsed-${label}`);
+      await toggle.click();
+      if ((await toggle.getAttribute('aria-expanded')) !== 'true') throw new Error('a tap did not open the title');
+      await ctx.shot(page, `studio-title-expanded-${label}`);
+      await toggle.click();
+      if ((await toggle.getAttribute('aria-expanded')) !== 'false') throw new Error('a second tap did not close the title');
+    }, [{ width: 1280, height: 800 }, { width: 390, height: 800 }]);
     await ctx.step('approving the waiting version records it', async () => {
       const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
       try {
