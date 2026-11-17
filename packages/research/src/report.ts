@@ -2,6 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
+import { figures, figuresClash, namesClash } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -280,6 +281,33 @@ export async function recordedReportInputs(session: RecordedSession, content: st
 const findingChunks = (inputs: Inputs, o: SplitDecl): Chunk[] => findingItems(inputs[String(o.from)]).map((f, i) => ({ id: `finding-${i + 1}`, text: f.text }));
 registerSplitter('research.findings', findingChunks);
 
+type Statement = { section: string; text: string };
+
+/** Each sentence of the report's own text with the section it sits in (the preamble's is ""): code fences and headings are left out,
+ *  and a line ends a sentence. */
+function statements(report: string): Statement[] {
+  const { preamble, sections } = splitReport(report);
+  return [{ name: '', lines: preamble }, ...sections].flatMap((s) => fenced(s.lines.join('\n'))
+    .filter(([line, code]) => !code && !/^\s*#/.test(line))
+    .flatMap(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').split(/(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u))
+    .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(/\[s\d+\]/g, '')))
+    .map((t) => ({ section: s.name, text: t.trim() })));
+}
+
+/** Pairs of sentences that may state one thing two ways, at least one of them in the report's own voice. A finding states what the source
+ *  it cites says and is checked against that source, so two findings that differ report a disagreement between sources, not the report's own. */
+function claimPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const all = statements(inputs[String(o.from)]);
+  const figs = all.map((s) => figures(s.text));
+  const own = (s: Statement) => s.section !== 'findings';
+  return all.flatMap((a, i) => all.slice(i + 1).flatMap((b, k) => {
+    const j = i + 1 + k;
+    const ask = (own(a) || own(b)) && (figuresClash(figs[i], figs[j]) || namesClash(a.text, b.text));
+    return ask ? [{ id: `${i + 1}|${j + 1}`, text: JSON.stringify({ first: a, second: b }) }] : [];
+  }));
+}
+registerSplitter('research.claimPairs', claimPairs);
+
 /** The report's parsed form, as the research report artifact contract states it: its sections by name, the ids it cites and its findings. */
 export function parseReport(report: string): { sections: Record<string, string>; citedIds: string[]; findings: Array<{ first: string; text: string }> } {
   const keys = [...new Set(splitReport(report).sections.map((s) => s.name))];
@@ -344,7 +372,7 @@ const bool = (instructions: string): Question => ({ type: 'bool', instructions: 
 const defect = (instructions: string, yes: string, no: string): Question => ({ type: 'choice', instructions: `${instructions}${FAIR}`, options: { yes, no } });
 
 /** How each model check of researchRubric is asked: per finding with its sources' excerpts, per Summary sentence with every bullet outside
- *  the Summary and Assumptions, and of the request and of the report once each, with the whole report. */
+ *  the Summary and Assumptions, of the request once with the whole report, and per pair of sentences that may conflict, with the Summary. */
 export const reportDeclaration: Declaration = {
   scopes: {
     fetched: { split: { name: 'whole', from: 'fetched' }, piece: 'ids' },
@@ -358,7 +386,8 @@ export const reportDeclaration: Declaration = {
       piece: 'sentence',
       context: { findings: { name: 'items', from: 'outside', strip: CITE } },
     },
-    report: { split: { name: 'whole', from: 'report' }, piece: 'report' },
+    // The Summary names what the report compares, so two products' figures read apart; shared, the pairs pack into few decision-model requests.
+    pairs: { split: { name: 'research.claimPairs', from: 'report' }, piece: 'pair', context: { summary: { name: 'whole', from: 'summary' } } },
   },
   checks: {
     // Clef passes findings their source does not state or states differently (a ranking, a figure, an author), so the 27B decides both.
@@ -367,14 +396,14 @@ export const reportDeclaration: Declaration = {
     answers_every_ask: { scope: 'request', aggregate: { name: 'all' }, question: bool("Is every distinct ask and constraint in the request (place, timeframe, budget, audience) answered in the report's Summary and Findings, or named under Assumptions as unsettled?") },
     summary_follows_findings: { scope: 'summary', aggregate: { name: 'all' }, question: bool("Does this sentence of the report's Summary follow from the findings shown with it?") },
     // Clef clears clean reports well but gives no reason, so only a flag goes to the judge model, which says what conflicts.
-    no_self_contradiction: { scope: 'report', aggregate: { name: 'all', pass: ['no'] }, decisionModel: PASS_ONLY, question: defect('Does any figure, date or name in the report conflict with another passage of the report?', 'Yes: two passages give different figures, dates or names for the same thing.', 'No: they all agree.') },
+    no_self_contradiction: { scope: 'pairs', aggregate: { name: 'all', pass: ['no'] }, decisionModel: PASS_ONLY, question: defect('Do these two passages of the report give conflicting figures, dates or names for the same thing?', 'Yes: they describe the same thing, and both cannot be true.', 'No: they describe different things, or both can be true.') },
   },
 };
 
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 7,
+  version: 8,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
