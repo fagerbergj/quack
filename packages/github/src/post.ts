@@ -16,6 +16,8 @@ const postFailed = async (res: Response) => ({
   isError: true,
 });
 
+const lastPosted = async (api: ToolExecutionApi, version: number | undefined, ctx: Context) => (version ? (await sealedVersion(api, reviewKind.kind, version, ctx))?.content : undefined);
+
 // Posts a version once per checkout; it runs after the judge's gate, so with the judge on only a passed or released version gets here.
 function post(config: SessionConfig) {
   return async (sealed: SealedArtifact, v: Verdict | null, api: ToolExecutionApi, ctx: Context) => {
@@ -33,10 +35,11 @@ function post(config: SessionConfig) {
     if (doc.postedThisCheckout) return { text: `Review v${doc.postedThisCheckout} was already posted for this checkout; a run posts one review, so v${sealed.version} was not sent.` };
     const marks = v?.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks).map((l) => `- ${l}`).join('\n')}\n` : '';
     const event = EVENT[parseReview(sealed.content).verdict ?? ''];
-    const { body: text, comments } = await postable(api, config.repoDir ?? 'repo', pr.baseRef, sealed.content, ctx);
+    const prior = await lastPosted(api, doc.posted?.at(-1), ctx);
+    const { body: text, fallbackBody, comments } = await postable(api, config.repoDir ?? 'repo', pr.baseRef, sealed.content, ctx, prior);
     // The request id makes a resubmit after a lost answer or a crash find the posted review instead of posting it again.
     const requestId = `${api.conversationId}/v${sealed.version}`;
-    const body = { commitId: pr.headSha, event, body: text + marks, requestId, ...(comments.length ? { comments, fallbackBody: sealed.content + marks } : {}) };
+    const body = { commitId: pr.headSha, event, body: text + marks, requestId, ...(comments.length ? { comments, fallbackBody: fallbackBody + marks } : {}) };
     const res = await fetch(`${config.serviceUrl}/pulls/${pr.owner}/${pr.repo}/${pr.number}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: `Bearer ${config.serviceToken}` } });
     if (!res.ok) return postFailed(res);
     const posted = (await res.json()) as { url?: string };

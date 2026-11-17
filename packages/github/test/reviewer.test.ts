@@ -14,17 +14,18 @@ import { cleanup, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
 
-const inlined = `## Takeaway
-The change does what issue #3 asks; approve.
-## Verdict
-approve
-## Findings
+const inlined = `The change does what issue #3 asks; approve.
 
-Posted inline on the diff:
-- nit: a named constant would say why the value is 2.
-## Verified
+1 nit inline.
+
+<details><summary>What I checked</summary>
+
+**Verified**
+
 - read app.ts:1 on the PR head: \`export const a = 2;\`
-`;
+
+</details>`;
+const unanchored = inlined.replace('1 nit inline.', 'Not anchored to a diff line:\n- nit: app.ts:1 — a named constant would say why the value is 2.');
 // The questions asked as the defect, which a good review answers "no", by their text: a check id never reaches Clef.
 const PITFALLS = /toolchain or network failure|contradict this finding|only assert that something is wrong|rest only on preference|fail to name something that goes wrong|though not labelled blocking|claim a result/;
 const clefUnits: string[] = [];
@@ -114,7 +115,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.equal(service.posted.length, 1);
   // The nit cites app.ts:1, which the PR changes: it goes inline and the body lists it by title.
   assert.match(service.posted[0].requestId, /^.+\/v1$/, 'the post names its conversation and version');
-  assert.deepEqual(service.posted[0], { commitId: head, event: 'APPROVE', body: inlined, requestId: service.posted[0].requestId, fallbackBody: review, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
+  assert.deepEqual(service.posted[0], { commitId: head, event: 'APPROVE', body: inlined, requestId: service.posted[0].requestId, fallbackBody: unanchored, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
 
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   const verdict = doc!.kinds['github.review'].versions[0].verdict as any;
@@ -165,7 +166,7 @@ test('a review released at the revision limit posts with its failures marked', a
   assert.equal(service.posted.length, 1);
   assert.match(service.posted[0].body, /\*\*Not fully checked:\*\* the revision limit was reached\. Checks that did not pass:\n- /);
   assert.match(service.posted[0].comments[0].body, /draft 3/);
-  assert.ok(service.posted[0].body.startsWith('## Takeaway'));
+  assert.ok(service.posted[0].body.startsWith('The change does what issue #3 asks'));
   await session.close();
 });
 
