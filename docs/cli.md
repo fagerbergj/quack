@@ -20,7 +20,7 @@
 | `agents` | Agent versions. |
 | `server [add <name> <url> [--token T] \| use <name> \| list [--keys] \| remove <name>]` | Saved servers; `server` alone prints where commands go now and whether it answers. |
 | `completion bash\|zsh` | Print a completion script: `source <(quack completion bash)`. Keys complete from `quack sessions --keys`, server names from `quack server list --keys`. |
-| `eval <args>` | Runs `packages/eval/src/main.ts` with the arguments as given (needs the `LANGFUSE_*` variables). |
+| `eval <args>` | Runs `packages/eval/src/main.ts` with the arguments as given (the `LANGFUSE_*` variables for a Langfuse dataset; a `.json` items file needs none). |
 
 ## Servers
 
