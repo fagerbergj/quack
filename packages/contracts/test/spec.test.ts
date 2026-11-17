@@ -5,12 +5,12 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { buildEvidence, codeResults } from '@quack/judge';
 import type { Approval, RecordedSession, SealedArtifact } from '@quack/sdk';
 import { contractOf, versionsOf } from '../src/app.ts';
-import { contractDeclaration, contractRubric, recordedSpecInputs, validateSpec, type ContractSpec } from '../src/index.ts';
+import { contractDeclaration, contractRubric, guideRules, kinds, recordedSpecInputs, validateSpec, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
 
 // The contract's own sealed spec: its document is the shape of every contract.spec, and the spec is one itself.
-const CONTRACT = { key: 'contracts:d45ad598-d0a3-4302-9d5c-faf634c3911d', version: 2 };
-const sealedContract = JSON.parse(readFileSync(new URL('fixtures-specs/contract-spec-v2.json', import.meta.url), 'utf8')) as ContractSpec;
+const CONTRACT = { key: 'contracts:d45ad598-d0a3-4302-9d5c-faf634c3911d', version: 7 };
+const sealedContract = JSON.parse(readFileSync(new URL('fixtures-specs/contract-spec-v7.json', import.meta.url), 'utf8')) as ContractSpec;
 const accepts = new Ajv2020({ strict: false, validateFormats: false }).compile(sealedContract.document as object);
 
 const refs = { versioning: 'request', time: 'request' };
@@ -24,7 +24,7 @@ const without = <T extends object>(o: T, ...keys: string[]) => Object.fromEntrie
 const breaking = (entry: object) => ({ ...revision, compatibility: { breaking: [entry], safe: [] } });
 
 test(`the checked-in shape is ${CONTRACT.key} v${CONTRACT.version}`, () => {
-  assert.deepEqual([sealedContract.title, sealedContract.version, sealedContract.baseline], ['The sealed contract.spec artifact', 2, 1]);
+  assert.deepEqual([sealedContract.title, sealedContract.version, sealedContract.baseline], ['The sealed contract.spec artifact', 7, 2]);
 });
 
 test('a greenfield draft seals at any version with no baseline, changes or compatibility', () => {
@@ -52,8 +52,23 @@ test('every breaking entry sealed now needs what, a named caller and one migrati
   assert.equal(problems(breaking({ ...without(entry, 'what'), change: entry.what })).length, 1);
 });
 
+const withFacts = (spec: ContractSpec, guarantees: unknown[], nonGoals: unknown[] = spec.intent.nonGoals) => ({ ...spec, intent: { ...spec.intent, guarantees, nonGoals } });
+const fact = (text: string, id = 'a.fact') => ({ id, text });
+const ACCEPTED_FACTS: Array<[string, unknown]> = [
+  ['an object of 160 code points that are 320 UTF-16 units', withFacts(v1, [fact('😀'.repeat(160))])],
+  ['a stored string of 2,762 characters beside an approved baseline', withFacts(revision, ['x'.repeat(2762)], ['y'.repeat(338)])],
+  ['a changes row naming facts', { ...revision, changes: [{ ...revision.changes![0], facts: ['read-only'] }] }],
+];
+
 // Shape problems both refuse; the rules that depend on the baseline are the code's, which the schema leaves open.
 const SHAPE_REFUSED: Array<[string, unknown]> = [
+  ['a fact of 161 characters', withFacts(v1, [fact('x'.repeat(161))])],
+  ['a fact of 161 code points', withFacts(revision, [fact('😀'.repeat(161))])],
+  ['a fact without an id', withFacts(revision, [{ text: 'short' }])],
+  ...['Reuse.Key', '1x', 'a..b', 'a.', 'a_b'].map((id): [string, unknown] => [`a fact id ${id}`, withFacts(revision, [fact('short', id)])]),
+  ['a fact with empty text', withFacts(revision, [fact('')])],
+  ['an empty string entry', withFacts(revision, [''])],
+  ['nonGoals that are not a list', withFacts(revision, [], 'Secrets' as never)],
   ['no title', without(v1, 'title')],
   ['an unknown kind', { ...v1, kind: 'grpc' }],
   ['no choices', { ...v1, choices: [] }],
@@ -72,12 +87,25 @@ const CODE_REFUSED: Array<[string, unknown]> = [
   ['a baseline without changes or compatibility', { ...v1, baseline: 'shipped' }],
   ['changes without a baseline', { ...greenfieldV2, changes: revision.changes, compatibility: compatible }],
   ['an approved baseline with no change rows', { ...revision, changes: [] }],
+  ['a greenfield string entry', withFacts(v1, ['Read-only'])],
+  ['a string entry with baseline "shipped"', withFacts(shippedV1, v1.intent.guarantees, ['Secrets'])],
+  ['an id used in both lists', withFacts(v1, [fact('one')], [fact('two')])],
+  ['an id used twice in one list', withFacts(revision, [fact('one'), fact('two')])],
 ];
 
+test('the seal requires an id on every entry with no baseline or "shipped", and unique ids across both lists', () => {
+  const noId = 'facts are not decomposed: guarantees[0]: no id — give it one';
+  assert.deepEqual(problems(withFacts(v1, ['Read-only'])), [noId]);
+  assert.deepEqual(problems(withFacts(shippedV1, ['Read-only'])), [noId]);
+  assert.deepEqual(problems(withFacts(revision, ['Read-only'])), [], 'beside an approved baseline the judge decides whether a string is unchanged');
+  assert.deepEqual(problems(withFacts(v1, [fact('one')], [fact('two')])), ["facts are not decomposed: nonGoals[0]: duplicate id — 'a.fact' is used more than once, so give each entry its own id"]);
+});
+
 test('the seal check and the contract schema agree on the specs both accept and the shapes both refuse', () => {
-  for (const spec of [v1, greenfieldV2, shippedV1, revision, sealedContract, ...((sealedContract.document as { examples: unknown[] }).examples)]) {
-    assert.deepEqual(problems(spec), [], (spec as ContractSpec).title);
-    assert.equal(accepts(spec), true, `${(spec as ContractSpec).title}: ${JSON.stringify(accepts.errors)}`);
+  const examples = (sealedContract.document as { examples: unknown[] }).examples.map((e, i): [string, unknown] => [`example ${i}`, e]);
+  for (const [what, spec] of [...[v1, greenfieldV2, shippedV1, revision, sealedContract].map((s): [string, unknown] => [s.title, s]), ...examples, ...ACCEPTED_FACTS]) {
+    assert.deepEqual(problems(spec), [], what);
+    assert.equal(accepts(spec), true, `${what}: ${JSON.stringify(accepts.errors)}`);
   }
   for (const [what, spec] of SHAPE_REFUSED) {
     assert.notDeepEqual(problems(spec), [], `the seal accepted ${what}`);
@@ -115,6 +143,17 @@ test('a revision of an approved contract must name that version as its baseline'
   }
 });
 
+test('facts_decomposed compares a revision\'s facts with the approved spec\'s and names each offender', async () => {
+  const decomposed = async (spec: unknown, approved = [approvedRecord(1, 1, 20)]) => (await judgedFacts([sealed(1, v1, 10), sealed(2, spec, 30, null)], approved)).results.find((r) => r.id === 'facts_decomposed')!;
+  assert.equal((await decomposed(revision)).met, 1);
+  const edited = withFacts(revision, [fact('Read-only, always', 'read-only'), v1.intent.guarantees[1]]);
+  assert.deepEqual([(await decomposed(edited)).met, (await decomposed(edited)).notes], [0, ["facts are not decomposed: guarantees[0]: id named in no changes row's facts — 'read-only' was added with new text, changed or removed, so name it in the row that touches the list."]]);
+  assert.equal((await decomposed({ ...edited, changes: [{ ...revision.changes![0], facts: ['read-only'] }] })).met, 1);
+  const stringsOnly = withFacts(revision, ['Read-only']);
+  assert.match((await decomposed(stringsOnly, [])).notes[0], /^facts are not decomposed: guarantees\[0\]: no id — give it one\.$/, 'with nothing approved every entry needs an id');
+  assert.equal(contractRubric.criteria.find((c) => c.id === 'sound')!.checks.find((c) => c.id === 'facts_decomposed')!.weight, 'gate');
+});
+
 test('with nothing approved, a numbered baseline is refused, and the judge finds no breaks: a passed draft is not a baseline', async () => {
   const numbered = await judgedFacts([sealed(1, v1, 10), sealed(2, revision, 30, null)]);
   assert.equal(numbered.gate.met, 0);
@@ -144,4 +183,11 @@ test('specs sealed before the baseline rule still read through the judge and the
   const artifacts = [{ kind: 'contract.spec', version: 1, content: JSON.stringify(stored) }];
   assert.deepEqual(contractOf('contracts:x', undefined, artifacts, []), { key: 'contracts:x', title: v1.title, kind: 'rest', draft: 2, pendingApproval: false });
   assert.deepEqual(versionsOf(artifacts, []), [{ artifact: 1, version: 2, status: 'draft' }]);
+});
+
+test('every kind guide and the contracts prompt carry the one-fact rule word for word as the contract records it', () => {
+  const decision = sealedContract.choices.find((c) => c.id === 'authoring-rule')!.decision;
+  const rule = /carries it too: '(.+)'$/.exec(decision)![1]!;
+  for (const kind of Object.values(kinds)) assert.equal(guideRules(kind.skill).get('one fact per entry'), rule);
+  assert.ok(readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8').includes(`\n${rule}\n`));
 });

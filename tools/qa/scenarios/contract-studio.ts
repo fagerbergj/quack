@@ -43,6 +43,14 @@ const scenario: Scenario = {
         await ctx.shot(page, `studio-rest-chat-${label}`);
       } else await visible(page.getByRole('textbox', { name: 'Message' }));
     });
+    await eachView(ctx, "the guarantees sheet shows each fact's text with its id beside it, grouped by the ids' dotted prefix", async (page, label) => {
+      await page.goto(`${ctx.url}/${SCHEDULE}`);
+      await paneOf(page, 'Contract').getByRole('button', { name: /^Guarantees/ }).click();
+      const sheet = page.getByRole('dialog', { name: 'Guarantees' });
+      await visible(sheet.getByRole('listitem').filter({ hasText: 'Errors say why in problem+json' }).locator('code', { hasText: 'errors.problem-json' }));
+      await visible(sheet.getByRole('heading', { name: 'errors', level: 3 }));
+      await ctx.shot(page, `studio-rest-guarantees-${label}`);
+    });
     await eachView(ctx, 'before the first version the Contract tab answers the waiting question, with the status, brief and decisions', async (page, label) => {
       await page.goto(`${ctx.url}/${DRAFT}`);
       const pane = paneOf(page, 'Contract');

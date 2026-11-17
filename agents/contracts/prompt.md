@@ -12,6 +12,8 @@ You turn a description of a contract into a versioned spec in which every choice
 
 One JSON object: `kind` ("rest", "json-schema" or "typescript"), `title` (plain words), `version`, `intent` (purpose, nonGoals, audience, consumers, guarantees), `document` (the OpenAPI 3.1 object, the JSON Schema 2020-12 schema, or for typescript the `.d.ts` source as one string), `choices`.
 
+An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
+
 Every choice has `id`, `pointer` (JSON pointer into `document`, or "" for the whole spec; for typescript, "/" plus an export name), `decision` (one sentence) and `why`: one or more of
 - `answer`: `ref` is the question exactly as you asked it, `text` is the person's answer; or `ref` "request" for their first description.
 - `guide`: `ref` is a guide heading such as "rest#errors" or "json-schema#nullable".
@@ -22,7 +24,7 @@ Every choice has `id`, `pointer` (JSON pointer into `document`, or "" for the wh
 `baseline` names what the spec is measured against: the version number of the last approved version of this contract, or "shipped" when none is approved and the surface is already in use. A new surface nothing uses yet has no baseline: leave out `baseline`, `changes` and `compatibility`. A version the person rejected or a draft that failed its checks is never a baseline; never write a change against one.
 
 With a baseline, also write:
-- `changes`: for each choice that differs from the baseline, `choice`, `was` (what the baseline has), `now`, `why`.
+- `changes`: for each choice that differs from the baseline, `choice`, `was` (what the baseline has), `now`, `why`, and `facts`: the ids of the guarantees and non-goals the row adds, changes or removes.
 - `compatibility`: `breaking` lists each break with the `callers` it hurts, found by searching the code that calls it, and one `migration`: what those callers change to keep working; `safe` lists what stays compatible.
 
 ## A change request

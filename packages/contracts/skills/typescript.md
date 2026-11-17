@@ -6,6 +6,9 @@ A rule marked check is enforced mechanically; a rule marked ask is a choice for 
 
 Settle these before drafting: who provides each value (core or an extension), who consumes it, and which direction a value flows, because a change that is safe for one side breaks the other. Read the code that implements and calls the surface first; a convention you find beats any default below.
 
+### One fact per entry
+An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
+
 ### document
 Check. A `.d.ts` module of `export type`, `export interface`, `export declare function` and `export declare const`. It compiles on its own with `strict` on. It imports only `@earendil-works/*` packages and `node:` built-ins.
 

@@ -39,10 +39,10 @@ export function scheduleSpecV1(refs: Refs): ContractSpec {
     version: 1,
     intent: {
       purpose: 'Show the Sleeper page the live week and when each job runs next.',
-      nonGoals: ['Editing schedules', 'Past runs'],
+      nonGoals: [{ id: 'no-editing', text: 'Editing schedules' }, { id: 'no-history', text: 'Past runs' }],
       audience: 'internal',
       consumers: ['The Sleeper page'],
-      guarantees: ['Read-only', 'Errors say why in problem+json'],
+      guarantees: [{ id: 'read-only', text: 'Read-only' }, { id: 'errors.problem-json', text: 'Errors say why in problem+json' }],
     },
     document: scheduleDocument('iso'),
     choices: [
@@ -98,7 +98,7 @@ export function settingsSpec(): ContractSpec {
     kind: 'json-schema',
     title: 'Sleeper settings file',
     version: 1,
-    intent: { purpose: 'The shape of the Sleeper settings file.', nonGoals: ['Secrets'], audience: 'internal', consumers: ['Sleeper extension'], guarantees: ['A typo in a key fails loudly'] },
+    intent: { purpose: 'The shape of the Sleeper settings file.', nonGoals: [{ id: 'no-secrets', text: 'Secrets' }], audience: 'internal', consumers: ['Sleeper extension'], guarantees: [{ id: 'typo-fails', text: 'A typo in a key fails loudly' }] },
     document: settingsSchema(),
     choices: [
       { id: 'closed', pointer: '/additionalProperties', decision: 'The file is closed: unknown keys are rejected.', why: [

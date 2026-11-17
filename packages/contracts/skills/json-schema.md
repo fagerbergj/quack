@@ -6,6 +6,9 @@ Sources: JSON Schema 2020-12, Google AIP-126, 140, 142, 180, 203. A rule marked 
 
 Settle these before drafting: who writes the document and who reads it (they may be different programs), where it lives (a file, a stored document, an artifact), how long old copies stay readable, and what happens when a reader meets a field it does not know. Read the house convention in the code first: an existing schema, a parser, a type. A convention you find beats any default below.
 
+### One fact per entry
+An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
+
 ### document
 Check. A JSON Schema 2020-12 object that compiles. `$schema` is `https://json-schema.org/draft/2020-12/schema`. Put shared shapes in `$defs` and refer to them with local `$ref`s; none remote.
 

@@ -164,6 +164,21 @@ test('the decision bar leads with what waits on you, and Approve confirms in a s
   expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'approve' } }]]);
 });
 
+test.each([
+  ['ids given to unchanged text are no change', 'Follows the REST guide', false],
+  ['a changed fact is one line', 'Follows the REST guide, always', true],
+] as const)('the approve sheet reads id\'d facts against stored strings by their text: %s', async (_n, last, changed) => {
+  const facts = { ...v2, intent: { ...v2.intent, guarantees: [{ id: 'read-only', text: 'Read-only' }, 'Covers a week with no runs', { id: 'guide.rest', text: last }] } };
+  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+  routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, facts)], [proposal(2, 2)]);
+  await waitFor(() => expect(line()).toHaveTextContent('v2 waits on you'));
+  await userEvent.click(within(bar()).getByRole('button', { name: 'Approve' }));
+  const s = sheet('Approve v2?');
+  expect(within(within(s).getAllByRole('list')[0]!).getAllByRole('listitem').map((li) => li.textContent).includes('Guarantees changed')).toBe(changed);
+  expect(s.textContent).not.toMatch(/"id"|\[object Object\]/);
+});
+
 test('asking for changes needs a reason, and sends it as the rejection the agent reads', async () => {
   await upForApproval();
   await userEvent.click(within(bar()).getByRole('button', { name: 'Ask for changes' }));
