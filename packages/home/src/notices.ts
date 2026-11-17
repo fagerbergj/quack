@@ -14,14 +14,29 @@ const oneLine = (s: string, n: number) => {
 
 type Notice = { id: string; session: string; outcome: RunEnded['data']['outcome']; failed: string | null };
 
+// A sent notice only outlives its event's redelivery after a restart; a key idle this long is a session nobody awaits.
+const SENT_KEEP_MS = 30 * 86_400_000;
+const STARTED_KEEP_MS = 90 * 86_400_000;
+
 /** Home's app: it records the keys Home's start action returned, and tells home:main, as a follow-up, how each of their runs ended. */
-export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fetch' | 'subscribe'>): App {
+export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fetch' | 'subscribe'>, now: () => number = Date.now): App {
   const db = new DatabaseSync(ctx.dbPath);
-  db.exec(`CREATE TABLE IF NOT EXISTS started (key TEXT PRIMARY KEY);
-    CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, session TEXT NOT NULL, outcome TEXT NOT NULL, failed TEXT, sent INTEGER NOT NULL DEFAULT 0)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS started (key TEXT PRIMARY KEY, at INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS notices (id TEXT PRIMARY KEY, session TEXT NOT NULL, outcome TEXT NOT NULL, failed TEXT, sent INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL DEFAULT 0)`);
+  // Tables from before pruning have no `at`; their rows start their retention now.
+  for (const table of ['started', 'notices']) {
+    if (!(db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((c) => c.name === 'at')) db.exec(`ALTER TABLE ${table} ADD COLUMN at INTEGER NOT NULL DEFAULT 0`);
+    db.prepare(`UPDATE ${table} SET at = ? WHERE at = 0`).run(now());
+  }
+  // Unsent notices are never pruned: they are what a restart must still deliver.
+  const prune = () => {
+    db.prepare('DELETE FROM notices WHERE sent = 1 AND at < ?').run(now() - SENT_KEEP_MS);
+    db.prepare('DELETE FROM started WHERE at < ?').run(now() - STARTED_KEEP_MS);
+  };
+  const touch = db.prepare('INSERT INTO started (key, at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET at = excluded.at');
   const isStarted = db.prepare('SELECT 1 FROM started WHERE key = ?');
   // Recorded synchronously, before the channel acks the batch, so a crash can repeat a notice's send but never lose it.
-  const record = db.prepare('INSERT OR IGNORE INTO notices (id, session, outcome, failed) VALUES (?, ?, ?, ?)');
+  const record = db.prepare('INSERT OR IGNORE INTO notices (id, session, outcome, failed, at) VALUES (?, ?, ?, ?, ?)');
 
   const get = async <T>(path: string): Promise<T | undefined> => {
     const res = await ctx.fetch(`${ctx.distributorUrl}${path}`);
@@ -57,7 +72,9 @@ export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fet
     const { outcome, failedSteps } = (event as RunEnded).data;
     const first = failedSteps[0];
     // The event id is per session, so the notice's key carries both.
-    record.run(`${session}\n${event.id}`, session, outcome, first ? `${first.step}: ${first.error}` : null);
+    record.run(`${session}\n${event.id}`, session, outcome, first ? `${first.step}: ${first.error}` : null, now());
+    touch.run(session, now());
+    prune();
     void drain();
   });
 
@@ -66,10 +83,10 @@ export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fet
       if (req.method !== 'POST' || req.url !== '/started') return sendProblem(res, 404, 'not found');
       const body = (await http.json(req).catch(() => null)) as { key?: unknown } | null;
       if (typeof body?.key !== 'string' || !isSessionKey(body.key)) return sendProblem(res, 400, 'key must be a session key');
-      db.prepare('INSERT OR IGNORE INTO started (key) VALUES (?)').run(body.key);
+      touch.run(body.key, now());
       http.send(res, 200, { ok: true });
     },
-    start: () => void drain(),
+    start: () => (prune(), void drain()),
     async stop() {
       unsubscribe();
       await draining;

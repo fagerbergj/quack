@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { after, test } from 'node:test';
 import { inProcessFetch, type LoopEvent } from '@quack/sdk';
 import { homeApp } from '../src/notices.ts';
@@ -13,7 +14,7 @@ const ended = (id: string, outcome: 'succeeded' | 'failed', failedSteps: Array<{
   ({ seq: 9, id, at: 0, type: 'run.ended', data: { run: 1, outcome, failedSteps } });
 
 // The distributor as Home's app reaches it in process: one session row and its newest artifact, and the invocations it is sent.
-async function home(dbPath?: string) {
+async function home(dbPath?: string, now: () => number = () => 0) {
   const path = dbPath ?? join(await mkdtemp(join(tmpdir(), 'quack-home-app-')), 'home.sqlite');
   if (!dbPath) dirs.push(join(path, '..'));
   const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
@@ -24,7 +25,7 @@ async function home(dbPath?: string) {
     return Response.json({ sessions: [{ title: 'Waivers week 9' }] });
   };
   let listener: ((session: string, event: LoopEvent) => void) | undefined;
-  const app = homeApp({ dbPath: path, distributorUrl: 'http://d', fetch, subscribe: (on) => ((listener = on), () => (listener = undefined)) });
+  const app = homeApp({ dbPath: path, distributorUrl: 'http://d', fetch, subscribe: (on) => ((listener = on), () => (listener = undefined)) }, now);
   const call = inProcessFetch((req, res) => app.handle(req, res));
   const started = (key: string) => call('http://app/started', { method: 'POST', body: JSON.stringify({ key }) });
   return { app, call, sent, started, path, hear: (session: string, e: LoopEvent) => listener!(session, e) };
@@ -78,4 +79,33 @@ test('a notice already sent is not sent again after a restart redelivers its eve
   second.hear('research:c', ended('e3', 'succeeded'));
   await second.app.stop!();
   assert.equal(first.sent.length + second.sent.length, 1);
+});
+
+const DAY = 86_400_000;
+const rows = (path: string, table: string) => {
+  const db = new DatabaseSync(path);
+  try {
+    return (db.prepare(`SELECT * FROM ${table}`).all() as Array<{ key?: string; id?: string }>).map((r) => r.key ?? r.id);
+  } finally {
+    db.close();
+  }
+};
+
+test('a sent notice is pruned after 30 days and a started key after 90 idle days, but a key with a recent run stays', async () => {
+  let t = 1_000;
+  const first = await home(undefined, () => t);
+  for (const k of ['research:old', 'research:live']) await first.started(k);
+  first.hear('research:old', ended('e1', 'succeeded'));
+  await first.app.stop!();
+  t += 60 * DAY;
+  const second = await home(first.path, () => t);
+  second.hear('research:live', ended('e2', 'succeeded'));
+  await second.app.stop!();
+  assert.deepEqual(rows(first.path, 'notices').sort(), ['research:live\ne2'], 'the 60-day-old sent notice is gone');
+  t += 40 * DAY;
+  const third = await home(first.path, () => t);
+  third.app.start!();
+  await third.app.stop!();
+  assert.deepEqual(rows(first.path, 'started'), ['research:live'], 'research:old idled 100 days; research:live ran 40 days ago');
+  assert.deepEqual(rows(first.path, 'notices'), [], 'research:live notice was sent 40 days ago');
 });
