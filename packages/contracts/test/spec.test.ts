@@ -154,6 +154,21 @@ test('facts_decomposed compares a revision\'s facts with the approved spec\'s an
   assert.equal(contractRubric.criteria.find((c) => c.id === 'sound')!.checks.find((c) => c.id === 'facts_decomposed')!.weight, 'gate');
 });
 
+// #2391: contract.spec numbers by gate-passed versions and "approval does not affect numbering", so a withdrawn proposal's number stays used.
+test('a passed version whose proposal was withdrawn still uses its number, and a failed one leaves it free', async () => {
+  const withdrawn: Approval = { tool: 'propose_contract', args: { version: 1, artifact: 1, hash: 'h1' }, requestedAt: 11, verdict: null, executing: false, done: false, withdrawn: { at: 12, reason: 'task_ended', supersededBy: null } };
+  const matches = async (version: number, passed = true) => {
+    const next = sealed(2, { ...v1, version }, 30, null);
+    const session = { docs: { 'quack.approvals': { items: { p1: withdrawn } } }, artifacts: { 'contract.spec': [sealed(1, v1, 10, passed), next] }, readFile: async () => undefined } as unknown as RecordedSession;
+    const inputs = await recordedSpecInputs(session, next.content);
+    const r = codeResults(contractRubric, next.content, (await buildEvidence(contractDeclaration, inputs)).evidence).find((x) => x.id === 'version_matches')!;
+    return [r.met, r.notes];
+  };
+  assert.deepEqual(await matches(1), [0, ['version is 1; this is spec version 2 (one more than the last delivered), so set version to 2']]);
+  assert.deepEqual(await matches(2), [1, []]);
+  assert.deepEqual(await matches(1, false), [1, []], 'a failed revision reuses its number');
+});
+
 test('with nothing approved, a numbered baseline is refused, and the judge finds no breaks: a passed draft is not a baseline', async () => {
   const numbered = await judgedFacts([sealed(1, v1, 10), sealed(2, revision, 30, null)]);
   assert.equal(numbered.gate.met, 0);
