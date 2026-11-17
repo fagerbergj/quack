@@ -86,8 +86,11 @@ export const sdkSpec = (version: number, document: string, baseline?: number): C
 
 type Contract = { key: string; title: string; asks: string[]; versions: ContractSpec[]; files?: string[] };
 
+// Long enough to wrap past two lines on a 390 px phone.
+const LONG_TITLE = 'Extension SDK manifest: the types an extension package exports, which the distributor reads when it loads a package and mounts its app, pages, actions and workflows';
+
 const CONTRACTS: Contract[] = [
-  { key: 'contracts:qa-sdk', title: 'Extension SDK manifest', asks: ['Define the extension SDK manifest types', 'Add an optional stop hook to App and maxTokens to models'], versions: [sdkSpec(1, SDK_V1), sdkSpec(2, SDK_V2, 1)] },
+  { key: 'contracts:qa-sdk', title: 'Extension SDK manifest', asks: ['Define the extension SDK manifest types', 'Add an optional stop hook to App and maxTokens to models'], versions: [sdkSpec(1, SDK_V1), sdkSpec(2, SDK_V2, 1)].map((v) => ({ ...v, title: LONG_TITLE })) },
   {
     key: 'contracts:qa-schedule', title: 'Sleeper schedule endpoint', asks: ['Define GET /apps/sleeper/schedule for the Sleeper page', 'Make the run time Unix seconds'],
     versions: [scheduleSpecV1({ versioning: 'request', time: 'request' }), scheduleSpecV2({ versioning: 'request', time: 'request' }, [SLEEPER_PAGE])],
