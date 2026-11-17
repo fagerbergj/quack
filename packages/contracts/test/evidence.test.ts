@@ -138,12 +138,14 @@ test('a recorded code ref under a directory too many names the file where the re
 });
 
 // The refs of prod session contracts:1811f4ba, judged live against a workspace laid out as a git clone, as that session's copy of packages/, or empty.
+// A layout entry copies a file of this repo there, or with '' makes an empty directory (a clone's .git, a stray __pycache__).
 const SERVICE = 'packages/sleeper/src/service.ts';
+const GIT = { 'repo/.git': '' };
 async function liveNotes(t: TestContext, layout: Record<string, string>, refs: string[]): Promise<string[]> {
   const dir = await mkdtemp(join(tmpdir(), 'contracts-ws-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   await mkdir(join(dir, 'artifacts'));
-  for (const [at, from] of Object.entries(layout)) await mkdir(dirname(join(dir, at)), { recursive: true }).then(() => cp(join(repoRoot, from), join(dir, at)));
+  for (const [at, from] of Object.entries(layout)) await mkdir(dirname(join(dir, at)), { recursive: true }).then(() => (from ? cp(join(repoRoot, from), join(dir, at)) : mkdir(join(dir, at))));
   const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
   spec.choices[1].why = refs.map((ref) => ({ source: 'code', text: 'upcomingRuns', ref }));
   const content = JSON.stringify(spec);
@@ -153,7 +155,7 @@ async function liveNotes(t: TestContext, layout: Record<string, string>, refs: s
 }
 
 test('a live code ref resolves only to a file in the workspace, and a wrong one is told the exact ref', async (t) => {
-  const notes = await liveNotes(t, { [`repo/${SERVICE}`]: SERVICE }, [`repo/${SERVICE}:64`, 'repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `${join(repoRoot, SERVICE)}:64`]);
+  const notes = await liveNotes(t, { ...GIT, [`repo/${SERVICE}`]: SERVICE }, [`repo/${SERVICE}:64`, 'repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `${join(repoRoot, SERVICE)}:64`]);
   const exact = 'names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:64"';
   assert.deepEqual(notes, [
     `time-format: code ref "repo/sleeper/src/service.ts:64" ${exact}`,
@@ -163,16 +165,31 @@ test('a live code ref resolves only to a file in the workspace, and a wrong one 
 });
 
 test('a ref resolves in the layout the session made: its packages/ copied to repo/ puts sleeper at repo/sleeper', async (t) => {
-  const notes = await liveNotes(t, { 'repo/sleeper/src/service.ts': SERVICE }, ['repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `repo/${SERVICE}:64`]);
+  const notes = await liveNotes(t, { ...GIT, 'repo/sleeper/src/service.ts': SERVICE }, ['repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `repo/${SERVICE}:64`]);
   const exact = 'names no file in the workspace; the file is at repo/sleeper/src/service.ts, so cite it as "repo/sleeper/src/service.ts:64"';
   assert.deepEqual(notes, [`time-format: code ref "${SERVICE}:64" ${exact}`, `time-format: code ref "repo/${SERVICE}:64" ${exact}`]);
 });
 
 test('a ref to no file gives the exact form from the clone directory, or says to clone when there is none', async (t) => {
-  const [inClone] = await liveNotes(t, { [`repo/${SERVICE}`]: SERVICE }, ['repo/packages/sleeper/src/missing.ts:3']);
+  const [inClone] = await liveNotes(t, { ...GIT, [`repo/${SERVICE}`]: SERVICE }, ['repo/packages/sleeper/src/missing.ts:3']);
   assert.equal(inClone, 'time-format: code ref "repo/packages/sleeper/src/missing.ts:3" names no file in the workspace. Refs are paths from the workspace root and your clone is repo/, so a file at packages/sleeper/src/missing.ts in the clone is cited as "repo/packages/sleeper/src/missing.ts:3"; read the clone to find where the file is');
   const [empty] = await liveNotes(t, {}, [`${SERVICE}:64`]);
   assert.equal(empty, `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`);
+});
+
+// #2380: the session's python left a __pycache__/ in a workspace with no clone, and 38 refs carried from an older version cited app/.
+test('only a git repository is the clone: a stray directory gets the no-clone hint, and an app/ ref is re-anchored to repo/', async (t) => {
+  const APP = 'app/packages/sleeper/src/service.ts:64';
+  const stray = await liveNotes(t, { __pycache__: '', 'node_modules/x/index.js': SERVICE }, [`${SERVICE}:64`, APP]);
+  assert.deepEqual(stray, [
+    `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`,
+    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}:64", once the repository is cloned into repo/ (git clone --depth 1 -b <branch> <url> repo)`,
+  ]);
+  const cloned = await liveNotes(t, { __pycache__: '', ...GIT, [`repo/${SERVICE}`]: SERVICE }, [APP, 'app/packages/sleeper/src/gone.ts:3']);
+  assert.deepEqual(cloned, [
+    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}:64"`,
+    'time-format: code ref "app/packages/sleeper/src/gone.ts:3" cites app/, the old session image\'s tree, which no longer resolves: re-anchor it to the clone, as "repo/packages/sleeper/src/gone.ts:3"',
+  ]);
 });
 
 test('with Clef on, Clef answers every choice and every definition code did not settle, and only meets_intent escalates to the judge model', async (t) => {
