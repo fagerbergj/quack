@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { derivations, figures, figuresClash, namesClash, recomputes, sameValue } from './claims.ts';
+import { derivations, figures, figuresClash, namesClash, numberWords, recomputes, sameValue } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -388,7 +388,7 @@ function derivedArithmetic(artifact: string): CodeResult {
  *  A finding is any cited sentence of the Findings section, so a finding written as a paragraph counts as one written as a bullet. */
 function derivedInputsTraced(artifact: string, ev: Evidence): CodeResult {
   const cited = [...findingItems(artifact).map((f) => f.text), ...statements(artifact).filter((s) => s.section === 'findings').map((s) => s.text)].filter((t) => citedIds(t).length);
-  const known = [...cited.flatMap(figures), ...figures(sectionBody(artifact, ['assumptions']))].map((f) => f.value);
+  const known = [...[...cited.flatMap(figures), ...figures(sectionBody(artifact, ['assumptions']))].map((f) => f.value), ...cited.flatMap(numberWords)];
   const traced = (v: string) => known.some((k) => sameValue(k, v));
   const stated = derivedStatements(artifact);
   const derived = stated.flatMap((s) => derivations(s.text));

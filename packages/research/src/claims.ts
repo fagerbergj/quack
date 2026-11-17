@@ -35,6 +35,10 @@ export function figures(text: string): Figure[] {
   });
 }
 
+const NUMBER_WORDS = ['two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+/** The counts a text writes as words ("Eight fans"), as the figures they are; "one" is left out, as it is mostly not a count. */
+export const numberWords = (text: string) => [...text.toLowerCase().matchAll(/\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g)].map((m) => String(NUMBER_WORDS.indexOf(m[1]) + 2));
+
 const decimals = (v: string) => v.split('.')[1]?.length ?? 0;
 // A date's year is the year another passage gives alone: "in 2026" and "5 January 2026".
 const yearOf = (v: string) => (/^\d{4}-\d\d-\d\d$/.test(v) ? v.slice(0, 4) : v);

@@ -75,3 +75,7 @@ test('derived_inputs_traced does not trace the labels the sentence splitter cuts
 test('derived_inputs_traced: a unit hyphened onto its number in a finding ("10-ft.") is that figure', () => {
   assert.equal(traced('The fans have their own 10 ft cord.', '- The package includes a C13 power cord, 10-ft. (3.05 m) [s1]').met, 1);
 });
+
+test('derived_inputs_traced: a count a finding writes as a word ("Eight fans") is the figure a derived sentence writes in numerals', () => {
+  assert.equal(traced('Run those 8 door fans as intake.', '- Eight high-performance fans are built into the door. [s1]').met, 1);
+});
