@@ -9,6 +9,7 @@ import { contracts } from './index.ts';
 import v1 from './fixtures/sleeper-schedule-v1.json';
 import v2 from './fixtures/sleeper-schedule-v2.json';
 import settingsSpec from './fixtures/sleeper-settings.json';
+import { diffUnits, units } from './diff.ts';
 import { BeforeAfter } from './Sections.tsx';
 import { fields, parseSpec, toYaml, type ContractSpec } from './spec.ts';
 
@@ -90,6 +91,44 @@ test('the intent and the decisions are not on the page: each opens in a sheet, a
   await userEvent.keyboard('{Escape}');
   await userEvent.click(within(more()).getByRole('button', { name: /^Decisions/ }));
   expect(screen.getByRole('dialog', { name: 'Decisions' })).toHaveTextContent('Yes, always');
+});
+
+// Version 2 with id'd facts beside a stored string, and a change row naming two of them.
+const facts = {
+  ...v2,
+  intent: { ...v2.intent, guarantees: ['Read-only', { id: 'week.empty', text: 'Covers a week with no runs' }, { id: 'guide.rest', text: 'Follows the REST guide' }], nonGoals: [{ id: 'no-jobs', text: 'Starting or cancelling a job' }] },
+  changes: [{ ...v2.changes[0]!, facts: ['week.empty', 'no-jobs'] }, ...v2.changes.slice(1)],
+};
+const showFacts = () => render(<>{contracts.card!(sealed(JSON.stringify(facts), { version: 2 }))}</>);
+
+test('an id\'d fact shows its text with its id as quiet secondary text, a stored string as it is, grouped by the ids\' dotted prefix', async () => {
+  showFacts();
+  await userEvent.click(within(more()).getByRole('button', { name: /^Guarantees3/ }));
+  const s = screen.getByRole('dialog', { name: 'Guarantees' });
+  expect(within(s).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Read-only', 'Covers a week with no runs week.empty', 'Follows the REST guide guide.rest']);
+  expect(within(s).getByText('week.empty').tagName).toBe('CODE');
+  expect(within(s).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['week', 'guide']);
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(within(more()).getByRole('button', { name: /^Out of scope1/ }));
+  const one = screen.getByRole('dialog', { name: 'Out of scope' });
+  expect(within(one).getByRole('listitem')).toHaveTextContent('Starting or cancelling a job no-jobs');
+  expect(within(one).queryByRole('heading', { level: 3 }), 'one prefix is not grouped').toBeNull();
+});
+
+test('a change row that names facts links to each, and the link opens the list holding it', async () => {
+  showFacts();
+  const row = within(changes()).getAllByRole('listitem')[0]!;
+  expect(within(row).getAllByRole('button', { name: /^[a-z]/ }).map((b) => b.textContent)).toEqual(['week.empty', 'no-jobs']);
+  await userEvent.click(within(row).getByRole('button', { name: 'no-jobs' }));
+  expect(within(screen.getByRole('dialog', { name: 'Out of scope' })).getByRole('listitem')).toHaveTextContent('Starting or cancelling a job');
+});
+
+test('the diff reads a fact by its text: an id given to unchanged text is no change, and a changed fact shows its words, not its JSON', () => {
+  const purpose = (s: object) => units(s as ContractSpec).get('#purpose')!.parts;
+  expect(purpose(facts).guarantees).toBe(purpose(v2).guarantees);
+  const edited = { ...facts, intent: { ...facts.intent, guarantees: [...facts.intent.guarantees.slice(0, 2), { id: 'guide.rest', text: 'Follows the REST guide, always' }] } };
+  const changed = diffUnits(units(v2 as ContractSpec), units(edited as ContractSpec)).changes.filter((c) => c.ptr === '#purpose');
+  expect(changed.map((c) => [c.part, c.rows[0]!.now])).toEqual([['guarantees', 'Read-only, Covers a week with no runs, Follows the REST guide, always']]);
 });
 
 test('a spec with no breaks and no changes renders no changes section at all', () => {

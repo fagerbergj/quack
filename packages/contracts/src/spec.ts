@@ -1,12 +1,14 @@
 // No node: imports, so the web bundle imports the artifact's type and parser from here.
+import { factShapeProblems, type Fact } from './facts.ts';
 
 export type Why = { source: 'answer' | 'guide' | 'code'; text: string; /** A question id, a guide rule anchor, or path:line. */ ref: string };
 export type Choice = { id: string; /** JSON pointer into `document` the choice governs; empty when spec-wide. */ pointer: string; decision: string; why: Why[] };
-export type Change = { choice: string; was: string; now: string; why: string };
+/** `facts` names the fact ids the row adds, changes or removes. */
+export type Change = { choice: string; was: string; now: string; why: string; facts?: string[] };
 /** Required at seal since contract.spec v2; a stored entry may lack migration, say change for what, or name its callers in one string. */
 export type Breaking = { what: string; callers: string[]; migration?: string };
 export type Compatibility = { breaking: Breaking[]; safe: string[] };
-export type Intent = { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
+export type Intent = { purpose: string; nonGoals: Fact[]; audience: string; consumers: string[]; guarantees: Fact[] };
 
 export const SPEC_KINDS = ['rest', 'json-schema', 'typescript'] as const;
 
@@ -41,10 +43,13 @@ export function parseSpec(content: string): ContractSpec | string {
   }
 }
 
-function intentProblems(i: unknown): string[] {
+// With no baseline, or "shipped", there is no approved entry a stored string could be, so every entry needs an id.
+function intentProblems(i: unknown, baseline: unknown): string[] {
   if (!isObj(i)) return ['intent is missing'];
   const bad = ['purpose', 'audience'].filter((k) => !text(i[k])).map((k) => `intent.${k} must be a non-empty string`);
-  return bad.concat(['nonGoals', 'consumers', 'guarantees'].filter((k) => !strings(i[k])).map((k) => `intent.${k} must be a list of strings`));
+  if (!strings(i.consumers)) bad.push('intent.consumers must be a list of strings');
+  bad.push(...['nonGoals', 'guarantees'].filter((k) => !Array.isArray(i[k])).map((k) => `intent.${k} must be a list of facts`));
+  return bad.concat(factShapeProblems(i, baseline === undefined || baseline === 'shipped'));
 }
 
 function choiceProblems(c: unknown, i: number): string[] {
@@ -87,7 +92,7 @@ export function validateSpec(content: string): string[] {
   if (!SPEC_KINDS.includes(s.kind)) out.push(`kind must be one of ${SPEC_KINDS.map((k) => `"${k}"`).join(', ')}`);
   if (!text(s.title)) out.push('title must be a non-empty string');
   if (!Number.isInteger(s.version) || s.version < 1) out.push('version must be a positive integer');
-  out.push(...intentProblems(s.intent));
+  out.push(...intentProblems(s.intent, s.baseline));
   if (s.kind === 'typescript' ? !text(s.document) : !isObj(s.document)) out.push('document must be the OpenAPI object, the JSON Schema, or for typescript the .d.ts source text');
   if (!Array.isArray(s.choices) || !s.choices.length) out.push('choices must list every decision the spec rests on');
   else out.push(...s.choices.flatMap(choiceProblems));

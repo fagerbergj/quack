@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { fields, operations, paramFields, resolve, type ContractSpec, type Decl, type Field, type Json, type Model, type Operation } from './spec.ts';
+import { factText, fields, operations, paramFields, resolve, type ContractSpec, type Decl, type Field, type Json, type Model, type Operation } from './spec.ts';
 
 /** How an element of the shown version differs from the version it is compared with; `breaking` is a change a listed break names. */
 export type Mark = 'added' | 'changed' | 'breaking';
@@ -70,7 +70,8 @@ export function units(spec: ContractSpec, model?: Model): Units {
   const { purpose, nonGoals, audience, consumers, guarantees } = spec.intent;
   return new Map([
     ['#title', { label: 'Title', parts: parts({ title: spec.title }) }],
-    ['#purpose', { label: 'What it does', parts: parts({ purpose, 'non-goals': nonGoals, audience, consumers, guarantees }) }],
+    // A fact diffs by its text, so an id given to unchanged text is no change.
+    ['#purpose', { label: 'What it does', parts: parts({ purpose, 'non-goals': nonGoals?.map(factText), audience, consumers, guarantees: guarantees?.map(factText) }) }],
     ...documentUnits(spec, model),
   ]);
 }

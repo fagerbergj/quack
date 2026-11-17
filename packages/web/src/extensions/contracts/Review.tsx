@@ -5,7 +5,7 @@ import type { Mark } from './diff.ts';
 import { Inline, Reasons } from './Info.tsx';
 import { lede, saysMore, shortChange, type Item } from './review.ts';
 import { BeforeAfter, label } from './Sections.tsx';
-import { listedBreaks, since, type ContractSpec } from './spec.ts';
+import { factText, listedBreaks, since, type ContractSpec, type Fact } from './spec.ts';
 
 // `look`: the jump came from the spec, so the diagram scrolls into view as well as centring.
 type Ping = { ptr: string; n: number; look?: boolean };
@@ -135,6 +135,23 @@ function ItemList() {
   );
 }
 
+const FACT_LISTS = [['guarantees', '#guarantees'], ['nonGoals', '#non-goals']] as const;
+const factPtr = (spec: ContractSpec, id: string) => FACT_LISTS.find(([k]) => spec.intent[k]?.some((f) => typeof f !== 'string' && f.id === id))?.[1];
+
+// The fact ids a change row names, each a link to its fact; a removed id has nothing left to link to.
+function FactLinks({ spec, ids }: { spec: ContractSpec; ids: string[] }) {
+  const { show } = useReview();
+  return (
+    <span className="flex flex-wrap items-center gap-x-2 text-[12px]">
+      <span className={label}>Facts</span>
+      {ids.map((id) => {
+        const at = factPtr(spec, id);
+        return at ? <button key={id} type="button" onClick={() => show(`${at}/${id}`)} className="min-h-6 cursor-pointer border-0 bg-transparent p-0 font-mono text-link underline underline-offset-2 focus-ring">{id}</button> : <code key={id} className="font-mono text-muted">{id}</code>;
+      })}
+    </span>
+  );
+}
+
 // The agent's own account of each change, one line each; was, now and why on demand.
 function Told({ spec }: { spec: ContractSpec }) {
   return (
@@ -142,6 +159,7 @@ function Told({ spec }: { spec: ContractSpec }) {
       {(spec.changes ?? []).map((c) => (
         <li key={c.choice} className="flex flex-col gap-1 [overflow-wrap:anywhere]">
           <code className="font-mono text-[12px] text-muted">{c.choice}</code>
+          {!!c.facts?.length && <FactLinks spec={spec} ids={c.facts} />}
           <Desc text={c.now} bare="Read the change" extra={<span className="flex flex-col gap-1 text-[13px] text-ink-2">{c.was && <span><span className={label}>Before </span><Inline text={c.was} /></span>}<span><span className={label}>Why </span><Inline text={c.why} /></span></span>} />
         </li>
       ))}
@@ -214,7 +232,25 @@ export function Sheet({ title, onClose, children, actions }: { title: string; on
   );
 }
 
-const List = ({ items }: { items: string[] }) => <ul className="m-0 flex list-disc flex-col gap-2 pl-5 [overflow-wrap:anywhere]">{items.map((s) => <li key={s}><Inline text={s} /></li>)}</ul>;
+const ul = 'm-0 flex list-disc flex-col gap-2 pl-5 [overflow-wrap:anywhere]';
+const List = ({ items }: { items: string[] }) => <ul className={ul}>{items.map((s) => <li key={s}><Inline text={s} /></li>)}</ul>;
+
+// A fact's text with its id as quiet secondary text; a change row's link to it lands here.
+function FactItem({ f, ptr }: { f: Fact; ptr: string }) {
+  const id = typeof f === 'string' ? undefined : f.id;
+  const flash = useFlash<HTMLLIElement>(id ? `${ptr}/${id}` : undefined);
+  return <li ref={flash.ref} tabIndex={id ? -1 : undefined} className={`rounded outline-none ${flash.cls}`}><Inline text={factText(f)} />{id && <> <code className="font-mono text-[12px] text-muted">{id}</code></>}</li>;
+}
+
+const prefixOf = (f: Fact) => (typeof f === 'string' || !f.id.includes('.') ? '' : f.id.slice(0, f.id.indexOf('.')));
+
+/** Guarantees or non-goals, grouped by their ids' dotted prefix when the list has more than one. */
+function Facts({ items, ptr }: { items: Fact[]; ptr: string }) {
+  const list = (fs: Fact[]) => <ul className={ul}>{fs.map((f, i) => <FactItem key={i} f={f} ptr={ptr} />)}</ul>;
+  const groups = [...Map.groupBy(items, prefixOf)];
+  if (groups.length < 2) return list(items);
+  return <>{groups.map(([p, fs]) => <section key={p} aria-label={p || undefined} className="flex flex-col gap-1.5">{p && <h3 className={`m-0 font-mono ${label}`}>{p}</h3>}{list(fs)}</section>)}</>;
+}
 
 type Part = { ptr: string; title: string; count?: number; body: ReactNode };
 
@@ -222,8 +258,8 @@ function parts(spec: ContractSpec, extra: Part[]): Part[] {
   const i = spec.intent;
   const who = [i.audience && <p key="a" className="m-0"><Inline text={i.audience} /></p>, !!i.consumers?.length && <List key="c" items={i.consumers} />];
   return [
-    ...(i.guarantees?.length ? [{ ptr: '#guarantees', title: 'Guarantees', count: i.guarantees.length, body: <List items={i.guarantees} /> }] : []),
-    ...(i.nonGoals?.length ? [{ ptr: '#non-goals', title: 'Out of scope', count: i.nonGoals.length, body: <List items={i.nonGoals} /> }] : []),
+    ...(i.guarantees?.length ? [{ ptr: '#guarantees', title: 'Guarantees', count: i.guarantees.length, body: <Facts items={i.guarantees} ptr="#guarantees" /> }] : []),
+    ...(i.nonGoals?.length ? [{ ptr: '#non-goals', title: 'Out of scope', count: i.nonGoals.length, body: <Facts items={i.nonGoals} ptr="#non-goals" /> }] : []),
     ...(i.audience || i.consumers?.length ? [{ ptr: '#audience', title: 'Who it is for', body: <>{who}</> }] : []),
     ...(spec.choices.length ? [{ ptr: '#decisions', title: 'Decisions', count: spec.choices.length, body: spec.choices.map((c) => <Reasons key={c.id} c={c} />) }] : []),
     ...extra,
@@ -248,9 +284,11 @@ function PartButton({ p, onOpen }: { p: Part; onOpen: () => void }) {
 /** The contract's long prose, as it is stored, one press away each: guarantees, out of scope, who it is for, the decisions, and any `extra`. */
 export function MoreAbout({ spec, extra = [] }: { spec: ContractSpec; extra?: Part[] }) {
   const [open, setOpen] = useState<string>();
-  const { items } = useReview();
+  const { items, flash } = useReview();
   const id = useId();
   const list = parts(spec, extra);
+  // A link to one fact opens the part that holds it.
+  useEffect(() => { const hit = flash && list.find((p) => flash.ptr.startsWith(`${p.ptr}/`)); if (hit) setOpen(hit.ptr); }, [flash]);
   const shown = list.find((p) => p.ptr === open);
   const changed = shown && items.find((i) => i.target === shown.ptr);
   if (!list.length) return null;

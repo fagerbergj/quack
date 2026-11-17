@@ -1,0 +1,1358 @@
+{
+  "kind": "json-schema",
+  "title": "The sealed contract.spec artifact",
+  "version": 7,
+  "baseline": 2,
+  "intent": {
+    "purpose": "Give the sealed contract.spec artifact — the JSON file every Contract Studio session seals, one per spec version — one shape the judge, the Contracts app and the page all check it against, and make a spec's changes and breaks measured against a baseline the spec names itself: the last approved version of this contract, or the shipped code when none is approved.",
+    "nonGoals": [
+      "It does not check a spec's document — the OpenAPI object, the JSON Schema or the .d.ts text — which is the kind's own checks' job",
+      "It does not record which versions a person approved; that is the session's approval records",
+      "It does not cover the Contracts app's HTTP routes; the approved Contracts app API does",
+      "Judging intent per guarantee instead of over the whole intent is the follow-up this shape enables",
+      "It does not shape contract comments, map diagram groups, change summaries, or per-definition summaries"
+    ],
+    "audience": "The Contract Studio sessions that seal specs, and the code and pages that read them back: the contract judge, the Contracts app, and the Contracts page.",
+    "consumers": [
+      "The contract judge's rubric (repo/packages/contracts/src/rubric.ts)",
+      "The Contracts app that serves specs to the page (repo/packages/contracts/src/app.ts)",
+      "The Contracts page: Studio, RestView, ChangeList, and the web's local copy of the type (repo/packages/web/src/extensions/contracts/)",
+      "Recorded-session replay, which reads older specs sealed before this version"
+    ],
+    "guarantees": [
+      "A spec missing kind, title, version, intent, document or choices fails the shape: the root names all six in required",
+      "A decision is never left uncited: every choice carries at least one why, and every why names its source, its text and its ref",
+      "A break is never left unnamed: every breaking entry names at least one caller and holds one field, migration, that states how its callers keep working",
+      "A reader never rejects a spec for a field it does not know: every object in the shape allows unknown properties, so specs sealed under older names still read",
+      "A spec's changes and breaks are measured against the top-level baseline it names: the approved version number, or 'shipped'",
+      "A spec is never measured against an unapproved draft: a rejected draft is not a baseline",
+      "Entries a revision adds or changes, and every entry with no baseline, or 'shipped', are each one checkable fact: a stable id, text of at most 160 characters",
+      "An entry whose text equals a baseline entry's keeps that entry's id; renaming it fails the facts gate",
+      "A stored string entry stays valid, however long",
+      "The seal gate, the Intent type and the web's copy of it move in the code fix after this approval, so an id'd entry seals from that code on",
+      "The one-fact rule is a no-model gate: code checks the ids, the limit and the changes rows' facts, not the judge's reading"
+    ]
+  },
+  "document": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The sealed contract.spec artifact: one JSON file per spec version, written to artifacts/spec.json by a Contract Studio session and sealed into the session's catalog. This shape describes specs sealed from the approved version of this contract on; validateSpec runs only at seal time, so stored specs are never re-validated, and readers — the Contracts page, the Contracts app, the judge — keep tolerating specs sealed before it: without a baseline, without a migration on their breaking entries, and with the stray field names some carry. Measured against the version-1 document, 245 sealed contract.spec versions across 31 contract sessions on prod stand as 235 pass and 10 fail, all 10 of them version-1 drafts the gate never ran laterVersionProblems on, in pairs from 5 sessions (20207648, ea66d629, 69e5aecf, 6fe21e34, aab002bf). Some stored version-1 drafts do not satisfy this shape, and readers must tolerate them: 34 breaking entries lack what (they say change instead), 8 carry callers as a string, and of the 526 breaking entries, 159 already carry migration while the stray fields are choice (50), change (18), was (16), now (16), note (9) and why (4).",
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "rest",
+          "json-schema",
+          "typescript"
+        ],
+        "description": "The kind of the contract; picks which standard document `document` holds and which guide, checks and diff apply to it."
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The name of the contract, shown on the Contracts page and in the approval ask."
+      },
+      "version": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "The spec's own version, as the gate applies it: one more than the last delivered — gate-passed — spec version. A proposal the reviewer rejects still consumes its number, and a failed revision reuses it, which is why approved versions skip numbers (deployment.json went v11 approved, v12 and v13 rejected, v14 approved). Approval does not affect numbering."
+      },
+      "baseline": {
+        "anyOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "const": "shipped"
+          }
+        ],
+        "description": "The baseline this version's `changes` and `compatibility` are measured against: the version number of this contract's last approved version, or \"shipped\" when no version is approved and the surface is already shipped to its callers. Absent when there is no baseline, which is only a greenfield surface nothing is shipped on; then `changes` and `compatibility` are absent too. The code requires the baseline, and with it the two sections, exactly when a baseline exists — at any version number against an approved version, from version 1 against a shipped surface — and never measures a version against an unapproved draft. No code can tell whether a surface is shipped, so the gate does not decide it: \"shipped\" is the author's claim, checked by the reviewer against the cited code, and the gate checks only that a named approved version exists when baseline is a number."
+      },
+      "intent": {
+        "description": "What the contract is for, in one place a judge can check the document against.",
+        "$ref": "#/$defs/intent"
+      },
+      "document": {
+        "description": "The kind's standard document: an OpenAPI 3.1 object for rest, a JSON Schema 2020-12 schema for json-schema, or the .d.ts source text for typescript. Its soundness is the kind's own checks' job, not this shape's."
+      },
+      "choices": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "$ref": "#/$defs/choice"
+        },
+        "description": "Every decision the document rests on, in at least one row; the document must not outgrow the list."
+      },
+      "changes": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/change"
+        },
+        "description": "What this version changes from the baseline named in `baseline`, one row per choice it revises; never measured against an unapproved draft of this contract. Present, together with `compatibility`, exactly when a baseline exists."
+      },
+      "compatibility": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "What this version breaks and what it keeps, checked in code against the baseline named in `baseline`. Present, together with `changes`, exactly when a baseline exists.",
+        "properties": {
+          "breaking": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/breaking"
+            },
+            "description": "Every break the version makes to the baseline, one entry per break, each naming the callers it hurts and stating one migration; empty when the version breaks nothing."
+          },
+          "safe": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "What stays working for the contract's callers against the baseline, each checked in code; empty when there is nothing to report."
+          }
+        },
+        "required": [
+          "breaking",
+          "safe"
+        ]
+      }
+    },
+    "required": [
+      "kind",
+      "title",
+      "version",
+      "intent",
+      "document",
+      "choices"
+    ],
+    "if": {
+      "properties": {
+        "kind": {
+          "const": "typescript"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "then": {
+      "properties": {
+        "document": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "else": {
+      "properties": {
+        "document": {
+          "type": "object"
+        }
+      }
+    },
+    "$defs": {
+      "intent": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "What the contract is for, in one place a judge can check the document against.",
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What the contract makes possible or safe, in plain words."
+          },
+          "nonGoals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fact"
+            },
+            "description": "What the contract deliberately does not cover, so a decision that drifts there is visible; may be empty. An entry is one checkable fact, by the same rule as guarantees."
+          },
+          "audience": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Who the contract is for in plain words: the people and programs it governs."
+          },
+          "consumers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The programs and pages that read the contract and must keep working, each named; may be empty."
+          },
+          "guarantees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/fact"
+            },
+            "description": "What the contract promises its consumers; each promise has a mechanism in the document that keeps it. An entry is one checkable fact: a stored string that stays valid until a revision changes it, or an object with a stable id and text of at most 160 characters. An entry a revision adds or changes must be the id'd object within the limit, and a spec with no baseline, or with a baseline of 'shipped', must have every entry id'd."
+          }
+        },
+        "required": [
+          "purpose",
+          "nonGoals",
+          "audience",
+          "consumers",
+          "guarantees"
+        ]
+      },
+      "choice": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One decision the spec rests on, and every reason behind it.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A stable slug naming the decision; rows of `changes` refer back to it."
+          },
+          "pointer": {
+            "type": "string",
+            "description": "A JSON pointer into `document` the decision governs; empty when the decision is spec-wide."
+          },
+          "decision": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What was decided, in one sentence."
+          },
+          "why": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/why"
+            },
+            "description": "Every reason behind the decision, in at least one entry."
+          }
+        },
+        "required": [
+          "id",
+          "pointer",
+          "decision",
+          "why"
+        ]
+      },
+      "why": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One reason a decision was made, citing where the reason comes from.",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "answer",
+              "guide",
+              "code"
+            ],
+            "description": "Where the reason comes from: an answer the person gave, a rule of the kind's authoring guide, or a line of code."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reason in plain words; for a code source, what the cited line shows."
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The thing cited: the question as asked or its id, the person's first description as \"request\", a guide heading, or a path:line in the session's workspace."
+          }
+        },
+        "required": [
+          "source",
+          "text",
+          "ref"
+        ]
+      },
+      "change": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One row of `changes`: what the baseline had, what this version has instead, and why.",
+        "properties": {
+          "choice": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The id of the choice in `choices` this row revises."
+          },
+          "was": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What the baseline had for that choice, in a short phrase."
+          },
+          "now": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What this version has for that choice, in a short phrase."
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why the change was made: the request, answer or requirement it answers."
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The ids of the facts this row adds, changes or removes; required by the gate whenever the revision touches either list."
+          }
+        },
+        "required": [
+          "choice",
+          "was",
+          "now",
+          "why"
+        ]
+      },
+      "breaking": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "One break to the baseline: what stops working for callers, who it hurts, and the one change that fixes it.",
+        "properties": {
+          "what": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The break in one sentence: what the baseline let a caller do that this version no longer does."
+          },
+          "callers": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The callers the break hurts, each named: the code, page or session that reads the baseline shape, found by reading the code that calls the contract."
+          },
+          "migration": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The one change each named caller makes to keep working; required on every breaking entry of a spec sealed from this version on. Readers keep tolerating the stored entries without it, some of which state the same under the stray names `change` and `choice`."
+          }
+        },
+        "required": [
+          "what",
+          "callers",
+          "migration"
+        ]
+      },
+      "fact": {
+        "description": "One entry of intent.guarantees or intent.nonGoals: one checkable fact, as a stored string or as an id'd object.",
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "$ref": "#/$defs/factEntry"
+          }
+        ]
+      },
+      "factEntry": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "text"
+        ],
+        "$comment": "The judge's facts_decomposed gate fails each offending entry with: facts are not decomposed: {location}: {reason}, so {fix}. {location} is {list}[{index}], or (id '{id}'), or changes[{row}].facts when there is no list index, as with a removed id. {reason} is one of: over 160 — the text is {n} characters, so split it into one fact per entry; no id — give it one; bad id — '{id}' is not lowercase dotted or dashed, so rename it; duplicate id — '{id}' is used more than once, so give each entry its own id; renamed id — the text matches the baseline's id '{id}', so keep that id; id named in no changes row's facts — '{id}' was added with new text, changed or removed, so name it in the row that touches the list; facts id the revision did not touch — '{id}' was named but was neither added, changed nor removed, and is not an id given to unchanged text, so remove it from facts.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$",
+            "description": "A stable id naming the fact: lowercase letters and digits with dots or dashes, beginning with a letter, unique within the spec across guarantees and nonGoals, kept across versions while the fact stays the same fact."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "The one fact in plain words, at most 160 characters: one sentence one meaning, too short for a second fact."
+          }
+        },
+        "description": "One checkable fact: a stable id, kept while the fact stays the same fact, and its text of at most 160 characters."
+      }
+    },
+    "examples": [
+      {
+        "kind": "json-schema",
+        "title": "Sleeper's nightly schedule",
+        "version": 1,
+        "intent": {
+          "purpose": "Fix the shape of the schedule file the Sleeper page reads, so a bad file fails where it is written.",
+          "nonGoals": [
+            {
+              "id": "no-scheduling",
+              "text": "It does not schedule anything; the runner does."
+            }
+          ],
+          "audience": "The Sleeper extension's author and the page that reads the file.",
+          "consumers": [
+            "The Sleeper page (repo/packages/web/src/extensions/sleeper/Sleeper.tsx)"
+          ],
+          "guarantees": [
+            {
+              "id": "week-check",
+              "text": "A schedule that names a run outside the week fails the shape"
+            }
+          ]
+        },
+        "document": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "runs": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "runs"
+          ]
+        },
+        "choices": [
+          {
+            "id": "runs-only",
+            "pointer": "",
+            "decision": "The schedule carries only runs; ordering is the runner's job.",
+            "why": [
+              {
+                "source": "answer",
+                "text": "Ordering is the runner's job",
+                "ref": "Who orders the runs?"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "rest",
+        "title": "The quack v1 distributor HTTP API",
+        "version": 2,
+        "baseline": "shipped",
+        "intent": {
+          "purpose": "Make the distributor's routes safe to call from the page: every list pages, and every error says why.",
+          "nonGoals": [
+            {
+              "id": "no-look",
+              "text": "It does not define the page's look."
+            }
+          ],
+          "audience": "The page extensions that call the distributor.",
+          "consumers": [
+            "The Contracts page (repo/packages/contracts/src/app.ts)"
+          ],
+          "guarantees": [
+            {
+              "id": "lists-page",
+              "text": "A list that cannot serve the page answers 400 and says which parameter is bad"
+            }
+          ]
+        },
+        "document": {
+          "openapi": "3.1.0",
+          "info": {
+            "title": "The quack v1 distributor",
+            "version": "2.0"
+          },
+          "paths": {
+            "/sessions": {
+              "get": {
+                "responses": {
+                  "200": {
+                    "description": "One page of live sessions"
+                  },
+                  "400": {
+                    "description": "A parameter the list cannot read"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "choices": [
+          {
+            "id": "page-by-key",
+            "pointer": "/paths/~1sessions/get",
+            "decision": "GET /sessions lists live sessions one page at a time, oldest first.",
+            "why": [
+              {
+                "source": "code",
+                "text": "The page token is the catalog's cursor bound to the whole q, so a token sent with any other q is refused",
+                "ref": "repo/packages/contracts/src/app.ts:44"
+              }
+            ]
+          }
+        ],
+        "changes": [
+          {
+            "choice": "page-by-key",
+            "was": "No listing route; sessions were read one by one",
+            "now": "GET /sessions pages the live sessions, oldest first",
+            "why": "The Contracts page lists sessions in one call"
+          }
+        ],
+        "compatibility": {
+          "breaking": [
+            {
+              "what": "GET /sessions now answers 400 for a pageSize above 1000, where it once clamped it",
+              "callers": [
+                "The distributor's web admin"
+              ],
+              "migration": "Page with pageSize 1000 or fewer and follow nextPageToken"
+            }
+          ],
+          "safe": [
+            "Every route the v1 document named still answers as it did"
+          ]
+        }
+      }
+    ]
+  },
+  "choices": [
+    {
+      "id": "shape-mirrors-shipped",
+      "pointer": "",
+      "decision": "The schema names exactly what the shipped type and gate name — kind, title, version, intent, document and choices required, changes and compatibility optional — and adds only what issue #2350 resolves: the top-level baseline, and migration on the breaking entry. This revision adds the fact and factEntry definitions the guarantees and nonGoals lists widen to, and the facts list on the changes row.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:14",
+          "text": "ContractSpec is declared here, and just below it lists kind, title, version, intent, document, choices, and optional changes and compatibility"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:29",
+          "text": "CONTRACT_PATH pins the artifact at artifacts/spec.json, one file per sealed version"
+        },
+        {
+          "source": "answer",
+          "text": "the JSON file every Contract Studio session seals, one per spec version, including this one … Two problems observed across the sessions approved this week, filed as issue #2350, to resolve in the design",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "kind-enum",
+      "pointer": "/properties/kind",
+      "decision": "kind is a closed three-value enum, because the code lists the kinds and rejects anything else.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:11",
+          "text": "SPEC_KINDS is the closed list ['rest', 'json-schema', 'typescript']"
+        },
+        {
+          "source": "guide",
+          "text": "an enum is for a set that is truly fixed; the code closes this one",
+          "ref": "json-schema#enums"
+        }
+      ]
+    },
+    {
+      "id": "version-numbers",
+      "pointer": "/properties/version",
+      "decision": "version is one more than the last delivered — gate-passed — spec version, as the gate applies it: a proposal the reviewer rejects still consumes its number, a failed revision reuses it, and approval does not affect numbering, which is why approved versions skip numbers.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/rubric.ts:223",
+          "text": "the versionMatches gate is defined here, and it passes only when version is 'one more than the last delivered', the expected number"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/rubric.ts:122",
+          "text": "a revision of a failing attempt is a new sealed version but the same spec version, and only passing versions can be proposed, so only they count toward the expected number"
+        },
+        {
+          "source": "answer",
+          "text": "A proposal the reviewer rejects still consumes its number, and a failed revision reuses it, which is why approved versions skip numbers (deployment.json went v11 approved, v12 and v13 rejected, v14 approved). Approval does not affect numbering",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "baseline-field",
+      "pointer": "/properties/baseline",
+      "decision": "A top-level baseline names what the version is measured against — the last approved version of this contract as a number, or 'shipped' for a shipped surface — and it is required, together with changes and compatibility, exactly when a baseline exists, never against an unapproved draft; without one, all three keys are absent. 'shipped' is the author's claim, checked by the reviewer against the cited code: no code can tell whether a surface is shipped, so the gate checks only that a named approved version exists when baseline is a number.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Approved version; shipped code if none; required when one exists. The baseline is the last approved version of this contract; if none exists, it is the shipped code of the surface; a greenfield surface with neither has no baseline. changes and compatibility are required exactly when a baseline exists: against an approved version, at any version number; against shipped code, already at version 1. The judge's diff base drops the cleared[0] fallback, because a rejected draft is not a baseline; and the spec must say which baseline it was measured against (a baseline field naming the approved version, or 'shipped'), so the gate can check requiredness without guessing",
+          "ref": "What are `changes` and `compatibility` measured against, and when are they required?"
+        },
+        {
+          "source": "answer",
+          "text": "no code can tell whether a surface is shipped, so the gate cannot decide it. Say that 'shipped' is the author's claim, checked by the reviewer against the cited code, and that the gate checks only that a named approved version exists when baseline is a number",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/rubric.ts:124",
+          "text": "the comment above the judge's break base: breaks are against the approved spec only, a rejected draft is not a baseline, and shipped code has no earlier spec to diff"
+        }
+      ]
+    },
+    {
+      "id": "document-by-kind",
+      "pointer": "/properties/document",
+      "decision": "document is the .d.ts source text for a typescript kind and an object for the other two, and this shape does not judge its soundness — the kind's own checks do.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:91",
+          "text": "validateSpec requires a non-empty string document for typescript and an object for the other kinds, leaving soundness to the kind's checks"
+        }
+      ]
+    },
+    {
+      "id": "intent-shape",
+      "pointer": "/properties/intent",
+      "decision": "intent is five fields, all required: purpose and audience non-empty strings, consumers a list of strings, and nonGoals and guarantees lists whose entries widen from plain strings to the fact shape — a string, or an object with a stable id and a text of at most 160 characters — and the seal gate and the shipped intent types move to the widened shape in the code fix after this approval.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:46",
+          "text": "intentProblems requires purpose and audience to be non-empty strings"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:47",
+          "text": "the other three fields must be lists of strings, and an empty list is not a problem"
+        },
+        {
+          "source": "answer",
+          "ref": "Will the seal gate accept the new fact-entry shape for this version, or should the shape stay sealable by the code as it is on main today?",
+          "text": "Objects; the seal gate moves with this approval"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/web/src/extensions/contracts/spec.ts:8",
+          "text": "the web's local copy of the intent still names all three lists as lists of strings, the copy that moves with the gate after this approval"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "large quality goals should be decomposed down into smaller checks and aggregated"
+        }
+      ]
+    },
+    {
+      "id": "choices-cited",
+      "pointer": "/properties/choices",
+      "decision": "choices lists every decision the document rests on, at least one, and every choice carries at least one why.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:92",
+          "text": "validateSpec requires choices to be a non-empty array, and the else just below runs each entry through choiceProblems"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:56",
+          "text": "a choice without a why is a problem: cite an answer, a guide rule or a code path"
+        }
+      ]
+    },
+    {
+      "id": "why-sources",
+      "pointer": "/$defs/why/properties/source",
+      "decision": "why.source is one of answer, guide, code, and every why's text and ref are non-empty: the person's answer or first description, a rule of the kind's guide, or a path:line in the session's workspace.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:57",
+          "text": "a why entry is a problem unless its source is answer, guide or code and its text and ref are non-empty strings"
+        }
+      ]
+    },
+    {
+      "id": "code-cites-show",
+      "pointer": "/$defs/why/properties/text",
+      "decision": "A code citation's text says what the cited line shows, not what the session thinks of it.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "every code citation's text says what the cited line shows",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "changes-rows",
+      "pointer": "/properties/changes",
+      "decision": "A changes row is the choice it revises plus was, now and why, all non-empty, measured against the baseline the spec names.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:68",
+          "text": "each change needs choice, was, now and why, each a non-empty string"
+        },
+        {
+          "source": "answer",
+          "text": "changes and compatibility are required exactly when a baseline exists … They are never measured against an unapproved draft",
+          "ref": "What are `changes` and `compatibility` measured against, and when are they required?"
+        }
+      ]
+    },
+    {
+      "id": "compatibility-pair",
+      "pointer": "/properties/compatibility",
+      "decision": "compatibility is breaking plus safe, both lists present whenever compatibility is, and the section stands or falls with changes.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:70",
+          "text": "the gate requires compatibility to hold a breaking array and a safe list of strings, else it fails"
+        }
+      ]
+    },
+    {
+      "id": "breaking-entry",
+      "pointer": "/$defs/breaking",
+      "decision": "A breaking entry is what, the named callers it hurts, and one migration under that single name; the stray names change and choice that sessions invented are not fields, and the entry stays open so older specs carrying them still read.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:61",
+          "text": "the gate's entry check (breakingOk) requires what, at least one named caller, and a non-empty migration"
+        },
+        {
+          "source": "answer",
+          "text": "Breaking entries in practice need a migration (every approved contract states one), but the type has only what and callers, so sessions have invented differently named fields (change, migration, choice)",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/web/src/extensions/contracts/Review.tsx:160",
+          "text": "the page's Breaks list renders each listed break's callers as 'Callers: …' beside the what and migration above it"
+        }
+      ]
+    },
+    {
+      "id": "callers-named",
+      "pointer": "/$defs/breaking/properties/callers",
+      "decision": "A breaking entry names at least one caller, and the judge fails a spec whose breaking entries name none when its diff found breaks.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:61",
+          "text": "the gate rejects a breaking entry whose callers list is not a non-empty list of strings"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/rubric.ts:241",
+          "text": "the breakingNamed gate is defined here, and it fails the spec when the kind's diff found breaks the compatibility section does not name callers for"
+        }
+      ]
+    },
+    {
+      "id": "migration-required",
+      "pointer": "/$defs/breaking/properties/migration",
+      "decision": "migration is required on every breaking entry of a spec sealed from this version on, and stored specs are never re-validated, so the stored entries without it stay readable and need no backfill; readers keep tolerating them, some of which state the same under the stray names change and choice.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Make migration required on breaking entries, and use the rule the sleeper.cards contract uses: the schema describes specs sealed from this version on; validateSpec runs only at seal time, so stored specs are never re-validated; readers (the Contracts page, the Contracts app, the judge) keep tolerating older specs without baseline or migration, and with the stray names. State this in the document and in compatibility",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/sdk/src/artifacts.ts:89",
+          "text": "the seal path runs the artifact kind's validator over the content and collects its problems"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:61",
+          "text": "the entry check (breakingOk) requires what, a non-empty callers list of strings, and a non-empty migration"
+        }
+      ]
+    },
+    {
+      "id": "stored-specs-tolerated",
+      "pointer": "",
+      "decision": "The shape records, plainly, that some stored version-1 drafts do not satisfy it and readers must tolerate them: of the 245 sealed contract.spec versions across 31 contract sessions on prod, 235 pass the version-1 document and 10 fail, all 10 of them version-1 drafts the gate never ran laterVersionProblems on, in pairs from 5 sessions.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "245 versions across 31 contracts sessions. Against v1's document with ajv 2020: 235 pass and 10 fail. All 10 failures are version-1 drafts that were never checked by laterVersionProblems, because it runs only above version 1, and they come in pairs from 5 sessions (20207648, ea66d629, 69e5aecf, 6fe21e34, aab002bf). 34 breaking entries lack what (they say change instead), and 8 have callers as a string. Across the 526 breaking entries, 159 already carry migration, and the stray fields are choice (50), change (18), was (16), now (16), note (9) and why (4). Use those numbers, and say plainly that some stored version-1 drafts do not satisfy this shape and readers must tolerate them",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:94",
+          "text": "validateSpec runs baselineProblems at every seal with no version condition above it — no laterVersionProblems escape remains"
+        }
+      ]
+    },
+    {
+      "id": "required-six",
+      "pointer": "",
+      "decision": "The root requires exactly the six fields a reader cannot work without — kind, title, version, intent, document, choices — and leaves baseline, changes and compatibility optional, because their requiredness depends on the session's approvals, which the shape cannot see.",
+      "why": [
+        {
+          "source": "guide",
+          "text": "require only what a reader cannot work without, and decide up front, because adding a required field later breaks every writer",
+          "ref": "json-schema#required"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:77",
+          "text": "the gate requires changes and compatibility only when the spec names a baseline, never from the version number"
+        }
+      ]
+    },
+    {
+      "id": "open-objects",
+      "pointer": "",
+      "decision": "Every object in the shape is open: a reader meets a field it does not know by skipping it, and an older spec sealed under an older name is not a typo.",
+      "why": [
+        {
+          "source": "guide",
+          "text": "open (true) for documents that other versions write, so readers skip unknown fields; closing an open object later breaks writers",
+          "ref": "json-schema#extensibility"
+        },
+        {
+          "source": "answer",
+          "text": "the 13 contract sessions' sealed specs on prod are readers' data too",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "keep-shipped-names",
+      "pointer": "",
+      "decision": "The shape keeps every name the shipped type and the web's local copy of it use, case and all, including nonGoals.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/contracts/src/spec.ts:9",
+          "text": "the shipped Intent type names its five fields purpose, nonGoals, audience, consumers, guarantees"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/web/src/extensions/contracts/spec.ts:12",
+          "text": "the web's local copy of the type declares the optional changes array as rows of choice, was, now and why"
+        }
+      ]
+    },
+    {
+      "id": "lists-code-breaks",
+      "pointer": "",
+      "decision": "This version's compatibility lists the code this contract moves, as breaks, each with its callers and one migration: the seal gate's intent check, the Intent type and the web's copy of it, the page's list and diff, the judge's rubric, and the prompt and kind guides sessions write by.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "compatibility must list the code this contract moves, as breaks, each with callers and one migration pointing at issue #2350",
+          "ref": "request"
+        },
+        {
+          "source": "guide",
+          "text": "a breaking change names its callers",
+          "ref": "json-schema#compatibility"
+        }
+      ]
+    },
+    {
+      "id": "examples-pair",
+      "pointer": "",
+      "decision": "The root carries two examples — a minimal greenfield v1 without baseline, changes or compatibility, and a version with every optional field — and the four guarantee and nonGoal entries in them carry the ids no-scheduling, week-check, no-look and lists-page, so a writer sees the fact shape and both ends of the requiredness.",
+      "why": [
+        {
+          "source": "guide",
+          "text": "one minimal valid example and one with every optional field, as examples on the root; an example that does not validate is a defect",
+          "ref": "json-schema#examples"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "judge rubrics should be decomposable to measure one piece of the output against a specific criteria"
+        }
+      ]
+    },
+    {
+      "id": "fact-entries",
+      "pointer": "/$defs/intent/properties/guarantees",
+      "decision": "Each entry of intent.guarantees and intent.nonGoals is one checkable fact: a stored string that stays valid until a revision changes it, or an object with a stable id and text of at most 160 characters; an entry a revision adds or changes must be the id'd object, and a spec with no baseline, or with a baseline of 'shipped', must have every entry id'd.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "intent.guarantees and intent.nonGoals become one fact per entry … a contract may not state a dozen facts as one guarantee … judge rubrics should be decomposable to measure one piece of the output against a specific criteria. large quality goals should be decomposed down into smaller checks and aggregated",
+          "ref": "request"
+        },
+        {
+          "source": "answer",
+          "text": "Objects; the seal gate moves with this approval. Note: Objects, with a plain string still accepted as a stored (legacy) entry so every approved spec reads unchanged … Ids in prose would put two meanings in one field.",
+          "ref": "Will the seal gate accept the new fact-entry shape for this version, or should the shape stay sealable by the code as it is on main today?"
+        },
+        {
+          "source": "code",
+          "text": "the Intent type lists guarantees and nonGoals as lists of strings today, with no id and no limit",
+          "ref": "repo/packages/contracts/src/spec.ts:9"
+        }
+      ]
+    },
+    {
+      "id": "entries-are-objects",
+      "pointer": "/$defs/fact",
+      "decision": "An entry is an object with an id and a text rather than a string with an id prefix, so the gate reads the id without parsing prose; a plain string stays accepted as a stored or unchanged entry so every approved spec reads, and a reader's migration is one field: an entry's text is the string as-is, or the object's text.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Objects; the seal gate moves with this approval. Note: Objects, with a plain string still accepted as a stored (legacy) entry so every approved spec reads unchanged … Ids in prose would put two meanings in one field.",
+          "ref": "Will the seal gate accept the new fact-entry shape for this version, or should the shape stay sealable by the code as it is on main today?"
+        },
+        {
+          "source": "code",
+          "text": "the review sheet's List is typed items: string[] and maps each string to a row, so it reads an entry's text",
+          "ref": "repo/packages/web/src/extensions/contracts/Review.tsx:217"
+        },
+        {
+          "source": "code",
+          "text": "the diff's units destructure the intent's lists and feed them to its parts as values",
+          "ref": "repo/packages/web/src/extensions/contracts/diff.ts:70"
+        }
+      ]
+    },
+    {
+      "id": "limit-160",
+      "pointer": "/$defs/factEntry/properties/text",
+      "decision": "The text limit is 160 characters, hard: it is what the design mockup used, it admits the measured one-fact entries at 157 and 151 characters, and it is below the median entry, so a typical entry must lose its second fact to pass. The 160 counts Unicode code points, as the schema's maxLength does; JavaScript's .length counts UTF-16 units, so the implementation counts code points.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "intent.guarantees: 174 entries, 3 to 14 per spec (median 5). Length min 32, p25 117, median 181, p75 253, p90 402, p95 597, max 2,762. At most 120 chars: 28%; 160: 44%; 200: 61%. … The mockup used 160. … Examples of one-fact guarantees near 150 to 160 chars: 'A finding's path and line come from a single citation match …' (157); 'version.lock is machine-written as exactly JSON.stringify …' (151)",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "id-shape",
+      "pointer": "/$defs/factEntry/properties/id",
+      "decision": "A fact id is lowercase letters and digits with dots or dashes, begins with a letter, and is unique across guarantees and nonGoals. 'An id is kept while the fact stays the same fact' is a writing rule the gate cannot check; to the gate a reused id with new text is an edit, a changed entry. The gate matches baseline entries by id first, then by text, so an entry whose id is in the baseline compares against that entry, and an entry whose text equals a baseline entry's keeps that entry's id when the baseline entry has one, and renaming it is what the gate fails.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "each fact has a stable id (unique within the spec across both lists, kebab or dotted lowercase, kept across versions while the fact stays the same fact)",
+          "ref": "request"
+        },
+        {
+          "source": "answer",
+          "text": "an entry whose text equals a baseline object entry keeps that entry's id, or the gate fails",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "grouping-by-prefix",
+      "pointer": "",
+      "decision": "There is no separate topic or group field; the dotted id prefix is the grouping, so related facts list together without a second field.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Optionally a topic/group so related facts list together. The mockup's ids already group: reuse.what, reuse.key, reuse.scope, reuse.stored, reuse.never-stored, …",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "unchanged-by-text",
+      "pointer": "",
+      "decision": "The gate matches baseline entries by id first, then by text, so duplicate baseline texts cannot make the renamed-id check ambiguous. An entry is unchanged when its text equals a baseline entry in the same list, so giving an id to an entry whose text is unchanged from the baseline touches it: it may be named in a changes row's facts but need not be, and it keeps that entry's id when the baseline entry has one. changed is an id in both whose text or list differs, so moving an id'd entry between guarantees and nonGoals is a change, and every changed, removed, or added id with new text must be named in facts. A new entry is any text the baseline's list does not have, and it must be the id'd object within the limit; splitting a long entry is one removed entry and added id'd entries, named in a changes row's facts.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "existing approved text is NOT forced to change … State exactly how 'changed' is determined when old entries have no ids (text equality against the baseline's entries in the same list), what counts when an old string entry is given an id, and how an old long entry is split in a later revision (one removed entry, N added entries: allowed, listed in changes).",
+          "ref": "request"
+        },
+        {
+          "source": "answer",
+          "text": "an entry whose text equals a baseline object entry keeps that entry's id, or the gate fails",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "text": "approvedSpec is defined here: the judge reads the baseline from the approvals, as this rule's comparisons are made",
+          "ref": "repo/packages/contracts/src/approval.ts:52"
+        }
+      ]
+    },
+    {
+      "id": "gate-split",
+      "pointer": "",
+      "decision": "The seal-time validateSpec checks what needs no baseline: entries are strings or id'd objects, an object's id matches the pattern and its text is within the limit, ids are unique across both lists, and a spec with no baseline, or with a baseline of 'shipped', has every entry id'd; the judge's gate checks what a revision adds or changes against the baseline, with the approvals beside it.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "State which part the seal-time validateSpec checks (it has no baseline) and which part the judge gate checks.",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "text": "the seal path runs the artifact kind's validator over the content and collects its problems",
+          "ref": "repo/packages/sdk/src/artifacts.ts:89"
+        },
+        {
+          "source": "code",
+          "text": "the judge's facts carry the baseline, the compatibility section and the previous approved version beside the findings, so the revision's diff is checked there",
+          "ref": "repo/packages/contracts/src/rubric.ts:133"
+        },
+        {
+          "source": "code",
+          "text": "the contract artifact kind names validateSpec as its validator, the seal-time check this split's first half is",
+          "ref": "repo/packages/contracts/src/index.ts:27"
+        }
+      ]
+    },
+    {
+      "id": "facts-anchor",
+      "pointer": "/$defs/change/properties/facts",
+      "decision": "facts names ids against the baseline: added is an id absent from the baseline, removed is a baseline id absent from the revision, and changed is an id in both whose text or list differs, so moving an id'd entry between guarantees and nonGoals is a change. A revision that gives an id to an entry whose text is unchanged from the baseline touches it: it MAY be named in facts but need not be. Every added id with new text, and every changed or removed id, must be named, and a named id must be one the revision touched, which includes ids given to unchanged text. The field is optional in the shape, required by the gate whenever a revision touches either list. The gate does not check the removal of an id-less (grandfathered) string; such a removal is expected to be listed in a changes row in prose.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "changes[] rows may point at the guarantee and non-goal ids they add, change or remove. … Optional field; say whether it is required for new revisions, and if so how code checks it.",
+          "ref": "request"
+        }
+      ]
+    },
+    {
+      "id": "facts-decomposed-gate",
+      "pointer": "/$defs/factEntry/$comment",
+      "decision": "The rule is a no-model judge gate, not a redesign of meets_intent: check facts_decomposed under criterion sound, weight gate, label 'A guarantee or non-goal is not one checkable fact', and its failure message is the exact template recorded in factEntry's $comment, naming each offending entry — list and index, id, or changes[{row}].facts for an id with no list index — its reason, over 160, no id, bad id, duplicate id, renamed id, id named in no changes row's facts or facts id the revision did not touch, and what to do.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Enforced by code, not the model: a gate that fails a spec whose guarantees or nonGoals over the limit, without ids, or with duplicate ids. Give its rubric check id, its label and its failure message (the message names each offending entry and what to do). Do not redesign meets_intent in this revision; record per-guarantee judging only as the follow-up this enables",
+          "ref": "request"
+        },
+        {
+          "source": "answer",
+          "text": "Give facts_decomposed's failure message exactly: a template naming each offending entry (list and index or id) and its reason (over 160, no id, bad id, duplicate id, renamed id, id named in no changes row's facts), and what to do.",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "text": "a rubric criterion's check is a code function beside its label and gate weight, and the sound criterion opens the criteria list just above",
+          "ref": "repo/packages/contracts/src/rubric.ts:256"
+        },
+        {
+          "source": "code",
+          "text": "the detail messages list at most six offenders, joined by semicolons",
+          "ref": "repo/packages/contracts/src/rubric.ts:216"
+        }
+      ]
+    },
+    {
+      "id": "authoring-rule",
+      "pointer": "",
+      "decision": "All three kind guides (rest, json-schema and typescript) gain one rule under the heading '### One fact per entry', and the contracts agent's prompt's spec-file section carries it too: 'An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.'",
+      "why": [
+        {
+          "source": "answer",
+          "text": "The drafting agent's writing guide gets one rule, with its why: state it in the contract word for word. It belongs in the kind guides (repo/packages/contracts/skills/*.md, as a ### rule so a choice can cite it) and the contracts agent's prompt (repo/agents/contracts/prompt.md, \"The spec file\").",
+          "ref": "request"
+        },
+        {
+          "source": "answer",
+          "text": "name its ### heading (the anchor a choice cites), and put its why in the rule text",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "text": "the prompt's spec-file section states the spec's top-level fields in one paragraph",
+          "ref": "repo/agents/contracts/prompt.md:13"
+        },
+        {
+          "source": "code",
+          "text": "a kind guide's rules sit under ### headings, each heading an anchor a choice cites by its kind",
+          "ref": "repo/packages/contracts/skills/json-schema.md:30"
+        }
+      ]
+    },
+    {
+      "id": "own-entries-strings",
+      "pointer": "",
+      "decision": "This version's own guarantees and nonGoals are plain strings — one fact each, within the limit — because the seal gate on main cannot seal an object entry yet; they become id'd entries in the first revision after the code lands.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "write THIS version's own guarantees and nonGoals as plain strings, each one fact within the limit you choose, and say in a sentence that they become objects in the first revision after the code lands",
+          "ref": "Will the seal gate accept the new fact-entry shape for this version, or should the shape stay sealable by the code as it is on main today?"
+        },
+        {
+          "source": "code",
+          "text": "intentProblems on main rejects nonGoals and guarantees unless they are lists of strings, so this version's own entries are strings until the code moves",
+          "ref": "repo/packages/contracts/src/spec.ts:47"
+        }
+      ]
+    },
+    {
+      "id": "followup-nonGoal",
+      "pointer": "",
+      "decision": "Judging intent per guarantee — meets_intent asked once per fact instead of over the whole spec — is the follow-up this shape enables, recorded as a nonGoal, because this revision does not redesign meets_intent.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Do not redesign meets_intent in this revision; record per-guarantee judging only as the follow-up this enables",
+          "ref": "request"
+        },
+        {
+          "source": "code",
+          "text": "meets_intent is asked over the whole spec: the document and every guarantee in the intent at once",
+          "ref": "repo/packages/contracts/src/rubric.ts:159"
+        }
+      ]
+    },
+    {
+      "id": "out-of-scope",
+      "pointer": "",
+      "decision": "Contract comments, map diagram grouping, agent-written one-line change summaries, and per-definition summaries are out of scope for this revision, recorded as a nonGoal.",
+      "why": [
+        {
+          "source": "answer",
+          "text": "Out of scope for this revision: comments on contracts, map.groups diagram grouping, agent-written one-line change summaries, per-definition summaries.",
+          "ref": "request"
+        }
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "choice": "shape-mirrors-shipped",
+      "was": "The schema added only what issue #2350 resolved: the top-level baseline and migration on the breaking entry",
+      "now": "It also adds the fact and factEntry definitions the guarantees and nonGoals lists widen to, and the facts list on the changes row; its code citations point at the lines on main that show what they say",
+      "why": "intent.guarantees and intent.nonGoals become one fact per entry, with ids so the rubric can measure one fact at a time"
+    },
+    {
+      "choice": "kind-enum",
+      "was": "The code citation pointed at spec.ts:9",
+      "now": "It points at spec.ts:11, where SPEC_KINDS stands on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "version-numbers",
+      "was": "The code citation pointed at rubric.ts:222",
+      "now": "It points at rubric.ts:223, where the versionMatches gate is defined on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "baseline-field",
+      "was": "The citation said the break base is the approved spec or, when none, the first passing one",
+      "now": "It says breaks are against the approved spec only: a rejected draft is not a baseline, and shipped code has no earlier spec to diff; v2's fifth guarantee, 185 characters with two facts, is split in two entries: the baseline it names, and never against an unapproved draft",
+      "why": "They are never measured against an unapproved draft"
+    },
+    {
+      "choice": "document-by-kind",
+      "was": "The code citation pointed at spec.ts:78",
+      "now": "It points at spec.ts:91, where validateSpec types the document by kind on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "intent-shape",
+      "was": "guarantees and nonGoals were lists of strings",
+      "now": "Their entries are one checkable fact: a stored string, or an object with a stable id and text of at most 160 characters; the citation points at the lines on main and names the gate that moves in the code fix after approval; the guarantee that the seal gate, the Intent type and the web's copy move in the code fix after approval is added to intent.guarantees",
+      "why": "large quality goals should be decomposed down into smaller checks and aggregated"
+    },
+    {
+      "choice": "choices-cited",
+      "was": "The code citations pointed at spec.ts:79 and spec.ts:53",
+      "now": "They point at spec.ts:92 and spec.ts:56, where those checks stand on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "why-sources",
+      "was": "The code citation pointed at spec.ts:54",
+      "now": "It points at spec.ts:57, where the why check stands on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "changes-rows",
+      "was": "The code citation pointed at spec.ts:62",
+      "now": "It points at spec.ts:68, where the change check stands on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "compatibility-pair",
+      "was": "The code citation pointed at spec.ts:64",
+      "now": "It points at spec.ts:70, where the compatibility check stands on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "breaking-entry",
+      "was": "The entry check was cited as requiring what and a named caller, and the page citation pointed at RestView.tsx:59",
+      "now": "The check at spec.ts:61 also requires a migration, and the page citation points at Review.tsx:160, where the review sheet shows each break's callers",
+      "why": "every approved contract states one"
+    },
+    {
+      "choice": "callers-named",
+      "was": "The code citations pointed at spec.ts:65 and rubric.ts:232",
+      "now": "They point at spec.ts:61 and rubric.ts:241, where the entry check and the breakingNamed gate stand on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "migration-required",
+      "was": "The seal citation pointed at artifacts.ts:62, and the entry check was cited as requiring what and a named caller, and nothing else",
+      "now": "The seal citation points at artifacts.ts:89, and the entry check at spec.ts:61 requires what, a named caller and a migration",
+      "why": "Make migration required on breaking entries"
+    },
+    {
+      "choice": "stored-specs-tolerated",
+      "was": "The citation pointed at the gate's laterVersionProblems, run only above version 1",
+      "now": "It points at spec.ts:94: validateSpec runs baselineProblems at every seal with no version condition above it",
+      "why": "some stored version-1 drafts do not satisfy this shape and readers must tolerate them"
+    },
+    {
+      "choice": "required-six",
+      "was": "The citation pointed at the gate's laterVersionProblems, run only above version 1",
+      "now": "It points at spec.ts:77: the gate requires changes and compatibility only when the spec names a baseline, never from the version number",
+      "why": "They are never measured against an unapproved draft"
+    },
+    {
+      "choice": "keep-shipped-names",
+      "was": "The shipped-type citation pointed at spec.ts:7 and the web's at spec.ts:11",
+      "now": "They point at spec.ts:9 and the web's spec.ts:12, where the Intent type and the web's changes row stand on main",
+      "why": "every code citation's text says what the cited line shows"
+    },
+    {
+      "choice": "lists-code-breaks",
+      "was": "The compatibility listed the four code breaks of issue #2350: the gate's requiredness rule, the entry check, the judge's break base, and the prompt and kind guides",
+      "now": "It lists the code this revision moves, as breaks with callers and migrations: the seal gate's intent check, the Intent type and the web's copy of it, the page's list and diff, the judge's rubric, and the prompt and kind guides sessions write by",
+      "why": "each with its callers and one migration"
+    },
+    {
+      "choice": "examples-pair",
+      "was": "The examples' guarantees and nonGoals were plain strings",
+      "now": "Their entries are id'd fact entries, each one fact within the limit",
+      "why": "the examples show the shape a session seals from this version on, where every entry of a spec with no baseline is id'd"
+    },
+    {
+      "choice": "fact-entries",
+      "was": "not in v2",
+      "now": "Each entry of intent.guarantees and intent.nonGoals is one checkable fact: a stored string, or an object with a stable id and text of at most 160 characters; a guarantee that a new or changed entry, and every entry with no baseline, or 'shipped', must be one is added",
+      "why": "judge rubrics should be decomposable to measure one piece of the output against a specific criteria"
+    },
+    {
+      "choice": "entries-are-objects",
+      "was": "not in v2",
+      "now": "An entry is an object with an id and a text, a plain string staying accepted as a stored or unchanged entry; the guarantee that a stored string entry stays valid, however long, is added; a compatibility safe note states that any edit to a grandfathered string, even one character, makes it a changed entry that must become id'd facts within the limit — old entries are decomposed when next touched, and a revision that need not touch an old entry leaves it alone",
+      "why": "Objects, with a plain string still accepted as a stored (legacy) entry so every approved spec reads unchanged"
+    },
+    {
+      "choice": "limit-160",
+      "was": "not in v2",
+      "now": "The fact text limit is 160 characters, hard; the 160 counts Unicode code points, as the schema's maxLength does, so the implementation counts code points where JavaScript's .length counts UTF-16 units",
+      "why": "The mockup used 160"
+    },
+    {
+      "choice": "id-shape",
+      "was": "not in v2",
+      "now": "A fact id is lowercase letters and digits with dots or dashes, begins with a letter, is unique across both lists, and is kept while the fact stays the same fact; 'kept while the fact stays the same fact' is a writing rule the gate cannot check — to the gate a reused id with new text is an edit, a changed entry",
+      "why": "each fact has a stable id (unique within the spec across both lists, kebab or dotted lowercase, kept across versions while the fact stays the same fact)"
+    },
+    {
+      "choice": "grouping-by-prefix",
+      "was": "not in v2",
+      "now": "There is no separate topic or group field; the dotted id prefix is the grouping",
+      "why": "The mockup's ids already group: reuse.what, reuse.key, reuse.scope, reuse.stored, reuse.never-stored"
+    },
+    {
+      "choice": "unchanged-by-text",
+      "was": "not in v2",
+      "now": "An entry is unchanged when its text equals a baseline entry in the same list, and an unchanged object entry keeps its id; the guarantee that renaming it fails the facts gate is added; baseline entries match by id first, then by text, so duplicate baseline texts cannot make the renamed-id check ambiguous, and giving an id to an entry whose text is unchanged from the baseline touches it: it may be named in facts but need not be",
+      "why": "State exactly how 'changed' is determined when old entries have no ids (text equality against the baseline's entries in the same list)"
+    },
+    {
+      "choice": "gate-split",
+      "was": "not in v2",
+      "now": "The seal gate checks what needs no baseline — the entries, the ids, the limit, and that a spec with no baseline, or with a baseline of 'shipped', has every entry id'd — and the judge's gate checks a revision's adds and changes with the approvals beside it",
+      "why": "State which part the seal-time validateSpec checks (it has no baseline) and which part the judge gate checks"
+    },
+    {
+      "choice": "facts-anchor",
+      "was": "not in v2",
+      "now": "A changes row may name, in a facts list, the ids the revision adds, changes or removes; optional in the shape, required by the gate whenever a revision touches either list; the id sets are defined against the baseline by id — added absent from it, removed a baseline id absent from the revision, changed in both with text or list differing, so a move between guarantees and nonGoals is a change — and the gate does not check the removal of an id-less (grandfathered) string, which is listed in a changes row in prose",
+      "why": "changes[] rows may point at the guarantee and non-goal ids they add, change or remove"
+    },
+    {
+      "choice": "facts-decomposed-gate",
+      "was": "not in v2",
+      "now": "The rule is the no-model facts_decomposed judge gate, with its exact failure-message template recorded in factEntry's $comment; the guarantee that code checks the ids, the limit and the rows' facts, not the judge's reading, is added; the template gains a reason for a facts id the revision did not touch and allows the location to be changes[{row}].facts when there is no list index, as with a removed id",
+      "why": "Enforced by code, not the model: a gate that fails a spec whose guarantees or nonGoals over the limit, without ids, or with duplicate ids"
+    },
+    {
+      "choice": "authoring-rule",
+      "was": "not in v2",
+      "now": "All three kind guides and the contracts agent's prompt get the one-fact rule, with its why, under the heading '### One fact per entry'",
+      "why": "The drafting agent's writing guide gets one rule, with its why: state it in the contract word for word"
+    },
+    {
+      "choice": "own-entries-strings",
+      "was": "not in v2",
+      "now": "This version's own guarantees and nonGoals are plain strings, one fact each within the limit, becoming id'd entries in the first revision after the code lands",
+      "why": "write THIS version's own guarantees and nonGoals as plain strings, each one fact within the limit you choose, and say in a sentence that they become objects in the first revision after the code lands"
+    },
+    {
+      "choice": "followup-nonGoal",
+      "was": "not in v2",
+      "now": "Judging intent per guarantee instead of over the whole intent is recorded as a nonGoal: the follow-up this shape enables",
+      "why": "Do not redesign meets_intent in this revision; record per-guarantee judging only as the follow-up this enables"
+    },
+    {
+      "choice": "out-of-scope",
+      "was": "not in v2",
+      "now": "Contract comments, map diagram grouping, agent-written one-line change summaries and per-definition summaries are out of scope for this revision, recorded as a nonGoal",
+      "why": "Out of scope for this revision: comments on contracts, map.groups diagram grouping, agent-written one-line change summaries, per-definition summaries"
+    }
+  ],
+  "compatibility": {
+    "breaking": [
+      {
+        "what": "An intent entry may now be an object with an id and a text, but the seal gate's intent check rejects any entry that is not a string, so an id'd entry does not seal on the code as it is on main today.",
+        "callers": [
+          "The sealing gate's intent check (repo/packages/contracts/src/spec.ts:47)",
+          "The contract sessions that seal a spec the gate then validates (repo/packages/sdk/src/artifacts.ts:89)"
+        ],
+        "migration": "The code fix moves the intent check to the fact shape — a string, or an object whose id matches the pattern and whose text is at most 160 characters — and the gate then seals id'd entries"
+      },
+      {
+        "what": "The Intent type and the web's local copy of it type guarantees and nonGoals as string[], so an id'd entry fits neither type.",
+        "callers": [
+          "The shipped Intent type (repo/packages/contracts/src/spec.ts:9)",
+          "The web's local copy of the type (repo/packages/web/src/extensions/contracts/spec.ts:8)"
+        ],
+        "migration": "The code fix widens both copies' entry type to a string or an id'd object in one commit, so the two packages read the same shape"
+      },
+      {
+        "what": "The review sheet's list renders each entry through Inline, which calls text.split on it, so an object entry throws instead of rendering, and the diff's text() shows an object entry as its JSON, so an entry sealed as an object reads in the diff as its JSON, not its fact",
+        "callers": [
+          "The review sheet's list (repo/packages/web/src/extensions/contracts/Review.tsx:217)",
+          "The Inline renderer the list uses (repo/packages/web/src/extensions/contracts/Info.tsx:13)",
+          "The spec diff's text() (repo/packages/web/src/extensions/contracts/diff.ts:13)"
+        ],
+        "migration": "The code fix reads each entry's text — the string as-is, or the object's text — in the list and the diff, so an object entry renders its fact and an unchanged entry still diffs as unchanged"
+      },
+      {
+        "what": "The judge's rubric has no gate for the one-fact rule: nothing checks the ids, the 160-character limit, the duplicate or renamed ids, or the changes rows' facts.",
+        "callers": [
+          "The contract judge's rubric (repo/packages/contracts/src/rubric.ts:252)"
+        ],
+        "migration": "The code fix adds the facts_decomposed gate under sound with the exact failure message this contract records in factEntry's $comment, and leaves meets_intent as the recorded follow-up"
+      },
+      {
+        "what": "The kind guides and the contracts agent's prompt do not carry the one-fact rule, so a session sealing against this shape has no rule to write by.",
+        "callers": [
+          "The contract sessions that write specs by the kind guides (repo/packages/contracts/skills/) and the prompt (repo/agents/contracts/prompt.md)"
+        ],
+        "migration": "The code fix adds the 'One fact per entry' rule under a ### heading in all three kind guides (rest.md, json-schema.md and typescript.md), carries it in the prompt's spec-file section, and bumps the agent's version (repo/agents/contracts/agent.json)"
+      }
+    ],
+    "safe": [
+      "Stored specs are never re-validated: validateSpec runs only at seal time (repo/packages/sdk/src/artifacts.ts:89), so the 10 stored version-1 drafts that do not satisfy this shape, and the 367 of the 526 stored breaking entries without migration, stay readable, with no backfill",
+      "Readers keep working: the Contracts page, the Contracts app and the judge keep tolerating specs without baseline or migration, and with the stray names change, choice, was, now, note and why",
+      "Every name the shipped type uses is unchanged: kind, title, version, document, choices and compatibility keep their shape, and breaking entries' what and callers keep theirs; intent keeps its five field names, with guarantees and nonGoals entries widened from a string to a string or an id'd object",
+      "A string entry — however long — stays a valid entry: the fact's string branch has no length limit, so an unchanged string entry in a new revision seals through the gate (repo/packages/sdk/src/artifacts.ts:89)",
+      "A spec already one fact per entry passes as-is: an entry is unchanged when its text equals a baseline entry's in the same list, and a changes row names facts only when the revision adds, changes or removes ids",
+      "Any edit to a grandfathered string, even one character, makes it a changed entry that must become id'd facts within the limit: old entries are decomposed when next touched, and a revision that need not touch an old entry leaves it alone"
+    ]
+  }
+}

@@ -1,15 +1,18 @@
 // Local copy of the ContractSpec type from the contracts package (#2065 backend lane); switch to its import once that package merges.
 export type Source = { source: 'answer' | 'guide' | 'code'; text: string; ref: string };
 export type Choice = { id: string; pointer: string; decision: string; why: Source[] };
+/** A guarantee or non-goal: a stored string, or one checkable fact with a stable id. */
+export type Fact = string | { id: string; text: string };
 export type ContractSpec = {
   kind: 'rest' | 'json-schema' | 'typescript';
   title: string;
   version: number;
-  intent: { purpose: string; nonGoals: string[]; audience: string; consumers: string[]; guarantees: string[] };
+  intent: { purpose: string; nonGoals: Fact[]; audience: string; consumers: string[]; guarantees: Fact[] };
   document: unknown;
   choices: Choice[];
   baseline?: number | 'shipped';
-  changes?: Array<{ choice: string; was: string; now: string; why: string }>;
+  // `facts` names the fact ids the row adds, changes or removes.
+  changes?: Array<{ choice: string; was: string; now: string; why: string; facts?: string[] }>;
   // Specs sealed before contract.spec v2 may say change for what, name callers in one string, and lack migration.
   compatibility?: { breaking: Array<{ what: string; callers: string[]; migration?: string }>; safe: string[] };
 };
@@ -18,6 +21,7 @@ export type ContractSpec = {
 export type Json = { [k: string]: any };
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null;
+export const factText = (f: Fact) => (typeof f === 'string' ? f : f.text);
 
 /** The spec's own version, from the row's outcome ("v3", "v3 typescript") that the seal stores, so no content is read. */
 export const specVersion = (a: { outcome?: string }): number | undefined => Number(/^v(\d+)/.exec(a.outcome ?? '')?.[1]) || undefined;

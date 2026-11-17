@@ -70,7 +70,7 @@ export const sdkSpec = (version: number, document: string, baseline?: number): C
   kind: 'typescript',
   title: 'Extension SDK manifest',
   version,
-  intent: { purpose: 'The types an extension package exports and the distributor reads.', nonGoals: ['Runtime behaviour'], audience: 'internal', consumers: ['Extensions', 'The distributor'], guarantees: ['Additive changes only within a major version'] },
+  intent: { purpose: 'The types an extension package exports and the distributor reads.', nonGoals: [{ id: 'no-runtime', text: 'Runtime behaviour' }], audience: 'internal', consumers: ['Extensions', 'The distributor'], guarantees: [{ id: 'additive', text: 'Additive changes only within a major version' }] },
   document,
   choices: [
     { id: 'manifest', pointer: '/ExtensionManifest', decision: 'One manifest object per package names everything it contributes.', why },
