@@ -8,6 +8,15 @@ type Sent = { type: string; instructions?: string; criteria: Record<string, stri
 /** One decision-model request as Clef received it: its state, and each question's instructions by id. */
 export type ClefRequest = { state: unknown; questions: Record<string, string> };
 
+type Packed = { asks?: string[]; items?: Array<{ id: string }> };
+// A packed question as the model reads it: its item named by the item's id and its text taken from `asks` when it points there.
+function readAs(state: Packed, instructions: string): string {
+  const m = /^About items\[(\d+)\]: (.*)$/s.exec(instructions);
+  if (!m || !state.items) return instructions;
+  const ask = /^answer asks\[(\d+)\]\.$/.exec(m[2]);
+  return `About items[${m[1]}] (${state.items[Number(m[1])].id}): ${ask ? state.asks![Number(ask[1])] : m[2]}`;
+}
+
 /** A stand-in for Clef on its wire format. A choice gets `pick(instructions)` (the first option by name when it gives none) at 0.95;
  * a bool gets an unknown answer type, so it escalates. */
 export async function fakeClef(t: TestContext, pick: (instructions: string) => string | undefined = () => undefined) {
@@ -16,10 +25,11 @@ export async function fakeClef(t: TestContext, pick: (instructions: string) => s
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
-    const { state, questions: sent } = JSON.parse(body) as { state: unknown; questions: Record<string, Sent> };
-    const questions = Object.keys(sent);
+    const { state, questions: raw } = JSON.parse(body) as { state: Packed; questions: Record<string, Sent> };
+    const questions = Object.keys(raw);
+    const sent = Object.fromEntries(questions.map((q) => [q, { ...raw[q], instructions: readAs(state, raw[q].instructions ?? '') }]));
     asked.push(questions);
-    requests.push({ state, questions: Object.fromEntries(questions.map((q) => [q, sent[q].instructions ?? ''])) });
+    requests.push({ state, questions: Object.fromEntries(questions.map((q) => [q, sent[q].instructions])) });
     const choice = (q: Sent) => {
       const options = Object.keys(q.criteria).sort();
       const first = pick(q.instructions ?? '') ?? options[0];

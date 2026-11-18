@@ -5,7 +5,8 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/conte
 import type { Context } from '@earendil-works/chord/context';
 import { PASS_ONLY } from '../src/declaration.ts';
 import { limiter } from '../src/limit.ts';
-import { answerItems, batchKey, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, type DecisionModelRef } from '../src/resolve.ts';
+import { answerItems, batchKey, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, PROMPT_VERSION, type DecisionModelRef } from '../src/resolve.ts';
+import { reuseKey } from '../src/reuse.ts';
 
 const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
 const unit = { id: 'f1', state: { finding: '- nit: rename' } };
@@ -139,8 +140,8 @@ test('a packed request sends the context once and one question per unit; its uns
   });
   const answered = await answerItems(api as never, { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations }, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
   assert.equal(sent.length, 1);
-  assert.deepEqual(sent[0].state, { context: shared, items: units.map((u) => ({ id: u.id, text: u.id })) });
-  assert.equal(sent[0].questions.q2.instructions, 'About items[2] (u2): Does it say why?');
+  assert.deepEqual(sent[0].state, { context: shared, asks: ['Does it say why?'], items: units.map((u) => ({ id: u.id, text: u.id })) });
+  assert.equal(sent[0].questions.q2.instructions, 'About items[2]: answer asks[0].');
   assert.doesNotMatch(JSON.stringify(sent[0]), /says_why/, 'no check id reaches the decision model, which would read it as part of the question');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver, a.answer!.note]), [['u0', true, 'clef', undefined], ['u1', true, 'j', 'says so'], ['u2', false, 'j', 'only asserts'], ['u3', false, 'clef', undefined]]);
   assert.equal(prompts.length, 1, 'one judge-model request for both unsure units');
@@ -259,7 +260,7 @@ test('a check with decisionModel false never reaches the decision model and is e
   });
   const settings = { ref, judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
   const answered = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks: [...checks, contra] })), BACKGROUND_CONTEXT);
-  assert.deepEqual(sent.map((r) => Object.values(r.questions).map((q) => q.instructions)), [['About items[0] (f0): Does it say why?', 'About items[1] (f1): Does it say why?']]);
+  assert.deepEqual(sent.map((r) => Object.values(r.questions).map((q) => q.instructions)), [['About items[0]: answer asks[0].', 'About items[1]: answer asks[0].']]);
   assert.equal(prompts.length, 1, 'both contradicted questions and the unsure says_why go in one judge-model request');
   assert.deepEqual(answered.map((a) => [a.unit.id, a.check.id, a.answer!.met, a.answer!.resolver]), [
     ['f0', 'c.says_why', true, 'clef'], ['f0', 'c.contradicted', true, 'j'], ['f1', 'c.says_why', true, 'j'], ['f1', 'c.contradicted', false, 'j'],
@@ -399,4 +400,50 @@ test('answerItems skips the decision model when need() is already false for ever
   assert.equal(api.memos.has('m:f1:classifier'), false);
   assert.deepEqual(answered, [{ unit, check: checks[0], answer: undefined }]);
   assert.deepEqual(seen, answered);
+});
+
+// Reads a packed request as the decision model would: each question's item by index, its text inline or from `asks`.
+function readRequest(req: { state: { asks?: string[]; items: Array<{ id: string; text: string }> }; questions: Record<string, { instructions: string }> }) {
+  return Object.fromEntries(Object.entries(req.questions).map(([q, { instructions }]) => {
+    const [, i, rest] = /^About items\[(\d+)\]: (.*)$/s.exec(instructions)!;
+    const ask = /^answer asks\[(\d+)\]\.$/.exec(rest);
+    return [q, `${req.state.items[Number(i)].text} | ${ask ? req.state.asks![Number(ask[1])] : rest}`];
+  }));
+}
+
+test('a packed request states a question asked of several items once and maps every answer back to its item and check', async () => {
+  const shared = { part: 'the document part' };
+  const [a, b] = [{ id: 'c.a', question: { type: 'bool' as const, instructions: 'Does the part make it hold?' } }, { id: 'c.b', question: { type: 'bool' as const, instructions: 'Is it named?' } }];
+  const items = [{ unit: { id: 'guarantee one ~ part', shared, state: { text: 'one' } }, checks: [a, b] }, ...['two', 'three'].map((t) => ({ unit: { id: `guarantee ${t} ~ part`, shared, state: { text: t } }, checks: [a] }))];
+  // The decision model passes exactly the pairs below, read from the request alone.
+  const holds = new Set(['one | Does the part make it hold?', 'three | Does the part make it hold?', 'two | Is it named?']);
+  let sent: any;
+  const api = callApi(async () => ({ stopReason: 'stop', answers: Object.fromEntries(Object.entries(readRequest(sent)).map(([q, read]) => [q, { type: 'bool', probability: holds.has(read) ? 0.95 : 0.05 }])) }));
+  const classify = api.models.classify;
+  api.models.classify = ((_m: unknown, req: never) => ((sent = req), classify())) as never;
+  const answered = await answerItems(api as never, { ref, memo: 'm', clef: limiter(1), escalations: limiter(1) }, items, BACKGROUND_CONTEXT);
+  assert.deepEqual(sent.state.asks, ['Does the part make it hold?'], 'asked of three items: stated once');
+  assert.equal(sent.questions.q1.instructions, 'About items[0]: Is it named?', 'asked of one item: inline');
+  assert.doesNotMatch(JSON.stringify(sent), /c\.a|c\.b/, 'no check id reaches the decision model');
+  assert.equal(JSON.stringify(sent).split('guarantee two ~ part').length, 2, 'a unit id is sent once, with its item');
+  assert.deepEqual(answered.map((x) => [x.unit.state.text, x.check.id, x.answer!.met]), [['one', 'c.a', true], ['one', 'c.b', false], ['two', 'c.a', false], ['three', 'c.a', true]]);
+});
+
+test('a question goes to asks from its second item in a request, and the smaller request fits more items under the cap', () => {
+  const shared = { part: 'p' };
+  const long = { id: 'c.long', question: { type: 'bool' as const, instructions: `Does it hold? ${'x'.repeat(600)}` } };
+  const units = ['a', 'b', 'c'].map((id) => ({ id: `scope ${id}`, shared, state: { text: id } }));
+  assert.equal(decisionModelTokens([units[0], units[1]], [long]) - decisionModelTokens(units[0], [long]) < 200 / 3, true, 'the second item adds its reference, not the question');
+  const cap = Math.ceil(decisionModelTokens(units, [long]));
+  assert.deepEqual(pack(units.map((unit) => ({ unit, checks: [long] })), cap).map((g) => g.length), [3], 'three items with a 600-byte question fit one request at its own size');
+});
+
+test('the reuse key is computed as before; only the prompt version moved', () => {
+  const ask = { id: 'c.kept', question: { type: 'bool' as const, instructions: 'Does it keep the rule?' } };
+  const unit = { id: 'rows a', state: { row: { id: 'a' } }, shared: { guide: 'g' } };
+  const policy = { decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } };
+  // The key main computed at prompt version 1 for this item.
+  assert.equal(reuseKey(ask, unit, policy, 1), 'c327464a2db21900b572b113a2bab98ff837f5b6a0c1bfd1bfac0632e7659528');
+  assert.equal(PROMPT_VERSION, 2);
+  assert.notEqual(reuseKey(ask, unit, policy), reuseKey(ask, unit, policy, 1));
 });
