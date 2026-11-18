@@ -268,7 +268,7 @@ export const contractDeclaration: Declaration = {
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
     // A guarantee holds when some part gives it a mechanism, and the intent is met when every guarantee holds.
-    meets_intent: { scope: 'guarantee', aggregate: { name: 'grouped', groupBy: 'guarantee', inner: 'any', outer: 'all', pass: ['yes'] }, question: yesNo('Does the document part shown as context give this guarantee a mechanism: a field, type, operation, header, status code or schema rule that makes it hold?') },
+    meets_intent: { scope: 'guarantee', aggregate: { name: 'grouped', groupBy: 'guarantee', inner: 'any', outer: 'all', pass: ['yes'] }, question: yesNo('Does the document part shown as context make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },

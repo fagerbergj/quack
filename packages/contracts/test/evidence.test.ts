@@ -197,7 +197,7 @@ test('with Clef on, Clef answers every guarantee and part, every choice and ever
   const models = createModels();
   models.setProvider(judge.provider);
   // Every guarantee has a mechanism, every definition is named by an intent entry and nothing departs, so no pitfall is present.
-  const clef = await fakeClef(t, (q) => (q.includes('named or implied') || q.includes('give this guarantee a mechanism') ? 'yes' : 'no'));
+  const clef = await fakeClef(t, (q) => (q.includes('named or implied') || q.includes('make this guarantee hold') ? 'yes' : 'no'));
   models.setProvider(clef.provider);
   const adapters = manifest.evalAdapters!;
   const content = JSON.stringify(lifecycle);

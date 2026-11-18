@@ -5,7 +5,7 @@ import { pack } from '../../judge/src/resolve.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 import { builtOf, judged } from './judging.ts';
 
-const MECHANISM = 'give this guarantee a mechanism';
+const MECHANISM = 'make this guarantee hold';
 const spec = () => scheduleSpecV1({ versioning: 'request', time: 'request' });
 const OP = 'GET /apps/sleeper/schedule';
 
@@ -33,6 +33,11 @@ test('meets_intent asks each guarantee of the parts related to it, grouped by gu
   const ask = { id: 'matches_intent.meets_intent', question: contractDeclaration.checks.meets_intent.question, pass: ['yes'] };
   const requests = pack(units.map((unit) => ({ unit, checks: [ask] })), 8192);
   assert.equal(requests.length, new Set(units.map((u) => (u.shared!.part as { id: string }).id)).size);
+});
+
+test('a behaviour the part states in its own text counts as making the guarantee hold, not only a field, type or schema rule', () => {
+  // Contracts written as TypeScript or JSON Schema state behaviour in TSDoc and descriptions; that text is the contract.
+  assert.match(contractDeclaration.checks.meets_intent.question.instructions, /field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states\?$/);
 });
 
 test('a guarantee holds when one part gives it a mechanism, and the check fails, naming the guarantee and part, when one has none', async (t) => {
