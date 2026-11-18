@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
@@ -42,9 +43,11 @@ async function served(t: TestContext, script: string[]) {
   return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
 }
 
+// The largest delay a timer takes: these runs end when the session settles, never at a wall-clock deadline.
+const NO_DEADLINE = 2 ** 31 - 1;
 const run = async (url: string, inputs: string[], policy: Policy) => {
   const log: Answered[] = [];
-  return { stopped: await drive({ url }, inputs, policy, log, Date.now() + 20_000, undefined, 0), log };
+  return { stopped: await drive({ url }, inputs, policy, log, Date.now() + NO_DEADLINE, undefined, 0), log };
 };
 
 test('questions take a recorded answer that fits, else the suggested option; approvals are approved, then rejected with the reason, and the next input waits for the run to settle', async (t) => {
@@ -119,13 +122,19 @@ test('an arm at a ref replays on that ref\'s agent bundle and guides over this t
   assert.deepEqual(candidateAt('.', 'd', 'a', ['packages/x']), { deployment: 'd', agent: 'a' });
 });
 
-test('a run with a local items file needs no Langfuse: each arm prints its result, writes it to --out, and gets its own summary', (t) => {
+test('a run with a local items file needs no Langfuse: each arm prints its result, writes it to --out, and gets its own summary', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'quack-eval-local-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'items.json'), JSON.stringify([{ id: 'x', input: { inputs: ['go'], pins: {} } }]));
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('LANGFUSE_')));
   const main = join(ROOT, 'packages/eval/src/main.ts');
-  const r = spawnSync(process.execPath, [main, 'run', join(dir, 'items.json'), 'ab', '/nonexistent/deployment.json', '/nonexistent/agent.json', '--arm', 'base=.', '--arm', 'cand=.', '--out', join(dir, 'out.jsonl')], { cwd: ROOT, env, encoding: 'utf8' });
+  // Piped and read to the end, never inherited, and in its own process group so the test ends it and its runtimes whatever happens.
+  const child = spawn(process.execPath, [main, 'run', join(dir, 'items.json'), 'ab', '/nonexistent/deployment.json', '/nonexistent/agent.json', '--arm', 'base=.', '--arm', 'cand=.', '--out', join(dir, 'out.jsonl')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  t.after(() => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ } });
+  const r = { stdout: '', stderr: '', status: null as number | null };
+  child.stdout!.on('data', (d) => (r.stdout += d));
+  child.stderr!.on('data', (d) => (r.stderr += d));
+  [r.status] = (await once(child, 'close')) as [number | null];
   assert.equal(r.status, 0, r.stderr);
   const lines = r.stdout.trim().split('\n');
   assert.match(lines[1], /^x base \{"checker_score":0,.*\} error: runtime exited with 1/);

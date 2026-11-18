@@ -368,7 +368,7 @@ export function processDriver(opts: LauncherOptions & { dataDir: string; agentsD
   return sessionHost(opts, processLauncher(opts));
 }
 
-type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's outbound credential (QUACK_LAUNCH_TOKEN_FILE) and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: SetTimer };
+type LauncherOptions = { command: string[]; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; /** Mints each launch's outbound credential (QUACK_LAUNCH_TOKEN_FILE) and revokes it when the process exits. */ broker?: Pick<CredentialBroker, 'mint' | 'revoke'>; startTimeoutMs?: number; /** How long a stopped process gets to exit on SIGTERM before SIGKILL. */ stopTimeoutMs?: number; /** Test seam for the stop deadline. */ setTimer?: SetTimer; /** Test seam for the start deadline. */ startTimer?: SetTimer };
 
 // Below the distributor's 20 s drain, so a drain still finishes after a kill.
 const STOP_TIMEOUT_MS = 10_000;
@@ -394,7 +394,7 @@ function processLauncher(opts: LauncherOptions): Launch {
     forwardOutput(proc.stderr!, process.stderr, keep, `[${key}] `);
     try {
       // The session binds its own port and reports it, so the parent never probes a port another process may own.
-      const url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
+      const url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000, opts.startTimer)}`;
       return {
         url,
         token: serverToken,

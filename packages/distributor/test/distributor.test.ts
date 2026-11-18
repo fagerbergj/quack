@@ -14,11 +14,13 @@ import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { RECORDS } from '../src/orphans.ts';
 import { openCatalog } from '@quack/catalog';
-import { createDistributor, credentialBroker, forwardOutput, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
+import { createDistributor, credentialBroker, forwardOutput, processDriver, sessionDirName, sessionHost, type HostDriver, type Launch } from '../src/index.ts';
 import { PING_TIMEOUT_MS, PROXY_PROOF } from '../src/server.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
 
 const WAKE_RETRY_MAX = 5 * 60_000;
+// A start deadline that never fires: a child that dies first fails the start, and a hang is the runner's timeout.
+const neverFires = () => () => {};
 
 const dirs: string[] = [];
 const servers: Array<() => Promise<void>> = [];
@@ -43,7 +45,7 @@ async function agentsDirAt(version: number, ...names: string[]) {
   return dir;
 }
 
-async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }, withCatalog = false) {
+async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv; onExit?: (key: string) => void } = { defaultAgent: '' }, withCatalog = false) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
@@ -68,15 +70,6 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   return { driver, invoke, base, ranAs, dataDir, known, exported, sweep: () => server.sweep(), advance: (ms: number) => void (clock += ms) };
 }
 
-// Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
-async function until(probe: () => boolean, ms = 15_000) {
-  const deadline = Date.now() + ms;
-  while (!probe()) {
-    if (Date.now() > deadline) throw new Error('timed out');
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
-
 test('routes each session key to its own process', async () => {
   const { driver, invoke } = await startDistributor(60_000);
   const pr = await invoke('github:fagerbergj/quack#1826', { input: 'review it', requestId: 'a', wait: true });
@@ -92,12 +85,17 @@ test('routes each session key to its own process', async () => {
 });
 
 test('a killed session process restarts with its history', async () => {
-  const { driver, invoke } = await startDistributor(60_000);
+  let exit = () => {};
+  const exited = new Promise<void>((r) => (exit = r));
+  const { driver, invoke } = await startDistributor(60_000, { defaultAgent: '', onExit: () => exit() });
   const key = 'github:fagerbergj/quack#1826';
   const first = await invoke(key, { input: 'review it', requestId: 'a', wait: true });
   const before = driver.pid(key)!;
   process.kill(before, 'SIGKILL');
-  await until(() => driver.pid(key) !== undefined && driver.pid(key) !== before);
+  await exited;
+  // The exit handler has already begun the restart in the session's turn; this joins it.
+  await driver.ensure(key);
+  assert.notEqual(driver.pid(key), before);
   const retried = await invoke(key, { input: 'review it', requestId: 'a', wait: true });
   assert.equal(retried.body.answer, 'echo: review it');
   assert.equal(retried.body.submissionId, first.body.submissionId, 'the retry found the first run in the restored log');
@@ -117,19 +115,28 @@ test('idle sessions release their process and wake on the next request', async (
 });
 
 test('a session that keeps crashing stops auto-restarting until the next request', async () => {
-  const { driver, invoke } = await startDistributor(60_000);
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const crashes: Array<() => void> = [];
+  let launches = 0;
+  // A launch that never starts a process: the test is the budget, so the crashes are the test's calls.
+  const launch: Launch = async () => (launches++, { url: `http://session.invalid/${launches}`, token: 't', pid: launches, stop: async () => {}, onExit: (cb) => void crashes.push(cb) });
+  const driver = sessionHost({ dataDir, defaultAgent: '' }, launch);
   const key = 'research:crashy';
-  await invoke(key, { input: 'first', wait: true });
-  for (let i = 0; i < 4; i++) {
-    const pid = driver.pid(key);
-    if (pid === undefined) break;
-    process.kill(pid, 'SIGKILL');
-    await until(() => driver.pid(key) !== pid);
-    if (i < 3) await until(() => driver.pid(key) !== undefined);
+  await driver.ensure(key);
+  for (let i = 1; i <= 3; i++) {
+    crashes.shift()!();
+    // The crash handler has begun the restart in the session's turn; this joins it.
+    await driver.ensure(key);
+    assert.equal(launches, i + 1, `crash ${i} restarted`);
   }
-  assert.equal(driver.pid(key), undefined, 'the fourth crash in a minute is not restarted');
-  const woke = await invoke(key, { input: 'again', wait: true });
-  assert.equal(woke.body.answer, 'echo: again');
+  crashes.shift()!();
+  // Stop waits its turn behind any restart the fourth crash began, so a restart would show in `launches`.
+  await driver.stop(key);
+  assert.equal(launches, 4, 'the fourth crash in a minute is not restarted');
+  assert.equal(driver.pid(key), undefined);
+  await driver.ensure(key);
+  assert.equal(launches, 5, 'the next request starts it');
 });
 
 test('a malformed session key is a client error', async () => {
@@ -814,18 +821,31 @@ test('a launch hands the session its outbound credential as a 0600 file beside t
   dirs.push(dataDir);
   // The child comes up only when what it was handed checks out, so a wrong launch fails the start.
   const check = "const fs = require('fs'); const f = process.env.QUACK_LAUNCH_TOKEN_FILE; const ok = process.env.QUACK_SESSION_LISTENER_URL === 'http://listener' && (fs.statSync(f).mode & 0o777) === 0o600 && fs.readFileSync(f, 'utf8') === 'minted' && !Object.keys(process.env).some((k) => k.startsWith('QUACK_INDEX')); if (!ok) process.exit(3); process.send({ port: 1 }); setInterval(() => {}, 1000);";
-  const driver = processDriver({ command: [process.execPath, '-e', check], dataDir, defaultAgent: '', env: { QUACK_SESSION_LISTENER_URL: 'http://listener' }, broker: { mint: () => 'minted', revoke: () => {} } });
-  await driver.ensure('research:handed');
-  await driver.stop('research:handed');
+  const driver = processDriver({ command: [process.execPath, '-e', check], dataDir, defaultAgent: '', env: { QUACK_SESSION_LISTENER_URL: 'http://listener' }, broker: { mint: () => 'minted', revoke: () => {} }, startTimer: neverFires });
+  try {
+    await driver.ensure('research:handed');
+  } finally {
+    await driver.stop('research:handed');
+  }
 });
 
 test('a session process that never reports a port fails with its output', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const hang = "console.log('loading models'); setInterval(() => {}, 1000);";
-  // Long enough that the first line has landed under a loaded runner before the start gives up.
-  const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 2_000 });
-  await assert.rejects(driver.ensure('research:hung'), /did not report a port within 2000 ms; pid \d+ is still running; output: loading models/);
+  // The deadline fires only once the line has been forwarded (the tail is taken before the write), so no clock decides whether it landed.
+  let fire = () => {};
+  const write = process.stdout.write;
+  process.stdout.write = function (this: unknown, chunk: unknown, ...rest: unknown[]) {
+    if (String(chunk).includes('[research:hung] loading models')) fire();
+    return (write as (...a: unknown[]) => boolean).call(this, chunk, ...rest);
+  } as typeof write;
+  const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 2_000, startTimer: (fn) => ((fire = fn), () => {}) });
+  try {
+    await assert.rejects(driver.ensure('research:hung'), /did not report a port within 2000 ms; pid \d+ is still running; output: loading models/);
+  } finally {
+    process.stdout.write = write;
+  }
 });
 
 test('a session command that cannot be spawned fails the start instead of crashing the distributor', async () => {
@@ -857,10 +877,14 @@ test('a session process that ignores SIGTERM is killed at the stop deadline', as
   await driver.ensure('research:deaf');
   const pid = driver.pid('research:deaf')!;
   const stopped = driver.stop('research:deaf');
-  await new Promise((r) => setImmediate(r));
-  assert.deepEqual(deadlines.map((d) => d.ms), [5_000]);
-  deadlines[0].fn();
-  await stopped;
+  try {
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(deadlines.map((d) => d.ms), [5_000]);
+  } finally {
+    // A deaf child never exits by itself, so a failed assertion above must still end it.
+    deadlines[0]?.fn();
+    await stopped;
+  }
   assert.throws(() => process.kill(pid, 0), /ESRCH/, 'the process is gone');
 });
 
@@ -868,11 +892,18 @@ test('a session process exits when the parent holding its IPC channel goes away'
   const dir = await mkdtemp(join(tmpdir(), 'quack-orphan-'));
   dirs.push(dir);
   await writeFile(join(dir, 'token'), 't');
-  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir, QUACK_SESSION_TOKEN_FILE: join(dir, 'token') }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
-  await childPort(child, 'echo session', 15_000);
+  // No inherited stdio: a child holding the runner's pipes keeps the file from ending.
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir, QUACK_SESSION_TOKEN_FILE: join(dir, 'token') }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
   const exited = new Promise((r) => child.once('exit', (code) => r(code)));
-  child.disconnect();
-  assert.equal(await exited, 0);
+  try {
+    await childPort(child, 'echo session', 0, neverFires);
+    child.disconnect();
+    assert.equal(await exited, 0);
+  } finally {
+    // A child that stays up after the disconnect is the failure; it must not outlive the test.
+    child.kill('SIGKILL');
+    await exited;
+  }
 });
 
 test('a broken output sink neither throws nor loses the tail', async () => {

@@ -11,7 +11,7 @@ import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { Approvals, gated, withdrawApprovals } from '@quack/sdk';
-import { createSessionServer, currentEvents, openSession, PRINCIPAL_HEADER, principalHeader } from '../src/index.ts';
+import { childPort, createSessionServer, currentEvents, openSession, PRINCIPAL_HEADER, principalHeader } from '../src/index.ts';
 import { nextFrame } from './ws-helpers.ts';
 
 const dirs: string[] = [];
@@ -144,14 +144,20 @@ test('an approved action killed mid-execution is reported on restart, never re-r
   const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
   dirs.push(dir);
   const effects = join(dir, 'side-effects');
-  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/gated-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir, SIDE_EFFECTS: effects }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+  // No inherited stdio: a child holding the runner's pipes keeps the file from ending. The fixture reports its port and its side effect over IPC.
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/gated-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir, SIDE_EFFECTS: effects }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
   const exited = new Promise((r) => child.once('exit', r));
+  const effect = new Promise((r) => child.on('message', (m) => (m as { effect?: boolean })?.effect && r(true)));
   try {
-    const base = `http://127.0.0.1:${await new Promise<number>((r) => child.once('message', (m) => r((m as { port: number }).port)))}`;
+    // A never-firing timer: a child that dies first rejects, and a hang is the runner's timeout.
+    const base = `http://127.0.0.1:${await childPort(child, 'session', 0, () => () => {})}`;
+    const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+    const shown = nextFrame(ws, (f) => f.type === 'standing' && f.approvals.length === 1);
     await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'Approve this PR', requestId: 'run-3' }) });
-    const [item] = await until(async () => { const l = (await (await fetch(`${base}/approvals`)).json()).approvals; return l.length ? l : undefined; });
+    const [item] = (await shown).approvals;
+    ws.close();
     await fetch(`${base}/approvals/${item.id}`, { method: 'POST', body: JSON.stringify({ decision: 'approve', by: 'jf' }) });
-    await until(() => readFile(effects, 'utf8').then((t) => (t ? t : undefined), () => undefined));
+    await effect;
   } finally {
     child.kill('SIGKILL');
     await exited;

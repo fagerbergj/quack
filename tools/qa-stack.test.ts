@@ -4,9 +4,10 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { probe, startDistributor, startStack, teardown, type Parts } from './qa/stack.ts';
+import { freePort, probe, startDistributor, startStack, teardown, type Parts } from './qa/stack.ts';
 
 test('the stack serves /version and its stub app', async () => {
   const web = mkdtempSync(join(tmpdir(), 'qa-web-'));
@@ -19,6 +20,28 @@ test('the stack serves /version and its stub app', async () => {
   assert.equal((await fetch(`${stack.url}/apps/schedules/x`, { method: 'PUT', body: '{}' })).status, 401);
   assert.equal((await fetch(`${stack.url}/apps/schedules/nope`, { method: 'DELETE' })).status, 404);
   await stack.stop();
+});
+
+test('a stack whose session port another process holds comes up on new ports', async () => {
+  const web = mkdtempSync(join(tmpdir(), 'qa-web-'));
+  writeFileSync(join(web, 'index.html'), '<!doctype html><title>qa</title>');
+  // A real distributor whose session listener cannot bind: it exits before serving, and the relaunch takes the next ports.
+  const squatter = createServer().listen(0, '127.0.0.1');
+  await once(squatter, 'listening');
+  const held = (squatter.address() as AddressInfo).port;
+  // Past the scripted draws, free ports again: another stack can take the public port of a launch.
+  const ports = [await freePort(), held, await freePort(), await freePort()];
+  try {
+    const stack = await startStack({ web, apps: ['schedules'] }, { next: async () => ports.shift() ?? freePort() });
+    try {
+      assert.equal(ports.length, 0, 'the first launch was abandoned for the second');
+      assert.equal(((await (await fetch(`${stack.url}/apps/schedules`)).json()) as { schedules: unknown[] }).schedules.length, 2);
+    } finally {
+      await stack.stop();
+    }
+  } finally {
+    squatter.close();
+  }
 });
 
 test('teardown ends every child process group', async () => {
@@ -63,6 +86,16 @@ test('the readiness probe accepts only the distributor launched with its nonce',
 test('a distributor that keeps exiting fails after three launches', async () => {
   let n = 0;
   const start = () => (n++, { exitCode: 1, signalCode: null }) as ChildProcess;
-  await assert.rejects(startDistributor({ children: [], servers: [], tmp: '' }, {}, { start, serving: async () => false }), /3 times/);
+  let port = 0;
+  await assert.rejects(startDistributor({ children: [], servers: [], tmp: '' }, {}, { next: async () => ++port, start, serving: async () => false }), /3 times/);
   assert.equal(n, 3);
+});
+
+test('two draws that land on one port are redrawn without costing a launch attempt', async () => {
+  // The third pair clashes (5, 5): skipping it used to spend attempt 3, so the failure check never ran and the loop spun forever.
+  const ports = [1, 2, 3, 4, 5, 5, 7, 8];
+  const launched: string[] = [];
+  const start = (_p: Parts, _a: string[], env: Record<string, string>) => (launched.push(`${env.PORT},${env.QUACK_SESSION_PORT}`), { exitCode: 1, signalCode: null }) as ChildProcess;
+  await assert.rejects(startDistributor({ children: [], servers: [], tmp: '' }, {}, { next: async () => ports.shift()!, start, serving: async () => false }), /3 times/);
+  assert.deepEqual(launched, ['1,2', '3,4', '5,7']);
 });

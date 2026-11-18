@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
@@ -45,12 +45,43 @@ test('a run that never settles ends at the deadline', async () => {
   s.close();
 });
 
-test('a child that ignores SIGTERM is killed', async () => {
-  const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"], { stdio: ['ignore', 'pipe', 'ignore'] });
-  await once(child.stdout!, 'data');
-  await stopChild(child, 0);
-  assert.equal(child.signalCode, 'SIGKILL');
-  await stopChild(child, 0);
+// A child as stopChild sees it: it records the signals it gets and exits only on those in `dies`.
+function fakeChild(dies: string[]) {
+  const signals: string[] = [];
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null as number | null,
+    signalCode: null as string | null,
+    kill(signal: string) {
+      signals.push(signal);
+      if (dies.includes(signal)) {
+        child.signalCode = signal;
+        child.emit('exit', null, signal);
+      }
+      return true;
+    },
+  });
+  return { child: child as unknown as ChildProcess, signals };
+}
+
+test('a child that ignores SIGTERM is killed when the grace period ends, and not before', async () => {
+  const { child, signals } = fakeChild(['SIGKILL']);
+  const deadlines: Array<{ fn: () => void; ms: number }> = [];
+  const stopped = stopChild(child, 7_000, (fn, ms) => (deadlines.push({ fn, ms }), () => {}));
+  assert.deepEqual(signals, ['SIGTERM']);
+  assert.deepEqual(deadlines.map((d) => d.ms), [7_000]);
+  deadlines[0].fn();
+  await stopped;
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  await stopChild(child, 0, () => assert.fail('an exited child needs no deadline'));
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('a child that exits on SIGTERM is not killed, and its deadline is cancelled', async () => {
+  const { child, signals } = fakeChild(['SIGTERM']);
+  let cancelled = false;
+  await stopChild(child, 7_000, () => () => void (cancelled = true));
+  assert.deepEqual(signals, ['SIGTERM']);
+  assert.equal(cancelled, true);
 });
 
 test('one failing item is reported while its siblings keep their results', async () => {

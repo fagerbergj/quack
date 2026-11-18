@@ -13,6 +13,7 @@ const post = defineTool({
   parameters: obj({ body: str() }, { open: true }),
   execute: async (args) => {
     appendFileSync(process.env.SIDE_EFFECTS!, `${args.body}\n`);
+    process.send!({ effect: true });
     return new Promise<never>(() => {});
   },
 });
