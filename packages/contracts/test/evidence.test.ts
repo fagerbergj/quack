@@ -9,7 +9,7 @@ import ts from 'typescript';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, decisionModelTokens, registerSelector, type Declaration, type Evidence, type Unit } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
@@ -192,13 +192,12 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('with Clef on, Clef answers every choice and every definition code did not settle, and only meets_intent escalates to the judge model', async (t) => {
+test('with Clef on, Clef answers every guarantee and part, every choice and every definition code did not settle, and nothing escalates', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
-  judge.setResponses([fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'every guarantee has a mechanism' }))]);
   const models = createModels();
   models.setProvider(judge.provider);
-  // Every definition is named by an intent entry and no choice or definition departs, so no pitfall is present.
-  const clef = await fakeClef(t, (q) => (q.includes('named or implied') ? 'yes' : 'no'));
+  // Every guarantee has a mechanism, every definition is named by an intent entry and nothing departs, so no pitfall is present.
+  const clef = await fakeClef(t, (q) => (q.includes('named or implied') || q.includes('give this guarantee a mechanism') ? 'yes' : 'no'));
   models.setProvider(clef.provider);
   const adapters = manifest.evalAdapters!;
   const content = JSON.stringify(lifecycle);
@@ -212,13 +211,14 @@ test('with Clef on, Clef answers every choice and every definition code did not 
   const ev = await evidenceOf(lifecycle);
   const asked = ev.definition.filter((u) => !u.related?.covered).length;
   assert.deepEqual(by, {
-    meets_intent: { met: 1, clef: 0, esc: 1 },
+    meets_intent: { met: 1, clef: ev.guarantee.length, esc: 0 },
     contradicts_guide: { met: 0, clef: 23, esc: 0 },
     adds_unasked: { met: 0, clef: asked, esc: 0 },
     implements_non_goal: { met: 0, clef: 0, esc: 0 },
   });
   const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
   assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit');
-  assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
+  assert.equal(clef.asked.flat().length, ev.guarantee.length + 23 + asked + pairs, 'one question per unit');
+  const parts = new Set(ev.guarantee.map((u) => JSON.stringify(u.shared))).size;
+  assert.ok(clef.asked.length <= parts + 6, `units sharing a part, a guide or the kind are packed: ${clef.asked.length} requests for ${parts} parts`);
 });
