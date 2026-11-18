@@ -171,8 +171,10 @@ export async function startDistributor(parts: Parts, env: Record<string, string>
   const { next = freePort, start = launch, serving = probe } = seams;
   for (let attempt = 1; ; attempt++) {
     // The distributor defaults its session port to port+1, which nothing proved free, so both are drawn here.
-    const [port, sessionPort] = [await next(), await next()];
-    if (port === sessionPort) continue;
+    const port = await next();
+    // A clash redraws: skipping the launch would still spend an attempt, and the `===` below would be passed over.
+    let sessionPort = await next();
+    while (sessionPort === port) sessionPort = await next();
     const url = `http://127.0.0.1:${port}`;
     const nonce = randomUUID();
     const child = start(parts, ['packages/distributor/src/main.ts'], { ...env, PORT: String(port), QUACK_SESSION_PORT: String(sessionPort), QUACK_COMMIT: nonce });
@@ -185,7 +187,7 @@ export async function startDistributor(parts: Parts, env: Record<string, string>
 }
 
 /** Starts a distributor (and the apps it mounts) on free ports with a throwaway data dir; `stop` tears everything down. */
-export async function startStack(opts: StackOpts = {}): Promise<Stack> {
+export async function startStack(opts: StackOpts = {}, seams: Seams = {}): Promise<Stack> {
   const parts: Parts = { children: [], servers: [], tmp: mkdtempSync(join(tmpdir(), 'quack-qa-')) };
   const stop = () => teardown(parts);
   const onExit = () => parts.children.forEach((c) => killGroup(c, 'SIGKILL'));
@@ -207,7 +209,7 @@ export async function startStack(opts: StackOpts = {}): Promise<Stack> {
       QUACK_DATA_DIR: dataDir, QUACK_AGENTS_DIR: agentsDir(parts.tmp, opts.agents), QUACK_CONFIG: config, QUACK_WEB_DIR: web,
       QUACK_LOCAL_API_KEY: 'x', QUACK_CLEF_API_KEY: 'x', ...(opts.apps?.includes('github') && githubEnv(parts.tmp)),
       ...rm,
-    });
+    }, seams);
     if (opts.seed === 'demo') await seedDemo(url);
     return { url, dataDir, stop: async () => { process.off('exit', onExit); await stop(); } };
   } catch (err) {
