@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
-import { defineExtension, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { defineExtension, GenerationTask, hook, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { feedback, judged, type Verdict } from '@quack/judge';
-import { artifactsExtension, attachLink, gate, sealedVersion, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { Artifacts, artifactsExtension, attachLink, gate, sealedVersion, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { postable } from './inline.ts';
 import { parseReview, reviewInputs, reviewKind } from './review.ts';
@@ -55,6 +55,21 @@ async function refuseAfterSkip(api: ToolExecutionApi, ctx: Context) {
   return skipped && `Nothing to submit: ${skipped}. This run is over.`;
 }
 
+const REVIEW_LINK = /https:\/\/github\.com\/[^\s)>\]]+#pullrequestreview-\d+/g;
+
+// A review link in a reply must be one GitHub returned for this session's post; a model-written id is no proof of one.
+const linkHook = () => hook(GenerationTask, {
+  async onYield(answer, api, ctx) {
+    const text = answer.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n');
+    const versions = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions ?? [];
+    const posted = [...new Set(versions.flatMap((v) => v.links?.map((l) => l.url) ?? []))];
+    const made = [...new Set(text.match(REVIEW_LINK))].filter((url) => !posted.includes(url));
+    if (!made.length) return undefined;
+    const real = posted.length ? `The reviews it posted: ${posted.join(', ')}.` : 'It has posted no review.';
+    return { continue: `Your reply links ${made.join(' and ')}, but this session posted no such review. ${real} Reply again without that link.` };
+  },
+});
+
 export type GithubSessionConfig = SessionConfig & { /** Which job this agent does; reviewer unless set. */ role?: 'reviewer' | 'implementer' };
 
 let unregister: (() => void) | undefined;
@@ -77,5 +92,5 @@ export function githubSessionExtensions(config: GithubSessionConfig): Extension[
   judged(reviewKind.kind, { rubric: reviewerRubric, declaration: reviewDeclaration, inputs: reviewInputs(config.repoDir), refuse: refuseAfterSkip });
   unregister?.();
   unregister = gate('artifact.sealed', postGate(config));
-  return [defineExtension({ name: 'github', tools: [checkoutTool(config)] }), artifactsExtension([reviewKind])];
+  return [defineExtension({ name: 'github', tools: [checkoutTool(config)], hooks: [linkHook()] }), artifactsExtension([reviewKind])];
 }

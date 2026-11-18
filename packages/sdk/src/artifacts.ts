@@ -31,7 +31,8 @@ export type SealedArtifact = {
   final?: { input: string; refused: number };
 };
 
-type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
+/** written: the hash of the file as a write or edit last left it, and the run input it was written under. */
+type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[]; written?: { hash: string; input: string } }> };
 
 export const Artifacts = defineDoc<ArtifactsDoc>({
   kind: 'quack.artifacts',
@@ -65,6 +66,18 @@ const newestInput = async (api: ToolExecutionApi, ctx: Context) => {
   return id && String(id);
 };
 
+const sha256 = (content: string) => createHash('sha256').update(content).digest('hex');
+
+/** Why the run may not finish: it changed the kind's file after the newest version and sealed nothing since; undefined when it may. */
+export async function unsubmitted(api: Pick<ToolExecutionApi, 'snapshot' | 'conversationId'>, kind: ArtifactKind, ctx: Context): Promise<string | undefined> {
+  const entry = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[kind.kind];
+  const [last, written] = [entry?.versions.at(-1), entry?.written];
+  const inputs = (await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs.map(String) ?? [];
+  // A change after a version final for this input is the seal's to refuse, not something to submit.
+  if (!last || !written || written.hash === last.hash || !inputs.includes(written.input) || last.final?.input === inputs.at(-1)) return undefined;
+  return `${kind.path} changed after ${kind.kind} v${last.version} and this run has not submitted it, so the change is not delivered: v${last.version} is still the newest version. Call ${kind.tool} to submit it before you finish.`;
+}
+
 const outcomeOf = (kind: ArtifactKind, last: SealedArtifact) => `${kind.kind} v${last.version} ${last.verdict?.passed ? 'passed and is delivered' : 'is delivered'}`;
 
 // The first change after a final version is refused so the writer can still reply; a second ends the run, so a looping writer costs one turn.
@@ -88,7 +101,7 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
   const content = await readWorkspace(api, kind.path, ctx);
   const problems = kind.validate?.(content) ?? [];
   if (problems.length) throw new Error(`${kind.path} does not match ${kind.kind}:\n- ${problems.join('\n- ')}`);
-  const hash = createHash('sha256').update(content).digest('hex');
+  const hash = sha256(content);
   const [basis, input] = [await kind.basis?.(api, ctx), await newestInput(api, ctx)];
   const newest = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[kind.kind]?.versions.at(-1);
   if (input && newest?.final?.input === input && newest.hash !== hash) await refuseAfterFinal(api, kind, newest, ctx);
@@ -150,8 +163,15 @@ function validateAfter(tool: ToolRegistration, kinds: ArtifactKind[]): ToolRegis
     async execute(args, api, ctx) {
       const result = await tool.execute(args, api, ctx);
       const kind = kinds.find((k) => k.path === (args as { path?: string }).path);
-      if (!kind?.validate || result.isError) return result;
-      const problems = kind.validate(await readWorkspace(api, kind.path, ctx));
+      if (!kind || result.isError) return result;
+      const content = await readWorkspace(api, kind.path, ctx);
+      const written = { hash: sha256(content), input: (await newestInput(api, ctx)) ?? '' };
+      await api.commit(async (tx) => {
+        const doc = await tx.doc(Artifacts, api.conversationId);
+        doc.kinds[kind.kind] ??= { versions: [] };
+        doc.kinds[kind.kind].written = written;
+      }, ctx);
+      const problems = kind.validate?.(content) ?? [];
       if (!problems.length) return result;
       const note = `${kind.path} does not yet match ${kind.kind}:\n- ${problems.join('\n- ')}`;
       return { ...result, output: [...(result.output ?? []), { type: 'text', text: note }] };

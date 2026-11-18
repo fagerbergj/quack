@@ -99,7 +99,7 @@ function fauxJudge() {
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const recorder = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
-const URL7 = 'https://github.com/acme/widgets/pull/7#review-9';
+const URL7 = 'https://github.com/acme/widgets/pull/7#pullrequestreview-9';
 const write = (content: string) => call('write', { path: 'artifacts/review.md', content });
 const checkout = () => call('checkout_pr', { repository: 'acme/widgets', number: 7 });
 
@@ -214,6 +214,55 @@ test('a re-review after a push may not end on the review posted for the old head
   assert.match(seen[5], new RegExp(`github\\.review v1 was written against ${head}, not ${moved}\\. Write artifacts/review\\.md for ${moved} and call submit_review before you finish\\.`));
   assert.deepEqual(service.posted.map((p) => p.commitId), [head, moved]);
   assert.match(service.posted[1].body, /approve on the new head/);
+  await session.close();
+});
+
+// A relabel after a reply on the reviewed head: the same head, so only the new reply makes the checkout look again.
+async function rereview(script: (step: ReturnType<typeof recorder>) => FauxResponseStep[]) {
+  const thread = { id: 1, path: 'app.ts', line: 1, commit: 'a'.repeat(40), at: '2026-11-09T22:58:17Z', outdated: false, body: '**question**: is the route exposed?', replies: [] as object[], repliesCut: 0 };
+  const feedback = { reviews: [], comments: [], ownThreads: [thread], ownThreadsCut: 0 };
+  const run = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [checkout(), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')), checkout(), ...script(step)];
+  }, { feedback });
+  run.live.feedback = { ...feedback, ownThreads: [{ ...thread, replies: [{ author: 'dev', at: '2026-11-09T23:01:23Z', body: 'It 302s to the login.' }] }] };
+  const again = await run.session.submit('Review pull request acme/widgets#7 (label quack:review)', 'gh-2', true);
+  return { ...run, again };
+}
+const resolved = review.replace('approve.', 'approve; the earlier question is resolved.');
+
+test('a re-review of an unchanged head that writes a new review and stops without submitting is sent back to submit it', async () => {
+  const { again, seen, service, head, session } = await rereview((step) => [
+    step(write(resolved)),
+    // The model claims the post without calling submit_review, as the reviewer did on fagerbergj/quack#2417.
+    step(fauxAssistantMessage('Approve, 0 findings.')),
+    step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')),
+  ]);
+  assert.equal(again.status === 'done' && again.answer, 'Posted.');
+  assert.match(seen[5], /artifacts\/review\.md changed after github\.review v1 and this run has not submitted it, so the change is not delivered: v1 is still the newest version\. Call submit_review to submit it before you finish\./);
+  assert.deepEqual(service.posted.map((p) => p.commitId), [head, head]);
+  assert.match(service.posted[1].body, /the earlier question is resolved/);
+  await session.close();
+});
+
+test('a re-review of an unchanged head that writes a new review and submits it posts it and ends', async () => {
+  const { again, seen, service, head, session } = await rereview((step) => [step(write(resolved)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.'))]);
+  assert.equal(again.status === 'done' && again.answer, 'Posted.');
+  assert.match(seen[5], /github\.review v2: .*passed\..*Posted as APPROVE: /);
+  assert.equal(seen.length, 6, 'the run ends on its answer, with nothing sent back');
+  assert.deepEqual(service.posted.map((p) => p.commitId), [head, head]);
+  await session.close();
+});
+
+test('a reply linking a review the app did not post is sent back with the link the submit result gave', async () => {
+  const { again, seen, session } = await rereview((step) => [
+    step(write(resolved)), step(call('submit_review', {})),
+    // The model's own review id, not the one GitHub returned, as on fagerbergj/quack#2417.
+    step(fauxAssistantMessage('Approve: https://github.com/acme/widgets/pull/7#pullrequestreview-5949693520')),
+    step(fauxAssistantMessage(`Approve: ${URL7}`)),
+  ]);
+  assert.equal(again.status === 'done' && again.answer, `Approve: ${URL7}`);
+  assert.match(seen[6], new RegExp(`Your reply links https://github\\.com/acme/widgets/pull/7#pullrequestreview-5949693520, but this session posted no such review\\. The reviews it posted: ${URL7.replace(/[/.#]/g, '\\$&')}\\. Reply again without that link\\.`));
   await session.close();
 });
 
