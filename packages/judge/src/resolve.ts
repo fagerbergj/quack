@@ -191,8 +191,10 @@ async function escalate(api: ToolExecutionApi, s: Settings, unit: Unit, ask: Ask
   return { met: passing(ask).includes(d.choice), resolver: by ?? d.resolver, note: d.reason };
 }
 
+/** Told when a request's decision-model answers are in, after its confident ones are counted; `ready` is what an unsure item waits on before it may escalate, or undefined when it need not wait. */
+export type Hold = { heard: (asked: Pending[]) => void; ready: (unit: Unit, check: Ask) => Promise<void> | undefined };
 /** `retry` is the model calls' retry test seam. */
-export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams };
+export type Settings = { ref?: DecisionModelRef; judgeModel?: ModelRef; memo: string; clef: Limit; escalations: Limit; retry?: RetrySeams; hold?: Hold };
 /** `answer` is absent when the item was not escalated because its check had already decided. */
 export type Answered = { unit: Unit; check: Ask; answer?: Answer };
 /** Whether an unsure item still needs the judge model: false once its check's fold has decided. */
@@ -214,6 +216,8 @@ async function escalateGroup(api: ToolExecutionApi, s: Settings, unsure: Pending
   const model = ref && api.models.getModel(ref.provider, ref.modelId);
   const resolver = ref?.modelId ?? agentModel.id;
   await Promise.all(subBatches(unsure, windowOf(model)).map(async (batch) => {
+    const held = batch.map((p) => s.hold?.ready(p.unit, p.check)).filter((w) => w !== undefined);
+    if (held.length) await Promise.all(held);
     const replies = await s.escalations(() => askBatch(api, s, model, batch.filter((p) => need(p.unit, p.check)), ctx));
     await Promise.all(batch.map(async (p) => {
       const r = replies.get(p);
@@ -241,8 +245,11 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
     await onAnswer?.(answered);
   };
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
+  s.hold?.heard(asked);
   const unsure = asked.filter((x) => !sure(x.p, x.check));
-  const alone = (a: Pending) => (need(a.unit, a.check) ? s.escalations(() => (need(a.unit, a.check) ? escalate(api, s, a.unit, a.check, ctx) : Promise.resolve(undefined))) : undefined);
+  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(() => (need(a.unit, a.check) ? escalate(api, s, a.unit, a.check, ctx) : Promise.resolve(undefined))) : undefined);
+  // A held item takes no escalation slot while it waits.
+  const alone = (a: Pending) => s.hold?.ready(a.unit, a.check)?.then(() => go(a)) ?? go(a);
   if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);
   else await Promise.all(unsure.map(async (a) => done(a, await alone(a))));
   return asked.map((a) => out.get(a)!);
