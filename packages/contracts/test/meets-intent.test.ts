@@ -77,6 +77,19 @@ test('a decided choice is a part a guarantee can be asked of, and the root is as
   assert.equal(cards.at(-1), '(rest of the document)');
 });
 
+test('a guarantee is asked of its parts most relevant first, so a failing note names the part sharing the most terms with it', async (t) => {
+  const s = spec();
+  // "week" is a component's name and a plain word of the guarantee; the operation shares far more of the guarantee's terms.
+  (s.document as { components: { schemas: Record<string, unknown> } }).components.schemas.week = { type: 'integer', minimum: 1 };
+  s.intent.guarantees = [{ id: 'live-week', text: 'The live NFL week and the next run of each scheduled job come back soonest first' }];
+  const { evidence } = await builtOf(s);
+  const parts = evidence.guarantee.map((u) => (u.shared!.part as { id: string }).id);
+  assert.ok(parts.includes('/components/schemas/week'), 'the named part is still asked');
+  assert.equal(parts[0], OP);
+  const failed = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'no', reason: 'Not here.' })).check('meets_intent');
+  assert.equal(failed.notes[0], `live-week: guarantee live-week ~ ${OP}: Not here.`);
+});
+
 test('a grandfathered string guarantee keeps its key when another is inserted, and one over the fact limit is split by sentence', async () => {
   const keys = async (guarantees: string[]) => {
     const s = spec();

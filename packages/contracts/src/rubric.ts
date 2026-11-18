@@ -197,12 +197,17 @@ type Part = { id: string; name?: string; text: string; evidence: unknown; root?:
 // so every guarantee is asked. The root holds spec-wide rules (additionalProperties, security, the stated scope), so it is always asked.
 function partsFor(text: string, parts: Part[], top: number, minShared: number): Part[] {
   const terms = termsOf(text);
-  const scored = parts.map((p, i) => ({ p, i, s: (p.name && mentions(p.name).test(text) ? 1000 : 0) + [...termsOf(p.text)].filter((t) => terms.has(t)).length }));
-  const ranked = scored.sort((a, b) => b.s - a.s || a.i - b.i);
+  const scored = parts.map((p, i) => {
+    const shared = [...termsOf(p.text)].filter((t) => terms.has(t)).length;
+    return { p, i, shared, s: (p.name && mentions(p.name).test(text) ? 1000 : 0) + shared };
+  });
+  const ranked = [...scored].sort((a, b) => b.s - a.s || a.i - b.i);
   const kept = ranked.filter((x) => x.s >= minShared);
-  const best = (kept.length ? kept : ranked).slice(0, top).map((x) => x.p);
-  const root = parts.find((p) => p.root);
-  return root && !best.includes(root) ? [...best, root] : best;
+  const best = (kept.length ? kept : ranked).slice(0, top);
+  const root = scored.find((x) => x.p.root);
+  // A failing guarantee's note names its first part, so the part sharing the most terms goes first: a name the guarantee only
+  // happens to use as a word ("session's") keeps a part in, but does not make it the most relevant.
+  return (root && !best.includes(root) ? [...best, root] : best).sort((a, b) => b.shared - a.shared).map((x) => x.p);
 }
 
 // The definitions, the rest of the document and the decided choices: a guarantee the code cannot show, such as layering or a
