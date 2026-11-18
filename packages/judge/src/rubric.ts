@@ -56,6 +56,8 @@ export type CheckResult = {
   /** Units no resolver decided; the check is then null, not unmet. */
   undecided?: number;
   marks?: string[];
+  /** A grouped fold's groups the outer fold ran over; absent for other folds, and when no item applies or the split failed. */
+  groups?: number;
 };
 
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };
@@ -93,9 +95,10 @@ const fellShort = (r: CheckResult) => r.met !== null && r.weight !== 0 && (r.wei
 export function feedback(results: CheckResult[]): string[] {
   return results.filter(fellShort).map((r) => {
     const kind = r.weight === 'gate' ? 'gate' : r.weight > 0 ? 'missed' : 'pitfall';
-    // A decided fold names its failing items in the notes; only a share says how many held. A model check's marks are a
-    // grouped fold's failed groups, whose share is of groups the result does not count, so its notes stand alone.
-    const share = typeof r.met === 'number' && r.units > 1 && !r.marks ? ` (${Math.round(r.met * r.units)} of ${r.units})` : '';
+    // A grouped share counts groups, not items, and only when there is more than one; other folds count items.
+    const n = r.groups ?? r.units;
+    const counted = typeof r.met === 'number' && (r.groups === undefined ? r.units > 1 && !r.marks : r.groups > 1);
+    const share = counted ? ` (${Math.round((r.met as number) * n)} of ${n})` : '';
     return `${kind} ${r.criterion}.${r.id}${share}${r.notes.length ? `: ${r.notes.join('; ')}` : ''}`;
   });
 }
