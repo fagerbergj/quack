@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildEvidence } from '@quack/judge';
 import { derivations, recomputes } from '../src/claims.ts';
@@ -88,4 +89,27 @@ test('derivations: an operand may carry a label, and a traced sum of labelled op
   assert.deepEqual(derivations('Your tower stack: Define 7 XL 566 mm + Define 5 ~460 mm + mATX ~200 mm = **~1,226 mm** for the three cases alone').map((d) => [d.inputs, d.shown, recomputes(d)]), [[['566', '460', '200'], '1226', true]]);
   const report = '## Summary\nx\n## Assumptions\n- The mATX case is about 200 mm tall.\n## Findings\n- The Define 7 XL is 566 mm tall and the Define 5 is 460 mm tall. [s1]\n## Analysis\n- Your tower stack: Define 7 XL 566 mm + Define 5 ~460 mm + mATX ~200 mm = ~1,226 mm.\n- The three cases need ~1,226 mm.\n';
   assert.deepEqual([code('derived_arithmetic', report).met, code('derived_inputs_traced', report).met], [1, 1]);
+});
+
+test('derivations: an "≈" before an operand marks it approximate, so the chain is still the sum it shows', () => {
+  const shown = (text: string) => derivations(text).map((d) => [d.inputs, d.shown, recomputes(d)]);
+  assert.deepEqual(shown('The stack is 566 + ≈460 = 1,026 mm tall.'), [[['566', '460'], '1026', true]]);
+  assert.deepEqual(shown('The stack is 566 + ≈460 ≈ 1,026 mm tall.'), [[['566', '460'], '1026', true]]);
+  assert.deepEqual(shown('The stack is ≈566 + 460 = 1,026 mm tall.'), [[['566', '460'], '1026', true]]);
+  assert.deepEqual(shown('Mounting: 24U × ≈44.45 mm = 1,066.8 mm.'), [[['24', '44.45'], '1066.8', true]]);
+});
+
+// Reports sealed on prod, and chains code cannot read; no shape may throw, since a throwing code check rejects the whole judge run.
+const SEALED = readdirSync(new URL('./fixtures/reports/', import.meta.url)).filter((f) => f.endsWith('.md')).map((f) => readFileSync(new URL(`./fixtures/reports/${f}`, import.meta.url), 'utf8'));
+const MALFORMED = ['= 1,026 mm', '566 + = 1,026', '≈ ≈ 5', '566 + ≈ = 3', '1 = = 2', '(≈)', '12 (× 4)', '5 mm (≈ cm)', '+ 4 = 4', '7 ≈', '≈≈≈', '3 − ≈ − 2 = 1', '$ + $ = $'];
+
+test('derivations and both derived checks never throw, on every line of the sealed reports and on malformed chains', () => {
+  const lines = [...SEALED.flatMap((r) => r.split('\n')), ...MALFORMED];
+  assert.ok(lines.length > 100);
+  for (const line of lines) {
+    assert.doesNotThrow(() => derivations(line), line);
+    const report = `## Summary\n${line}\n## Assumptions\nNone.\n## Findings\n- ${line} [s1]\n## Verdict\n- ${line}\n`;
+    assert.doesNotThrow(() => [code('derived_arithmetic', report), code('derived_inputs_traced', report)], line);
+  }
+  for (const r of SEALED) assert.doesNotThrow(() => [code('derived_arithmetic', r), code('derived_inputs_traced', r)]);
 });

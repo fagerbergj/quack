@@ -86,14 +86,15 @@ const TERM = new RegExp(String.raw`(${NUM})(?:\s?(mm|cm|m|in|ft|lbs|lb|kg|g|RU|U
 const OPS = new RegExp(OP, 'gu');
 
 type Term = { value: string; unit?: string };
-/** An expression's operators and operands; an operand is the last figure of its segment, so a label's model number ("Define 5") is not one. */
-const parse = (s: string) => {
-  const terms = s.split(OPS).map((seg): Term => {
-    const m = [...seg.matchAll(TERM)].at(-1)!;
-    return { value: m[1].replace(/[~≈$,]/g, ''), unit: m[2]?.toLowerCase() };
-  });
-  return { terms, ops: [...s.matchAll(OPS)].map((m) => m[0].trim()) };
-};
+/** An expression's operators and operands; an operand is the last figure of its segment, so a label's model number ("Define 5") is not one.
+ *  undefined when a segment holds no figure: a shape code cannot read is no derivation. */
+function parse(s: string): { terms: Term[]; ops: string[] } | undefined {
+  const found = s.split(OPS).map((seg) => [...seg.matchAll(TERM)].at(-1));
+  if (found.some((m) => !m)) return undefined;
+  return { terms: found.map((m) => ({ value: m![1].replace(/[~≈$,]/g, ''), unit: m![2]?.toLowerCase() })), ops: [...s.matchAll(OPS)].map((m) => m[0].trim()) };
+}
+// "=" or "≈" separates two sides only after a figure ends; "≈" before a figure ("566 + ≈460") marks it as approximate.
+const SIDES = /(?<=[\d\p{L}"%])\s*[=≈]\s*/u;
 
 /** Products and quotients first, then sums and differences, left to right. */
 function evaluate(values: number[], ops: string[]): number {
@@ -131,7 +132,9 @@ const expression = (text: string, e: { terms: Term[]; ops: string[] }, shown: Te
 /** "a + b = c (= d)": the expression against the first value shown, then each value shown against the one before it in another unit.
  *  An expression's units travel through its arithmetic, so its result is compared as shown. */
 function chain(text: string): Derivation[] {
-  const [first, ...rest] = text.split(/\s*[=≈]\s*/).map(parse);
+  const sides = text.split(SIDES).map(parse);
+  if (sides.length < 2 || sides.some((p) => !p)) return [];
+  const [first, ...rest] = sides as Array<{ terms: Term[]; ops: string[] }>;
   const shown = rest.map((s) => s.terms[0]);
   const values = first.terms.length > 1 ? shown : [first.terms[0], ...shown];
   return [...(first.terms.length > 1 ? [expression(text, first, shown[0])] : []), ...values.slice(1).flatMap((v, k) => conversion(text, values[k], v))];
@@ -139,7 +142,9 @@ function chain(text: string): Derivation[] {
 
 /** "c (a × b)" checks the expression against c; "x mm (y in)" checks the conversion. */
 function paren(text: string, outer: string, inner: string): Derivation[] {
-  const [o, i] = [parse(outer).terms[0], parse(inner)];
+  const [p, i] = [parse(outer), parse(inner)];
+  if (!p || !i) return [];
+  const o = p.terms[0];
   if (i.terms.length === 1) return conversion(text, o, i.terms[0]);
   // "38.5 in (97.79 × 59.95 cm)" gives dimensions in another unit; only an expression in c's own unit, or in none, is c's.
   const unit = i.terms.findLast((t) => t.unit)?.unit;
