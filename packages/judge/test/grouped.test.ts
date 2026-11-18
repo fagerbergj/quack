@@ -137,3 +137,44 @@ test('reuse inside a group: an unchanged item is reused, a changed evidence or g
   const v3 = await round(api, optsOf(declOf(grouped('any', 'share')), moved), 3);
   assert.deepEqual([seen.clef.slice(3).sort(), v3.checks[0].reused], [['a2f', 'b1t'], { 'rows a1t': 1 }], "a2f's evidence and b1t's group claim changed");
 });
+
+// Pass-only any groups: a decision-model "no" is never final, and one pass decides the group, so escalations wait for the group's answers.
+const passOnlyAny = (escalations = 4) => (pairs: Array<[string, string, string?]>) => ({ ...optsOf(declOf(grouped('any', 'share'), { decisionModel: PASS_ONLY }), pairs), escalations });
+
+test("pass-only any: a group whose last decision-model answer is its one pass sends nothing to the judge model", async () => {
+  const { api, seen } = sessionApi(clef, () => said('no'));
+  const v = await round(api, passOnlyAny()([['a1f', 'A'], ['a2f', 'A'], ['a3f', 'A'], ['a4t', 'A']]));
+  assert.deepEqual([v.checks[0].met, seen.clef, seen.judge], [1, ['a1f', 'a2f', 'a3f', 'a4t'], []]);
+});
+
+test('pass-only any: a group the decision model passed nowhere escalates once its answers are in, and stops at the first judge-model pass', async () => {
+  const order: string[] = [];
+  const { api, seen } = sessionApi((row) => (order.push(`clef ${row}`), clef(row)), (row) => (order.push(`judge ${row}`), said(row === 'a2f' ? 'yes' : 'no')));
+  const v = await round(api, passOnlyAny(1)([['a1f', 'A'], ['a2f', 'A'], ['a3f', 'A'], ['a4f', 'A']]));
+  assert.ok(order.indexOf('judge a1f') > order.lastIndexOf('clef a4f'), `no escalation before the group's last answer: ${order.join(', ')}`);
+  // The limiter hands a3f its slot before a2f's pass is counted, as for any check; a4f, still queued, is skipped.
+  assert.deepEqual([v.checks[0].met, seen.judge.slice(0, 2), seen.judge.includes('a4f')], [1, ['a1f', 'a2f'], false]);
+});
+
+test('pass-only any: two groups interleaved across packed requests escalate only the group no part passed', async () => {
+  // Each part x, y, z is one request with a question per guarantee; A passes only on the last part, B on none.
+  const { api, seen } = sessionApi(clef, () => said('no'));
+  const pairs: Array<[string, string, string]> = [['ax1f', 'A', 'x'], ['bx1f', 'B', 'x'], ['ay2f', 'A', 'y'], ['by2f', 'B', 'y'], ['az3t', 'A', 'z'], ['bz3f', 'B', 'z']];
+  const v = await round(api, passOnlyAny()(pairs));
+  assert.deepEqual(seen.clef, ['ax1f', 'bx1f', 'ay2f', 'by2f', 'az3t', 'bz3f']);
+  assert.deepEqual([v.checks[0].met, v.checks[0].marks, seen.judge.sort()], [0.5, ['B'], ['bx1f', 'by2f', 'bz3f']]);
+});
+
+test("pass-only any: a decision-model error on one item still releases its group's escalations, and undecided handling is unchanged", async () => {
+  const { api, seen } = sessionApi((row) => (row === 'a1' ? 'error' : clef(row)), (row) => (row === 'a1' ? 'error' : said('no')));
+  const v = await round(api, passOnlyAny()([['a1', 'A'], ['a2f', 'A']]));
+  assert.deepEqual([v.checks[0].met, v.checks[0].undecided, seen.judge.filter((r) => r === 'a2f')], [null, 1, ['a2f']]);
+});
+
+test('pass-only any: reused answers count for the group, and only its fresh items are waited on', async () => {
+  const { api, seen } = sessionApi(clef, () => said('no'));
+  await round(api, passOnlyAny()([['a1f', 'A'], ['a2f', 'A']]), 1);
+  assert.deepEqual(seen.judge.splice(0).sort(), ['a1f', 'a2f']);
+  const v2 = await round(api, passOnlyAny()([['a1f', 'A'], ['a2f', 'A'], ['a4f', 'A'], ['a3t', 'A'], ['b1f', 'B']]), 2);
+  assert.deepEqual([v2.checks[0].met, v2.checks[0].reused, seen.clef.slice(2), seen.judge], [0.5, { 'rows a1f': 1, 'rows a2f': 1 }, ['a4f', 'a3t', 'b1f'], ['b1f']]);
+});

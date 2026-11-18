@@ -1,10 +1,10 @@
 import type { Context } from '@earendil-works/chord/context';
 import { LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, type SealedArtifact } from '@quack/sdk';
-import { buildEvidence, checkDeclaration, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
+import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
-import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Item, type ModelRef } from './resolve.ts';
+import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
 import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
 import { feedback, score, unitsFor, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
@@ -211,13 +211,36 @@ function reuseItems(items: Item[], byKey: Map<string, Plan>, reuse: Reuse): Item
   return items.map((it) => ({ unit: it.unit, checks: it.checks.filter((ask) => fresh(it, ask)) })).filter((it) => it.checks.length);
 }
 
+// Under pass-only the decision model can only pass an item, and one pass decides an `any` group, so such a group's
+// items escalate only once the decision model has answered every one of them that it is asked.
+const waits = (p: Plan) => p.aggregate?.name === 'grouped' && p.aggregate.inner === 'any' && p.ask.decisionModel === PASS_ONLY;
+
+function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => void } {
+  const groups = new Map<string, { left: number } & PromiseWithResolvers<void>>();
+  const of = (u: Unit, check: Ask) => {
+    const p = byKey.get(check.id)!;
+    return waits(p) ? `${check.id}\u0000${p.groupOf![u.id]}` : '';
+  };
+  const expect = (items: Item[]) => items.forEach((it) => it.checks.filter((c) => of(it.unit, c)).forEach((c) => {
+    const key = of(it.unit, c);
+    const g = groups.get(key) ?? { left: 0, ...Promise.withResolvers<void>() };
+    g.left++;
+    groups.set(key, g);
+  }));
+  const heard = (asked: Pending[]) => asked.forEach((a) => {
+    const g = groups.get(of(a.unit, a.check));
+    if (g && !--g.left) g.resolve();
+  });
+  return { expect, heard, ready: (u, c) => groups.get(of(u, c))?.promise };
+}
+
 // Each stage's requests start as soon as its evidence is built: decision-model requests queue on their own limit (one at
 // a time) and escalations on theirs, so a slow LLM split delays only the checks on its scope.
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: Array<Promise<BuiltEvidence>>, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
   const plans: Plan[] = [];
   const byKey = new Map<string, Plan>();
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
-  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4) };
+  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4), hold: holds(byKey) };
   const tally = async ({ unit, check, answer }: Answered) => {
     const p = byKey.get(check.id)!;
     p.left--;
@@ -235,6 +258,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
     const mine = planChecks(opts.rubric, opts.declaration, built);
     for (const p of mine) plans.push(p), byKey.set(p.key, p);
     const items = reuse ? reuseItems(itemsOf(mine), byKey, reuse) : itemsOf(mine);
+    settings.hold.expect(items);
     await publish();
     await Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
   };
