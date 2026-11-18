@@ -286,11 +286,13 @@ type Placed = Statement & { line: string; before?: string };
 
 /** Each sentence of the report's own text with the section it sits in (the preamble's is ""), its whole line and the sentence before it
  *  in that section: code fences and headings are left out, and a line ends a sentence. */
+const SOURCE_LISTS = new Set(['sources', 'references', 'bibliography']);
+
 function placed(report: string): Placed[] {
   const { preamble, sections } = splitReport(report);
-  return [{ name: '', lines: preamble }, ...sections].flatMap((s) => {
-    // A line that opens with a source's mark lists that source ("[s3] Seemann, 2021, p. 4"), as a Sources section does: it claims nothing.
-    const lines = fenced(s.lines.join('\n')).filter(([line, code]) => !code && !/^\s*#/.test(line) && !/^\s*(?:[-*]|\d+\.)?\s*\[s\d+\]/.test(line)).map(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').trim());
+  // A Sources section lists what was read ("[s3] Seemann, 2021, p. 4"): it claims nothing, so none of its lines is a sentence.
+  return [{ name: '', lines: preamble }, ...sections].filter((s) => !SOURCE_LISTS.has(s.name)).flatMap((s) => {
+    const lines = fenced(s.lines.join('\n')).filter(([line, code]) => !code && !/^\s*#/.test(line)).map(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').trim());
     const sentences = lines.flatMap((line) => line.split(/(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u)
       .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(/\[s\d+\]/g, '')))
       .map((t) => ({ section: s.name, text: t.trim(), line })));

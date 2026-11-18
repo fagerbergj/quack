@@ -113,3 +113,11 @@ test('derivations and both derived checks never throw, on every line of the seal
   }
   for (const r of SEALED) assert.doesNotThrow(() => [code('derived_arithmetic', r), code('derived_inputs_traced', r)]);
 });
+
+test('a finding bullet that opens with its mark is still a sentence; only a Sources section is a listing', async () => {
+  const report = '## Summary\nThe Tripp Lite cord is 6 ft.\n## Assumptions\nNone.\n## Findings\n- [s1] The datasheet gives the fan cord as 10 ft.\n## Sources\n- [s1] Tripp Lite SR24UBFFD datasheet, 2024.\n';
+  const pairs = (await buildEvidence(reportDeclaration, inputsOf(report, undefined, new Map(), ['s1']))).evidence.pairs;
+  assert.deepEqual(pairs.map((u) => u.id), ['pairs 1|3'], 'the Summary is paired with the finding bullet');
+  assert.equal(code('derived_inputs_traced', report).met, 0, 'the 6 ft is untraced; the Sources line\'s 2024 is not traced at all');
+  assert.match(code('derived_inputs_traced', report).detail!, /^6 in "The Tripp Lite cord is 6 ft\./);
+});
