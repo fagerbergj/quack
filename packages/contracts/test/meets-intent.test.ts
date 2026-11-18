@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { Unit } from '@quack/judge';
 import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
-import { pack } from '../../judge/src/resolve.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 import { builtOf, judged } from './judging.ts';
 
-const MECHANISM = 'make this guarantee hold';
 const spec = () => scheduleSpecV1({ versioning: 'request', time: 'request' });
 const OP = 'GET /apps/sleeper/schedule';
+type Shown = { part: string; text: unknown };
+const evidenceOf = (u: Unit) => u.state.evidence as unknown as Shown[];
+const unit = (units: Unit[], id: string) => units.find((u) => u.id === id)!;
 
 // The schedule spec with five components no guarantee is about, so the cut has parts to leave out.
 function withComponents(): ContractSpec {
@@ -18,114 +20,70 @@ function withComponents(): ContractSpec {
   return s;
 }
 
-test('meets_intent asks each guarantee of the parts related to it, grouped by guarantee, with the part as shared context', async () => {
-  const { evidence, groups } = await builtOf(withComponents());
-  const units = evidence.guarantee;
-  // The guarantee that names Problem is asked of the Problem part and not of the five unrelated components.
-  const shape = units.filter((u) => groups!.guarantee[u.id] === 'errors.shape').map((u) => (u.shared!.part as { id: string }).id);
-  assert.ok(shape.includes('/components/schemas/Problem'), shape.join(', '));
-  assert.ok(!shape.some((id) => /Avatar|Badge|Colour|Dimension|Emblem/.test(id)), shape.join(', '));
-  assert.ok(shape.length <= 4);
-  const one = units.find((u) => u.id === `guarantee errors.problem-json ~ ${OP}`)!;
-  assert.deepEqual(Object.keys(one.shared!), ['part', 'kind']);
-  assert.deepEqual(one.state, { guarantee: 'Errors say why in problem+json' });
-  // Every guarantee asked of one part shares that part, so the part goes once per request.
-  const ask = { id: 'matches_intent.meets_intent', question: contractDeclaration.checks.meets_intent.question, pass: ['yes'] };
-  const requests = pack(units.map((unit) => ({ unit, checks: [ask] })), 8192);
-  assert.equal(requests.length, new Set(units.map((u) => (u.shared!.part as { id: string }).id)).size);
+test('each guarantee is one item, its evidence the parts it names or shares terms with, not the unrelated ones', async () => {
+  const { evidence } = await builtOf(withComponents());
+  const shape = unit(evidence.guarantee, 'guarantee errors.shape');
+  assert.equal(shape.state.guarantee, 'Every error body is a Problem with a title and a detail');
+  const parts = evidenceOf(shape).map((e) => e.part);
+  assert.ok(parts.includes('/components/schemas/Problem'), parts.join(', '));
+  assert.ok(!parts.some((id) => /Avatar|Badge|Colour|Dimension|Emblem/.test(id)), parts.join(', '));
+  assert.ok(parts.length <= 5, 'the four best parts and the root');
+  assert.equal(shape.shared, undefined, 'nothing is packed: each promise is its own judge-model question');
 });
 
-test('a behaviour the part states in its own text counts as making the guarantee hold, not only a field, type or schema rule', () => {
-  // Contracts written as TypeScript or JSON Schema state behaviour in TSDoc and descriptions; that text is the contract.
-  assert.match(contractDeclaration.checks.meets_intent.question.instructions, /field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states\?$/);
-});
-
-test('a guarantee holds when one part gives it a mechanism, and the check fails, naming the guarantee and part, when one has none', async (t) => {
-  const held = await judged(t, spec(), ['meets_intent'], (q) => (q.includes(MECHANISM) && q.includes(OP) ? 'yes' : 'no'));
-  const ok = held.check('meets_intent');
-  assert.deepEqual([ok.met, ok.groups, ok.resolvers.clef > 0], [true, 2, true]);
-  const no = { choice: 'no', reason: 'Nothing in this part marks the schedule read-only.' };
-  const missing = await judged(t, spec(), ['meets_intent'], (q) => (q.includes(MECHANISM) && q.includes(OP) && !q.includes('read-only') ? 'yes' : 'no'), no);
-  const failed = missing.check('meets_intent');
-  assert.equal(failed.met, false);
-  assert.equal(failed.notes.length, 1);
-  assert.match(failed.notes[0], /^read-only: guarantee read-only ~ .+: Nothing in this part marks the schedule read-only\.$/);
-});
-
-test('a Clef "no" is not final: the judge model decides it, so a failing guarantee has a reason, and its "yes" holds the guarantee', async (t) => {
-  const s = spec();
-  s.intent.guarantees = [{ id: 'read-only', text: 'Read-only' }];
-  const flagged = await judged(t, s, ['meets_intent'], () => 'no', { choice: 'no', reason: 'No part says the schedule cannot be changed.' });
-  const failed = flagged.check('meets_intent');
-  assert.equal(failed.met, false);
-  assert.equal(failed.resolvers.clef, undefined, 'no item is failed on the decision model alone');
-  assert.ok(failed.resolvers.j > 0);
-  assert.match(failed.notes[0], /No part says the schedule cannot be changed\.$/);
-  const overturned = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'yes', reason: 'GET is the only method, so the schedule is read-only.' })).check('meets_intent');
-  assert.equal(overturned.met, true);
-});
-
-test('a decided choice is a part a guarantee can be asked of, and the root is asked even when four named parts outrank it', async () => {
+test('a decided choice is evidence, the root always is (without its examples), and the most relevant part comes first', async () => {
   const s = withComponents();
-  s.intent.guarantees.push({ id: 'iso-times', text: 'Run times are ISO 8601 date-times' }, { id: 'cards', text: 'Avatar, Badge, Colour and Dimension describe a profile card' });
-  const { evidence, groups } = await builtOf(s);
-  const partsOf = (key: string) => evidence.guarantee.filter((u) => groups!.guarantee[u.id] === key).map((u) => u.shared!.part as { id: string; definition: unknown });
-  const iso = partsOf('iso-times').find((p) => p.id === 'choice time-format');
-  assert.deepEqual(iso?.definition, { decision: 'Run times are ISO 8601 date-times.', why: ['You decide (the suggested ISO 8601 string stands)', 'The service already returns the next run as the schedules service gives it.'] });
-  const cards = partsOf('cards').map((p) => p.id);
-  assert.deepEqual(cards.slice(0, 4).sort(), ['/components/schemas/Avatar', '/components/schemas/Badge', '/components/schemas/Colour', '/components/schemas/Dimension']);
-  assert.equal(cards.at(-1), '(rest of the document)');
+  (s.document as Record<string, unknown>).examples = [{ big: 'an example makes nothing hold' }];
+  s.intent.guarantees.push(
+    { id: 'iso-times', text: 'Run times are ISO 8601 date-times' },
+    { id: 'cards', text: 'Avatar, Badge, Colour and Dimension describe a profile card' },
+    { id: 'live-week', text: 'The live NFL week and the next run of each scheduled job come back soonest first' },
+  );
+  const { evidence } = await builtOf(s);
+  const shown = (id: string) => evidenceOf(unit(evidence.guarantee, `guarantee ${id}`));
+  assert.deepEqual(shown('iso-times').find((e) => e.part === 'choice time-format')?.text, { decision: 'Run times are ISO 8601 date-times.', why: ['You decide (the suggested ISO 8601 string stands)', 'The service already returns the next run as the schedules service gives it.'] });
+  const cards = shown('cards');
+  assert.deepEqual(cards.slice(0, 4).map((e) => e.part).sort(), ['/components/schemas/Avatar', '/components/schemas/Badge', '/components/schemas/Colour', '/components/schemas/Dimension']);
+  assert.equal(cards.at(-1)!.part, '(rest of the document)');
+  assert.ok(!JSON.stringify(cards.at(-1)!.text).includes('an example makes nothing hold'));
+  assert.equal(shown('live-week')[0].part, OP);
 });
 
-test('a guarantee is asked of its parts most relevant first, so a failing note names the part sharing the most terms with it', async (t) => {
+test('the judge model answers every promise and nothing reaches the decision model; a failing one carries its reason', async (t) => {
   const s = spec();
-  // "week" is a component's name and a plain word of the guarantee; the operation shares far more of the guarantee's terms.
-  (s.document as { components: { schemas: Record<string, unknown> } }).components.schemas.week = { type: 'integer', minimum: 1 };
-  s.intent.guarantees = [{ id: 'live-week', text: 'The live NFL week and the next run of each scheduled job come back soonest first' }];
-  const { evidence } = await builtOf(s);
-  const parts = evidence.guarantee.map((u) => (u.shared!.part as { id: string }).id);
-  assert.ok(parts.includes('/components/schemas/week'), 'the named part is still asked');
-  assert.equal(parts[0], OP);
-  const failed = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'no', reason: 'Not here.' })).check('meets_intent');
-  assert.equal(failed.notes[0], `live-week: guarantee live-week ~ ${OP}: Not here.`);
+  const failed = await judged(t, s, ['meets_intent'], () => 'yes', { choice: 'no', reason: 'Nothing here marks the schedule read-only.' });
+  const check = failed.check('meets_intent');
+  assert.equal(check.met, false);
+  assert.match(check.notes[0], /^guarantee (read-only|errors\.problem-json): Nothing here marks the schedule read-only\.$/);
+  assert.deepEqual([failed.requests.length, check.resolvers.clef], [0, undefined]);
+  const held = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'yes', reason: 'GET is the only method.' })).check('meets_intent');
+  assert.deepEqual([held.met, held.units, held.resolvers], [true, 2, { j: 2 }]);
+  assert.match(contractDeclaration.checks.meets_intent.question.instructions, /field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states\?$/);
 });
 
 test('a grandfathered string guarantee keeps its key when another is inserted, and one over the fact limit is split by sentence', async () => {
   const keys = async (guarantees: string[]) => {
     const s = spec();
     s.intent.guarantees = guarantees;
-    return [...new Set(Object.values((await builtOf(s)).groups!.guarantee))];
+    return (await builtOf(s)).evidence.guarantee.map((u) => u.id);
   };
   const before = await keys(['Read-only', 'Errors say why in problem+json']);
   const after = await keys(['Covers a week with no runs', 'Read-only', 'Errors say why in problem+json']);
   assert.deepEqual(after.slice(1), before);
-  assert.match(before[0], /^Read-only #[0-9a-f]{6}$/);
+  assert.match(before[0], /^guarantee Read-only #[0-9a-f]{6}$/);
   const long = 'The schedule lists every job the league runs this week, soonest first, with its next run time. A week with no runs is an empty list, not an error, and the week number is still given. Errors say why in problem+json.';
   assert.equal((await keys([long])).length, 3);
 });
 
-test('each promising sentence of the purpose is asked of its parts as a guarantee is, sharing the part with the guarantees asked of it', async () => {
+test('each promising sentence of the purpose is one judge-model item; provenance is not; the two checks share the old weight of 4', async (t) => {
   const s = spec();
   s.intent.purpose = 'Show the Sleeper page the live week and when each job runs next. It only reads. Provenance: v2 was approved after the epoch change.';
-  const { evidence, groups } = await builtOf(s);
-  assert.deepEqual([...new Set(Object.values(groups!.purpose))].map((k) => k.replace(/ #[0-9a-f]{6}$/, '')), ['Show the Sleeper page the live', 'It only reads.']);
-  const sentence = evidence.purpose.find((u) => (u.shared!.part as { id: string }).id === OP)!;
-  assert.deepEqual(sentence.state, { sentence: 'Show the Sleeper page the live week and when each job runs next.' });
-  // The same part asked of a guarantee carries the same shared evidence, so the two checks' questions of it pack into one request.
-  const guarantee = evidence.guarantee.find((u) => (u.shared!.part as { id: string }).id === OP)!;
-  assert.equal(JSON.stringify(sentence.shared), JSON.stringify(guarantee.shared));
-  const asks = (id: string) => ({ id, question: contractDeclaration.checks[id].question, pass: ['yes'] });
-  const items = [...evidence.guarantee.map((unit) => ({ unit, checks: [asks('meets_intent')] })), ...evidence.purpose.map((unit) => ({ unit, checks: [asks('delivers_purpose')] }))];
-  assert.equal(pack(items, 8192).length, new Set(items.map((i) => JSON.stringify(i.unit.shared))).size);
-});
-
-test('a purpose Clef doubts goes to the judge model, whose reason stands; the two checks share the old weight of 4', async (t) => {
-  const failed = (await judged(t, spec(), ['delivers_purpose'], () => 'no', { choice: 'no', reason: 'No part reports the live week.' })).check('delivers_purpose');
-  assert.equal(failed.met, false);
-  assert.match(failed.notes[0], /^Show the Sleeper page the live #[0-9a-f]{6}: purpose .+: No part reports the live week\.$/);
-  assert.equal(failed.resolvers.clef, undefined, 'no sentence fails on the decision model alone');
-  const held = (await judged(t, spec(), ['delivers_purpose'], () => 'yes')).check('delivers_purpose');
-  assert.deepEqual([held.met, held.groups], [true, 1]);
+  const { evidence } = await builtOf(s);
+  assert.deepEqual(evidence.purpose.map((u) => u.state.sentence), ['Show the Sleeper page the live week and when each job runs next.', 'It only reads.']);
+  assert.ok(evidenceOf(evidence.purpose[0]).some((e) => e.part === OP));
+  const failed = await judged(t, s, ['delivers_purpose'], () => 'yes', { choice: 'no', reason: 'No part reports the live week.' });
+  assert.deepEqual([failed.check('delivers_purpose').met, failed.requests.length], [false, 0]);
+  assert.match(failed.check('delivers_purpose').notes[0], /^purpose .+: No part reports the live week\.$/);
   const weights = contractRubric.criteria.flatMap((c) => c.checks).filter((k) => ['meets_intent', 'delivers_purpose'].includes(k.id)).map((k) => k.weight);
   assert.deepEqual(weights, [3, 1]);
 });

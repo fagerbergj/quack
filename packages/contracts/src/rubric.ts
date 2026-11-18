@@ -3,7 +3,7 @@ import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { isAbsolute, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
+import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
@@ -218,31 +218,34 @@ function partsOf(spec: Pick<ContractSpec, 'document' | 'choices'>, kind: Contrac
     const evidence = { decision: c.decision, why: c.why.map((w) => w.text) };
     return { id: `choice ${c.id}`, text: JSON.stringify(evidence), evidence };
   });
-  return [...defs.map((d): Part => ({ id: d.id, name: d.name, text: textOf(d), evidence: d.definition, ...(d.rest && { root: true as const }) })), ...choices];
+  // The root goes with every promise, so its examples, which make nothing hold, stay out of the evidence.
+  const shown = (d: Definition) => (d.rest && typeof d.definition === 'object' && d.definition !== null ? { ...d.definition, examples: undefined } : d.definition);
+  return [...defs.map((d): Part => ({ id: d.id, name: d.name, text: textOf(d), evidence: shown(d), ...(d.rest && { root: true as const }) })), ...choices];
 }
 
-// One item per promise and part that may make it hold, the promise grouped under `group`. The part and the kind are the shared
-// evidence, the same for a guarantee and a purpose sentence asked of one part, so both checks' questions of a part pack into one request.
-function promiseChunks(inputs: Inputs, o: SplitDecl, group: string, promisesOf: (intent: Partial<Intent> & { purpose: string }) => Entry[]): Chunk[] {
+// One item per promise; its evidence is the parts that may make it hold (named or sharing the most terms, the decided choices, the root),
+// most relevant first, so one judge-model question per promise reads them together.
+function promiseItems(inputs: Inputs, o: SplitDecl, promisesOf: (intent: Partial<Intent> & { purpose: string }) => Entry[]): Chunk[] {
   const [specInput, kindInput] = [o.from].flat();
   const spec = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'intent' | 'document' | 'choices'>;
   const parts = partsOf(spec, inputs[kindInput] as ContractSpec['kind']);
-  return promisesOf(spec.intent).flatMap((g) => {
-    const key = guaranteeKey(g);
-    return partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ id: `${key} ~ ${p.id}`, text: g.text, meta: { [group]: key, part: { id: p.id, definition: p.evidence } } }));
+  return promisesOf(spec.intent).map((g) => {
+    const evidence = partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ part: p.id, text: p.evidence }));
+    return { id: guaranteeKey(g), text: g.text, meta: { evidence } };
   });
 }
+registerSelector('contract.evidence', (_i, c) => JSON.stringify((c.meta as { evidence: unknown[] }).evidence));
 
 // A grandfathered guarantee over the fact limit holds several facts, and no one part may give them all: each sentence is a guarantee.
 // With none, the check has no items and counts toward neither side; delivers_purpose still scores the intent.
-registerSplitter('contract.guaranteeChunks', (inputs, o) => promiseChunks(inputs, o, 'guarantee', (intent) => entriesOf(intent, ['guarantees'])));
+registerSplitter('contract.guarantees', (inputs, o) => promiseItems(inputs, o, (intent) => entriesOf(intent, ['guarantees'])));
 
 // A purpose sentence that only records history (a "Provenance:" note, or one opening with a version such as "v5 corrects…") promises
 // nothing the document must provide; every other sentence is a promise, judged as a guarantee is.
 const PROVENANCE = /^(provenance\b|v\d+\b)|\bwas approved\b/i;
 const purposeSentences = (intent: { purpose: string }): Entry[] =>
   (intent.purpose ?? '').split(/(?<=[.;:])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
-registerSplitter('contract.purposeChunks', (inputs, o) => promiseChunks(inputs, o, 'sentence', purposeSentences));
+registerSplitter('contract.purposeSentences', (inputs, o) => promiseItems(inputs, o, purposeSentences));
 
 // The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
@@ -279,10 +282,9 @@ const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, 
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
-    // One item per guarantee and document part; the part and the kind are the context every guarantee asked of that part shares.
-    guarantee: { split: { name: 'contract.guaranteeChunks', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { kind: { name: 'whole', from: 'kind' } } },
-    // Each sentence of the purpose that promises something, asked of its parts as a guarantee is, with the same shared evidence.
-    purpose: { split: { name: 'contract.purposeChunks', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { kind: { name: 'whole', from: 'kind' } } },
+    // One item per guarantee, and one per promising sentence of the purpose; the evidence is the parts each may hold in.
+    guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
+    purpose: { split: { name: 'contract.purposeSentences', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { evidence: { name: 'contract.evidence' } } },
     choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
     // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
     definition: {
@@ -296,12 +298,12 @@ export const contractDeclaration: Declaration = {
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
-    // A guarantee holds when some part gives it a mechanism, and the intent is met when every guarantee holds. Clef may pass a pair;
-    // a "no" goes to the judge model, so a failing guarantee always carries a reason the writer can act on.
-    meets_intent: { scope: 'guarantee', aggregate: { name: 'grouped', groupBy: 'guarantee', inner: 'any', outer: 'all', pass: ['yes'] }, decisionModel: PASS_ONLY, question: yesNo('Does the document part shown as context make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
-    // Known miss: an operation the purpose promises passes on prose or a schema that describes it, though no path defines it
-    // (5 of 5 on the removed-operation negatives); the break gate still catches one removed from an approved contract.
-    delivers_purpose: { scope: 'purpose', aggregate: { name: 'grouped', groupBy: 'sentence', inner: 'any', outer: 'all', pass: ['yes'] }, decisionModel: PASS_ONLY, question: yesNo('Does the document part shown as context make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
+    // queued behind it made the round slower than the one question they replaced.
+    meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // Known miss: an operation the purpose promises may pass on prose or a schema that describes it, though no path defines it;
+    // the break gate still catches one removed from an approved contract.
+    delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
