@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contractDeclaration, type ContractSpec } from '../src/index.ts';
+import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
 import { pack } from '../../judge/src/resolve.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 import { builtOf, judged } from './judging.ts';
@@ -104,10 +104,28 @@ test('a grandfathered string guarantee keeps its key when another is inserted, a
   assert.equal((await keys([long])).length, 3);
 });
 
-test('with no guarantees, the purpose stands in as the one guarantee', async () => {
+test('each promising sentence of the purpose is asked of its parts as a guarantee is, sharing the part with the guarantees asked of it', async () => {
   const s = spec();
-  s.intent.guarantees = [];
+  s.intent.purpose = 'Show the Sleeper page the live week and when each job runs next. It only reads. Provenance: v2 was approved after the epoch change.';
   const { evidence, groups } = await builtOf(s);
-  assert.deepEqual([...new Set(Object.values(groups!.guarantee))], ['purpose']);
-  assert.ok(evidence.guarantee.every((u) => u.state.guarantee === s.intent.purpose));
+  assert.deepEqual([...new Set(Object.values(groups!.purpose))].map((k) => k.replace(/ #[0-9a-f]{6}$/, '')), ['Show the Sleeper page the live', 'It only reads.']);
+  const sentence = evidence.purpose.find((u) => (u.shared!.part as { id: string }).id === OP)!;
+  assert.deepEqual(sentence.state, { sentence: 'Show the Sleeper page the live week and when each job runs next.' });
+  // The same part asked of a guarantee carries the same shared evidence, so the two checks' questions of it pack into one request.
+  const guarantee = evidence.guarantee.find((u) => (u.shared!.part as { id: string }).id === OP)!;
+  assert.equal(JSON.stringify(sentence.shared), JSON.stringify(guarantee.shared));
+  const asks = (id: string) => ({ id, question: contractDeclaration.checks[id].question, pass: ['yes'] });
+  const items = [...evidence.guarantee.map((unit) => ({ unit, checks: [asks('meets_intent')] })), ...evidence.purpose.map((unit) => ({ unit, checks: [asks('delivers_purpose')] }))];
+  assert.equal(pack(items, 8192).length, new Set(items.map((i) => JSON.stringify(i.unit.shared))).size);
+});
+
+test('a purpose Clef doubts goes to the judge model, whose reason stands; the two checks share the old weight of 4', async (t) => {
+  const failed = (await judged(t, spec(), ['delivers_purpose'], () => 'no', { choice: 'no', reason: 'No part reports the live week.' })).check('delivers_purpose');
+  assert.equal(failed.met, false);
+  assert.match(failed.notes[0], /^Show the Sleeper page the live #[0-9a-f]{6}: purpose .+: No part reports the live week\.$/);
+  assert.equal(failed.resolvers.clef, undefined, 'no sentence fails on the decision model alone');
+  const held = (await judged(t, spec(), ['delivers_purpose'], () => 'yes')).check('delivers_purpose');
+  assert.deepEqual([held.met, held.groups], [true, 1]);
+  const weights = contractRubric.criteria.flatMap((c) => c.checks).filter((k) => ['meets_intent', 'delivers_purpose'].includes(k.id)).map((k) => k.weight);
+  assert.deepEqual(weights, [3, 1]);
 });
