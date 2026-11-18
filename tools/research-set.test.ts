@@ -11,6 +11,6 @@ test('the research set has its required mix and every case passes the code gates
   for (const c of cases) {
     assert.equal(c.good, c.targets.length === 0, c.case);
     const { evidence } = await buildEvidence(reportDeclaration, c.inputs);
-    assert.deepEqual(codeResults(researchRubric, c.content, evidence).filter((r) => Number(r.met ?? 1) < 1).map((r) => r.id), [], c.case);
+    assert.deepEqual(codeResults(researchRubric, c.content, evidence).filter((r) => r.weight === 'gate' && Number(r.met ?? 1) < 1).map((r) => r.id), [], c.case);
   }
 });

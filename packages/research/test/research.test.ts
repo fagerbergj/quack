@@ -120,8 +120,8 @@ function judgeFaux() {
     const t = JSON.stringify(c.messages);
     const conflict = t.includes('conflicting figures');
     const pitfall = t.includes('contradict it?') || conflict;
-    const flag = conflict && /\b10 ft/.test(t) && /\b6 ft/.test(t);
-    return fauxAssistantMessage(JSON.stringify({ choice: pitfall && !flag ? 'no' : 'yes', confidence: 1, reason: flag ? 'the cord is 10 ft and 6 ft' : 'ok' }));
+    const flag = (conflict && /\b10 ft/.test(t) && /\b6 ft/.test(t));
+    return fauxAssistantMessage(JSON.stringify({ choice: pitfall === flag ? 'yes' : 'no', confidence: 1, reason: flag ? 'the cord is 10 ft and 6 ft' : 'ok' }));
   };
   faux.setResponses(Array.from({ length: 200 }, () => answer));
   return faux;
@@ -583,6 +583,15 @@ test('no_self_contradiction: findings that attribute different cord lengths to t
   const asserted = await selfCheck('## Summary\nThe cabinet ships with a 6 ft fan cord.\n## Assumptions\nNone.\n## Findings\n- The Tripp Lite datasheet gives a 10 ft fan cord. [s1]\n');
   assert.deepEqual([pick(asserted).units, pick(asserted).met, asserted.passed], [1, true, false]);
   assert.match(pick(asserted).notes.join('\n'), /^pairs 1\|3: the cord is 10 ft and 6 ft/);
+});
+
+test('the derived checks are reported at weight 0: a Verdict figure no finding gives is named and costs nothing', async () => {
+  const plain = (await verdictOf(GOOD)).verdict as any;
+  const derived = (await verdictOf(`${GOOD}## Verdict\n- Ducks fly 300 km a day [s1].\n`)).verdict as any;
+  const traced = derived.checks.find((c: any) => c.id === 'derived_inputs_traced');
+  assert.deepEqual([traced.weight, traced.met], [0, 0]);
+  assert.match(traced.notes.join('\n'), /^300 in "Ducks fly 300 km a day/);
+  assert.deepEqual([derived.passed, derived.score], [plain.passed, plain.score]);
 });
 
 test('excerpt keeps the pieces that share the claim\'s figures and words, in page order, and short pages whole', () => {

@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { figures, figuresClash, namesClash } from './claims.ts';
+import { derivations, figures, figuresClash, namesClash, numberWords, recomputes, sameValue, type Figure } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -286,9 +286,12 @@ type Placed = Statement & { line: string; before?: string };
 
 /** Each sentence of the report's own text with the section it sits in (the preamble's is ""), its whole line and the sentence before it
  *  in that section: code fences and headings are left out, and a line ends a sentence. */
+const SOURCE_LISTS = new Set(['sources', 'references', 'bibliography']);
+
 function placed(report: string): Placed[] {
   const { preamble, sections } = splitReport(report);
-  return [{ name: '', lines: preamble }, ...sections].flatMap((s) => {
+  // A Sources section lists what was read ("[s3] Seemann, 2021, p. 4"): it claims nothing, so none of its lines is a sentence.
+  return [{ name: '', lines: preamble }, ...sections].filter((s) => !SOURCE_LISTS.has(s.name)).flatMap((s) => {
     const lines = fenced(s.lines.join('\n')).filter(([line, code]) => !code && !/^\s*#/.test(line)).map(([line]) => line.replace(/^\s*([-*]|\d+\.)\s+/, '').trim());
     const sentences = lines.flatMap((line) => line.split(/(?<=[.!?])\s+(?=["“(*_]?[\p{Lu}\p{N}])/u)
       .filter((t) => /[\p{L}\p{N}]/u.test(t.replace(/\[s\d+\]/g, '')))
@@ -296,6 +299,8 @@ function placed(report: string): Placed[] {
     return sentences.map((x, k) => ({ ...x, before: sentences[k - 1]?.text }));
   });
 }
+
+const statements = (report: string): Statement[] => placed(report).map(({ section, text }) => ({ section, text }));
 
 /** The sentence compared, and apart from it the text around it, so one that opens "It has…" keeps its subject; context is never compared. */
 function side(p: Placed) {
@@ -316,6 +321,10 @@ function claimPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   }));
 }
 registerSplitter('research.claimPairs', claimPairs);
+
+// Every section but Findings is what the report derives from its findings (#2360); Assumptions lists the inputs it adds.
+const derivedSection = (s: Statement) => s.section !== 'findings' && s.section !== 'assumptions';
+
 
 /** The report's parsed form, as the research report artifact contract states it: its sections by name, the ids it cites and its findings. */
 export function parseReport(report: string): { sections: Record<string, string>; citedIds: string[]; findings: Array<{ first: string; text: string }> } {
@@ -365,12 +374,48 @@ function citesFetchedSources(artifact: string, ev: Evidence): CodeResult {
   return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
 }
 
+const shownAt = (d: { computed: number; shown: string }) => d.computed.toFixed((d.shown.split('.')[1]?.length ?? 0) + 1);
+const derivedStatements = (report: string) => statements(report).filter(derivedSection);
+
+/** Every equation and unit conversion outside Findings and Assumptions, recomputed from the inputs it shows. */
+function derivedArithmetic(artifact: string): CodeResult {
+  const all = derivedStatements(artifact).flatMap((s) => derivations(s.text));
+  const wrong = all.filter((d) => !recomputes(d));
+  return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? wrong.map((d) => `"${d.text.trim()}" shows ${d.shown}; its inputs give ${shownAt(d)}`).join('; ') : undefined };
+}
+
+/** Every figure outside Findings and Assumptions is a figure of a cited finding, one Assumptions lists, or one the report recomputes from those.
+ *  A finding is any cited sentence of the Findings section, so a finding written as a paragraph counts as one written as a bullet. */
+function derivedInputsTraced(artifact: string, ev: Evidence): CodeResult {
+  const cited = [...findingItems(artifact).map((f) => f.text), ...statements(artifact).filter((s) => s.section === 'findings').map((s) => s.text)].filter((t) => citedIds(t).length);
+  const known = [...[...cited.flatMap(figures), ...figures(sectionBody(artifact, ['assumptions']))].map((f) => f.value), ...cited.flatMap(numberWords)];
+  const traced = (v: string) => known.some((k) => sameValue(k, v));
+  const stated = derivedStatements(artifact);
+  const derived = stated.flatMap((s) => derivations(s.text));
+  // A result whose inputs trace traces too, so a later sentence may restate it; a second pass reaches results built on results.
+  for (const d of [...derived, ...derived]) if (recomputes(d) && d.inputs.every(traced)) known.push(d.shown);
+  // "0U" names a mounting style (a zero-U PDU rides the rails), not a quantity taken from anywhere.
+  const zeroU = (f: Figure) => Number(f.value) === 0 && (f.unit.has('u') || f.unit.has('ru'));
+  const all = stated.flatMap((s) => figures(s.text).filter((f) => !zeroU(f)).map((f) => ({ value: f.value, at: s.text })));
+  const loose = all.filter((f) => !traced(f.value));
+  // The owner's rule counts a figure from the request as untraced too; it is named apart so a reader can tell the two kinds of gap.
+  const asked = figures(String(ev.request?.[0]?.state.request ?? '')).map((f) => f.value);
+  const fromRequest = loose.filter((f) => asked.some((v) => sameValue(v, f.value)));
+  const named = (fs: typeof loose) => fs.map((f) => `${f.value} in "${f.at.slice(0, 60)}…"`).join('; ');
+  const reasons = [[loose.filter((f) => !fromRequest.includes(f)), 'cite no finding and are not listed under Assumptions'], [fromRequest, 'come from the request, not from a finding or assumption']] as const;
+  const detail = reasons.filter(([fs]) => fs.length).map(([fs, why]) => `${named(fs)} ${why}`).join('. ');
+  return { met: all.length ? (all.length - loose.length) / all.length : 1, detail: detail || undefined };
+}
+
 const SUPPORTED_WEIGHT = 4;
 const CONTRADICTED_WEIGHT = -4;
 // Audit weights are 4 and 3; 0 (observe-only) until their false-block rate on good reports is under 10%.
 const ASKS_WEIGHT = 0;
 const SUMMARY_WEIGHT = 0;
 const SELF_WEIGHT = -4;
+// Observe-only until a replay shows a clean false-positive record; then a pitfall, never a gate (#2360). Code only: Clef left 70–90% of
+// "does the finding give this figure for the same thing" items unsure in every form tried, so a model check here cost time without settling.
+const DERIVED_WEIGHT = 0;
 
 // The judge's knowledge has a cutoff, so a real fact newer than it reads as invented; every question says so.
 const FAIR = ' Judge only from the text shown; a fact you do not recognise is not evidence of error.';
@@ -397,6 +442,7 @@ export const reportDeclaration: Declaration = {
     },
     // The Summary names what the report compares, so two products' figures read apart; shared, the pairs pack into few decision-model requests.
     pairs: { split: { name: 'research.claimPairs', from: 'report' }, piece: 'pair', context: { summary: { name: 'whole', from: 'summary' } } },
+    // Assumptions is the same for every sentence, so the sentences pack into few decision-model requests.
   },
   checks: {
     // Clef passes findings their source does not state or states differently (a ranking, a figure, an author), so the 27B decides both.
@@ -412,7 +458,7 @@ export const reportDeclaration: Declaration = {
 // Weight 0 is observe-only: the check is reported but does not score.
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 8,
+  version: 9,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
@@ -428,6 +474,10 @@ export const researchRubric: Rubric = {
     { id: 'internally_consistent', checks: [
       { id: 'summary_follows_findings', label: "Summary says more than the findings", weight: SUMMARY_WEIGHT },
       { id: 'no_self_contradiction', label: "Report contradicts itself", weight: SELF_WEIGHT },
+    ] },
+    { id: 'derived_grounded', checks: [
+      { id: 'derived_arithmetic', label: "A derived figure doesn't recompute", weight: DERIVED_WEIGHT, code: derivedArithmetic },
+      { id: 'derived_inputs_traced', label: "A derived figure has no cited or assumed input", weight: DERIVED_WEIGHT, code: derivedInputsTraced },
     ] },
   ],
 };
