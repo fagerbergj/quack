@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { credentialBroker, dockerApi, dockerGate, dockerLauncher, parseDockerHost, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
 
 // Opt-in: QUACK_LIVE_IMAGE=<quack image> QUACK_LIVE_RUNTIME=runsc, with the Docker daemon on /var/run/docker.sock
-// (or QUACK_DOCKER_HOST) and the temp dir visible to the daemon at the same path. The v1 isolation job runs it.
+// (or QUACK_DOCKER_HOST) and the temp dir visible to the daemon at the same path. No CI job runs it; run it by hand after changing the docker driver or the egress proxy.
 const image = process.env.QUACK_LIVE_IMAGE;
 const runtime = process.env.QUACK_LIVE_RUNTIME;
 

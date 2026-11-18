@@ -12,9 +12,9 @@ npx playwright install chromium      # or: export QA_CHROMIUM=/path/to/chrome
 node tools/qa/run.ts --out /tmp/qa-out
 ```
 
-CI runs the same command (job `qa` in `.github/workflows/v1.yaml`) on every pull request and trunk push, and uploads `qa-out` as the `qa-screenshots` artifact when a step fails. A step asserting text or a count the code produces therefore fails the pull request that changes it; change the assertion in the same pull request.
+No CI job runs the rig; run it before opening a pull request that changes the UI or a page route, and cite the run. A step asserting text or a count the code produces fails when that changes; change the assertion in the same pull request.
 
-`run.ts` builds `packages/web` once, then for each scenario starts its own stack, runs it, and tears the stack down. Flags: `--scenario home-sessions,schedules` to pick scenarios, `--web <dist dir>` to reuse a build (or one from another branch's checkout), `--model local|none|fake` to override the scenario's model (scenarios that script the fake model, and `headers`, which seeds sessions through it, need their own model, so CI does not override), `--out <dir>`. The exit code is non-zero if any step failed.
+`run.ts` builds `packages/web` once, then for each scenario starts its own stack, runs it, and tears the stack down. Flags: `--scenario home-sessions,schedules` to pick scenarios, `--web <dist dir>` to reuse a build (or one from another branch's checkout), `--model local|none|fake` to override the scenario's model (scenarios that script the fake model, and `headers`, which seeds sessions through it, need their own model), `--out <dir>`. The exit code is non-zero if any step failed.
 
 ## The stack
 

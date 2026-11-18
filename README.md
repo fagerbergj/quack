@@ -28,4 +28,4 @@ Three reMarkable tests need the `rmc` Python module: `pip install --no-deps -r p
 
 `node packages/distributor/src/main.ts` serves the API and the web UI on `PORT` (default 8080), reading `QUACK_CONFIG` (the deployment file), `QUACK_AGENTS_DIR` and `QUACK_DATA_DIR`. `node packages/runtime/src/validate.ts` checks a deployment file, the bundles and every session's pinned agent before a rollout; see [docs/README.md](docs/README.md). The CLI is [docs/cli.md](docs/cli.md) and the QA rig is [docs/qa.md](docs/qa.md).
 
-CI (`.github/workflows/v1.yaml`) runs typecheck, tests, sloplint and a live session-isolation test on every pull request, and each trunk push publishes `ghcr.io/fagerbergj/quack:v1-<sha>`.
+CI (`.github/workflows/v1.yaml`) runs typecheck, tests and sloplint on every pull request, and each trunk push publishes `ghcr.io/fagerbergj/quack:v1-<sha>`.

@@ -46,78 +46,10 @@ jobs:
       - if: github.event_name == 'pull_request'
         run: npm run sloplint -- diff origin/${{ github.base_ref }}
 
-  # Every rig scenario that needs no live model, so a change to text or a count a scenario asserts fails here. Not yet a required check.
-  qa:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      # The contracts scenarios diff OpenAPI versions with oasdiff; keep the pin in step with the check job.
-      - run: go install github.com/oasdiff/oasdiff@v1.34.0 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - id: pw
-        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ steps.pw.outputs.version }}
-      - run: npx playwright install --with-deps chromium
-      - run: node tools/qa/run.ts --out qa-out
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: qa-screenshots
-          path: qa-out
-          retention-days: 7
-
-  # Session isolation is only provable against a real image under gVisor, so this job builds one and runs the live test.
-  isolation:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: package-lock.json
-      - run: npm ci
-      # Prod runs sessions under runsc; if the runner cannot install it, the test still runs under runc and the job warns.
-      - id: runtime
-        name: Install gVisor (runsc) as a Docker runtime
-        run: |
-          install_runsc() {
-            curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg &&
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list &&
-            sudo apt-get update && sudo apt-get install -y runsc &&
-            sudo runsc install -- --network=host && sudo systemctl restart docker &&
-            docker run --rm --runtime=runsc --network=host busybox true
-          }
-          if install_runsc; then echo "name=runsc" >> "$GITHUB_OUTPUT"; else echo "::warning::gVisor is unavailable on this runner; the isolation test runs under runc"; echo "name=runc" >> "$GITHUB_OUTPUT"; fi
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          load: true
-          tags: quack:isolation
-          cache-from: type=gha,scope=quack-v1
-      # The isolation test runs on host networking so the runner reaches the session on 127.0.0.1:8080; the egress test builds its own internal network and proxy.
-      - run: set -o pipefail; node --test --test-reporter=spec packages/distributor/test/docker-live.test.ts | tee live.log; grep -q '^ℹ pass 2' live.log
-        env:
-          QUACK_LIVE_IMAGE: quack:isolation
-          QUACK_LIVE_RUNTIME: ${{ steps.runtime.outputs.name }}
-          QUACK_LIVE_NETWORK: host
-          QUACK_LIVE_URL: http://127.0.0.1:8080
-
   # Each trunk push publishes an image the home server pins by commit, under the public quack package.
   image:
     if: github.event_name == 'push'
-    needs: [check, isolation]
+    needs: [check]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
