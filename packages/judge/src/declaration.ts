@@ -13,7 +13,8 @@ export type Chunk = {
   /** Stable key the context selectors can match on (a file path, an item's key). */
   key?: string;
   text: string;
-  /** Strategy-specific data that travels with the item (for instance, the span the LLM splitter quoted for it). */
+  /** Strategy-specific data that travels with the item (for instance, the span the LLM splitter quoted for it).
+   *  For a grouped fold: the item's group key under the fold's `groupBy`, and its evidence, which goes on the unit's `shared`. */
   meta?: Record<string, unknown>;
 };
 
@@ -69,14 +70,26 @@ export type Scope = { split: SplitDecl; piece?: string; context?: Record<string,
 /** The question asked of one item, shown with the scope's named context; a bool question's `pass` names the answer that means the item holds (`['yes']` by default). */
 export type Question = { type: 'bool'; instructions: string; pass?: ('yes' | 'no')[] } | { type: 'choice'; instructions: string; options: Record<string, string> };
 
-/** The fan-in: how the per-item answers fold into the check's result. */
+/** The fan-in: how the per-item answers fold into the check's result; a `grouped` fold folds each group's items with `inner`, then the groups' results with `outer`. */
 export type AggregateDecl = {
-  name: 'all' | 'any' | 'share' | 'atLeast' | 'coverageUnion';
+  name: 'all' | 'any' | 'share' | 'atLeast' | 'coverageUnion' | 'grouped';
+  /** `atLeast`, or `grouped` with `outer: 'atLeast'`: the number of items (groups) that must hold. */
   k?: number;
+  /** `share` and `coverageUnion`, or `grouped` with `outer: 'share'`: the share of items (groups) that must hold. */
   min?: number;
   by?: 'related' | 'answer' | 'either';
+  /** `grouped` only, required: the field of the item's `meta` that holds its group key. */
+  groupBy?: string;
+  /** `grouped` only, required: the fold per group; a decided group's remaining items are not asked. */
+  inner?: 'any' | 'all';
+  /** `grouped` only, required: the fold over the groups' three-valued results. */
+  outer?: 'share' | 'all' | 'any' | 'atLeast';
   pass?: string[];
 };
+
+const GROUPING = ['groupBy', 'inner', 'outer'] as const;
+/** The `groupBy` of the grouped checks on a scope, which puts its items' meta on their units; undefined when none is grouped. */
+const groupByOf = (decl: Declaration, scope: string) => Object.values(decl.checks).find((c) => c.scope === scope && c.aggregate.name === 'grouped')?.aggregate.groupBy;
 
 /** The decisionModel value under which the decision model may pass an item but not fail it; the judge model decides and explains a failing one. */
 export const PASS_ONLY = 'pass-only' as const;
@@ -147,7 +160,15 @@ function asValue(text: string): JsonValue {
   }
 }
 
-type Built = { unit: Unit } | undefined;
+type Built = { unit: Unit; group?: string } | undefined;
+
+// A grouped scope's item carries its group key and evidence in its meta: the key groups it, the rest is its shared context.
+function grouping(name: string, chunk: Chunk, groupBy: string | undefined): { group?: string; rest: JsonObject } {
+  if (!groupBy) return { rest: {} };
+  const { [groupBy]: group, ...rest } = chunk.meta ?? {};
+  if (typeof group !== 'string' && typeof group !== 'number') throw new Error(`scope ${name}: item ${chunk.id} has no string or number group key ${groupBy} in its meta`);
+  return { group: String(group), rest: rest as JsonObject };
+}
 
 // Whether every cross-input `where` holds for the item against its joined record.
 function crossHolds(inputs: Inputs, name: string, scope: Scope, chunk: Chunk): boolean {
@@ -159,10 +180,10 @@ function crossHolds(inputs: Inputs, name: string, scope: Scope, chunk: Chunk): b
 }
 
 // An item is dropped when a selector finds nothing it requires, or a cross-input `where` does not hold for it.
-function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitOther: (o: SplitDecl) => Chunk[]): Built {
+function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitOther: (o: SplitDecl) => Chunk[], groupBy?: string): Built {
   if (!crossHolds(inputs, name, scope, chunk)) return undefined;
   const state: JsonObject = { [scope.piece ?? 'piece']: asValue(chunk.text) };
-  const shared: JsonObject = {};
+  const { group, rest: shared } = grouping(name, chunk, groupBy);
   const related: Record<string, number> = {};
   for (const [as, sel] of Object.entries(scope.context ?? {})) {
     const got = select(inputs, chunk, sel, splitOther);
@@ -173,22 +194,27 @@ function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitO
   }
   // A declared item is named by its scope, so units of two scopes never share an id; a whole-input item is named once.
   const id = chunk.id === name ? name : `${name} ${chunk.id}`;
-  return { unit: { id, state, ...(Object.keys(related).length ? { related } : {}), ...(Object.keys(shared).length ? { shared } : {}) } };
+  return { unit: { id, state, ...(Object.keys(related).length ? { related } : {}), ...(Object.keys(shared).length ? { shared } : {}) }, ...(group !== undefined && { group }) };
 }
 
-export type BuiltEvidence = { evidence: Evidence; splits: Record<string, Splitting> };
+/** `groups`: for each scope a grouped check reads, every unit's group key by unit id. */
+export type BuiltEvidence = { evidence: Evidence; splits: Record<string, Splitting>; groups?: Record<string, Record<string, string>> };
 
 /** Builds the units of every scope (or those `only` keeps) from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
 export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: ModelSplit, only: (scope: Scope) => boolean = () => true): Promise<BuiltEvidence> {
   const evidence: Evidence = {};
   const splits: Record<string, Splitting> = {};
+  const groups: Record<string, Record<string, string>> = {};
   // A related selector's candidates are the same for every item, so each chunker runs once per build.
   const cache = new Map<string, Chunk[]>();
   const splitOther = (o: SplitDecl) => cache.get(JSON.stringify(o)) ?? cache.set(JSON.stringify(o), runSplitter(inputs, o)).get(JSON.stringify(o))!;
   for (const [name, scope] of Object.entries(decl.scopes).filter(([, s]) => only(s))) {
     try {
       const { chunks, ...how } = await split(inputs, scope.split, model, name);
-      evidence[name] = chunks.map((c) => unitOf(inputs, name, scope, c, splitOther)).filter((b) => b !== undefined).map((b) => b.unit);
+      const groupBy = groupByOf(decl, name);
+      const built = chunks.map((c) => unitOf(inputs, name, scope, c, splitOther, groupBy)).filter((b) => b !== undefined);
+      evidence[name] = built.map((b) => b.unit);
+      if (groupBy) groups[name] = Object.fromEntries(built.map((b) => [b.unit.id, b.group!]));
       splits[name] = how;
     } catch (err) {
       if (!(err instanceof SplitFailed)) throw err;
@@ -196,7 +222,7 @@ export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: M
       splits[name] = { splitter: scope.split.name, failed: err.message };
     }
   }
-  return { evidence, splits };
+  return { evidence, splits, ...(Object.keys(groups).length ? { groups } : {}) };
 }
 
 /** A declaration names a scope for every model check of the rubric and nothing else; a gap is an extension error. */
@@ -205,6 +231,9 @@ export function checkDeclaration(decl: Declaration, modelChecks: string[]): void
   const extra = Object.keys(decl.checks).filter((id) => !modelChecks.includes(id));
   const unscoped = Object.entries(decl.checks).filter(([, c]) => !decl.scopes[c.scope]).map(([id, c]) => `${id} (${c.scope})`);
   const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false && c.decisionModel !== PASS_ONLY).map(([id]) => id);
-  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false or ${PASS_ONLY}: ${routed.join(', ')}`].filter(Boolean);
+  const misgrouped = Object.entries(decl.checks).filter(([, c]) => (c.aggregate.name === 'grouped' ? !GROUPING.every((f) => c.aggregate[f] !== undefined) : GROUPING.some((f) => c.aggregate[f] !== undefined))).map(([id]) => id);
+  // A scope's units carry one group key, so its grouped checks must agree on where it is.
+  const torn = Object.entries(decl.checks).filter(([, c]) => c.aggregate.name === 'grouped' && c.aggregate.groupBy !== groupByOf(decl, c.scope)).map(([id]) => id);
+  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false or ${PASS_ONLY}: ${routed.join(', ')}`, misgrouped.length && `a grouped fold needs groupBy, inner and outer, and only a grouped fold takes them: ${misgrouped.join(', ')}`, torn.length && `grouped checks on one scope group by different fields: ${torn.join(', ')}`].filter(Boolean);
   if (problems.length) throw new Error(`the judge declaration does not match its rubric: ${problems.join('; ')}`);
 }

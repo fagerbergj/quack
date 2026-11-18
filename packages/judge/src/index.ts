@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, type SealedArtifact } from '@quack/sdk';
 import { buildEvidence, checkDeclaration, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
-import { fold, fractional, metOf, type Tri } from './fold.ts';
+import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
 import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Item, type ModelRef } from './resolve.ts';
 import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
@@ -56,8 +56,9 @@ export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): Che
   );
 }
 
-/** One model check being judged: its units, the question asked of each, and the fold; a legacy check has no aggregate and scores the share of units met. */
-export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; aggregate?: AggregateDecl; pitfall: boolean; answers: Map<string, Answer>; left: number; failed?: string };
+/** One model check being judged: its units, the question asked of each, and the fold; a legacy check has no aggregate and scores the share of units met.
+ *  `groupOf`: a grouped check's group key by unit id. */
+export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; aggregate?: AggregateDecl; pitfall: boolean; answers: Map<string, Answer>; left: number; failed?: string; groupOf?: Record<string, string> };
 
 const modelChecks = (rubric: Rubric) => rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code).map((k) => k.id));
 
@@ -71,7 +72,8 @@ function planChecks(rubric: Rubric, decl: Declaration | undefined, built: BuiltE
     const split = d && built.splits[d.scope];
     const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}), ...(split?.reason ? { splitterReason: split.reason } : {}) };
     const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel !== undefined && { decisionModel: d.decisionModel }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
-    return { key, result, ask, units, aggregate: d?.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, failed: split?.failed };
+    const groupOf = d?.aggregate.name === 'grouped' ? { groupOf: built.groups?.[d.scope] ?? {} } : {};
+    return { key, result, ask, units, aggregate: d?.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, failed: split?.failed, ...groupOf };
   }));
 }
 
@@ -86,16 +88,43 @@ function preset(p: Plan, u: Unit): Answer | undefined {
 }
 
 const triOf = (p: Plan, u: Unit): Tri => p.answers.get(u.id)?.met ?? undefined;
-// A share is the result itself, so it is decided only once every item is; a boolean fold decides as soon as no item can change it.
-const decided = (p: Plan) => !!p.aggregate && (fractional(p.aggregate) ? p.units.every((u) => triOf(p, u) !== undefined) : fold(p.aggregate, p.units.map((u) => triOf(p, u))) !== undefined);
+const trisOf = (p: Plan) => p.units.map((u) => triOf(p, u));
+const groupsOf = (p: Plan) => groupResults(p.aggregate!, p.units.map((u) => p.groupOf![u.id]), trisOf(p));
+// What the fold runs over: the items, or, for a grouped fold, the groups' inner results under its outer rule.
+const view = (ag: AggregateDecl, p: Plan): [AggregateDecl, Tri[]] => (ag.name === 'grouped' ? [outerOf(ag), [...groupsOf(p).values()]] : [ag, trisOf(p)]);
+// A share is the result itself, so it is decided only once every item (group) is; a boolean fold decides as soon as none can change it.
+function decided(p: Plan): boolean {
+  if (!p.aggregate) return false;
+  const [ag, tris] = view(p.aggregate, p);
+  return fractional(ag) ? tris.every((t) => t !== undefined) : fold(ag, tris) !== undefined;
+}
+// A grouped check's item is not asked once its own group has decided, either.
+const groupDecided = (p: Plan, u: Unit) => p.aggregate?.name === 'grouped' && groupsOf(p).get(p.groupOf![u.id]) !== undefined;
 
 // Every failing item gets a note, even from a resolver that gives no reason (Clef never does), so the reader sees which failed.
-const noteOf = (p: Plan, u: Unit) => {
+const whyOf = (p: Plan, u: Unit) => {
   const a = p.answers.get(u.id)!;
   const on = p.result.reused?.[u.id];
-  const why = `${a.note || `flagged by ${a.resolver} (no reason given)`}${on ? ` (judged on v${on})` : ''}`;
-  return u.whole ? why : `${u.id}: ${why}`;
+  return `${a.note || `flagged by ${a.resolver} (no reason given)`}${on ? ` (judged on v${on})` : ''}`;
 };
+const noteOf = (p: Plan, u: Unit) => (u.whole ? whyOf(p, u) : `${u.id}: ${whyOf(p, u)}`);
+
+// One note per failing group, with the reason of its first failing item; the failing groups' keys are the marks.
+function groupedFinal(p: Plan, r: CheckResult): CheckResult {
+  const keys = p.units.map((u) => p.groupOf![u.id]);
+  const tris = trisOf(p);
+  const groups = groupsOf(p);
+  const failing = [...groups].filter(([, t]) => t === false).map(([k]) => k);
+  r.notes = failing.map((k) => `${k}: ${whyOf(p, p.units[keys.findIndex((g, i) => g === k && tris[i] === false)])}`);
+  if (failing.length) r.marks = failing;
+  const open = [...groups].filter(([, t]) => t === undefined).map(([k]) => k);
+  const [outer, results] = view(p.aggregate!, p);
+  const value = fold(outer, results);
+  if (value === undefined || (fractional(outer) && open.length)) return Object.assign(r, { met: null, undecided: tris.filter((t, i) => t === undefined && open.includes(keys[i])).length });
+  r.met = metOf(outer, value, results, p.pitfall);
+  if (open.length) r.undecidedItems = open;
+  return r;
+}
 
 // A legacy check notes a "no" on a gate or a positive check and a "yes" on a pitfall.
 function legacyFinal(p: Plan, r: CheckResult) {
@@ -116,6 +145,7 @@ function finalize(p: Plan): CheckResult {
     legacyFinal(p, r);
     return r;
   }
+  if (p.aggregate.name === 'grouped') return groupedFinal(p, r);
   const tris = p.units.map((u) => triOf(p, u));
   r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [noteOf(p, u)] : []));
   const open = p.units.filter((_, i) => tris[i] === undefined).map((u) => u.id);
@@ -195,8 +225,8 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
     }
     if (!p.left) await publish();
   };
-  // An unsure item escalates only while its check's fold can still go either way.
-  const need = (_u: Unit, check: Ask) => !decided(byKey.get(check.id)!);
+  // An unsure item escalates only while its check's fold (and its group's) can still go either way.
+  const need = (u: Unit, check: Ask) => !decided(byKey.get(check.id)!) && !groupDecided(byKey.get(check.id)!, u);
   const ask = async (built: BuiltEvidence) => {
     const mine = planChecks(opts.rubric, opts.declaration, built);
     for (const p of mine) plans.push(p), byKey.set(p.key, p);

@@ -16,8 +16,18 @@ export function fold(ag: AggregateDecl, items: Tri[]): Tri {
   return n ? bounds(t / n, (t + u) / n, ag.min ?? 1) : true;
 }
 
-/** Whether the fold reports a share of items rather than a decided boolean. */
-export const fractional = (ag: AggregateDecl) => ag.name === 'share' || ag.name === 'atLeast';
+/** Whether the fold reports a share of items (of groups, for a grouped fold) rather than a decided boolean. */
+export const fractional = (ag: AggregateDecl) => ag.name === 'share' || ag.name === 'atLeast' || (ag.name === 'grouped' && (ag.outer === 'share' || ag.outer === 'atLeast'));
+
+/** A grouped fold's outer rule, as the flat fold it runs over the groups' results. */
+export const outerOf = (ag: AggregateDecl): AggregateDecl => ({ name: ag.outer!, k: ag.k, min: ag.min });
+
+/** Each group's inner fold over its items' answers, by group key in the order the groups first appear. */
+export function groupResults(ag: AggregateDecl, keys: string[], items: Tri[]): Map<string, Tri> {
+  const members = new Map<string, Tri[]>();
+  keys.forEach((k, i) => members.set(k, [...(members.get(k) ?? []), items[i]]));
+  return new Map([...members].map(([k, tris]) => [k, fold({ name: ag.inner! }, tris)]));
+}
 
 /** The check's met for a decided fold: a positive check holds when the fold is true, a pitfall is present when it is false. */
 export function metOf(ag: AggregateDecl, value: boolean, items: Tri[], pitfall: boolean): boolean | number {
