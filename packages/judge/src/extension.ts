@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineExtension, GenerationTask, hook, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { artifactKind, Artifacts, gate, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
+import { artifactKind, Artifacts, gate, unsubmitted, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
 import { check, report, type JudgeOptions, type Verdict } from './index.ts';
 import type { DecisionModelRef, ModelRef } from './resolve.ts';
@@ -50,7 +50,8 @@ async function overtaken(api: ToolExecutionApi, declared: ArtifactKind, last: Se
   return now && now !== last.basis ? `${declared.kind} v${last.version} was written against ${last.basis}, not ${now}. Write ${declared.path} for ${now} and call ${declared.tool} before you finish.` : undefined;
 }
 
-// A run may not finish before each sealed-by-tool kind's newest version passed or was released at the limit, unless the kind's refuse says there is nothing to submit.
+// A run may not finish before each sealed-by-tool kind's newest version passed or was released at the limit and holds the run's last change to its file,
+// unless the kind's refuse says there is nothing to submit.
 const yieldHook = () => hook(GenerationTask, {
   async onYield(_answer, hookApi, ctx) {
     // refuse and basis read committed state only, which the hook's api also serves.
@@ -68,6 +69,8 @@ const yieldHook = () => hook(GenerationTask, {
       if (stale) return { continue: stale };
       if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
       if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
+      const pending = await unsubmitted(api, declared, ctx);
+      if (pending) return { continue: pending };
     }
     return undefined;
   },

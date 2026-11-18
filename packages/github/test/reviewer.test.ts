@@ -217,6 +217,43 @@ test('a re-review after a push may not end on the review posted for the old head
   await session.close();
 });
 
+// A relabel after a reply on the reviewed head: the same head, so only the new reply makes the checkout look again.
+async function rereview(script: (step: ReturnType<typeof recorder>) => FauxResponseStep[]) {
+  const thread = { id: 1, path: 'app.ts', line: 1, commit: 'a'.repeat(40), at: '2026-11-09T22:58:17Z', outdated: false, body: '**question**: is the route exposed?', replies: [] as object[], repliesCut: 0 };
+  const feedback = { reviews: [], comments: [], ownThreads: [thread], ownThreadsCut: 0 };
+  const run = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [checkout(), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')), checkout(), ...script(step)];
+  }, { feedback });
+  run.live.feedback = { ...feedback, ownThreads: [{ ...thread, replies: [{ author: 'dev', at: '2026-11-09T23:01:23Z', body: 'It 302s to the login.' }] }] };
+  const again = await run.session.submit('Review pull request acme/widgets#7 (label quack:review)', 'gh-2', true);
+  return { ...run, again };
+}
+const resolved = review.replace('approve.', 'approve; the earlier question is resolved.');
+
+test('a re-review of an unchanged head that writes a new review and stops without submitting is sent back to submit it', async () => {
+  const { again, seen, service, head, session } = await rereview((step) => [
+    step(write(resolved)),
+    // The model claims the post without calling submit_review, as the reviewer did on fagerbergj/quack#2417.
+    step(fauxAssistantMessage('Approve, 0 findings.')),
+    step(call('submit_review', {})), step(fauxAssistantMessage('Posted.')),
+  ]);
+  assert.equal(again.status === 'done' && again.answer, 'Posted.');
+  assert.match(seen[5], /artifacts\/review\.md changed after github\.review v1 and this run has not submitted it, so the change is not delivered: v1 is still the newest version\. Call submit_review to submit it before you finish\./);
+  assert.deepEqual(service.posted.map((p) => p.commitId), [head, head]);
+  assert.match(service.posted[1].body, /the earlier question is resolved/);
+  await session.close();
+});
+
+test('a re-review of an unchanged head that writes a new review and submits it posts it and ends', async () => {
+  const { again, seen, service, head, session } = await rereview((step) => [step(write(resolved)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.'))]);
+  assert.equal(again.status === 'done' && again.answer, 'Posted.');
+  assert.match(seen[5], /github\.review v2: .*passed\..*Posted as APPROVE: /);
+  assert.equal(seen.length, 6, 'the run ends on its answer, with nothing sent back');
+  assert.deepEqual(service.posted.map((p) => p.commitId), [head, head]);
+  await session.close();
+});
+
 test('a request naming an old head reviews the live head and says so', async () => {
   const { seen, service, head, session } = await reviewRun((seen) => [
     call('checkout_pr', { repository: 'acme/widgets', number: 7, head: 'a30f00a' }),
