@@ -68,9 +68,9 @@ test('derived_inputs_traced: each false-positive class of the recorded reports t
   assert.equal(asked.met, 0, 'a figure from the request is still untraced, as the owner decided');
 });
 
-test('derived_inputs_traced does not trace the labels the sentence splitter cuts off a line', () => {
-  const report = '## Summary\nThe Tripp Lite suits a dusty shop. [s1]\n## Assumptions\nNone.\n## Findings\n- Eight fans pull air through two filters. [s1]\n## Analysis\n- **3. Ventilation.** The door fans pull air in through the filters [s1].\n- **2.**\n';
-  assert.equal(code('derived_inputs_traced', report).met, 1, 'the "2" of a list label is no figure to trace');
+test('derived_inputs_traced traces a figure however few words its line has', () => {
+  assert.equal(traced('x', '- The cabinet is 24U. [s1]', '## Analysis\n- **3.**\n999 mm.\n').met, 0, 'the 999 mm is untraced, and so is the bare label 3');
+  assert.match(traced('x', '- The cabinet is 24U. [s1]', '## Analysis\n- **3.**\n999 mm.\n').detail!, /999 in "999 mm\./);
 });
 
 test('derived_inputs_traced: a unit hyphened onto its number in a finding ("10-ft.") is that figure', () => {
