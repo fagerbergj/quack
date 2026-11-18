@@ -3,7 +3,7 @@ import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { isAbsolute, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
+import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
@@ -283,8 +283,9 @@ export const contractDeclaration: Declaration = {
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
-    // A guarantee holds when some part gives it a mechanism, and the intent is met when every guarantee holds.
-    meets_intent: { scope: 'guarantee', aggregate: { name: 'grouped', groupBy: 'guarantee', inner: 'any', outer: 'all', pass: ['yes'] }, question: yesNo('Does the document part shown as context make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // A guarantee holds when some part gives it a mechanism, and the intent is met when every guarantee holds. Clef may pass a pair;
+    // a "no" goes to the judge model, so a failing guarantee always carries a reason the writer can act on.
+    meets_intent: { scope: 'guarantee', aggregate: { name: 'grouped', groupBy: 'guarantee', inner: 'any', outer: 'all', pass: ['yes'] }, decisionModel: PASS_ONLY, question: yesNo('Does the document part shown as context make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },

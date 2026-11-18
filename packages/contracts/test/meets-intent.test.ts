@@ -44,11 +44,25 @@ test('a guarantee holds when one part gives it a mechanism, and the check fails,
   const held = await judged(t, spec(), ['meets_intent'], (q) => (q.includes(MECHANISM) && q.includes(OP) ? 'yes' : 'no'));
   const ok = held.check('meets_intent');
   assert.deepEqual([ok.met, ok.groups, ok.resolvers.clef > 0], [true, 2, true]);
-  const missing = await judged(t, spec(), ['meets_intent'], (q) => (q.includes(MECHANISM) && q.includes(OP) && !q.includes('read-only') ? 'yes' : 'no'));
+  const no = { choice: 'no', reason: 'Nothing in this part marks the schedule read-only.' };
+  const missing = await judged(t, spec(), ['meets_intent'], (q) => (q.includes(MECHANISM) && q.includes(OP) && !q.includes('read-only') ? 'yes' : 'no'), no);
   const failed = missing.check('meets_intent');
   assert.equal(failed.met, false);
   assert.equal(failed.notes.length, 1);
-  assert.match(failed.notes[0], /^read-only: guarantee read-only ~ .+: /);
+  assert.match(failed.notes[0], /^read-only: guarantee read-only ~ .+: Nothing in this part marks the schedule read-only\.$/);
+});
+
+test('a Clef "no" is not final: the judge model decides it, so a failing guarantee has a reason, and its "yes" holds the guarantee', async (t) => {
+  const s = spec();
+  s.intent.guarantees = [{ id: 'read-only', text: 'Read-only' }];
+  const flagged = await judged(t, s, ['meets_intent'], () => 'no', { choice: 'no', reason: 'No part says the schedule cannot be changed.' });
+  const failed = flagged.check('meets_intent');
+  assert.equal(failed.met, false);
+  assert.equal(failed.resolvers.clef, undefined, 'no item is failed on the decision model alone');
+  assert.ok(failed.resolvers.j > 0);
+  assert.match(failed.notes[0], /No part says the schedule cannot be changed\.$/);
+  const overturned = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'yes', reason: 'GET is the only method, so the schedule is read-only.' })).check('meets_intent');
+  assert.equal(overturned.met, true);
 });
 
 test('a decided choice is a part a guarantee can be asked of, and the root is asked even when four named parts outrank it', async () => {

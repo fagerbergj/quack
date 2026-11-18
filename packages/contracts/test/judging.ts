@@ -1,5 +1,5 @@
 import type { TestContext } from 'node:test';
-import { createModels, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, rejudge, type Verdict } from '@quack/judge';
 import { contractDeclaration, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
@@ -15,10 +15,13 @@ export const inputsOf = (spec: ContractSpec) => {
 export const builtOf = async (spec: ContractSpec) => buildEvidence(contractDeclaration, await inputsOf(spec));
 export const evidenceOf = async (spec: ContractSpec) => (await builtOf(spec)).evidence;
 
-/** Judges `checks` with Clef answering by `pick`; the judge model has no replies, so a question that reached it would stay undecided. */
-export async function judged(t: TestContext, spec: ContractSpec, checks: string[], pick: (q: string) => string) {
+/** Judges `checks` with Clef answering by `pick`; the judge model answers every question it gets with `judge`, or, without one, gives
+ * no reply, so a question that reached it would stay undecided. */
+export async function judged(t: TestContext, spec: ContractSpec, checks: string[], pick: (q: string) => string, judge?: { choice: string; reason: string }) {
   const models = createModels();
-  models.setProvider(fauxProvider({ provider: 'judge', models: [{ id: 'j' }] }).provider);
+  const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  if (judge) faux.setResponses(Array.from({ length: 50 }, () => () => fauxAssistantMessage(JSON.stringify({ ...judge, confidence: 0.9 }))));
+  models.setProvider(faux.provider);
   const clef = await fakeClef(t, pick);
   models.setProvider(clef.provider);
   let verdict: Verdict | undefined;
