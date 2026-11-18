@@ -93,8 +93,9 @@ const fellShort = (r: CheckResult) => r.met !== null && r.weight !== 0 && (r.wei
 export function feedback(results: CheckResult[]): string[] {
   return results.filter(fellShort).map((r) => {
     const kind = r.weight === 'gate' ? 'gate' : r.weight > 0 ? 'missed' : 'pitfall';
-    // A decided fold names its failing items in the notes; only a share says how many held.
-    const share = typeof r.met === 'number' && r.units > 1 ? ` (${Math.round(r.met * r.units)} of ${r.units})` : '';
+    // A decided fold names its failing items in the notes; only a share says how many held. A model check's marks are a
+    // grouped fold's failed groups, whose share is of groups the result does not count, so its notes stand alone.
+    const share = typeof r.met === 'number' && r.units > 1 && !r.marks ? ` (${Math.round(r.met * r.units)} of ${r.units})` : '';
     return `${kind} ${r.criterion}.${r.id}${share}${r.notes.length ? `: ${r.notes.join('; ')}` : ''}`;
   });
 }

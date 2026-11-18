@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { PASS_ONLY, type AggregateDecl, type CheckDecl, type Declaration } from '../src/declaration.ts';
-import { judged, registerSelector, registerSplitter, rejudge, type JudgeOptions, type Rubric } from '../src/index.ts';
+import { check, feedback, judged, registerSelector, registerSplitter, rejudge, type JudgeOptions, type Rubric } from '../src/index.ts';
 import { sessionApi } from './fake-session.ts';
 
 // Each pair is [item, group, evidence?]: the item's piece is its group's claim, the evidence goes on its shared context.
-registerSplitter('test.grouped.pairs', (inputs) => (JSON.parse(inputs.pairs) as Array<[string, string, string?]>).map(([id, g, ev]) => ({
+registerSplitter('test.grouped.pairs', (inputs) => (JSON.parse(inputs.pairs) as Array<[string, unknown, string?]>).map(([id, g, ev]) => ({
   id, text: JSON.stringify({ id, claim: `claim ${g}` }), meta: { g, ...(ev === undefined ? {} : { chunk: ev }), ...(id.startsWith('drop') ? { drop: true } : {}) },
 })));
 registerSelector('test.grouped.keep', (_i, c) => (c.meta?.drop ? undefined : { value: '', matches: 0 }));
@@ -69,9 +69,32 @@ test('a group of one item takes that item\'s answer, and a group whose every ite
   assert.deepEqual([empty.checks[0].met, empty.checks[0].units], [null, 0], 'no item, no group: the check does not count');
 });
 
-test('an item without its group key is an extension error naming the item', async () => {
+test('an item without a string or number group key is an extension error naming the item', async () => {
   const decl = declOf(grouped('any', 'all', { groupBy: 'missing' }));
-  await assert.rejects(round(sessionApi(clef, () => said('no')).api, optsOf(decl, abc)), /item a1t has no group key missing/);
+  await assert.rejects(round(sessionApi(clef, () => said('no')).api, optsOf(decl, abc)), /item a1t has no string or number group key missing/);
+  for (const key of [null, { g: 1 }]) {
+    const pairs = [['a1t', key]] as unknown as Array<[string, string]>;
+    await assert.rejects(round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all')), pairs)), /item a1t has no string or number group key g/, JSON.stringify(key));
+  }
+  const numbered = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all')), [['a1f', 7]] as unknown as Array<[string, string]>));
+  assert.deepEqual(numbered.checks[0].marks, ['7']);
+});
+
+test("a grouped share's feedback names its failing groups and gives no item count its share does not measure", async () => {
+  const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'share')), abc));
+  assert.deepEqual(feedback(v.checks), ['missed c.kept: C: flagged by clef (no reason given)'], 'not "4 of 6": two groups of three held, three items of six');
+});
+
+test("a judge model that errors on an open group of a share leaves the check undecided, counting only open groups' items, and attaches no verdict", async () => {
+  // A decides on a1t, so its unsure a2 is not asked; B's two unsure items reach a judge model that errors.
+  const pairs: Array<[string, string, string]> = [['a1t', 'A', 'x'], ['a2', 'A', 'x'], ['b1', 'B', 'y'], ['b2', 'B', 'y']];
+  const opts = optsOf(declOf(grouped('any', 'share')), pairs);
+  const { api, seen } = sessionApi(clef, () => 'error');
+  const k = (await round(api, opts)).checks[0];
+  assert.deepEqual([k.met, k.undecided, k.undecidedItems, seen.judge.filter((r) => r.startsWith('a'))], [null, 2, undefined, []]);
+  const out = await check(sessionApi(clef, () => 'error').api, opts, { kind: 'k', version: 1, hash: '', content: 'x', sealedAt: 0, verdict: null }, 'submit', BACKGROUND_CONTEXT);
+  assert.deepEqual(Object.keys(out), ['undecided'], 'no verdict');
+  assert.match((out as { undecided: string }).undecided, /c\.kept/);
 });
 
 test("a decided group's unsure items are not escalated, and an undecided group is listed once the check decides", async () => {

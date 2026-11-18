@@ -166,7 +166,7 @@ type Built = { unit: Unit; group?: string } | undefined;
 function grouping(name: string, chunk: Chunk, groupBy: string | undefined): { group?: string; rest: JsonObject } {
   if (!groupBy) return { rest: {} };
   const { [groupBy]: group, ...rest } = chunk.meta ?? {};
-  if (group === undefined) throw new Error(`scope ${name}: item ${chunk.id} has no group key ${groupBy} in its meta`);
+  if (typeof group !== 'string' && typeof group !== 'number') throw new Error(`scope ${name}: item ${chunk.id} has no string or number group key ${groupBy} in its meta`);
   return { group: String(group), rest: rest as JsonObject };
 }
 
