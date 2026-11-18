@@ -99,7 +99,7 @@ function fauxJudge() {
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const recorder = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
-const URL7 = 'https://github.com/acme/widgets/pull/7#review-9';
+const URL7 = 'https://github.com/acme/widgets/pull/7#pullrequestreview-9';
 const write = (content: string) => call('write', { path: 'artifacts/review.md', content });
 const checkout = () => call('checkout_pr', { repository: 'acme/widgets', number: 7 });
 
@@ -251,6 +251,18 @@ test('a re-review of an unchanged head that writes a new review and submits it p
   assert.match(seen[5], /github\.review v2: .*passed\..*Posted as APPROVE: /);
   assert.equal(seen.length, 6, 'the run ends on its answer, with nothing sent back');
   assert.deepEqual(service.posted.map((p) => p.commitId), [head, head]);
+  await session.close();
+});
+
+test('a reply linking a review the app did not post is sent back with the link the submit result gave', async () => {
+  const { again, seen, session } = await rereview((step) => [
+    step(write(resolved)), step(call('submit_review', {})),
+    // The model's own review id, not the one GitHub returned, as on fagerbergj/quack#2417.
+    step(fauxAssistantMessage('Approve: https://github.com/acme/widgets/pull/7#pullrequestreview-5949693520')),
+    step(fauxAssistantMessage(`Approve: ${URL7}`)),
+  ]);
+  assert.equal(again.status === 'done' && again.answer, `Approve: ${URL7}`);
+  assert.match(seen[6], new RegExp(`Your reply links https://github\\.com/acme/widgets/pull/7#pullrequestreview-5949693520, but this session posted no such review\\. The reviews it posted: ${URL7.replace(/[/.#]/g, '\\$&')}\\. Reply again without that link\\.`));
   await session.close();
 });
 
