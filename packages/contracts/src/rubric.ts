@@ -190,29 +190,45 @@ registerSelector('contract.held', (_i, c) => ({ value: '', matches: Number(c.met
 // A guarantee's group key: its fact id, or for a grandfathered string its first words and a hash of its text, which an insert does not move.
 const guaranteeKey = (e: Entry) => e.label ?? `${e.text.split(/\s+/).slice(0, 6).join(' ')} #${createHash('sha256').update(e.text).digest('hex').slice(0, 6)}`;
 
-// The parts of the document a guarantee is checked against, best first: one it names, then by shared terms; with none above the bar,
-// the best few anyway, so every guarantee is asked and a weak match still has its chance.
-function chunksFor(text: string, defs: Definition[], top: number, minShared: number): Definition[] {
+/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. */
+type Part = { id: string; name?: string; text: string; evidence: unknown; root?: true };
+
+// The parts a guarantee is checked against, best first: one it names, then by shared terms; with none above the bar, the best few anyway,
+// so every guarantee is asked. The root holds spec-wide rules (additionalProperties, security, the stated scope), so it is always asked.
+function partsFor(text: string, parts: Part[], top: number, minShared: number): Part[] {
   const terms = termsOf(text);
-  const scored = defs.map((d, i) => ({ d, i, s: (d.name && mentions(d.name).test(text) ? 1000 : 0) + [...termsOf(textOf(d))].filter((t) => terms.has(t)).length }));
+  const scored = parts.map((p, i) => ({ p, i, s: (p.name && mentions(p.name).test(text) ? 1000 : 0) + [...termsOf(p.text)].filter((t) => terms.has(t)).length }));
   const ranked = scored.sort((a, b) => b.s - a.s || a.i - b.i);
   const kept = ranked.filter((x) => x.s >= minShared);
-  return (kept.length ? kept : ranked).slice(0, top).map((x) => x.d);
+  const best = (kept.length ? kept : ranked).slice(0, top).map((x) => x.p);
+  const root = parts.find((p) => p.root);
+  return root && !best.includes(root) ? [...best, root] : best;
 }
 
-// One item per guarantee and document part that may give it a mechanism; the part is the item's evidence, shared by every guarantee
-// asked of it, so a part's questions pack into one request. The rest of the document counts: it holds root security and descriptions.
+// The definitions, the rest of the document and the decided choices: a guarantee the code cannot show, such as layering or a
+// budget the judge measures, is carried by the choice that decides it.
+function partsOf(spec: Pick<ContractSpec, 'document' | 'choices'>, kind: ContractSpec['kind']): Part[] {
+  const defs = kinds[kind].definitions(spec.document).filter((d) => /[\p{L}\p{N}]/u.test(textOf(d)));
+  const choices = (spec.choices ?? []).map((c): Part => {
+    const evidence = { decision: c.decision, why: c.why.map((w) => w.text) };
+    return { id: `choice ${c.id}`, text: JSON.stringify(evidence), evidence };
+  });
+  return [...defs.map((d): Part => ({ id: d.id, name: d.name, text: textOf(d), evidence: d.definition, ...(d.rest && { root: true as const }) })), ...choices];
+}
+
+// One item per guarantee and part that may make it hold; the part is the item's evidence, shared by every guarantee asked of it, so a
+// part's questions pack into one request.
 function guaranteeChunks(inputs: Inputs, o: SplitDecl): Chunk[] {
   const [specInput, kindInput] = [o.from].flat();
-  const { intent, document } = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'intent' | 'document'>;
-  const defs = kinds[inputs[kindInput] as ContractSpec['kind']].definitions(document).filter((d) => /[\p{L}\p{N}]/u.test(textOf(d)));
+  const spec = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'intent' | 'document' | 'choices'>;
+  const parts = partsOf(spec, inputs[kindInput] as ContractSpec['kind']);
   // A grandfathered guarantee over the fact limit holds several facts, and no one part may give them all: each sentence is a guarantee.
   // With none, the purpose stands in, so the check still counts toward the score rather than leaving only pitfalls to set it.
-  const listed = entriesOf(intent, ['guarantees']);
-  const guarantees = listed.length ? listed : [{ label: 'purpose', at: 'purpose', text: intent.purpose }];
+  const listed = entriesOf(spec.intent, ['guarantees']);
+  const guarantees = listed.length ? listed : [{ label: 'purpose', at: 'purpose', text: spec.intent.purpose }];
   return guarantees.flatMap((g) => {
     const key = guaranteeKey(g);
-    return chunksFor(g.text, defs, o.top ?? 4, o.minShared ?? 2).map((d) => ({ id: `${key} ~ ${d.id}`, text: g.text, meta: { guarantee: key, part: { id: d.id, definition: d.definition } } }));
+    return partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ id: `${key} ~ ${p.id}`, text: g.text, meta: { guarantee: key, part: { id: p.id, definition: p.evidence } } }));
   });
 }
 registerSplitter('contract.guaranteeChunks', guaranteeChunks);

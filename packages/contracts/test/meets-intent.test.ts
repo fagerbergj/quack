@@ -51,6 +51,18 @@ test('a guarantee holds when one part gives it a mechanism, and the check fails,
   assert.match(failed.notes[0], /^read-only: guarantee read-only ~ .+: /);
 });
 
+test('a decided choice is a part a guarantee can be asked of, and the root is asked even when four named parts outrank it', async () => {
+  const s = withComponents();
+  s.intent.guarantees.push({ id: 'iso-times', text: 'Run times are ISO 8601 date-times' }, { id: 'cards', text: 'Avatar, Badge, Colour and Dimension describe a profile card' });
+  const { evidence, groups } = await builtOf(s);
+  const partsOf = (key: string) => evidence.guarantee.filter((u) => groups!.guarantee[u.id] === key).map((u) => u.shared!.part as { id: string; definition: unknown });
+  const iso = partsOf('iso-times').find((p) => p.id === 'choice time-format');
+  assert.deepEqual(iso?.definition, { decision: 'Run times are ISO 8601 date-times.', why: ['You decide (the suggested ISO 8601 string stands)', 'The service already returns the next run as the schedules service gives it.'] });
+  const cards = partsOf('cards').map((p) => p.id);
+  assert.deepEqual(cards.slice(0, 4).sort(), ['/components/schemas/Avatar', '/components/schemas/Badge', '/components/schemas/Colour', '/components/schemas/Dimension']);
+  assert.equal(cards.at(-1), '(rest of the document)');
+});
+
 test('a grandfathered string guarantee keeps its key when another is inserted, and one over the fact limit is split by sentence', async () => {
   const keys = async (guarantees: string[]) => {
     const s = spec();
