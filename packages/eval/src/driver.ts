@@ -105,14 +105,19 @@ export async function drive(runtime: Runtime, inputs: string[], policy: Policy, 
   return false;
 }
 
-/** Stops a child: SIGTERM, then SIGKILL after `graceMs`, since a runtime's graceful close waits on its in-flight run. */
-export async function stopChild(child: ChildProcess, graceMs = KILL_AFTER_MS): Promise<void> {
+const wallTimer = (fn: () => void, ms: number) => {
+  const t = setTimeout(fn, ms);
+  return () => clearTimeout(t);
+};
+
+/** Stops a child: SIGTERM, then SIGKILL after `graceMs`, since a runtime's graceful close waits on its in-flight run. `setTimer` is the test seam for that deadline. */
+export async function stopChild(child: ChildProcess, graceMs = KILL_AFTER_MS, setTimer = wallTimer): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((r) => child.once('exit', () => r()));
   child.kill('SIGTERM');
-  const timer = setTimeout(() => child.kill('SIGKILL'), graceMs);
+  const cancel = setTimer(() => child.kill('SIGKILL'), graceMs);
   await exited;
-  clearTimeout(timer);
+  cancel();
 }
 
 /** Runs `tool` once in a scripted one-tool session at `dir`: the judge's calls need a tool's api, so a session hosts them. */
