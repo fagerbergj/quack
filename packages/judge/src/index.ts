@@ -242,8 +242,8 @@ async function evidenceFor(api: ToolExecutionApi, opts: JudgeOptions, sealed: Se
   return buildEvidence(opts.declaration, await opts.inputs(api, sealed, ctx));
 }
 
-// The run's first input id: stable through the run, where its task id changes between tool rounds.
-const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
+// The run's first input id (stable across tool rounds), or the task id for a workflow run that has no LiveDoc.run.
+const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? api.taskId ?? '');
 
 /** Versions this run has judged since its last pass, passing or failing: the count the revision limit bounds. */
 async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<number> {

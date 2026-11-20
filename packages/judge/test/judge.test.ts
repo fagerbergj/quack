@@ -244,3 +244,35 @@ test('progress withholds a check until every unit is judged and decided, and pas
   plans[0].left = 0;
   assert.deepEqual(mets(), [1, 0.5, 1, undefined, null], 'once every unit is judged the share shows');
 });
+
+test('a second workflow run without LiveDoc.run gets a fresh revision budget via taskId', async () => {
+  const kind = 'workflow.card';
+  const versions: Array<{ kind: string; version: number; path: string; content: string; sha256: string; sealedAt: number; verdict: unknown }> = [];
+  const doc = { kinds: { [kind]: { versions } } };
+  const apiFor = (taskId: number) => ({
+    conversationId: 1,
+    taskId,
+    now: () => 1,
+    snapshot: async (token: { kind?: string }) => (token === Artifacts ? doc : undefined),
+    commit: async (fn: (tx: { doc: () => Promise<typeof doc> }) => Promise<unknown>) => fn({ doc: async () => doc }),
+  });
+  const codeOnly: Rubric = {
+    name: 'wf',
+    version: 1,
+    threshold: 1,
+    criteria: [{ id: 'c', checks: [{ id: 'ok', label: 'ok', weight: 'gate', code: (a) => ({ met: a.includes('ok') ? 1 : 0, detail: 'needs ok' }) }] }],
+  };
+  const opts: JudgeOptions = { kind, rubric: codeOnly, maxRevisions: 0, declaration: { scopes: {}, checks: {} }, inputs: async () => ({}) };
+  const v1 = { kind, version: 1, path: 'artifacts/card.json', content: 'bad', sha256: '1', sealedAt: 1, verdict: null };
+  versions.push(v1);
+  const first = await check(apiFor(10) as never, opts, v1 as never, 'submit', BACKGROUND_CONTEXT);
+  assert.ok('verdict' in first && first.verdict.limitReached === true);
+
+  const v2 = { kind, version: 2, path: 'artifacts/card.json', content: 'ok', sha256: '2', sealedAt: 2, verdict: null };
+  versions.push(v2);
+  const deniedInSameRun = await check(apiFor(10) as never, opts, v2 as never, 'submit', BACKGROUND_CONTEXT);
+  assert.ok('deny' in deniedInSameRun, 'the same workflow run is past its limit');
+
+  const secondRun = await check(apiFor(20) as never, opts, v2 as never, 'submit', BACKGROUND_CONTEXT);
+  assert.ok('verdict' in secondRun && secondRun.verdict.passed === true, 'a new workflow run gets a fresh revision budget');
+});

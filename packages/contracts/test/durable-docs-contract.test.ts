@@ -70,8 +70,16 @@ async function first<T>(s: Open, d: unknown, pick: (v: any) => T | undefined): P
 const nextQuestion = (s: Open, seen: string[] = []) => first(s, Questions, (v) => pendingQuestions(v).find((q) => !seen.includes(q.id)));
 const nextApproval = (s: Open, seen: string[] = []) => first(s, Approvals, (v) => Object.entries<{ verdict: unknown }>(v?.items ?? {}).find(([k, a]) => !a.verdict && !seen.includes(k))?.[0]);
 const text = (c: Msgs) => { const m = c.messages.at(-1)!.content; return typeof m === 'string' ? m : (m as Array<{ text?: string }>).map((p) => p.text ?? '').join(''); };
-// The judge's "Decision: ..." questions get yes, except the pitfall ones; every other request takes the next scripted step.
-const judged = (script: Step[]): Step[] => Array.from({ length: 80 }, () => (c: Msgs) => (text(c).startsWith('Decision:') ? fauxAssistantMessage(JSON.stringify({ choice: /never asked for|contradict a guide rule/.test(text(c)) ? 'no' : 'yes', confidence: 1, reason: 'fine' })) : script.shift()!(c)));
+// The judge's single ("Decision: ...") and batched ("Evidence: ...") questions get yes, except the pitfall ones; other requests take the next scripted step.
+const judged = (script: Step[]): Step[] => {
+  const answer = (q: string) => ({ choice: /never asked for|contradict a guide rule/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
+  return Array.from({ length: 80 }, () => (c: Msgs) => {
+    const p = text(c);
+    if (p.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(answer(p)));
+    if (p.startsWith('Evidence:')) return fauxAssistantMessage(JSON.stringify(Object.fromEntries([...p.matchAll(/^- (q\d+): ([\s\S]*?)\n  Options:/gm)].map(([, id, q]) => [id, answer(q)]))));
+    return script.shift()!(c);
+  });
+};
 const ask = (id: string, question: string) => call('ask_question', { id, question, matters: 'It decides the shape.', suggested: 'Yes', alternatives: [{ answer: 'No', tradeoff: 'None.' }] });
 const spec = (title: string) => call('write', { path: 'artifacts/spec.json', content: JSON.stringify({ ...settingsSpec(), title }, null, 2) });
 

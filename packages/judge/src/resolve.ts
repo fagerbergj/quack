@@ -55,26 +55,22 @@ export const decisionModelTokens = (unit: Unit | Unit[], checks: Ask[]) =>
   JSON.stringify(request((Array.isArray(unit) ? unit : [unit]).map((u) => ({ unit: u, checks })))).length / BYTES_PER_TOKEN;
 const tokensOf = (items: Item[]) => JSON.stringify(request(items)).length / BYTES_PER_TOKEN;
 
-/** Units that share context are packed in order into requests up to the cap; those that alone are over it go together, to escalate as one. */
+/** Units that share context are packed in order into requests up to the cap; those that skip the decision model go together, to escalate as one. */
 export function pack(items: Item[], cap: number | undefined): Item[][] {
   const out: Item[][] = [];
   const open = new Map<string, Item[]>();
   const over = new Map<string, Item[]>();
   for (const it of items) {
-    const group = it.unit.shared && cap ? JSON.stringify(it.unit.shared) : undefined;
-    const big = group !== undefined && tokensOf([it]) > cap! ? over.get(group) : undefined;
-    if (big) {
-      big.push(it);
-      continue;
-    }
-    const current = group === undefined ? undefined : open.get(group);
-    if (current && tokensOf([...current, it]) <= cap!) {
-      current.push(it);
+    const group = it.unit.shared ? JSON.stringify(it.unit.shared) : undefined;
+    const skips = cap === undefined || !questionsOf([it]).length || tokensOf([it]) > cap;
+    const target = group === undefined ? undefined : (skips ? over : open).get(group);
+    if (target && (skips || tokensOf([...target, it]) <= cap!)) {
+      target.push(it);
       continue;
     }
     const fresh = [it];
     out.push(fresh);
-    if (group !== undefined) (tokensOf([it]) > cap! ? over : open).set(group, fresh);
+    if (group !== undefined) (skips ? over : open).set(group, fresh);
   }
   return out;
 }
@@ -176,7 +172,8 @@ async function askBatch(api: ToolExecutionApi, s: Settings, model: JudgeModel, p
     const send = (fetch: typeof globalThis.fetch) => observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal, fetch }));
     const reply = await retryModelCall(`${model.provider}/${model.id}`, send, ctx.abortSignal, s.retry).catch(() => undefined);
     ctx.abortSignal?.throwIfAborted();
-    replies = await api.memo(key, reply && reply.stopReason !== 'error' ? parsePacked(contentText(reply.content), pending) : pending.map(() => null), ctx);
+    if (!reply || reply.stopReason === 'error') return new Map();
+    replies = await api.memo(key, parsePacked(contentText(reply.content), pending), ctx);
   }
   return new Map(pending.map((p, n) => [p, replies![n]]));
 }
@@ -232,18 +229,23 @@ type Done = (p: Pending, a: Answer | undefined) => Promise<void>;
 // One decision-model request per packed group; confident answers stand and are counted first, so a decided check asks no more.
 // The rest escalate: a packed group's in sub-batches, a lone unit's questions concurrently, all within the escalation limit.
 export async function answerItems(api: ToolExecutionApi, s: Settings, items: Item[], ctx: Context, onAnswer?: (a: Answered) => Promise<void>, need: Need = () => true): Promise<Answered[]> {
-  const packed = !!items[0].unit.shared;
-  const probabilities = await probabilitiesOf(api, s, items, ctx);
-  const act = s.ref?.act ?? 0.8;
-  const asked = items.flatMap((it, i) => it.checks.map((check) => ({ i, unit: it.unit, check, p: probabilities?.[qid(check, i, packed)] })));
-  // A PASS_ONLY check's confident failing answer is not taken: the judge model decides it and gives the writer a reason.
-  const sure = (p: number | undefined, check: Ask) => p !== undefined && (p >= act || (1 - p >= act && check.decisionModel !== PASS_ONLY));
+  const pairs = items.flatMap((it, i) => it.checks.map((check) => ({ i, unit: it.unit, check })));
   const out = new Map<Pending, Answered>();
   const done = async (a: Pending, answer: Answer | undefined) => {
     const answered = { unit: a.unit, check: a.check, answer };
     out.set(a, answered);
     await onAnswer?.(answered);
   };
+  if (pairs.every((a) => !need(a.unit, a.check))) {
+    for (const a of pairs) await done(a, undefined);
+    return pairs.map((a) => out.get(a)!);
+  }
+  const packed = !!items[0].unit.shared;
+  const probabilities = await probabilitiesOf(api, s, items, ctx);
+  const act = s.ref?.act ?? 0.8;
+  const asked = pairs.map((a) => ({ ...a, p: probabilities?.[qid(a.check, a.i, packed)] }));
+  // A PASS_ONLY check's confident failing answer is not taken: the judge model decides it and gives the writer a reason.
+  const sure = (p: number | undefined, check: Ask) => p !== undefined && (p >= act || (1 - p >= act && check.decisionModel !== PASS_ONLY));
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
   s.hold?.heard(asked);
   const unsure = asked.filter((x) => !sure(x.p, x.check));

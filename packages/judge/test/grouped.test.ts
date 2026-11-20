@@ -127,14 +127,14 @@ test("under pass-only a group's failing decision-model answer goes to the judge 
 
 test('reuse inside a group: an unchanged item is reused, a changed evidence or group claim asks again', async () => {
   const { api, seen } = sessionApi(clef, () => said('no'));
-  const pairs: Array<[string, string, string]> = [['a1t', 'A', 'x'], ['a2f', 'A', 'y'], ['b1t', 'B', 'x']];
+  const pairs: Array<[string, string, string]> = [['a1f', 'A', 'x'], ['a2t', 'A', 'y'], ['b1t', 'B', 'x']];
   const v1 = await round(api, optsOf(declOf(grouped('any', 'share')), pairs), 1);
   assert.equal(v1.checks[0].met, 1);
   const v2 = await round(api, optsOf(declOf(grouped('any', 'share')), pairs), 2);
-  assert.deepEqual([seen.clef.length, v2.checks[0].reused, v2.checks[0].resolvers], [3, { 'rows a1t': 1, 'rows a2f': 1, 'rows b1t': 1 }, {}]);
-  const moved: Array<[string, string, string]> = [['a1t', 'A', 'x'], ['a2f', 'A', 'z'], ['b1t', 'C', 'x']];
+  assert.deepEqual([seen.clef.length, v2.checks[0].reused, v2.checks[0].resolvers], [3, { 'rows a1f': 1, 'rows a2t': 1, 'rows b1t': 1 }, {}]);
+  const moved: Array<[string, string, string]> = [['a1f', 'A', 'x'], ['a2t', 'A', 'z'], ['b1t', 'C', 'x']];
   const v3 = await round(api, optsOf(declOf(grouped('any', 'share')), moved), 3);
-  assert.deepEqual([seen.clef.slice(3).sort(), v3.checks[0].reused], [['a2f', 'b1t'], { 'rows a1t': 1 }], "a2f's evidence and b1t's group claim changed");
+  assert.deepEqual([seen.clef.slice(3).sort(), v3.checks[0].reused], [['a2t', 'b1t'], { 'rows a1f': 1 }], "a2t's evidence and b1t's group claim changed");
 });
 
 // Pass-only any groups: a decision-model "no" is never final, and one pass decides the group, so escalations wait for the group's answers.
