@@ -46,8 +46,8 @@ export function ArtifactView({ sessionKey, versions, a, onPick, onFollow, onClos
         <span className="flex-1" />
         {onFollow && <FollowNewest onClick={onFollow} />}
         {onClose && (
-          <button type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className="grid h-8 w-8 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          <button type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         )}
       </div>

@@ -7,7 +7,7 @@ import { tmpdir, type NetworkInterfaceInfo } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { credentialBroker, containerEnv, dockerApi, dockerLauncher, onSessionNetwork, parseDockerHost, parseHostConfig, reapSessions, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
-import { proxyKeyedServices, proxyProviders } from '../src/keyed-services.ts';
+import { assertServiceNames, proxyKeyedServices, proxyProviders } from '../src/keyed-services.ts';
 import { sessionDriver } from '../src/session-driver.ts';
 
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -191,6 +191,16 @@ test('an operator can pass a named secret through', () => {
   const broker = credentialBroker();
   const { env } = containerEnv({ QUACK_EXA_API_KEY: 'exa' }, { key: 'k', token: 't', broker, distributorUrl: 'http://d', passthrough: ['QUACK_EXA_API_KEY'], dir: '/data/x' });
   assert.equal(env.QUACK_EXA_API_KEY, 'exa');
+});
+
+test('two manifests naming one proxied service are refused when the services are flattened', () => {
+  assert.throws(
+    () => assertServiceNames([
+      { name: 'ACME', urlEnv: 'ACME_URL', secretEnv: 'ACME_KEY', header: 'x-api-key' },
+      { name: 'ACME', urlEnv: 'ACME_URL', secretEnv: 'ACME_KEY', header: 'x-api-key' },
+    ]),
+    /proxied service ACME is declared by two extensions/,
+  );
 });
 
 test('the pinned agent definition and deployment config are addressed inside the container', async () => {

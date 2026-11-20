@@ -5,7 +5,13 @@ import type { CredentialBroker } from './credentials.ts';
 
 type Proxy = { broker: CredentialBroker; distributorUrl: string; token: string };
 const route = (p: Proxy, name: string) => `${p.distributorUrl}/proxy/${name}`;
-const defaultServices = manifests.flatMap((m) => m.proxiedServices ?? []);
+// Two manifests naming the same proxied service would both map to one /proxy/<name> route; refuse the deployment.
+export const assertServiceNames = (services: readonly ProxiedService[]) => {
+  const dup = services.find((s, i) => services.findIndex((t) => t.name === s.name) !== i);
+  if (dup) throw new Error(`proxied service ${dup.name} is declared by two extensions`);
+  return services;
+};
+export const defaultServices = assertServiceNames(manifests.flatMap((m) => m.proxiedServices ?? []));
 
 /** Services that take an API key: the session gets the broker route and its launch token in the slots its client reads; the real key is added server-side. */
 export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy, services: readonly ProxiedService[] = defaultServices): Record<string, string> {

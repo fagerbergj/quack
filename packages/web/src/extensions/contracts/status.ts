@@ -1,4 +1,4 @@
-import { json, listAll } from '../../api.ts';
+import { listAll, postInvocation } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 
 export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
@@ -67,7 +67,6 @@ export function draftTitle(description: string): string {
 export async function startContract(description: string): Promise<string> {
   const id = crypto.randomUUID();
   const key = `contracts:${id}`;
-  const title = draftTitle(description);
-  await json(await fetch(`sessions/${encodeURIComponent(key)}/invocations?agent=contracts`, { method: 'POST', body: JSON.stringify({ requestId: `ui-contract:${id}`, title, input: description }) }));
+  await postInvocation(key, 'contracts', { requestId: `ui-contract:${id}`, title: draftTitle(description), input: description });
   return key;
 }

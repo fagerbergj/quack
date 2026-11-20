@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref, type SubmitEvent } from 'react';
 import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
@@ -248,9 +248,9 @@ function More({ running, onAbort, manage, link }: { running: boolean; onAbort: (
 }
 
 type ArtifactToggle = { label: string; open: boolean; toggle: () => void };
-type HeaderProps = Facts & { back: { href: string; label: string }; artifact?: ArtifactToggle; onDetails?: () => void; children: ReactNode };
+type HeaderProps = Facts & { back: { href: string; label: string }; artifact?: ArtifactToggle; artifactRef?: Ref<HTMLButtonElement>; onDetails?: () => void; children: ReactNode };
 
-function Header({ back, artifact, onDetails, children, ...facts }: HeaderProps) {
+function Header({ back, artifact, artifactRef, onDetails, children, ...facts }: HeaderProps) {
   return (
     <div className="flex min-h-[calc(3.5rem+env(safe-area-inset-top,0px))] items-center gap-0.5 border-b border-line bg-canvas/70 px-1 pt-[env(safe-area-inset-top,0px)] lg:gap-1 lg:px-3">
       <a href={back.href} aria-label={back.label} title={back.label} className={`${iconBtn} lg:hidden`}>
@@ -261,7 +261,7 @@ function Header({ back, artifact, onDetails, children, ...facts }: HeaderProps) 
       </span>
       <Title {...facts} />
       {artifact && (
-        <button type="button" aria-label={artifact.label} title={artifact.label} aria-expanded={artifact.open} onClick={artifact.toggle} className={`${iconBtn} aria-expanded:bg-soft aria-expanded:text-ink`}>
+        <button ref={artifactRef} type="button" aria-label={artifact.label} title={artifact.label} aria-expanded={artifact.open} onClick={artifact.toggle} className={`${iconBtn} aria-expanded:bg-soft aria-expanded:text-ink`}>
           <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4" /></svg>
         </button>
       )}
@@ -346,7 +346,12 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const [focus, setFocus] = useState<SealedArtifact>();
   const open = useCallback((a: SealedArtifact) => (setFocus(a), setExpanded(true), setTab('pane')), []);
   const toggle = useCallback(() => setExpanded((v) => !v), []);
-  const close = useCallback(() => setExpanded(false), []);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const close = useCallback(() => {
+    setExpanded(false);
+    // The close button unmounts with the pane, so land focus on the header toggle that stays.
+    toggleRef.current?.focus();
+  }, []);
   const id = useId();
   // Below lg the tabs show one column at a time, so each column is the tab panel its tab controls.
   const tabbed = !useDesktop();
@@ -369,7 +374,7 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const headerToggle: ArtifactToggle | undefined = !studio && shown && !tabbed
     ? { label: `${paneOpen ? 'Hide' : 'Show'} ${label}`, open: paneOpen, toggle }
     : undefined;
-  return { studio, label, paneOpen, tabbed, headerToggle, tab, setTab, open, close, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
+  return { studio, label, paneOpen, tabbed, headerToggle, toggleRef, tab, setTab, open, close, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
 }
 type Live = ReturnType<typeof usePane>;
 
@@ -441,7 +446,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const chat = chatClass(live);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} artifact={live.headerToggle} onDetails={details.show}>
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} artifact={live.headerToggle} artifactRef={live.toggleRef} onDetails={details.show}>
         <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}

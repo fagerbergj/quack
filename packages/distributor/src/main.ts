@@ -10,6 +10,7 @@ import { openNotifications } from './notifications.ts';
 import { pinnedAgentPath } from './process-driver.ts';
 import { credentialBroker } from './credentials.ts';
 import { sessionDriver } from './session-driver.ts';
+import { defaultServices } from './keyed-services.ts';
 import { crossSession, declaredApps, loadManifests } from '@quack/runtime/catalog';
 import { rubricFrom } from './rubrics.ts';
 import { appStream, appsGateway, mountApps } from './apps.ts';
@@ -34,7 +35,7 @@ const manifests = await loadManifests();
 
 // A process that exits, stopped or crashed, is the catalog's stopped; the session cannot report its own end.
 const stopped = (key: string) => void catalog.stopped(key).catch((err) => console.error(`catalog: ${key} stop not recorded:`, err.message));
-const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker, proxiedServices: manifests.flatMap((m) => m.proxiedServices ?? []), onExit: stopped });
+const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker, proxiedServices: defaultServices, onExit: stopped });
 // Before any session starts, so each log has one owner while its stream is seeded.
 await ready;
 const backfilled = await backfillCatalog(catalog, dataDir, priceOf(parseDeployment(deployment)));

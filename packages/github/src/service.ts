@@ -220,18 +220,20 @@ function reviewRequest(r: unknown) {
   return { event: r.event as string, body: r.body, requestId: r.requestId, comments: (r.comments ?? []) as Comment[], commitId: r.commitId as string | undefined, fallbackBody: r.fallbackBody as string | undefined };
 }
 
+// Whether a GitHub object was authored by this app's bot, case-insensitively.
+const isBot = (v: any, slug: string) => String(v?.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
+
 // The review a request already posted, found by the mark in its body: a retry after a lost answer or a crash posts nothing twice. Also hands back the PR's whole review list, so the caller need not refetch it.
 async function postedBefore(app: GithubApp, t: Target, slug: string, mark: string): Promise<{ repeat: any; earlier: any[] }> {
   const reviews = await allReviews(app, t.owner, t.repo, `/repos/${t.owner}/${t.repo}/pulls/${t.number}`, Infinity);
-  return { repeat: reviews.find((v) => String(v.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase() && String(v.body ?? '').includes(mark.trim())), earlier: reviews };
+  return { repeat: reviews.find((v) => isBot(v, slug) && String(v.body ?? '').includes(mark.trim())), earlier: reviews };
 }
 
 const MINIMIZE_OUTDATED = 'mutation($id: ID!) { minimizeComment(input: { subjectId: $id, classifier: OUTDATED }) { minimizedComment { isMinimized } } }';
 
 // The bot's own earlier reviews are outdated once a new one posts; best-effort, since the new review is what counts.
 async function minimizeOutdated(app: GithubApp, t: Target, slug: string, earlier: any[], id: unknown) {
-  const mine = (v: any) => String(v.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
-  const items = earlier.filter((v) => mine(v) && typeof v.node_id === 'string' && v.node_id && v.id !== id && String(v.body ?? '').trim());
+  const items = earlier.filter((v) => isBot(v, slug) && typeof v.node_id === 'string' && v.node_id && v.id !== id && String(v.body ?? '').trim());
   await Promise.all(items.map((v) => app.asInstallation(t.owner, t.repo, 'POST', '/graphql', { query: MINIMIZE_OUTDATED, variables: { id: v.node_id } })
     .then(({ json }) => { if (json?.errors) console.warn(`could not minimize review ${v.id}: ${json.errors[0]?.message ?? 'unknown error'}`); })
     .catch((err) => console.warn(`could not minimize review ${v.id}:`, err))));
@@ -249,7 +251,7 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   const { repeat, earlier } = await postedBefore(app, t, slug, mark);
   if (repeat) return (count(), send(res, 200, { id: repeat.id, url: repeat.html_url }));
   // GitHub refuses an approve or request-changes from a pull request's author, and the implementer opens pull requests as this app.
-  const own = r.event !== 'COMMENT' && String((await app.asInstallation(t.owner, t.repo, 'GET', `/repos/${t.owner}/${t.repo}/pulls/${t.number}`)).json?.user?.login).toLowerCase() === `${slug}[bot]`.toLowerCase();
+  const own = r.event !== 'COMMENT' && isBot((await app.asInstallation(t.owner, t.repo, 'GET', `/repos/${t.owner}/${t.repo}/pulls/${t.number}`)).json, slug);
   const lead = own ? `**Verdict: ${r.event === 'APPROVE' ? 'approve' : 'request changes'}.** GitHub does not take this verdict from a pull request's own author, so it is posted as a comment.\n\n` : '';
   const post = (body: string, inline: Comment[]) => app.asInstallation(t.owner, t.repo, 'POST', path, {
     event: own ? 'COMMENT' : r.event, body: stripMentions(lead + body, slug) + mark, ...(r.commitId ? { commit_id: r.commitId } : {}),

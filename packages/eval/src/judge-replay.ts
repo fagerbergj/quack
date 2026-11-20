@@ -17,7 +17,7 @@ import { asJudged, readSession } from './record.ts';
 
 /** A recorded artifact to judge: from a session directory, or with its content and inputs given inline; `units` keeps only those items. */
 export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; inputs?: Inputs };
-/** An arm judges with its adapters' rubrics and evidence, its judge engine (this tree's when unset) and, when it has one, a per-unit decision model before the judge model. */
+/** An arm judges with its adapters' declarations and inputs, its judge engine (this tree's when unset) and, when it has one, a per-unit decision model before the judge model. */
 export type Arm = { label: string; adapters: EvalAdapter[]; rejudge?: typeof rejudge; decisionModel?: DecisionModelRef; /** Item reuse on: each repeat judges a recorded session's cases in version order against one store of their own. */ reuse?: boolean };
 
 /** A tar of `packages/` as it stood at ref in the repo at `top`; a ref from before the repo-root layout keeps it under v1/. */
@@ -99,7 +99,7 @@ async function prepare(arm: Arm, c: Case): Promise<Prepared | Declined> {
     const rubric = watch(a.judge!.rubric as Rubric, c.checks);
     return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, reuse: arm.reuse, c, content, rubric, judged: { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
   }
-  return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
+  return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no declaration serves ${c.kind} with these inputs` };
 }
 
 async function judgedBy(a: EvalAdapter, c: Case, record: RecordedSession, content: string): Promise<Judged> {

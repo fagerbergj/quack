@@ -1,5 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  // A symbol that is used in its own file counts as exported on purpose, so knip will not flag it as an unused export even when no other module imports it.
   "ignoreExportsUsedInFile": true,
   "workspaces": {
     ".": {
