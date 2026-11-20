@@ -8,6 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession, readExport } from '@quack/session';
+import { subagentExtension } from '@quack/subagent';
 import { judged, manifest, type JudgeConfig, type Judged } from '../src/index.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'quack-judge-ext-'));
@@ -128,6 +129,43 @@ test('a run may not finish before its kind is sealed and checked', async () => {
   const r = await run('yield', { maxRevisions: 1 }, [done, write('ok'), submit, done]);
   assert.match(r.seen[1], /Write artifacts\/note\.md and call submit_note before you finish\./);
   assert.deepEqual(r.versions.map(passed), [true]);
+});
+
+test('a subagent child conversation can yield without sealing while the root conversation is still gated', async () => {
+  const seen: string[] = [];
+  let childCalls = 0;
+  let rootStep = 0;
+  const rootSteps = [
+    fauxAssistantMessage(fauxToolCall('subagent', { task: 'gather facts' }), { stopReason: 'toolUse' }),
+    done,
+    write('ok'),
+    submit,
+    done,
+  ];
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses(Array.from({ length: 12 }, () => (c: { messages: Array<{ role: string; content: unknown }> }) => {
+    const all = JSON.stringify(c.messages);
+    const last = JSON.stringify(c.messages.at(-1));
+    seen.push(last);
+    if (all.includes('gather facts') && !all.includes('Write and submit the note.')) {
+      childCalls++;
+      return fauxAssistantMessage('gathered facts');
+    }
+    return rootSteps[rootStep++] ?? done;
+  }));
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const judge = await manifest.session!({ maxRevisions: 1 }, {}, []);
+  judged(note.kind, how());
+  const session = await openSession({ dir: join(dir, 'subagent-yield'), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...judge, artifactsExtension([note]), subagentExtension()] } });
+  const result = await session.submit('Write and submit the note.', 'subagent-yield-1', true);
+  const versions = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))?.kinds[note.kind]?.versions ?? [];
+  await session.close();
+  assert.equal(childCalls, 1, 'subagent yields on its first answer without being trapped by yieldHook');
+  assert.ok(seen.some((m) => m.includes('Write artifacts/note.md and call submit_note before you finish.')), 'root conversation is still gated');
+  assert.equal(result.status === 'done' && result.answer, 'Done.');
+  assert.deepEqual(versions.map(passed), [true]);
 });
 
 test('a later run may not finish on a passed version written against an earlier basis', async () => {

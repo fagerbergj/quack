@@ -116,7 +116,7 @@ test('the fold is recomputed from reused answers: a check they already decide es
   const { api, store, seen } = sessionApi((row) => (row === 'b' ? 0.05 : row === 'd' ? 0.5 : 0.95), () => said('yes'));
   await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'c') }), 1);
   const v2 = await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'd') }), 2);
-  assert.deepEqual([seen.clef, seen.judge], [['a', 'b', 'c', 'd'], []], 'the reused failure of b decides the all fold, so unsure d is not escalated');
+  assert.deepEqual([seen.clef, seen.judge], [['a', 'b', 'c'], []], 'the reused failure of b decides the all fold, so d asks neither model');
   const k = v2.checks[0];
   assert.deepEqual([k.met, k.notes, k.undecidedItems, k.reused, k.resolvers], [false, ['rows b: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)'], ['rows d'], { 'rows a': 1, 'rows b': 1 }, {}]);
   assert.equal(Object.keys(store.answers).length, 3, 'd, skipped, is not stored');

@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord/context';
-import { defineExtension, GenerationTask, hook, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { defineExtension, GenerationTask, hook, ROOT_CONVERSATION_ID, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { artifactKind, Artifacts, gate, unsubmitted, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
 import { check, report, type JudgeOptions, type Verdict } from './index.ts';
@@ -54,6 +54,8 @@ async function overtaken(api: ToolExecutionApi, declared: ArtifactKind, last: Se
 // unless the kind's refuse says there is nothing to submit.
 const yieldHook = () => hook(GenerationTask, {
   async onYield(_answer, hookApi, ctx) {
+    // Only the root conversation delivers artifacts; owned child conversations such as subagents yield freely.
+    if (hookApi.conversationId !== ROOT_CONVERSATION_ID) return undefined;
     // refuse and basis read committed state only, which the hook's api also serves.
     const api = hookApi as unknown as ToolExecutionApi;
     const doc = await api.snapshot(Artifacts, api.conversationId, ctx);

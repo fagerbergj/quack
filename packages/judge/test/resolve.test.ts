@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/conte
 import type { Context } from '@earendil-works/chord/context';
 import { PASS_ONLY } from '../src/declaration.ts';
 import { limiter } from '../src/limit.ts';
-import { answerItems, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, type DecisionModelRef } from '../src/resolve.ts';
+import { answerItems, batchKey, decisionModelTokens, MAX_BATCH_QUESTIONS, pack, type DecisionModelRef } from '../src/resolve.ts';
 
 const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
 const unit = { id: 'f1', state: { finding: '- nit: rename' } };
@@ -98,12 +98,14 @@ test('an abort propagates instead of escalating', async () => {
 
 test('units that share context pack in order up to the cap; one without it goes by itself, and those alone over the cap go together', () => {
   const shared = { guide: 'g'.repeat(300) };
-  const item = (id: string, text: string, s: Record<string, string> | undefined = shared) => ({ unit: { id, state: { text }, ...(s ? { shared: s } : {}) }, checks });
-  const items = [item('a', 'x'), item('b', 'y'), item('lone', 'z', undefined), item('c', 'w'.repeat(400)), item('huge', 'h'.repeat(3000))];
+  const item = (id: string, text: string, s: Record<string, string> | null = shared) => ({ unit: { id, state: { text }, ...(s ? { shared: s } : {}) }, checks });
+  const items = [item('a', 'x'), item('b', 'y'), item('lone', 'z', null), item('c', 'w'.repeat(400)), item('huge', 'h'.repeat(3000))];
   const one = decisionModelTokens(items[0].unit, checks);
   const ids = (cap: number | undefined) => pack(items, cap).map((g) => g.map((it) => it.unit.id));
   assert.deepEqual(ids(Math.ceil(one * 1.5)), [['a', 'b'], ['lone'], ['c', 'huge']], 'c and huge each exceed the cap, so they escalate as one');
-  assert.deepEqual(ids(undefined), [['a'], ['b'], ['lone'], ['c'], ['huge']], 'without a decision model nothing packs');
+  assert.deepEqual(ids(undefined), [['a', 'b', 'c', 'huge'], ['lone']], 'without a decision model, shared-context units still pack to escalate together');
+  const noClef = items.map((it) => ({ ...it, checks: it.checks.map((c) => ({ ...c, decisionModel: false as const })) }));
+  assert.deepEqual(pack(noClef, Math.ceil(one * 1.5)).map((g) => g.map((it) => it.unit.id)), [['a', 'b', 'c', 'huge'], ['lone']], 'decisionModel-false items are not split by the decision model cap');
   assert.ok(decisionModelTokens([items[0].unit, items[1].unit], checks) < one * 1.5, 'the shared context is counted once');
 });
 
@@ -355,4 +357,46 @@ test('a limiter runs at most n tasks at once and starts the next as one ends', a
   }
   await all;
   assert.equal(peak, 2);
+});
+
+test('a transient askBatch error is not memoized: a retry calls the judge model again', async () => {
+  const shared = { diff: 'd' };
+  const units = ['p0', 'p1'].map((id) => ({ id, shared, state: { promise: id } }));
+  const api = callApi(async () => ({ stopReason: 'stop', answers: {} }));
+  let batchCalls = 0;
+  let fail = true;
+  Object.assign(api, { now: () => 0, agent: async () => ({}) });
+  Object.assign(api.models, {
+    getModel: (provider: string, id: string) => ({ provider, id }),
+    completeSimple: async (_m: unknown, r: { messages: Array<{ content: string }> }) => {
+      const alone = r.messages[0].content.startsWith('Decision:');
+      if (!alone) batchCalls++;
+      if (fail) return { stopReason: 'error', errorMessage: '503 busy', content: [] };
+      return { stopReason: 'stop', content: [{ type: 'text', text: '{"q0": {"choice": "yes", "confidence": 0.9, "reason": "ok"}, "q1": {"choice": "yes", "confidence": 0.9, "reason": "ok"}}' }] };
+    },
+  });
+  const retry = { sleep: async () => {}, random: () => 0, log: () => {} };
+  const settings = { judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1), retry };
+  const pending = units.map((unit, i) => ({ i, unit, check: checks[0] }));
+  const key = batchKey('m', pending);
+
+  const first = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+  assert.equal(api.memos.has(key), false, 'a transient outage is not memoized');
+  assert.ok(first.every((a) => a.answer!.met === null));
+
+  fail = false;
+  const second = await answerItems(api as never, settings, units.map((u) => ({ unit: u, checks })), BACKGROUND_CONTEXT);
+  assert.ok(batchCalls > 1, 'the retry calls the judge model again in a batch');
+  assert.equal(api.memos.has(key), true);
+  assert.deepEqual(second.map((a) => [a.unit.id, a.answer!.met, a.answer!.resolver]), [['p0', true, 'j'], ['p1', true, 'j']]);
+});
+
+test('answerItems skips the decision model when need() is already false for every item in the group', async () => {
+  const api = callApi(async () => assert.fail('classify must not be called when every check is already decided'));
+  const seen: unknown[] = [];
+  const answered = await answerItems(api as never, { ref, memo: 'm', clef: limiter(1), escalations: limiter(1) }, [{ unit, checks }], BACKGROUND_CONTEXT, async (a) => void seen.push(a), () => false);
+  assert.equal(api.calls(), 0);
+  assert.equal(api.memos.has('m:f1:classifier'), false);
+  assert.deepEqual(answered, [{ unit, check: checks[0], answer: undefined }]);
+  assert.deepEqual(seen, answered);
 });
