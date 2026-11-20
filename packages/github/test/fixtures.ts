@@ -4,6 +4,9 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { Approvals, resolveApproval, type Approval } from '@quack/sdk';
+import type { openSession } from '@quack/session';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -44,6 +47,22 @@ export async function listen(server: Server) {
   servers.push(server.listen(0));
   await new Promise((r) => server.once('listening', r));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+// Waits for the first open approval via document watch, then answers it as an operator would.
+export async function answerApproval(session: Awaited<ReturnType<typeof openSession>>, decision: 'approve' | 'reject') {
+  await session.root.commit(async (tx) => { await tx.doc(Approvals, session.root.id); }, BACKGROUND_CONTEXT);
+  const watch = (await session.harness.watchDoc(Approvals, session.root.id, BACKGROUND_CONTEXT))!;
+  const pending = await new Promise<Approval & { id: string }>((resolve) => {
+    const find = () => {
+      const hit = Object.entries(watch.value?.items ?? {}).find(([, a]) => !a.verdict && !a.withdrawn);
+      return hit ? { id: hit[0], ...hit[1] } : undefined;
+    };
+    if (find()) return resolve(find()!);
+    watch.start(async () => { if (find()) resolve(find()!); });
+  }).finally(() => watch.stop());
+  await resolveApproval(session.root, pending.id, { decision, by: { kind: 'person', name: 'operator' }, reason: decision === 'reject' ? 'not now' : undefined }, BACKGROUND_CONTEXT);
+  return pending;
 }
 
 /** The service half's session-facing API, faked: PR metadata, credentials, and posted reviews recorded. */

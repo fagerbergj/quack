@@ -6,10 +6,10 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { Artifacts, pendingApprovals, resolveApproval } from '@quack/sdk';
+import { Artifacts, pendingApprovals } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { githubSessionExtensions, triggerFor } from '../src/index.ts';
-import { cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
+import { answerApproval, cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
 
@@ -74,19 +74,6 @@ async function commit(repo: string) {
   await writeFile(join(repo, '..', 'artifacts', 'pr.md'), PR_MD);
 }
 
-async function answer(session: Awaited<ReturnType<typeof openSession>>, decision: 'approve' | 'reject') {
-  const deadline = Date.now() + 15_000;
-  for (;;) {
-    const [pending] = await pendingApprovals(session.root, BACKGROUND_CONTEXT);
-    if (pending) {
-      await resolveApproval(session.root, pending.id, { decision, by: { kind: 'person', name: 'operator' }, reason: decision === 'reject' ? 'not now' : undefined }, BACKGROUND_CONTEXT);
-      return pending;
-    }
-    if (Date.now() > deadline) throw new Error('no approval was requested');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 test('checkout_task for an issue cuts quack/<n>-<slug> from the default branch and returns the issue and conventions', async () => {
   const { session, seen } = await work(({ seen }) => [checkout(), record(seen, () => fauxAssistantMessage('ok'))]);
   await session.submit('Implement acme/widgets#12', 'im-1', true);
@@ -102,7 +89,7 @@ test('checkout_task for an issue cuts quack/<n>-<slug> from the default branch a
 test('an approved deliver pushes the branch and opens a pull request that closes the issue', async () => {
   const { session, service, bare, seen } = await work(({ repo, seen }) => [checkout(), async () => (await commit(repo()), call('deliver')), record(seen, () => fauxAssistantMessage('Delivered.'))]);
   const run = session.submit('Implement acme/widgets#12', 'im-1', true);
-  const pending = await answer(session, 'approve');
+  const pending = await answerApproval(session, 'approve');
   assert.equal((pending.args as Record<string, string>).summary, 'Open a PR from quack/12-add-cache-ttl into main for #12: feat(app): bump a to 3');
   assert.equal((await run).status, 'done');
   assert.equal(sh(bare, 'rev-parse', `refs/heads/${BRANCH}`), sh(join(session.workspace, 'repo'), 'rev-parse', 'HEAD'));
@@ -116,7 +103,7 @@ test('an approved deliver pushes the branch and opens a pull request that closes
 test('a rejected deliver pushes and opens nothing', async () => {
   const { session, service, bare, seen } = await work(({ repo, seen }) => [checkout(), async () => (await commit(repo()), call('deliver')), record(seen, () => fauxAssistantMessage('Stopped.'))]);
   const run = session.submit('Implement acme/widgets#12', 'im-1', true);
-  await answer(session, 'reject');
+  await answerApproval(session, 'reject');
   await run;
   assert.match(seen[0], /Rejected by operator: not now/);
   assert.equal(sh(bare, 'branch', '--list', BRANCH), '');

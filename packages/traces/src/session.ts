@@ -4,7 +4,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
 import { onGeneration } from '@quack/sdk';
 
-export type TracesConfig = { baseUrl?: string; publicKey?: string; secretKey?: string; sessionKey?: string; agentName?: string; agentVersion?: string };
+export type TracesConfig = { baseUrl?: string; publicKey?: string; secretKey?: string; sessionKey?: string; agentName?: string; agentVersion?: string; now?: () => number };
 
 type Span = Record<string, unknown>;
 
@@ -104,7 +104,7 @@ export function generationSpan(config: TracesConfig, traceKey: string, input: un
     name: 'generation',
     kind: 1,
     startTimeUnixNano: nanos(start),
-    endTimeUnixNano: nanos(Math.max(Date.now(), start)),
+    endTimeUnixNano: nanos(Math.max((config.now ?? Date.now)(), start)),
     attributes,
     status: failed ? { code: 2, message: message.errorMessage } : { code: 1 },
   };
@@ -129,6 +129,7 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
   const sender = new Sender(`${config.baseUrl.replace(/\/+$/, '')}/api/public/otel/v1/traces`, `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`);
   const traceKey = config.sessionKey ?? crypto.randomUUID();
   const pending = new Map<number, { input: unknown; start: number }>();
+  const now = config.now ?? Date.now;
   // Workflow model steps call completeSimple directly, so they reach us through the sdk hook instead of GenerationTask.
   onGeneration(({ systemPrompt, messages, start, message }) => {
     const input = systemPrompt ? [{ role: 'system', content: systemPrompt }, ...messages] : messages;
@@ -138,7 +139,7 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
     name: 'traces',
     hooks: [hook(GenerationTask, {
       beforeRequest(request, api) {
-        remember(pending, api.taskId, { input: request.messages, start: Date.now() });
+        remember(pending, api.taskId, { input: request.messages, start: now() });
         return undefined;
       },
       afterResponse(message, api) {

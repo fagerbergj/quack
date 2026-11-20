@@ -6,7 +6,7 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { obj, str } from '@earendil-works/pi-schema';
-import { pendingApprovals, resolveApproval, type Action } from '@quack/sdk';
+import { Approvals, pendingApprovals, resolveApproval, type Action, type Approval } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { homeSessionExtensions } from '../src/index.ts';
 
@@ -40,14 +40,18 @@ async function homeSessionWith(doFetch: typeof fetch, ...responses: Responses) {
 
 const callStart = () => fauxAssistantMessage(fauxToolCall('start', { action: 'ping_thing', params: { thing: 'x' } }), { stopReason: 'toolUse' });
 
-// Waits for the run to stop on the approval; the deadline only matters when the code is broken.
+const openApprovals = (doc: { items: Record<string, Approval> } | null) =>
+  Object.entries(doc?.items ?? {}).filter(([, a]) => !a.verdict && !a.withdrawn).map(([id, a]) => ({ id, ...a }));
+
+// Waits for `count` open approvals; touching the document first lets it be watched before anything has asked.
 async function pendingAll(session: Awaited<ReturnType<typeof homeSession>>, count: number) {
-  for (let i = 0; i < 1500; i++) {
-    const items = await pendingApprovals(session.root, BACKGROUND_CONTEXT);
-    if (items.length >= count) return items;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  throw new Error('no approval was requested');
+  await session.root.commit(async (tx) => { await tx.doc(Approvals, session.root.id); }, BACKGROUND_CONTEXT);
+  const watch = (await session.harness.watchDoc(Approvals, session.root.id, BACKGROUND_CONTEXT))!;
+  return new Promise<Array<Approval & { id: string }>>((resolve) => {
+    const hit = () => { const items = openApprovals(watch.value); return items.length >= count ? items : undefined; };
+    if (hit()) return resolve(hit()!);
+    watch.start(async () => { if (hit()) resolve(hit()!); });
+  }).finally(() => watch.stop());
 }
 const pending = async (session: Awaited<ReturnType<typeof homeSession>>) => (await pendingAll(session, 1))[0]!;
 

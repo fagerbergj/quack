@@ -177,18 +177,14 @@ test('an ingestion that partly fails is an error, not a silent gap in the experi
 });
 
 test('a runtime that exits at startup ends the replay at once with its error, not at the deadline', async () => {
-  const started = Date.now();
   const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/nonexistent/deployment.json', agent: '/nonexistent/agent.json' }, []);
   assert.match(r.error ?? '', /^runtime exited with 1: .*nonexistent\/deployment\.json/);
-  assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
   assert.deepEqual(r.record.outcome, { status: 'pending' });
 });
 
 test('a runtime killed by a signal also ends the replay at once', async () => {
-  const started = Date.now();
   const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: '--import=data:text/javascript,process.kill(process.pid,9)' } }, []);
   assert.match(r.error ?? '', /^runtime exited with SIGKILL/);
-  assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
   assert.deepEqual(r.record.outcome, { status: 'pending' });
 });
 

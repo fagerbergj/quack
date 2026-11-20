@@ -10,7 +10,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { Approvals, gated, withdrawApprovals } from '@quack/sdk';
+import { Approvals, gated, withdrawApprovals, type Approval } from '@quack/sdk';
 import { childPort, createSessionServer, currentEvents, openSession, PRINCIPAL_HEADER, principalHeader } from '../src/index.ts';
 import { nextFrame } from './ws-helpers.ts';
 
@@ -64,15 +64,22 @@ async function serve(session: Awaited<ReturnType<typeof openSession>>) {
   return { json, base, stop: () => new Promise((r) => server.close(r)) };
 }
 
-// Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
-async function until<T>(probe: () => Promise<T | undefined>, ms = 15_000): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error('timed out');
-    await new Promise((r) => setTimeout(r, 10));
-  }
+const ctx = BACKGROUND_CONTEXT;
+type Open = Awaited<ReturnType<typeof openSession>>;
+const rowOf = async (s: Open, id: string) => (await s.harness.snapshot(Approvals, s.root.id, ctx))!.items[id]!;
+
+// Waits for the first open approval not in `seen`; touching the document first lets it be watched before anything has asked.
+async function firstAsk(s: Open, seen: string[] = []): Promise<Approval & { id: string }> {
+  await s.root.commit(async (tx) => { await tx.doc(Approvals, s.root.id); }, ctx);
+  const watch = (await s.harness.watchDoc(Approvals, s.root.id, ctx))!;
+  return new Promise<Approval & { id: string }>((resolve) => {
+    const find = () => {
+      const hit = Object.entries(watch.value?.items ?? {}).find(([id, a]) => !a.verdict && !a.withdrawn && !seen.includes(id));
+      return hit ? { id: hit[0], ...hit[1] } : undefined;
+    };
+    if (find()) return resolve(find()!);
+    watch.start(async () => { if (find()) resolve(find()!); });
+  }).finally(() => watch.stop());
 }
 
 test('a gated call waits across a restart, then runs once when approved', async () => {
@@ -82,26 +89,23 @@ test('a gated call waits across a restart, then runs once when approved', async 
 
   const first = await openSession({ dir, ...agentWith(callPost()) });
   await first.submit('Approve this PR', 'run-1');
-  const pending = await until(async () => {
-    const list = await serve(first).then(async (h) => { const r = await h.json('/approvals'); await h.stop(); return r.body.approvals; });
-    return list.length ? list : undefined;
-  });
-  assert.equal(pending[0].tool, 'post_comment');
-  assert.deepEqual(pending[0].args, { body: 'LGTM' });
+  const pending = await firstAsk(first);
+  assert.equal(pending.tool, 'post_comment');
+  assert.deepEqual(pending.args, { body: 'LGTM' });
   assert.deepEqual(posted, []);
   await first.close();
 
   const second = await openSession({ dir, ...agentWith(fauxAssistantMessage('Posted the review.')) });
   const http = await serve(second);
   const kept = (await http.json('/approvals')).body.approvals;
-  assert.deepEqual(kept.map((a: { id: string }) => a.id), [pending[0].id], 'the rerun reached the gate with the same arguments, so it keeps its approval');
-  assert.equal((await second.harness.snapshot(Approvals, second.root.id, BACKGROUND_CONTEXT))!.items[pending[0].id]!.withdrawn, undefined);
+  assert.deepEqual(kept.map((a: { id: string }) => a.id), [pending.id], 'the rerun reached the gate with the same arguments, so it keeps its approval');
+  assert.equal((await second.harness.snapshot(Approvals, second.root.id, BACKGROUND_CONTEXT))!.items[pending.id]!.withdrawn, undefined);
 
-  const bad = await http.json(`/approvals/${pending[0].id}`, { decision: 'maybe', by: 'jf' });
+  const bad = await http.json(`/approvals/${pending.id}`, { decision: 'maybe', by: 'jf' });
   assert.equal(bad.status, 400);
-  const ok = await http.json(`/approvals/${pending[0].id}`, { decision: 'approve', by: 'jf' });
+  const ok = await http.json(`/approvals/${pending.id}`, { decision: 'approve', by: 'jf' });
   assert.equal(ok.status, 200);
-  const again = await http.json(`/approvals/${pending[0].id}`, { decision: 'approve', by: 'jf' });
+  const again = await http.json(`/approvals/${pending.id}`, { decision: 'approve', by: 'jf' });
   assert.equal(again.status, 409);
 
   const done = await second.submit('Approve this PR', 'run-1', true);
@@ -127,7 +131,7 @@ test(`a rejection reaches the model and the tool never runs; ${label} the decide
   });
   await session.submit('Approve this PR', 'run-2');
   const http = await serve(session);
-  const [item] = await until(async () => { const l = (await http.json('/approvals')).body.approvals; return l.length ? l : undefined; });
+  const item = await firstAsk(session);
   await http.json(`/approvals/${item.id}`, { decision: 'reject', reason: 'finding 2 is wrong', by: 'evil' }, { ...BEARER, [PRINCIPAL_HEADER]: principalHeader(who), 'x-authentik-username': 'evil' });
 
   const done = await session.submit('Approve this PR', 'run-2', true);
@@ -148,17 +152,18 @@ test('an approved action killed mid-execution is reported on restart, never re-r
   const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/gated-session.ts', import.meta.url))], { env: { ...process.env, QUACK_SESSION_DIR: dir, SIDE_EFFECTS: effects }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
   const exited = new Promise((r) => child.once('exit', r));
   const effect = new Promise((r) => child.on('message', (m) => (m as { effect?: boolean })?.effect && r(true)));
+  let ws: WebSocket | undefined;
   try {
     // A never-firing timer: a child that dies first rejects, and a hang is the runner's timeout.
     const base = `http://127.0.0.1:${await childPort(child, 'session', 0, () => () => {})}`;
-    const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+    ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
     const shown = nextFrame(ws, (f) => f.type === 'standing' && f.approvals.length === 1);
     await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'Approve this PR', requestId: 'run-3' }) });
     const [item] = (await shown).approvals;
-    ws.close();
     await fetch(`${base}/approvals/${item.id}`, { method: 'POST', body: JSON.stringify({ decision: 'approve', by: 'jf' }) });
     await effect;
   } finally {
+    ws?.close();
     child.kill('SIGKILL');
     await exited;
   }
@@ -182,7 +187,7 @@ test('the session server answers only its launch token, and a decision only with
   for (const headers of [{}, { authorization: 'Bearer wrong' }, { 'x-authentik-username': 'jason' }] as Array<Record<string, string>>) assert.equal((await http.json('/ping', undefined, headers)).status, 401);
   const ws = new WebSocket(`${http.base.replace('http', 'ws')}/ws`);
   assert.equal(await new Promise((r) => { ws.onopen = () => r('open'); ws.onerror = () => r('refused'); }), 'refused');
-  const [item] = await until(async () => { const l = (await http.json('/approvals')).body.approvals; return l.length ? l : undefined; });
+  const item = await firstAsk(session);
   for (const headers of [{ 'x-authentik-username': 'jason', [PRINCIPAL_HEADER]: principalHeader({ kind: 'tailnet' }) }, BEARER, { ...BEARER, [PRINCIPAL_HEADER]: 'forged' }] as Array<Record<string, string>>) {
     assert.notEqual((await http.json(`/approvals/${item.id}`, { decision: 'approve' }, headers)).status, 200);
   }
@@ -190,12 +195,6 @@ test('the session server answers only its launch token, and a decision only with
   await http.stop();
   await session.close();
 });
-
-const ctx = BACKGROUND_CONTEXT;
-type Open = Awaited<ReturnType<typeof openSession>>;
-const rowOf = async (s: Open, id: string) => (await s.harness.snapshot(Approvals, s.root.id, ctx))!.items[id]!;
-const approvalsOf = async (s: Open) => (await serve(s).then(async (h) => { const r = await h.json('/approvals'); await h.stop(); return r.body.approvals; })) as Array<{ id: string; args: unknown }>;
-const firstAsk = (s: Open, seen: string[] = []) => until(async () => (await approvalsOf(s)).find((a) => !seen.includes(a.id)));
 
 // The incident in #2374: the session restarts under code that refuses the call before its gate, so nothing will ever act on the ask.
 test('a rerun that fails before its gate withdraws the approval, and a late answer is refused with why', async () => {
