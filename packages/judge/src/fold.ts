@@ -12,15 +12,14 @@ export function fold(ag: AggregateDecl, items: Tri[]): Tri {
   const u = items.filter((v) => v === undefined).length;
   if (ag.name === 'all') return bounds(t, t + u, n);
   if (ag.name === 'any') return bounds(t, t + u, 1);
-  if (ag.name === 'atLeast') return bounds(t, t + u, ag.k ?? 1);
   return n ? bounds(t / n, (t + u) / n, ag.min ?? 1) : true;
 }
 
 /** Whether the fold reports a share of items (of groups, for a grouped fold) rather than a decided boolean. */
-export const fractional = (ag: AggregateDecl) => ag.name === 'share' || ag.name === 'atLeast' || (ag.name === 'grouped' && (ag.outer === 'share' || ag.outer === 'atLeast'));
+export const fractional = (ag: AggregateDecl) => ag.name === 'share' || (ag.name === 'grouped' && ag.outer === 'share');
 
 /** A grouped fold's outer rule, as the flat fold it runs over the groups' results. */
-export const outerOf = (ag: AggregateDecl): AggregateDecl => ({ name: ag.outer!, k: ag.k, min: ag.min });
+export const outerOf = (ag: AggregateDecl): AggregateDecl => ({ name: ag.outer!, min: ag.min });
 
 /** Each group's inner fold over its items' answers, by group key in the order the groups first appear. */
 export function groupResults(ag: AggregateDecl, keys: string[], items: Tri[]): Map<string, Tri> {

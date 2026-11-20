@@ -8,15 +8,15 @@ import type { MutableModels } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import type { Context } from '@earendil-works/chord/context';
 import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { rejudge, type DecisionModelRef, type Declaration, type Evidence, type Inputs, type JudgeOptions, type ModelRef, type Rubric } from '@quack/judge';
+import { rejudge, type DecisionModelRef, type Declaration, type Inputs, type JudgeOptions, type ModelRef, type Rubric } from '@quack/judge';
 import { extensionList, loadManifests } from '@quack/runtime/catalog';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { adaptersOf } from './adapters.ts';
 import { driveTool } from './driver.ts';
 import { asJudged, readSession } from './record.ts';
 
-/** A recorded artifact to judge: from a session directory, or with its content and evidence (or a declared rubric's inputs) given inline, for a kind whose adapter cannot rebuild them; `units` keeps only those evidence units. */
-export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; evidence?: Evidence; inputs?: Inputs };
+/** A recorded artifact to judge: from a session directory, or with its content and inputs given inline; `units` keeps only those items. */
+export type Case = { case: string; kind: string; checks?: string[]; units?: string[]; session?: string; version?: number; content?: string; inputs?: Inputs };
 /** An arm judges with its adapters' rubrics and evidence, its judge engine (this tree's when unset) and, when it has one, a per-unit decision model before the judge model. */
 export type Arm = { label: string; adapters: EvalAdapter[]; rejudge?: typeof rejudge; decisionModel?: DecisionModelRef; /** Item reuse on: each repeat judges a recorded session's cases in version order against one store of their own. */ reuse?: boolean };
 
@@ -69,8 +69,8 @@ export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency:
 
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
 const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
-/** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
-type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
+/** What a job is judged on: the rubric's declaration and inputs. */
+type Judged = { declaration: Declaration; inputs: Inputs };
 type Prepared = Omit<Job, 'rep' | 'pos'>;
 type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; reuse?: boolean; rep: number; pos: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
@@ -97,18 +97,14 @@ async function prepare(arm: Arm, c: Case): Promise<Prepared | Declined> {
     const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
     if (!judged) continue;
     const rubric = watch(a.judge!.rubric as Rubric, c.checks);
-    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, reuse: arm.reuse, c, content, rubric, judged: 'evidence' in judged ? judged : { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
+    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, reuse: arm.reuse, c, content, rubric, judged: { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no adapter judges ${c.kind} with this evidence` };
 }
 
-async function judgedBy(a: EvalAdapter, c: Case, record: RecordedSession, content: string): Promise<Judged | undefined> {
+async function judgedBy(a: EvalAdapter, c: Case, record: RecordedSession, content: string): Promise<Judged> {
   const j = a.judge!;
-  if (j.declaration) return { declaration: j.declaration as Declaration, inputs: c.inputs ?? (await j.inputs!(record, content)) };
-  const evidence = (c.evidence ?? (await j.evidence!(record, content))) as Evidence | undefined;
-  // One finding of a 50-finding report is a case of its own without judging the other 49 every repeat.
-  const units = c.units;
-  return evidence ? { evidence: units ? Object.fromEntries(Object.entries(evidence).map(([scope, us]) => [scope, us.filter((u) => units.includes(u.id))])) : evidence } : undefined;
+  return { declaration: j.declaration as Declaration, inputs: c.inputs ?? (await j.inputs(record, content)) };
 }
 
 /** The declaration cut to the watched rubric's checks, as the rubric is; `units` (an item's id, or its unit's "scope id") keeps only those items of their scopes. */
@@ -142,9 +138,7 @@ function counted(api: ToolExecutionApi): { api: ToolExecutionApi; requests: Reco
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: j.c.version ?? 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const base = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations, ...(j.reuse && { reuse: true }) };
-  const judged = j.judged;
-  const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
+  const opts: JudgeOptions = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations, ...(j.reuse && { reuse: true }), declaration: j.judged.declaration, inputs: async () => j.judged.inputs };
   const { api: on, requests } = counted(api);
   const t = Date.now();
   const v = await j.rejudge(on, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);

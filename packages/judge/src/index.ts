@@ -4,22 +4,26 @@ import { Artifacts, attachVerdict, type SealedArtifact } from '@quack/sdk';
 import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
-import { answerItems, modelSplit, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
+import { answerItems, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
 import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
-import { feedback, score, unitsFor, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
+import { feedback, score, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
 export * from './rubric.ts';
-export { buildEvidence, PASS_ONLY, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type SplitExpect, type Where } from './declaration.ts';
+export { buildEvidence, PASS_ONLY, type AggregateDecl, type Chunk, type CheckDecl, type Declaration, type Inputs, type Question, type Scope, type SelectorDecl, type SplitDecl, type Where } from './declaration.ts';
 export { registerSelector, registerSplitter } from './library.ts';
 export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './resolve.ts';
 export { limiter } from './limit.ts';
 export { judged, type JudgeConfig, type Judged } from './extension.ts';
 export { manifest } from './manifest.ts';
 
-type Common = {
+export type JudgeOptions = {
   /** The artifact kind judged, by name. */
   kind: string;
   rubric: Rubric;
+  /** The named texts the declaration reads, gathered per sealed version. */
+  inputs: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Inputs>;
+  /** How this artifact is judged: the scopes, and a question and fold per model check, keyed by rubric check id. */
+  declaration: Declaration;
   /** Revise-and-recheck rounds before a failing version may go out with its failures marked: a round judges at most maxRevisions + 1 versions. */
   maxRevisions: number;
   /** A decision model asked first; uncertain items, and a unit that alone is over its input cap, escalate to the judge model. */
@@ -32,19 +36,6 @@ type Common = {
   reuse?: boolean;
 };
 
-type Declared = {
-  /** The named texts the declaration reads, gathered per sealed version. */
-  inputs: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Inputs>;
-  /** How this artifact is judged: the scopes, and a question and fold per model check, keyed by rubric check id. */
-  declaration: Declaration;
-  evidence?: never;
-};
-
-// shortcut: an undeclared rubric builds its own evidence and asks Check.question per unit; drop once github, research and sleeper declare.
-type Legacy = { evidence: (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context) => Promise<Evidence>; inputs?: never; declaration?: never };
-
-export type JudgeOptions = Common & (Declared | Legacy);
-
 export type Verdict = { /** The run that judged it, so a run's submits can be counted. */ run?: string; passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
 
 export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResult[] {
@@ -56,32 +47,28 @@ export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): Che
   );
 }
 
-/** One model check being judged: its units, the question asked of each, and the fold; a legacy check has no aggregate and scores the share of units met.
+/** One model check being judged: its units, the question asked of each, and the fold.
  *  `groupOf`: a grouped check's group key by unit id. */
-export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; aggregate?: AggregateDecl; pitfall: boolean; answers: Map<string, Answer>; left: number; failed?: string; groupOf?: Record<string, string> };
+export type Plan = { key: string; result: CheckResult; ask: Ask; units: Unit[]; aggregate: AggregateDecl; pitfall: boolean; answers: Map<string, Answer>; left: number; groupOf?: Record<string, string> };
 
 const modelChecks = (rubric: Rubric) => rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code).map((k) => k.id));
 
-// The checks a stage of evidence can answer: a declared check once its scope is built, a legacy one with its question.
-function planChecks(rubric: Rubric, decl: Declaration | undefined, built: BuiltEvidence): Plan[] {
-  const ready = (id: string, question?: string) => (decl ? Object.hasOwn(built.evidence, decl.checks[id].scope) : !!question);
-  return rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code && ready(k.id, k.question)).map((k): Plan => {
+function planChecks(rubric: Rubric, decl: Declaration, built: BuiltEvidence): Plan[] {
+  return rubric.criteria.flatMap((c) => c.checks.filter((k) => !k.code).map((k): Plan => {
     const key = `${c.id}.${k.id}`;
-    const d = decl?.checks[k.id];
-    const units = d ? built.evidence[d.scope] ?? [] : unitsFor(k.scope, built.evidence);
-    const split = d && built.splits[d.scope];
-    const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}), ...(split?.reason ? { splitterReason: split.reason } : {}) };
-    const ask: Ask = d ? { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel !== undefined && { decisionModel: d.decisionModel }) } : { id: key, question: { type: 'bool', instructions: k.question! } };
-    const groupOf = d?.aggregate.name === 'grouped' ? { groupOf: built.groups?.[d.scope] ?? {} } : {};
-    return { key, result, ask, units, aggregate: d?.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, failed: split?.failed, ...groupOf };
+    const d = decl.checks[k.id];
+    const units = built.evidence[d.scope] ?? [];
+    const split = built.splits[d.scope];
+    const result: CheckResult = { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], ...(split ? { splitter: split.splitter } : {}) };
+    const ask: Ask = { id: key, question: d.question, pass: d.aggregate.pass, ...(d.decisionModel !== undefined && { decisionModel: d.decisionModel }) };
+    const groupOf = d.aggregate.name === 'grouped' ? { groupOf: built.groups?.[d.scope] ?? {} } : {};
+    return { key, result, ask, units, aggregate: d.aggregate, pitfall: typeof k.weight === 'number' && k.weight < 0, answers: new Map(), left: units.length, ...groupOf };
   }));
 }
 
-// An item code found related material for holds without a model, under coverageUnion (`either` by default) or a share with `by`;
-// `by: 'related'` never asks the model at all.
+// An item code found related material for holds without a model under a share with `by`; `by: 'related'` never asks the model at all.
 function preset(p: Plan, u: Unit): Answer | undefined {
-  const ag = p.aggregate;
-  const by = ag?.name === 'coverageUnion' ? ag.by ?? 'either' : ag?.name === 'share' ? ag.by : undefined;
+  const by = p.aggregate.name === 'share' ? p.aggregate.by : undefined;
   if (!by || by === 'answer') return undefined;
   const found = Object.values(u.related ?? {}).some((n) => n > 0);
   return found ? { met: true, resolver: 'code' } : by === 'related' ? { met: false, resolver: 'code' } : undefined;
@@ -89,17 +76,16 @@ function preset(p: Plan, u: Unit): Answer | undefined {
 
 const triOf = (p: Plan, u: Unit): Tri => p.answers.get(u.id)?.met ?? undefined;
 const trisOf = (p: Plan) => p.units.map((u) => triOf(p, u));
-const groupsOf = (p: Plan) => groupResults(p.aggregate!, p.units.map((u) => p.groupOf![u.id]), trisOf(p));
+const groupsOf = (p: Plan) => groupResults(p.aggregate, p.units.map((u) => p.groupOf![u.id]), trisOf(p));
 // What the fold runs over: the items, or, for a grouped fold, the groups' inner results under its outer rule.
 const view = (ag: AggregateDecl, p: Plan): [AggregateDecl, Tri[]] => (ag.name === 'grouped' ? [outerOf(ag), [...groupsOf(p).values()]] : [ag, trisOf(p)]);
 // A share is the result itself, so it is decided only once every item (group) is; a boolean fold decides as soon as none can change it.
 function decided(p: Plan): boolean {
-  if (!p.aggregate) return false;
   const [ag, tris] = view(p.aggregate, p);
   return fractional(ag) ? tris.every((t) => t !== undefined) : fold(ag, tris) !== undefined;
 }
 // A grouped check's item is not asked once its own group has decided, either.
-const groupDecided = (p: Plan, u: Unit) => p.aggregate?.name === 'grouped' && groupsOf(p).get(p.groupOf![u.id]) !== undefined;
+const groupDecided = (p: Plan, u: Unit) => p.aggregate.name === 'grouped' && groupsOf(p).get(p.groupOf![u.id]) !== undefined;
 
 // Every failing item gets a note, even from a resolver that gives no reason (Clef never does): the item named, and the fix in the source,
 // not the wording, since rewording cannot change what the source says.
@@ -136,25 +122,10 @@ function groupedFinal(p: Plan, r: CheckResult): CheckResult {
   return r;
 }
 
-// A legacy check notes a "no" on a gate or a positive check and a "yes" on a pitfall.
-function legacyFinal(p: Plan, r: CheckResult) {
-  const answers = p.units.map((u) => p.answers.get(u.id));
-  r.notes = p.units.flatMap((u, i) => (answers[i] && answers[i]!.met === p.pitfall ? [noteOf(p, u)] : []));
-  const undecided = answers.filter((a) => !a || a.met === null).length;
-  // Met units are counted, not summed as fractions: 23 sums of 1/23 fall short of 1 and would read as a miss.
-  r.met = undecided ? null : answers.filter((a) => a?.met).length / p.units.length;
-  if (undecided) r.undecided = undecided;
-}
-
 /** The check's result from its answers: a decided fold, or met null with the undecided count while the fold could still go either way. */
 function finalize(p: Plan): CheckResult {
   const r = p.result;
-  if (p.failed) return Object.assign(r, { met: null, undecided: 1, notes: [p.failed] });
   if (!p.units.length) return r;
-  if (!p.aggregate) {
-    legacyFinal(p, r);
-    return r;
-  }
   if (p.aggregate.name === 'grouped') return groupedFinal(p, r);
   const tris = p.units.map((u) => triOf(p, u));
   r.notes = p.units.flatMap((u, i) => (tris[i] === false ? [noteOf(p, u)] : []));
@@ -219,7 +190,7 @@ function reuseItems(items: Item[], byKey: Map<string, Plan>, reuse: Reuse): Item
 
 // Under pass-only the decision model can only pass an item, and one pass decides an `any` group, so such a group's
 // items escalate only once the decision model has answered every one of them that it is asked.
-const waits = (p: Plan) => p.aggregate?.name === 'grouped' && p.aggregate.inner === 'any' && p.ask.decisionModel === PASS_ONLY;
+const waits = (p: Plan) => p.aggregate.name === 'grouped' && p.aggregate.inner === 'any' && p.ask.decisionModel === PASS_ONLY;
 
 function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => void } {
   const groups = new Map<string, { left: number } & PromiseWithResolvers<void>>();
@@ -240,11 +211,10 @@ function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => vo
   return { expect, heard, ready: (u, c) => groups.get(of(u, c))?.promise };
 }
 
-// Each stage's requests start as soon as its evidence is built: decision-model requests queue on their own limit (one at
-// a time) and escalations on theirs, so a slow LLM split delays only the checks on its scope.
-async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: Array<Promise<BuiltEvidence>>, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
-  const plans: Plan[] = [];
-  const byKey = new Map<string, Plan>();
+// Decision-model requests queue on their own limit (one at a time) and escalations on theirs.
+async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: BuiltEvidence, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
+  const plans = planChecks(opts.rubric, opts.declaration, built);
+  const byKey = new Map(plans.map((p) => [p.key, p]));
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
   const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4), hold: holds(byKey) };
   const tally = async ({ unit, check, answer }: Answered) => {
@@ -260,25 +230,16 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, stages: A
   };
   // An unsure item escalates only while its check's fold (and its group's) can still go either way.
   const need = (u: Unit, check: Ask) => !decided(byKey.get(check.id)!) && !groupDecided(byKey.get(check.id)!, u);
-  const ask = async (built: BuiltEvidence) => {
-    const mine = planChecks(opts.rubric, opts.declaration, built);
-    for (const p of mine) plans.push(p), byKey.set(p.key, p);
-    const items = reuse ? reuseItems(itemsOf(mine), byKey, reuse) : itemsOf(mine);
-    settings.hold.expect(items);
-    await publish();
-    await Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
-  };
-  await Promise.all(stages.map((s) => s.then(ask)));
-  const order = opts.rubric.criteria.flatMap((c) => c.checks.map((k) => `${c.id}.${k.id}`));
-  return plans.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key)).map(finalize);
+  const items = reuse ? reuseItems(itemsOf(plans), byKey, reuse) : itemsOf(plans);
+  settings.hold.expect(items);
+  await publish();
+  await Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
+  return plans.map(finalize);
 }
 
-// A declared rubric's evidence is built from its inputs in two stages, the LLM-split scopes last; a legacy one hands it over as built.
-async function evidenceFor(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context): Promise<Array<Promise<BuiltEvidence>>> {
-  if (!opts.declaration) return [opts.evidence(api, sealed, ctx).then((evidence) => ({ evidence, splits: {} }))];
+async function evidenceFor(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context): Promise<BuiltEvidence> {
   checkDeclaration(opts.declaration, modelChecks(opts.rubric));
-  const [decl, inputs, split] = [opts.declaration, await opts.inputs(api, sealed, ctx), modelSplit(api, opts.judgeModel, memo, ctx)];
-  return [false, true].map((slow) => buildEvidence(decl, inputs, split, (scope) => (scope.split.name === 'llm') === slow));
+  return buildEvidence(opts.declaration, await opts.inputs(api, sealed, ctx));
 }
 
 // The run's first input id: stable through the run, where its task id changes between tool rounds.
@@ -295,12 +256,10 @@ async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): P
 
 async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, ctx: Context, memo = `judge:${sealed.kind}:v${sealed.version}`, report?: Report): Promise<Verdict> {
   await report?.(progressOf(opts.rubric, []));
-  const stages = await evidenceFor(api, opts, sealed, memo, ctx);
+  const built = await evidenceFor(api, opts, sealed, ctx);
   const reuse = opts.reuse ? await sessionReuse(api, opts, sealed.version, ctx) : undefined;
-  // Code checks may read any scope, so they wait for every stage; until then progress shows them as still checking.
-  const code: CheckResult[] = [];
-  const all = Promise.all(stages).then((built) => void code.push(...codeResults(opts.rubric, sealed.content, Object.assign({}, ...built.map((b) => b.evidence)))));
-  const [, model] = await Promise.all([all, modelResults(api, opts, stages, memo, ctx, code, reuse, report)]);
+  const code = codeResults(opts.rubric, sealed.content, built.evidence);
+  const model = await modelResults(api, opts, built, memo, ctx, code, reuse, report);
   const checks = [...code, ...model];
   const s = score(opts.rubric, checks);
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;

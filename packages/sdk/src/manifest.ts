@@ -102,7 +102,7 @@ export type EvalAdapter = {
   services?: Record<string, (pin: JsonObject) => Promise<EvalService>>;
   /** Whether the final artifact blocks what it judged; undefined when it holds no verdict. */
   blocks?: (content: string) => boolean | undefined;
-  /** The kind's rubric (a @quack/judge Rubric, untyped here so sdk stays below judge) and either its declaration with the inputs rebuilt
-   * from a recording, or its evidence rebuilt from one (a rubric not yet declared); either throws when the recording lacks what it needs. */
-  judge?: { rubric: unknown; declaration?: unknown; inputs?: (session: RecordedSession, content: string) => Promise<Record<string, string>>; evidence?: (session: RecordedSession, content: string) => Promise<unknown> };
+  /** The kind's rubric (a @quack/judge Rubric, untyped here so sdk stays below judge), its declaration, and the inputs rebuilt
+   * from a recording; `inputs` throws when the recording lacks what it needs. */
+  judge?: { rubric: unknown; declaration: unknown; inputs: (session: RecordedSession, content: string) => Promise<Record<string, string>> };
 };

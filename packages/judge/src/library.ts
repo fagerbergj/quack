@@ -1,4 +1,4 @@
-// The judge's shared strategy library: splitters, context selectors, matchers and the map-reduce digest strategies.
+// The judge's shared strategy library: splitters, context selectors, and the map-reduce digest strategies.
 // Every option a strategy reads is declared in declaration.ts; nothing here knows an artifact kind.
 import type { Chunk, Inputs, SelectorDecl, SplitDecl, Where } from './declaration.ts';
 
@@ -61,18 +61,6 @@ function jsonItems(inputs: Inputs, o: SplitDecl): Chunk[] {
   const shown = (v: unknown) => (o.pick && isObj(v) ? Object.fromEntries(o.pick.map((p) => [p, at(v, p)])) : v);
   return entries.map(([k, v]) => ({ id: k, key: k, text: typeof v === 'string' ? v : JSON.stringify(shown(v)), meta: isObj(v) ? v : { value: v } }));
 }
-
-function diffFiles(inputs: Inputs, o: SplitDecl): Chunk[] {
-  const files = from(inputs, o.from).split(/^(?=diff --git )/m).filter((p) => p.startsWith('diff --git'));
-  const chunks = files.map((p) => {
-    const path = /^diff --git a\/(\S+)/.exec(p)![1];
-    return { id: path, key: path, text: p, meta: { added: /^new file mode/m.test(p) } };
-  });
-  return o.filter === 'added' ? chunks.filter((c) => c.meta.added) : chunks;
-}
-
-const diffHunks = (inputs: Inputs, o: SplitDecl): Chunk[] =>
-  diffFiles(inputs, o).flatMap((f) => f.text.split(/^(?=@@ )/m).slice(1).map((h, n) => ({ id: `${f.id}#${n + 1}`, key: f.key, text: `${f.key} ${h}` })));
 
 // Map-reduce digests: facts by class, and the passage's other words as its terms.
 type Fact = { cls: string; value: string };
@@ -144,8 +132,6 @@ const library: Record<string, Splitter> = {
   markdownSections: (i, o) => from(i, o.from).split(/^## /m).slice(1).map((p) => ({ id: head(p), key: head(p), text: body(p).trim() })),
   listItems: (i, o) => listItems(scoped(i, o)),
   sentences: (i, o) => sentences(scoped(i, o), o.splitOn),
-  diffFiles,
-  diffHunks,
   digestPairs,
 };
 
@@ -165,7 +151,7 @@ function register<T>(table: Map<string, T>, kind: string, name: string, run: T, 
 
 /** Registers a named splitter for an input the library's splitters do not shape. */
 export function registerSplitter(name: string, run: Splitter): void {
-  register(registered, 'splitter', name, run, name in library || name === 'llm');
+  register(registered, 'splitter', name, run, name in library);
 }
 
 /** Registers a named context selector the library does not offer; returning undefined drops the item from the scope, and `matches` counts as related material. */
@@ -193,7 +179,7 @@ export function keep(chunks: Chunk[], o: SplitDecl): Chunk[] {
 /** A deterministic split with its filters: a library splitter or a registered one. */
 export function runSplitter(inputs: Inputs, o: SplitDecl): Chunk[] {
   const run = library[o.name] ?? registered.get(o.name);
-  if (!run) throw new Error(o.name === 'llm' ? 'the llm splitter cannot run here (inside map-reduce or a related selector)' : `no splitter "${o.name}" in the judge's library or registered`);
+  if (!run) throw new Error(`no splitter "${o.name}" in the judge's library or registered`);
   return keep(run(inputs, o), o);
 }
 
@@ -207,32 +193,9 @@ export function holds(w: Where, item: unknown, joined?: unknown): boolean {
   return same(v, other) === (w.op === 'eq');
 }
 
-// Matchers score how well another chunk of the related input matches the item; 0 is no match.
-const tail = (s: string) => s.split('/').pop()!;
-const dir = (s: string) => s.slice(0, s.lastIndexOf('/') + 1);
-// The name suffix siblings share: "a.test.ts" -> ".test.ts", "store_pg.go" -> "pg.go".
-const suffix = (s: string) => {
-  const b = tail(s);
-  return b.split('.').length > 2 ? b.slice(b.indexOf('.')) : `${b.slice(0, b.lastIndexOf('.')).split(/[-_]/).pop()}${b.slice(b.lastIndexOf('.'))}`;
-};
-const names = (text: string, key?: string) => !!key && (text.includes(key) || text.includes(tail(key)));
-const matchers: Record<string, (piece: Chunk, other: Chunk) => number> = {
-  /** The other chunk's key (a file path) is named in the piece. */
-  names: (p, r) => (names(p.text, r.key) ? 1 : 0),
-  /** The piece's key is named in the other chunk. */
-  cites: (p, r) => (names(r.text, p.key) ? 1 : 0),
-  /** Words shared with the piece. */
-  overlap: (p, r) => {
-    const w = words(p.text);
-    return [...words(`${r.key ?? ''} ${r.text}`)].filter((x) => w.has(x)).length;
-  },
-  /** Same directory and name suffix as the piece's file; newer first by `meta.ts`. */
-  sibling: (p, r) => (p.key && r.key && p.key !== r.key && dir(p.key) === dir(r.key) && suffix(p.key) === suffix(r.key) ? 1 + Number(r.meta?.ts ?? 0) / 1e12 : 0),
-};
-
-/** A selector's value for an item, and how many matches it found (for `related` and `join`). */
+/** A selector's value for an item, and how many matches it found (for `join` and registered selectors). */
 export type Selected = { value: string | undefined; matches?: number };
-type Selector = (inputs: Inputs, chunk: Chunk, o: SelectorDecl, split: (o: SplitDecl) => Chunk[]) => Selected;
+type Selector = (inputs: Inputs, chunk: Chunk, o: SelectorDecl) => Selected;
 type Of<N extends string> = Extract<SelectorDecl, { name: N }>;
 
 // A declared cut is marked in the text, so the model knows it was shown part of the context.
@@ -244,19 +207,6 @@ function jsonPart(inputs: Inputs, chunk: Chunk, o: Of<'json'>): string {
   const part = pointer.split('/').slice(1).reduce<unknown>(step, JSON.parse(input(inputs, o.from)));
   const shown = o.pick && isObj(part) ? Object.fromEntries(o.pick.map((p) => [p, at(part, p)])) : part;
   return JSON.stringify(shown ?? null);
-}
-
-function related(inputs: Inputs, chunk: Chunk, o: Of<'related'>, split: (o: SplitDecl) => Chunk[]): Selected {
-  const others = split(o.chunker);
-  const ranked = (m: string) => {
-    const score = strategy(matchers, 'matcher', m);
-    return others.map((r) => ({ r, s: score(chunk, r) })).filter((x) => x.s >= (o.min ?? 1)).sort((a, b) => b.s - a.s).slice(0, o.top ?? 3);
-  };
-  // Matchers are tried in order; the first that finds anything wins.
-  const hits = [o.match].flat().map(ranked).find((h) => h.length) ?? [];
-  if (!hits.length) return { value: o.require ? undefined : '(none)', matches: 0 };
-  const shown = hits.map(({ r }) => (r.key && !r.text.startsWith(r.key) ? `${r.key}: ${r.text}` : r.text)).join('\n---\n');
-  return { value: cut(shown, o.maxChars), matches: hits.length };
 }
 
 /** The record a `join` looks up for an item: the item's `by` field, or its key, in the JSON object of the second input. */
@@ -274,7 +224,6 @@ const selectors: Record<string, Selector> = {
     return { value: cut(keep(listItems(scoped(i, it)), { name: 'items', from: it.from, strip: it.strip }).map((c) => `- ${c.text}`).join('\n'), it.maxChars) };
   },
   json: (i, c, o) => ({ value: jsonPart(i, c, o as Of<'json'>) }),
-  related: (i, c, o, split) => related(i, c, o as Of<'related'>, split),
   join: (i, c, o) => {
     const record = joined(i, c, o as Of<'join'>);
     return { value: record === undefined ? '(none)' : JSON.stringify(record), matches: record === undefined ? 0 : 1 };
@@ -284,9 +233,9 @@ const selectors: Record<string, Selector> = {
 /** Whether a selector shows every item of its scope the same context, so it can go on the units' `shared`. */
 export const itemIndependent = (o: SelectorDecl) => ['whole', 'sections', 'items'].includes(o.name) || (o.name === 'json' && typeof (o as Of<'json'>).pointer !== 'object');
 
-export function select(inputs: Inputs, chunk: Chunk, o: SelectorDecl, split: (o: SplitDecl) => Chunk[]): Selected {
+export function select(inputs: Inputs, chunk: Chunk, o: SelectorDecl): Selected {
   const own = selectors[o.name];
-  if (own) return own(inputs, chunk, o, split);
+  if (own) return own(inputs, chunk, o);
   const run = registeredSelectors.get(o.name);
   if (!run) throw new Error(`no context selector "${o.name}" in the judge's library or registered`);
   const got = run(inputs, chunk, o);

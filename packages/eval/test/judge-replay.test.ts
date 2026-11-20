@@ -9,17 +9,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
-import type { DecisionModelRef, Rubric } from '@quack/judge';
+import type { Declaration, Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
 import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
 
-const rubric = (question: string): Rubric => ({
+const rubric: Rubric = {
   name: 'acme', version: 1, threshold: 0.5,
-  criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 2, scope: 'note', question }, { id: 'other', label: 'L other', weight: 1, scope: 'gap', question: 'Unwatched?' }] }],
+  criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 2 }, { id: 'other', label: 'L other', weight: 1 }] }],
+};
+const declaration = (question: string): Declaration => ({
+  scopes: { note: { split: { name: 'jsonItems', from: 'note' } }, gap: { split: { name: 'jsonItems', from: 'gap' } } },
+  checks: {
+    helpful: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: question } },
+    other: { scope: 'gap', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Unwatched?' } },
+  },
 });
-const adapter = (question: string): EvalAdapter => ({ kind: 'acme.note', judge: { rubric: rubric(question), evidence: async () => undefined } });
+const adapter = (question: string): EvalAdapter => ({ kind: 'acme.note', judge: { rubric, declaration: declaration(question), inputs: async () => ({ note: '{}', gap: '[]' }) } });
 const arms: Arm[] = [{ label: 'base', adapters: [adapter('Is it helpful?')] }, { label: 'cand', adapters: [adapter('Does it help a reader act?')] }];
-const cases: Case[] = ['a', 'b'].map((c) => ({ case: c, kind: 'acme.note', checks: ['helpful'], content: c, evidence: { note: [{ id: c, state: { text: c } }] } }));
+const cases: Case[] = ['a', 'b'].map((c) => ({ case: c, kind: 'acme.note', checks: ['helpful'], content: c, inputs: { note: JSON.stringify({ [c]: { text: c } }), gap: '[]' } }));
 const answer = (yes: boolean) => fauxAssistantMessage(JSON.stringify({ choice: yes ? 'yes' : 'no', confidence: 0.9, reason: 'because' }));
 const judgeModel = { provider: 'judge', modelId: 'j' };
 
@@ -62,7 +69,7 @@ test('two cases, two arms and repeat 2 give the met values of each repeat for th
     assert.match(out[i], new RegExp(`^- ${arm}: requests 4 \\(j 4\\); items decision model 0, escalated 4, reused 0; judge seconds per case median \\d+\\.\\d p90 \\d+\\.\\d, by place 1: median .*; 2: median `));
   }
   assert.equal(out[8], 'arm order seed 7');
-  assert.deepEqual(out.slice(10), ['disagreements (case check: met per repeat by arm, then the notes each arm gave):', '- b helpful: base 0 0; cand 1 1', '  - base: b: because']);
+  assert.deepEqual(out.slice(10), ['disagreements (case check: met per repeat by arm, then the notes each arm gave):', '- b helpful: base 0 0; cand 1 1', '  - base: note b: because']);
 });
 
 test('arms are interleaved case by case in a seeded order, so each arm takes each place and a seed replays the same order', async () => {
@@ -84,7 +91,7 @@ test('arms are interleaved case by case in a seeded order, so each arm takes eac
 
 test('each job\'s rows are handed over as it finishes, so a run that fails later keeps them', async () => {
   const written: Row[][] = [];
-  const later: EvalAdapter = { kind: 'acme.note', judge: { evidence: async () => undefined, rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L', weight: 'gate', code: (a: string) => { if (a === 'b') throw new Error('stopped'); return { met: 1 }; } }] }] } } };
+  const later: EvalAdapter = { kind: 'acme.note', judge: { declaration: { scopes: {}, checks: {} }, inputs: async () => ({}), rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L', weight: 'gate', code: (a: string) => { if (a === 'b') throw new Error('stopped'); return { met: 1 }; } }] }] } } };
   await assert.rejects(replayJudge({ cases, arms: [{ label: 'base', adapters: [later] }], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel, seed: 1, onRows: (rows) => written.push(rows) }), /stopped/);
   assert.deepEqual(written.map((rows) => rows.map((r) => [r.case, r.check, r.met, r.requests])), [[['a', 'helpful', 1, {}]]]);
 });
@@ -117,8 +124,8 @@ test('arms that differ only in decision model: the decision-model arm answers fr
 });
 
 test('an adapter that cannot rebuild a case declines it with its reason, and the other cases are still judged', async () => {
-  const picky: EvalAdapter = { kind: 'acme.note', judge: { rubric: rubric('Is it helpful?'), evidence: async (_s, content) => { throw new Error(`the recording of ${content} keeps no facts`); } } };
-  const bare = cases.map(({ evidence: _e, ...c }) => c);
+  const picky: EvalAdapter = { kind: 'acme.note', judge: { rubric, declaration: declaration('Is it helpful?'), inputs: async (_s, content) => { throw new Error(`the recording of ${content} keeps no facts`); } } };
+  const bare = cases.map(({ inputs: _i, ...c }) => c);
   const result = await replayJudge({ cases: [cases[0], bare[1]], arms: [{ label: 'base', adapters: [picky] }], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel });
   assert.deepEqual(result.declined, [{ arm: 'base', case: 'b', reason: 'the recording of b keeps no facts' }]);
   assert.deepEqual(table(result, ['base']).split('\n').slice(-2), ['declined:', '- base b: the recording of b keeps no facts']);
@@ -132,18 +139,10 @@ test('a watched check no rubric has is an error, and a check with no unit prints
   assert.match(table(rows, ['base']), /\| a \| other \| null \| 0\/0 \|/);
 });
 
-test('a case naming units judges only those units of the evidence the adapter built', async () => {
-  const two: EvalAdapter = { kind: 'acme.note', judge: { rubric: rubric('Is it helpful?'), evidence: async () => ({ note: [{ id: 'keep', state: {} }, { id: 'drop', state: {} }] }) } };
-  // One answer: a second unit would ask the judge again and find no response left.
-  const rows = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', checks: ['helpful'], content: 'a', units: ['keep'] }], arms: [{ label: 'base', adapters: [two] }], repeat: 1, concurrency: 1, models: judgeModels([false]), judgeModel });
-  assert.deepEqual(rows.rows.map((r) => [r.check, r.met]), [['helpful', 0]]);
-  assert.deepEqual(rows.rows[0].notes, ['keep: because']);
-});
-
 test('a case naming units judges only those items of a declared rubric, by item id or unit id', async () => {
   const declared: Rubric = { name: 'acme', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 2 }] }] };
-  const declaration = { scopes: { note: { split: { name: 'jsonItems', from: 'note' } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' as const }, question: { type: 'bool' as const, instructions: 'Is it helpful?' } } } };
-  const two: EvalAdapter = { kind: 'acme.note', judge: { rubric: declared, declaration, inputs: async () => ({ note: JSON.stringify({ keep: 'a', drop: 'b' }) }) } };
+  const decl = { scopes: { note: { split: { name: 'jsonItems', from: 'note' } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' as const }, question: { type: 'bool' as const, instructions: 'Is it helpful?' } } } };
+  const two: EvalAdapter = { kind: 'acme.note', judge: { rubric: declared, declaration: decl, inputs: async () => ({ note: JSON.stringify({ keep: 'a', drop: 'b' }) }) } };
   for (const units of [['keep'], ['note keep']]) {
     const rows = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', units }], arms: [{ label: 'base', adapters: [two] }], repeat: 1, concurrency: 1, models: judgeModels([false]), judgeModel });
     assert.deepEqual(rows.rows.map((r) => [r.check, r.met, r.notes]), [['helpful', 0, ['note keep: because']]], units[0]);
@@ -160,15 +159,15 @@ test('a check the judge model could not answer prints null, not a failed check',
 });
 
 test('a reuse arm judges one session\'s cases in version order against a store of their own per repeat, interleaved with the other arms; an arm without it asks every case', async () => {
-  // v2 listed first, same evidence as v1; the reuse arm must judge v1 first and reuse its answer for v2.
-  const drafts: Case[] = [2, 1].map((version) => ({ case: `s v${version}`, kind: 'acme.note', session: '/nonexistent/s', version, checks: ['helpful'], content: `v${version}`, evidence: { note: [{ id: 'n', state: { text: 'same' } }] } }));
+  // v2 listed first, same inputs as v1; the reuse arm must judge v1 first and reuse its answer for v2.
+  const drafts: Case[] = [2, 1].map((version) => ({ case: `s v${version}`, kind: 'acme.note', session: '/nonexistent/s', version, checks: ['helpful'], content: `v${version}`, inputs: { note: JSON.stringify({ n: { text: 'same' } }), gap: '[]' } }));
   // The reuse arm's first ask is met, its second (the next repeat's fresh store) is not; the other arm's answers are not checked.
   let candAsks = 0;
   const { models } = judgeBy((sent) => !sent.includes('reader act') || candAsks++ === 0);
   const { rows } = await replayJudge({ cases: drafts, arms: [{ label: 'cand', adapters: [adapter('Does it help a reader act?')], reuse: true }, { label: 'base', adapters: [adapter('Is it helpful?')] }], repeat: 2, concurrency: 1, models, judgeModel, seed: 5 });
   const of = (arm: string, c: string) => rows.filter((r) => r.arm === arm && r.case === c).map((r) => [r.rep, r.met, r.esc, r.reused, r.notes]);
-  assert.deepEqual(of('cand', 's v1'), [[1, 1, 1, 0, []], [2, 0, 1, 0, ['n: because']]]);
-  assert.deepEqual(of('cand', 's v2'), [[1, 1, 0, 1, []], [2, 0, 0, 1, ['n: because (judged on v1)']]], 'v2 reuses the answer v1 got in the same repeat');
+  assert.deepEqual(of('cand', 's v1'), [[1, 1, 1, 0, []], [2, 0, 1, 0, ['note n: because']]]);
+  assert.deepEqual(of('cand', 's v2'), [[1, 1, 0, 1, []], [2, 0, 0, 1, ['note n: because (judged on v1)']]], 'v2 reuses the answer v1 got in the same repeat');
   assert.deepEqual(of('base', 's v2').map((r) => r[2]).concat(of('base', 's v1').map((r) => r[2])), [1, 1, 1, 1], 'without reuse every case is asked');
   const cand = rows.filter((r) => r.arm === 'cand');
   assert.deepEqual(cand.map((r) => `${r.rep} ${r.case}`), ['1 s v1', '1 s v2', '2 s v1', '2 s v2'], 'each repeat\'s drafts run back to back, in version order');
@@ -182,7 +181,7 @@ test('concurrency 2 gives the same table as concurrency 1', async () => {
 });
 
 test('a run that faults fails loudly, and so does a judge the deployment lacks', async () => {
-  const boom: Arm = { label: 'boom', adapters: [{ kind: 'acme.note', judge: { evidence: async () => undefined, rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 'gate', code: () => { throw new Error('bad rubric code'); } }] }] } } }] };
+  const boom: Arm = { label: 'boom', adapters: [{ kind: 'acme.note', judge: { declaration: { scopes: {}, checks: {} }, inputs: async () => ({}), rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 'gate', code: () => { throw new Error('bad rubric code'); } }] }] } } }] };
   await assert.rejects(replayJudge({ cases, arms: [boom], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /bad rubric code/);
   await assert.rejects(replayJudge({ cases, arms, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel: { provider: 'judge', modelId: 'nope' } }), /judge judge\/nope is not configured/);
 });

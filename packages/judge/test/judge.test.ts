@@ -13,7 +13,7 @@ import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { Artifacts, artifactsExtension, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { check, feedback, progressOf, report, score, settled, unitsFor, type CheckResult, type Evidence, type JudgeOptions, type Plan, type Rubric } from '../src/index.ts';
+import { check, feedback, progressOf, report, score, settled, type CheckResult, type Declaration, type Inputs, type JudgeOptions, type Plan, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -29,8 +29,9 @@ async function fakeClef(probability: (question: string, unit: string) => number)
     let body = '';
     for await (const chunk of req) body += chunk;
     const { state, questions } = JSON.parse(body);
-    clefCalls.push({ unit: state.unit, questions: Object.keys(questions) });
-    const answers = Object.fromEntries(Object.entries(questions as Record<string, { instructions: string }>).map(([q, { instructions }]) => [q, { type: 'noul', noul: probability(instructions, state.unit) }]));
+    const unit = state.finding?.id ?? 'review';
+    clefCalls.push({ unit, questions: Object.keys(questions) });
+    const answers = Object.fromEntries(Object.entries(questions as Record<string, { instructions: string }>).map(([q, { instructions }]) => [q, { type: 'noul', noul: probability(instructions, unit) }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 0 } }));
   }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -40,11 +41,11 @@ async function fakeClef(probability: (question: string, unit: string) => number)
 
 const review: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md' };
 
-// Findings are lines starting "- blocking:" or "- nit:"; each becomes a unit with only its own text.
-async function evidence(_api: unknown, sealed: { content: string }): Promise<Evidence> {
+// Findings are lines starting "- blocking:" or "- nit:"; each becomes a JSON item with its id and severity.
+async function inputs(_api: unknown, sealed: { content: string }): Promise<Inputs> {
   const findings = sealed.content.split('\n').filter((l) => /^- (blocking|nit):/.test(l))
-    .map((line, i) => ({ id: `f${i + 1}`, blocking: line.startsWith('- blocking:'), state: { unit: `f${i + 1}`, finding: line } }));
-  return { review: [{ id: 'review', whole: true, state: { unit: 'review', review: sealed.content } }], finding: findings, blocking: findings.filter((f) => f.blocking) };
+    .map((line, i) => ({ id: `f${i + 1}`, blocking: line.startsWith('- blocking:'), text: line }));
+  return { review: sealed.content, findings: JSON.stringify(findings) };
 }
 
 const hasVerdict = (a: string) => /## Verdict/.test(a);
@@ -55,14 +56,26 @@ const rubric: Rubric = {
   criteria: [
     { id: 'structured_verdict', checks: [
       { id: 'verdict_present', label: 'L verdict_present', weight: 'gate', code: (a) => ({ met: hasVerdict(a) ? 1 : 0, detail: hasVerdict(a) ? undefined : 'no ## Verdict section' }) },
-      { id: 'takeaway_actionable', label: 'L takeaway_actionable', weight: 2, scope: 'review', question: 'Is the takeaway one sentence a reader can act on?' },
+      { id: 'takeaway_actionable', label: 'L takeaway_actionable', weight: 2 },
     ] },
-    { id: 'constructive_actionable', checks: [{ id: 'says_why', label: 'L says_why', weight: 3, scope: 'finding', question: 'Does this finding say why it matters?' }] },
-    { id: 'severity_grounded', checks: [{ id: 'preference_only', label: 'L preference_only', weight: -3, scope: 'blocking', question: 'Does this blocking finding rest only on preference?' }] },
+    { id: 'constructive_actionable', checks: [{ id: 'says_why', label: 'L says_why', weight: 3 }] },
+    { id: 'severity_grounded', checks: [{ id: 'preference_only', label: 'L preference_only', weight: -3 }] },
   ],
 };
 
-// These checks are judged from built evidence, which judged() does not take, so a test tool runs each submit's round through check().
+const declaration: Declaration = {
+  scopes: {
+    review: { split: { name: 'whole', from: 'review' }, piece: 'review' },
+    finding: { split: { name: 'jsonItems', from: 'findings' }, piece: 'finding' },
+    blocking: { split: { name: 'jsonItems', from: 'findings', where: [{ path: 'blocking', op: 'truthy' }] }, piece: 'finding' },
+  },
+  checks: {
+    takeaway_actionable: { scope: 'review', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Is the takeaway one sentence a reader can act on?' } },
+    says_why: { scope: 'finding', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Does this finding say why it matters?' } },
+    preference_only: { scope: 'blocking', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Does this blocking finding rest only on preference?', pass: ['no'] } },
+  },
+};
+
 function submitThrough(opts: JudgeOptions) {
   const submit = defineTool({
     name: 'submit_review',
@@ -91,7 +104,7 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
   }
   const m = faux.getModel();
   const decisionModel = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
-  const extensions = [CodingTools, artifactsExtension([review]), submitThrough({ kind: review.kind, rubric, evidence: evidence as never, maxRevisions: 2, decisionModel })];
+  const extensions = [CodingTools, artifactsExtension([review]), submitThrough({ kind: review.kind, rubric, declaration, inputs: inputs as never, maxRevisions: 2, decisionModel })];
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review the PR.', request, true);
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
@@ -130,7 +143,7 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   const preference = v2.checks.find((c: any) => c.id === 'preference_only');
   assert.equal(preference.units, 1, 'only the blocking finding');
   assert.deepEqual(preference.resolvers, { clef: 1 }, 'p = 0.2 is taken as given, not escalated');
-  assert.ok(clefCalls.some((c) => c.unit === 'f1' && c.questions.length === 2), 'one request per unit, all its checks together');
+  assert.ok(clefCalls.some((c) => c.unit === 'f1' && c.questions.length === 1), 'each scope sends its own unit');
 });
 
 test('a unit over the decision model cap skips it and every check escalates', async () => {
@@ -173,13 +186,13 @@ test('an undecided check is unscored, never unmet', () => {
   assert.deepEqual(feedback([r]), []);
 });
 
-test('a whole-artifact unit adds no prefix to its notes, another unit keeps its id', async () => {
+test('a check with multiple units prefixes each note with its unit id', async () => {
   const no = fauxAssistantMessage('{"choice": "no", "confidence": 0.9, "reason": "too long"}');
   const content = '## Takeaway\nLooks good.\n## Verdict\napprove\n## Findings\n- nit: src/y.ts:3 rename\n';
   const { versions } = await run(undefined, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), no, no, fauxAssistantMessage('Done.')]);
   const notes = (id: string) => versions[0].checks.find((c: any) => c.id === id).notes;
-  assert.deepEqual(notes('takeaway_actionable'), ['too long']);
-  assert.deepEqual(notes('says_why'), ['f1: too long']);
+  assert.deepEqual(notes('takeaway_actionable'), ['review: too long']);
+  assert.deepEqual(notes('says_why'), ['finding f1: too long']);
 });
 
 test('a pitfall keeps the reason where it is present, a met check keeps none', async () => {
@@ -187,18 +200,18 @@ test('a pitfall keeps the reason where it is present, a met check keeps none', a
   const content = '## Takeaway\nFix the loop.\n## Verdict\nrequest changes\n## Findings\n- blocking: src/y.ts:3 I prefer tabs\n';
   const { versions } = await run(undefined, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), yes('one sentence'), yes('says why'), yes('only taste'), fauxAssistantMessage('Done.')]);
   const notes = (id: string) => versions[0].checks.find((c: any) => c.id === id).notes;
-  assert.deepEqual([notes('takeaway_actionable'), notes('says_why'), notes('preference_only')], [[], [], ['f1: only taste']]);
+  assert.deepEqual([notes('takeaway_actionable'), notes('says_why'), notes('preference_only')], [[], [], ['blocking f1: only taste']]);
 });
 
-// A legacy plan (no aggregate) whose units are already answered, as Clef answers them: confident and without a reason.
+// A plan whose units are already answered, as Clef answers them: confident and without a reason.
 const answeredPlan = (id: string, weight: number, answers: Array<boolean | null>, whole = false): Plan => ({
   key: `c.${id}`, result: { criterion: 'c', id, label: id, weight, met: 0, units: answers.length, resolvers: {}, notes: [] }, ask: { id: `c.${id}`, question: { type: 'bool', instructions: '?' } },
-  pitfall: weight < 0, left: 0, units: answers.map((_, i) => ({ id: `f${i + 1}`, state: {}, ...(whole ? { whole: true as const } : {}) })),
+  aggregate: { name: 'share' }, pitfall: weight < 0, left: 0, units: answers.map((_, i) => ({ id: `f${i + 1}`, state: {}, ...(whole ? { whole: true as const } : {}) })),
   answers: new Map(answers.map((met, i) => [`f${i + 1}`, { met, resolver: 'clef' }])),
 });
 
 test('a failing item Clef answered without a reason is still named in the notes', () => {
-  const [why, pref, takeaway] = settled([answeredPlan('says_why', 3, [true, false]), answeredPlan('preference_only', -3, [true, false]), answeredPlan('takeaway', 2, [false], true)]);
+  const [why, pref, takeaway] = settled([answeredPlan('says_why', 3, [true, false]), answeredPlan('preference_only', -3, [false, true]), answeredPlan('takeaway', 2, [false], true)]);
   const flag = 'flagged by clef (no reason given); re-verify it against the cited source before rewording it';
   assert.deepEqual([why.met, why.notes], [0.5, [`f2: ${flag}`]]);
   assert.deepEqual([pref.met, pref.notes], [0.5, [`f1: ${flag}`]], 'a pitfall names where it is present');
@@ -217,15 +230,10 @@ test('a share over every unit met is exactly 1: units are counted, not summed as
   for (const n of [3, 6, 7, 10, 23]) assert.equal(settled([answeredPlan('k', 3, Array(n).fill(true))])[0].met, 1, `${n} units`);
 });
 
-test('a check without a scope is an error, not a default scope', () => {
-  assert.throws(() => unitsFor(undefined, { review: [] }), /name its evidence scope/);
-  assert.deepEqual(unitsFor('review', { review: [] }), []);
-});
-
 test('progress withholds a check until every unit is judged and decided, and passes code results through', () => {
   const r = (id: string, units: number): CheckResult => ({ criterion: 'c', id, label: id, weight: 2, met: units ? 0 : null, units, resolvers: {}, notes: [] });
   const plan = (id: string, answers: Array<boolean | null>, left: number): Plan => ({
-    key: `c.${id}`, result: r(id, answers.length), ask: { id: `c.${id}`, question: { type: 'bool', instructions: '?' } }, pitfall: false, left,
+    key: `c.${id}`, result: r(id, answers.length), ask: { id: `c.${id}`, question: { type: 'bool', instructions: '?' } }, aggregate: { name: 'share' }, pitfall: false, left,
     units: answers.map((_, i) => ({ id: `u${i}`, state: {} })), answers: new Map(answers.map((met, i) => [`u${i}`, { met, resolver: 'clef' }])),
   });
   const code = { ...r('verdict_present', 1), met: 1 };

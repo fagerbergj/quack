@@ -24,10 +24,6 @@ export type Check = {
   /** Plain words for what went wrong when this fails, shown to the user in place of the id. */
   label: string;
   weight: number | 'gate';
-  /** @deprecated A rubric judged by `evidence` names its scope here; a declared rubric names it in `declaration.checks`. */
-  scope?: string;
-  /** @deprecated As `scope`: the per-unit question of a rubric still judged by `evidence`. */
-  question?: string;
   code?: (artifact: string, evidence: Evidence) => CodeResult;
 };
 
@@ -49,10 +45,8 @@ export type CheckResult = {
   notes: string[];
   /** The items the fold left undecided while the check decided; listed so the reader sees what was not asked. */
   undecidedItems?: string[];
-  /** Which splitter produced the items, including a fallback (`sentences -> llm`). */
+  /** Which splitter produced the items. */
   splitter?: string;
-  /** Why the fallback ran (the `expect` that the input did not meet). */
-  splitterReason?: string;
   /** Units no resolver decided; the check is then null, not unmet. */
   undecided?: number;
   marks?: string[];
@@ -61,11 +55,6 @@ export type CheckResult = {
 };
 
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };
-
-export function unitsFor(scope: string | undefined, evidence: Evidence): Unit[] {
-  if (!scope) throw new Error('a check with a question must name its evidence scope');
-  return evidence[scope] ?? [];
-}
 
 // Earned points over possible points; checks that apply to no unit count toward neither.
 export function score(rubric: Rubric, results: CheckResult[]): Score {
