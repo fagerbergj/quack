@@ -165,7 +165,7 @@ export function useHarness(base: () => Routes) {
 
 // Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
 export const stubViewport = (desktop: boolean, wide = false) =>
-  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('1440') ? wide : desktop, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('1440') ? wide : q.includes('coarse') ? !desktop : desktop, addEventListener() {}, removeEventListener() {} }));
 
 export const usage = {};
 export const entry = (id: string, model: object[]) => ({ id, conversationId: 'c', kind: 'x', model });
