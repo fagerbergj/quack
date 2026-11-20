@@ -109,3 +109,20 @@ test('a sent notice is pruned after 30 days and a started key after 90 idle days
   assert.deepEqual(rows(first.path, 'started'), ['research:live'], 'research:old idled 100 days; research:live ran 40 days ago');
   assert.deepEqual(rows(first.path, 'notices'), [], 'research:live notice was sent 40 days ago');
 });
+
+test('a run.ended event arriving as a drain pass finishes is not stranded', async () => {
+  const h = await home();
+  await h.started('research:race');
+  h.app.start!();
+  // Recorded synchronously while start()'s empty drainOnce() has returned but its .finally() has not yet cleared draining.
+  h.hear('research:race', ended('e1', 'succeeded'));
+  await h.app.stop!();
+  assert.equal(h.sent.length, 1, 'notice recorded during drain teardown must still be delivered');
+  assert.equal(rows(h.path, 'notices').length, 1);
+  const db = new DatabaseSync(h.path);
+  try {
+    assert.deepEqual(db.prepare('SELECT sent FROM notices').all().map((r) => (r as { sent: number }).sent), [1]);
+  } finally {
+    db.close();
+  }
+});

@@ -54,8 +54,9 @@ export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fet
     return lines.join('\n');
   }
 
-  // One pass at a time; a notice stays unsent until home:main accepts it, and the next event or a restart retries it.
+  // One pass at a time; a call while draining marks it dirty so a notice recorded as a pass ends is not stranded.
   let draining: Promise<void> | undefined;
+  let dirty = false;
   const unsent = db.prepare('SELECT id, session, outcome, failed FROM notices WHERE sent = 0 ORDER BY rowid LIMIT 1');
   async function drainOnce() {
     for (let n = unsent.get() as Notice | undefined; n; n = unsent.get() as Notice | undefined) {
@@ -64,7 +65,17 @@ export function homeApp(ctx: Pick<AppContext, 'dbPath' | 'distributorUrl' | 'fet
       db.prepare('UPDATE notices SET sent = 1 WHERE id = ?').run(n.id);
     }
   }
-  const drain = () => (draining ??= drainOnce().catch((err) => console.error('home: notices:', err)).finally(() => (draining = undefined)));
+  async function drainLoop() {
+    try {
+      do { dirty = false; await drainOnce().catch((err) => console.error('home: notices:', err)); } while (dirty);
+    } finally {
+      draining = undefined;
+    }
+  }
+  function drain() {
+    if (draining) { dirty = true; return draining; }
+    return (draining = drainLoop());
+  }
 
   // shortcut: a run that ends before the start tool records its key goes unheard; session boot makes that window small, so reconcile with the catalog on record if it shows up.
   const unsubscribe = ctx.subscribe((session, event) => {

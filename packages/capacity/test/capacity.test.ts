@@ -271,6 +271,30 @@ test('a call reuses the idle lease of the one before it, and all leases go back 
   assert.deepEqual(heldBy(), []);
 });
 
+test('a queued call claiming a spare lease marks it busy before releasing its own, so a concurrent begin cannot share it', async () => {
+  fresh(1);
+  let finishRelease!: () => void;
+  const base = direct(table);
+  const client: LeaseClient = {
+    ...base,
+    release: (e, h) => new Promise<void>((resolve) => { finishRelease = () => { void base.release(e, h); resolve(); }; }),
+  };
+  const g = gate('s', client);
+  const first = await g.begin('swap');
+  let second: GatedCall | undefined;
+  let third: GatedCall | undefined;
+  void g.begin('swap').then((c) => (second = c));
+  await clock.settle();
+  g.end(first);
+  await clock.advance(1000);
+  void g.begin('swap').then((c) => (third = c));
+  await clock.settle();
+  finishRelease();
+  await clock.settle();
+  assert.ok(second?.lease, 'the queued call took the spare lease');
+  assert.equal(third, undefined, 'a concurrent call must not steal the spare lease while the waiter drops its queued one');
+});
+
 // The app as the /apps gateway hands it requests, relative to its mount; no socket.
 function served(capacity: Record<string, number>, now: () => number = clock.now) {
   const app = createCapacityService({ dbPath: ':memory:', capacity, leaseTtlMs: TTL, now });

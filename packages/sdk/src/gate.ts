@@ -98,9 +98,12 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
       }, ctx);
       if (item.executing && !item.done) return errorResult(`${tool.name} was interrupted after approval and was not re-run.`);
 
-      const watch = await api.watchDoc(Approvals, api.conversationId, ctx);
-      if (!watch) return errorResult('approval state is unavailable');
-      const answered = item.verdict || item.withdrawn ? item : await whileWaiting(() => waitForAnswer(watch as never, id, ctx));
+      let answered = item;
+      if (!item.verdict && !item.withdrawn) {
+        const watch = await api.watchDoc(Approvals, api.conversationId, ctx);
+        if (!watch) return errorResult('approval state is unavailable');
+        answered = await whileWaiting(() => waitForAnswer(watch as never, id, ctx));
+      }
       if (answered.withdrawn) return notRun(tool.name, answered.withdrawn);
       const verdict = answered.verdict!;
       if (verdict.decision === 'reject') return errorResult(`Rejected by ${principalName(verdict.by)}${verdict.reason ? `: ${verdict.reason}` : ''}`);

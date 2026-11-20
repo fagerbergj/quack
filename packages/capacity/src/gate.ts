@@ -171,9 +171,10 @@ export class CapacityGate {
       // A call of this session that ended frees its own idle lease; take that over the queue.
       const spare = this.#leases.find((l) => l !== lease && !l.busy && l.endpoint === lease.endpoint);
       if (spare) {
+        spare.busy = true;
         await this.#drop(lease);
         this.#o.setNote(null);
-        return Object.assign(spare, { busy: true });
+        return spare;
       }
     }
   }
