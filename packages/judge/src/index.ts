@@ -101,11 +101,17 @@ function decided(p: Plan): boolean {
 // A grouped check's item is not asked once its own group has decided, either.
 const groupDecided = (p: Plan, u: Unit) => p.aggregate?.name === 'grouped' && groupsOf(p).get(p.groupOf![u.id]) !== undefined;
 
-// Every failing item gets a note, even from a resolver that gives no reason (Clef never does), so the reader sees which failed.
+// Every failing item gets a note, even from a resolver that gives no reason (Clef never does): the item named, and the fix in the source,
+// not the wording, since rewording cannot change what the source says.
+const flaggedBy = (u: Unit, by: string) => {
+  const text = Object.values(u.state).find((v) => typeof v === 'string')?.replace(/\s+/g, ' ').trim();
+  const item = text ? `: "${text.slice(0, 60).trim()}${text.length > 60 ? '…' : ''}"` : '';
+  return `flagged by ${by} (no reason given)${item}; re-verify it against the cited source before rewording it`;
+};
 const whyOf = (p: Plan, u: Unit) => {
   const a = p.answers.get(u.id)!;
   const on = p.result.reused?.[u.id];
-  return `${a.note || `flagged by ${a.resolver} (no reason given)`}${on ? ` (judged on v${on})` : ''}`;
+  return `${a.note || flaggedBy(u, a.resolver)}${on ? ` (judged on v${on})` : ''}`;
 };
 const noteOf = (p: Plan, u: Unit) => (u.whole ? whyOf(p, u) : `${u.id}: ${whyOf(p, u)}`);
 

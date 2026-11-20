@@ -54,10 +54,10 @@ test('a failure is reused and its note says which version it was judged on', asy
   const { api, seen } = sessionApi((row) => (row === 'b' ? 0.05 : 0.95), () => said('yes'));
   const opts = optsOf(declOf({ name: 'share' }), { rows: rowsJson('a', 'b', 'c') });
   const v1 = await round(api, opts, 1);
-  assert.deepEqual(v1.checks[0].notes, ['rows b: flagged by clef (no reason given)']);
+  assert.deepEqual(v1.checks[0].notes, ['rows b: flagged by clef (no reason given); re-verify it against the cited source before rewording it']);
   const v2 = await round(api, opts, 2);
   assert.equal(seen.clef.length, 3);
-  assert.deepEqual([v2.checks[0].met, v2.checks[0].notes], [2 / 3, ['rows b: flagged by clef (no reason given) (judged on v1)']]);
+  assert.deepEqual([v2.checks[0].met, v2.checks[0].notes], [2 / 3, ['rows b: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)']]);
 });
 
 test('an undecided item and an outage are not stored and are asked next round', async () => {
@@ -118,7 +118,7 @@ test('the fold is recomputed from reused answers: a check they already decide es
   const v2 = await round(api, optsOf(declOf({ name: 'all' }), { rows: rowsJson('a', 'b', 'd') }), 2);
   assert.deepEqual([seen.clef, seen.judge], [['a', 'b', 'c', 'd'], []], 'the reused failure of b decides the all fold, so unsure d is not escalated');
   const k = v2.checks[0];
-  assert.deepEqual([k.met, k.notes, k.undecidedItems, k.reused, k.resolvers], [false, ['rows b: flagged by clef (no reason given) (judged on v1)'], ['rows d'], { 'rows a': 1, 'rows b': 1 }, {}]);
+  assert.deepEqual([k.met, k.notes, k.undecidedItems, k.reused, k.resolvers], [false, ['rows b: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)'], ['rows d'], { 'rows a': 1, 'rows b': 1 }, {}]);
   assert.equal(Object.keys(store.answers).length, 3, 'd, skipped, is not stored');
 });
 

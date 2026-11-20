@@ -421,6 +421,19 @@ test('quotes_exist: a quote the cited source lacks fails the gate, naming the qu
   assert.equal((await gate('quotes_exist', findings('"Geese never fly south" [s1]'), {})).met, 1);
 });
 
+test('quotes_exist: a missing quote is met with the nearest passage on the cited page, so the quote can be fixed against it', async () => {
+  const page = 'Ducks and geese migrate north in spring. The geese lead the formation while the ducks follow behind the river banks.';
+  const bad = await gate('quotes_exist', findings('Geese are said to be flightless: "Geese never fly south" [s1]'), { s1: page });
+  assert.equal(bad.met, 0);
+  assert.match(bad.detail!, /quotes "Geese never fly south" \(nearest on the cited page: "Ducks and geese migrate north in spring The"\), which isn't on the cited page/);
+  assert.match(bad.detail!, /Quote the page as written, or paraphrase without quotation marks\./);
+  // A page too short for a window, or one that shares no word with the quote, gets no hint.
+  const short = await gate('quotes_exist', findings('Geese are said to be flightless: "Geese never fly south" [s1]'), { s1: 'Ducks are birds.' });
+  assert.doesNotMatch(short.detail!, /nearest on the cited page/);
+  const disjoint = await gate('quotes_exist', findings('The plant "reactor output peaked at 400 megawatts" [s1]'), { s1: 'The bakery sells rye and wheat loaves every morning for the festival crowd.' });
+  assert.doesNotMatch(disjoint.detail!, /nearest on the cited page/);
+});
+
 test('the declaration asks each finding alone with its kept sources\' excerpts, each Summary sentence with every finding shared, the request whole, and each pair that may conflict with the Summary shared', async () => {
   const report = '## Summary\nKestrel runs 38 electric buses in 2026. [s1]\n## Assumptions\nNone.\n## Findings\n- Kestrel operates 38 electric buses out of a fleet of 112. [s1]\n- All 28 electric buses are the Vantor E12. [s1][s2]\n- Depots are at Northside. [s9]\n';
   const ev = await evidenceFor(report, { s1: 'Kestrel Transit operates 38 battery-electric buses.', s2: 'Vantor E12 page.' }, 'How many electric buses does Kestrel run?');
