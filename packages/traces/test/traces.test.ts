@@ -37,9 +37,9 @@ async function fakeLangfuse(status = 200, reply = '{}') {
   return { first, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => new Promise((r) => server.close(r)) };
 }
 
-async function generate(extensions: ReturnType<typeof tracesSessionExtensions>, text: string) {
+async function generate(extensions: ReturnType<typeof tracesSessionExtensions>, text: string, onResponse?: () => void) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
-  faux.setResponses([async () => (await new Promise((r) => setTimeout(r, 20)), fauxAssistantMessage(text))]);
+  faux.setResponses([() => (onResponse?.(), fauxAssistantMessage(text))]);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -51,7 +51,8 @@ async function generate(extensions: ReturnType<typeof tracesSessionExtensions>, 
 
 test('a generation sends one OTLP span with Langfuse generation attributes', async () => {
   const lf = await fakeLangfuse();
-  const done = await generate(tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'sess-1', agentName: 'reviewer', agentVersion: '3' }), 'Hi there.');
+  let clock = 1_000_000;
+  const done = await generate(tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'sess-1', agentName: 'reviewer', agentVersion: '3', now: () => clock }), 'Hi there.', () => (clock += 20));
   assert.equal(done.status === 'done' && done.answer, 'Hi there.');
   const { auth, version, spans } = await lf.first;
   assert.equal(auth, `Basic ${Buffer.from('pk:sk').toString('base64')}`);

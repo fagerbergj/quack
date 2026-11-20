@@ -7,11 +7,11 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { Artifacts, pendingApprovals, resolveApproval } from '@quack/sdk';
+import { Artifacts, pendingApprovals } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
 import { claimedCommands } from '../src/claims.ts';
-import { cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
+import { answerApproval as answer, cleanup, fakeService, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
 
@@ -45,20 +45,6 @@ async function change(repo: string, subject = 'fix(app): bump a to 3') {
   sh(repo, 'commit', '-qam', subject);
   await mkdir(join(repo, '..', 'artifacts'), { recursive: true });
   await writeFile(join(repo, '..', 'artifacts', 'pr.md'), PR_MD);
-}
-
-// The gate is durable; the test waits for the approval row, then answers it as an operator would.
-async function answer(session: Awaited<ReturnType<typeof openSession>>, decision: 'approve' | 'reject') {
-  const deadline = Date.now() + 15_000;
-  for (;;) {
-    const [pending] = await pendingApprovals(session.root, BACKGROUND_CONTEXT);
-    if (pending) {
-      await resolveApproval(session.root, pending.id, { decision, by: { kind: 'person', name: 'operator' }, reason: decision === 'reject' ? 'not now' : undefined }, BACKGROUND_CONTEXT);
-      return pending;
-    }
-    if (Date.now() > deadline) throw new Error('no approval was requested');
-    await new Promise((r) => setTimeout(r, 10));
-  }
 }
 
 test('checkout_task puts the PR head branch in ./repo, not detached, with the facts the task needs', async () => {
