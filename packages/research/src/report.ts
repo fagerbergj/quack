@@ -349,7 +349,7 @@ function findingFacts(report: string, ev: Evidence) {
   return findingItems(report).map((f) => {
     const ids = citedIds(f.text);
     const kept = ids.filter((id) => Object.hasOwn(texts, id));
-    return { first: f.first, cited: ids.length > 0, misquotes: kept.length ? missingQuotes(f.text, kept.map((id) => texts[id])) : [] };
+    return { first: f.first, cited: ids.length > 0, misquotes: kept.length ? missingQuotes(f.text, kept.map((id) => texts[id])) : [], pages: kept.map((id) => texts[id]) };
   });
 }
 
@@ -360,10 +360,34 @@ function findingsCited(artifact: string, ev: Evidence): CodeResult {
   return { met: (all.length - bare.length) / all.length, detail: bare.length ? `${bare.map((f) => `${opening(f.first)} cites no source`).join('; ')}. Add the [sN] of the page that supports each, or drop it.` : undefined };
 }
 
+// The 8-word page window sharing the most words with the quote: where the page says what the quote should have quoted.
+const NEAR = 8;
+const nearestOn = (pages: string[], quote: string): string | undefined => {
+  const want = new Set(quote.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+  let best: string | undefined;
+  let hits = 0;
+  for (const page of pages) {
+    // A kept JSON source keeps its escapes; drop them so an escape's characters are not page words.
+    // Distinct words: a window repeating one stopword must not outscore the window holding the quote's content word.
+    const ws = page.replace(/\\u[0-9a-fA-F]{4}|\\./g, ' ').match(/[\p{L}\p{N}]+/gu) ?? [];
+    for (let i = 0; i + NEAR <= ws.length; i++) {
+      const same = new Set(ws.slice(i, i + NEAR).map((w) => w.toLowerCase()).filter((w) => want.has(w))).size;
+      if (same > hits) [best, hits] = [ws.slice(i, i + NEAR).join(' '), same];
+    }
+  }
+  return best;
+};
+
 function quotesExist(artifact: string, ev: Evidence): CodeResult {
   const all = findingFacts(artifact, ev);
   const wrong = all.filter((f) => f.misquotes.length);
-  const listed = wrong.map((f) => `${opening(f.first)} quotes ${f.misquotes.slice(0, 3).map((q) => `"${q}"`).join(', ')}, which isn't on the cited page`).join('; ');
+  const listed = wrong.map((f) => {
+    const quotes = f.misquotes.slice(0, 3).map((q) => {
+      const near = nearestOn(f.pages, q);
+      return near ? `"${q}" (nearest on the cited page: "${near}")` : `"${q}"`;
+    }).join(', ');
+    return `${opening(f.first)} quotes ${quotes}, which isn't on the cited page`;
+  }).join('; ');
   return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? `${listed}. Quote the page as written, or paraphrase without quotation marks.` : undefined };
 }
 
