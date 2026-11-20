@@ -58,6 +58,8 @@ export type ExtensionManifest = {
   name: string;
   session?: (config: unknown, workflows: ContributedWorkflows, actions: Action<any>[]) => Extension[] | Promise<Extension[]>;
   env?: readonly string[] | ((config: unknown, workflows: ContributedWorkflows, actions: Action<any>[]) => readonly string[]);
+  /** Where a reopened session reads this extension's config: `'pinned'` (default) keeps the session's snapshot; `'current'` follows its agent's current bundle. */
+  configSource?: 'pinned' | 'current';
   /** Problems with an agent's config for this extension, given the deployment; empty when it is fine. */
   validate?: (config: unknown, deployment: DeploymentView) => string[];
   deployment?: boolean;

@@ -242,13 +242,13 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
 
   const agentOf = (key: string) => readText(join(sessionDir(key), 'agent'));
 
-  // Before each start the session gets its agent's current agent.json, whose judge settings it runs with (withCurrentJudge).
+  // Before each start the session gets its agent's current agent.json for extensions with configSource: 'current' (withCurrentExtensions).
   async function followCurrent(key: string) {
     const dir = sessionDir(key);
     const name = await agentOf(key);
     if (!name || !(await exists(join(dir, SNAPSHOT)))) return;
     const from = await source(name, await defaultName()).catch(() => undefined);
-    if (!from) throw new AgentError(409, `session ${key} runs agent ${name}, which is no longer installed, so it has no current bundle to judge with`);
+    if (!from) throw new AgentError(409, `session ${key} runs agent ${name}, which is no longer installed, so it has no current bundle to read live extension config from`);
     await cp(from, join(dir, CURRENT_AGENT_FILE));
   }
 

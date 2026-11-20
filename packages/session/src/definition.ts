@@ -22,7 +22,7 @@ export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** 
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
-export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[] };
+export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[]; configSource?: 'pinned' | 'current' };
 /** Extensions compiled into the runtime image, by name. */
 export type Catalog = Record<string, CatalogEntry>;
 
@@ -261,12 +261,14 @@ function withJudge(raw: Record<string, unknown>, catalog: Catalog): Record<strin
 /** The current bundle's agent.json of a session's agent, which the distributor writes into the session dir before each start. */
 export const CURRENT_AGENT_FILE = 'agent-current.json';
 
-// The judge gates sealed versions outside the recorded conversation, so its settings follow the agent's current bundle; the rest stays pinned.
-export function withCurrentJudge<T>(pinned: T, current: unknown): T {
+// Extensions declaring configSource: 'current' follow the agent's current bundle; the rest stays pinned.
+export function withCurrentExtensions<T>(pinned: T, current: unknown, catalog: Catalog): T {
   if (!isObject(pinned) || !isObject(pinned.extensions) || !isObject(current) || !isObject(current.extensions)) return pinned;
-  const rest = Object.entries(pinned.extensions).filter(([name]) => name !== 'judge');
-  const judge = Object.hasOwn(current.extensions, 'judge') ? [['judge', current.extensions.judge]] : [];
-  return { ...pinned, extensions: Object.fromEntries([...rest, ...judge]) } as T;
+  const live = new Set(Object.entries(catalog).filter(([, e]) => e.configSource === 'current').map(([name]) => name));
+  if (!live.size) return pinned;
+  const rest = Object.entries(pinned.extensions).filter(([name]) => !live.has(name));
+  const fromCurrent = Object.entries(current.extensions).filter(([name]) => live.has(name));
+  return { ...pinned, extensions: Object.fromEntries([...rest, ...fromCurrent]) } as T;
 }
 
 function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
@@ -277,10 +279,10 @@ function extensionProblems(extensions: unknown, deployment: DeploymentConfig, ca
   return [...problems, ...resolveExtensions(Object.keys(extensions), catalog).problems];
 }
 
-/** Validates an agent definition against the deployment and the catalog, reporting every problem at once; `current` is its agent's current bundle (see withCurrentJudge). */
+/** Validates an agent definition against the deployment and the catalog, reporting every problem at once; `current` is its agent's current bundle (see withCurrentExtensions). */
 export function parseDefinition(input: unknown, deployment: DeploymentConfig, catalog: Catalog, current?: unknown): AgentDefinition {
   if (!isObject(input)) throw new Error('invalid agent definition:\n- definition must be an object');
-  const raw = withCurrentJudge(withJudge(withDecisionModel(withoutRemoved(input)), catalog), current);
+  const raw = withCurrentExtensions(withJudge(withDecisionModel(withoutRemoved(input)), catalog), current, catalog);
   const problems: string[] = [];
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');

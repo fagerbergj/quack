@@ -22,6 +22,8 @@ const agentsDir = new URL('../../../agents/', import.meta.url);
 
 test('the manifest-built catalog has the old entry names and deployment env', () => {
   assert.deepEqual(Object.keys(catalog).sort(), ['codemode', 'coding', 'contracts', 'github', 'home', 'judge', 'research', 'subagent', 'workflows']);
+  assert.equal(catalog.judge.configSource, 'current');
+  assert.equal(catalog.coding.configSource, undefined);
   assert.deepEqual(deploymentEnv(deploymentExtensions), ['LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']);
 });
 
