@@ -78,14 +78,16 @@ test('a bad finder decision fails the card step instead of reaching the judge', 
   assert.throws(() => build([{ ...s, give: '200' }]), /200, who is not on your team/);
 });
 
-test('the news check keeps the legacy row unit; the partner check reads each suggestion with its partner row', async () => {
+test('the news check reads each row\'s news and designations; the partner check reads each suggestion with its partner row', async () => {
   const f = await factsOf();
   const c = buildFinderCard(f, finderDecision, { '110': [item] });
   const ev = (await buildEvidence(tradeDeclaration, tradeInputsOf(f, JSON.stringify(c)))).evidence;
-  const row = ev.news[0].state as unknown as { news: unknown[]; designations: Record<string, string>; league_teams: string; partner: { stance: string; surplus: string[] } };
-  assert.deepEqual(Object.keys(row), ['row', 'news', 'designations', 'league_teams', 'you', 'partner']);
-  assert.deepEqual([row.news.length, Object.keys(row.designations), row.league_teams, row.partner.stance, row.partner.surplus], [1, ['Bo Bench', 'Tom Tail'], '3', 'rebuilder', ['411']]);
-  const s = ev.suggestions[0].state.suggestion as { partner: { team: string; needs: object }; note: string };
+  const row = ev.news[0].state.row as unknown as { deal: Record<string, unknown>; news: unknown[]; designations: Record<string, string>; league_teams: number; partner: Record<string, unknown> };
+  assert.deepEqual(Object.keys(row), ['deal', 'news', 'designations', 'league_teams', 'you', 'partner']);
+  assert.deepEqual(Object.keys(row.partner), ['team', 'record', 'stance', 'needs', 'surplus']);
+  assert.deepEqual([row.news.length, Object.keys(row.designations), row.league_teams, row.partner.stance, row.partner.surplus], [1, ['Bo Bench', 'Tom Tail'], 3, 'rebuilder', ['411']]);
+  const s = ev.suggestions[0].state.suggestion as { partner: Record<string, unknown>; note: string };
+  assert.deepEqual(Object.keys(s.partner), ['team', 'record', 'stance', 'needs', 'bye_holes']);
   assert.deepEqual([s.partner.team, s.partner.needs, s.note], ['Pintail Pride', { RB: 3, WR: 2, K: 1, DEF: 1 }, finderDecision.suggestions[0].note]);
   // News is searched for every dealable player, so a row without any is a job with no source; it is not asked about news.
   assert.deepEqual((await buildEvidence(tradeDeclaration, tradeInputsOf(f, JSON.stringify(buildFinderCard(f, finderDecision, {}))))).evidence.news, []);

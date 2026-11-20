@@ -90,8 +90,8 @@ test('a row\'s judge evidence carries that season\'s figures and its note; a sea
   const f = await factsOf();
   const ev = (await buildEvidence(historyDeclaration, historyInputsOf(f, JSON.stringify(buildHistoryCard(f, decision))))).evidence;
   assert.deepEqual([ev.row.map((u) => u.id), ev.notes.map((u) => u.id)], [['row season2025'], ['notes season2025']]);
-  const row = ev.row[0].state as unknown as { season: { record: string; weeks: unknown[]; draft: Array<{ verdict: string }> }; note: string };
-  assert.deepEqual([row.season.record, row.season.weeks.length, row.season.draft.map((p) => p.verdict), row.note], ['2-1', 3, ['as_expected', 'reach', 'steal'], decision.seasons[0].text]);
+  const row = ev.row[0].state.row as unknown as { figures: { record: string; weeks: unknown[]; draft: Array<{ verdict: string }> }; note: string };
+  assert.deepEqual([row.figures.record, row.figures.weeks.length, row.figures.draft.map((p) => p.verdict), row.note], ['2-1', 3, ['as_expected', 'reach', 'steal'], decision.seasons[0].text]);
   assert.deepEqual(ev.notes[0].state, { row: { season: '2025', note: decision.seasons[0].text } });
 });
 

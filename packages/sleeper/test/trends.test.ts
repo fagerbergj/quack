@@ -153,11 +153,11 @@ test('the lookup tells apart two players who share name, position and team', asy
   assert.match(p, /- Rob Rowe \(.*\) #2: 9102\n?/);
 });
 
-test('the conflict check keeps the legacy item unit; the source check reads each linked item\'s source', async () => {
+test('the conflict check reads the item with its news and designation; the source check reads each linked item\'s source', async () => {
   const f = await factsOf(async () => [item]);
   const c = buildTrendsCard(f, decision);
   const ev = (await buildEvidence(trendsDeclaration, trendsInputsOf(f, JSON.stringify(c)))).evidence;
-  const first = ev.conflict[0].state as unknown as { item: unknown; designations: Record<string, string>; news: Array<{ url: string }> };
+  const first = ev.conflict[0].state.item as unknown as { item: unknown; designations: Record<string, string>; news: Array<{ url: string }> };
   assert.deepEqual(Object.keys(first), ['item', 'since', 'news', 'designations']);
   assert.deepEqual([first.item, first.designations, first.news.map((n) => n.url)], [c.items[0], { 'Rob Rowe': 'Questionable' }, [item.url]]);
   assert.deepEqual([ev.conflict.map((u) => u.id), ev.sourced.map((u) => [u.id, u.state.item])], [['conflict item1'], [['sourced item1', { source: 'Ian Rapoport via NBC Sports', link: item.url }]]]);

@@ -1,5 +1,5 @@
-import { registerSplitter, type Declaration, type Inputs, type Rubric } from '@quack/judge';
-import { metaFields, parseCard, SHARE, yes } from '../rubric-kit.ts';
+import type { Declaration, Inputs, Rubric } from '@quack/judge';
+import { parseCard, SHARE, yes } from '../rubric-kit.ts';
 import type { FinderCard } from './card.ts';
 import type { TradeFacts } from './facts.ts';
 
@@ -8,34 +8,42 @@ type Suggestion = FinderCard['suggestions'][number];
 const brief = (s: Suggestion) => ({ id: `suggestion${s.rank}`, give: [s.give.name], get: [s.get.name], text: s.note });
 const designations = (s: Suggestion) => Object.fromEntries([s.give, s.get].map((p) => [p.name, p.inj ?? 'none']));
 
-/** Each suggestion as one record: what the partner check reads, and the legacy unit news_per_traded_player keeps. */
+/** Each suggestion as one record for the partner check. */
 function suggestions(f: TradeFacts, card: FinderCard) {
   return card.suggestions.map((s) => {
     const p = f.partners.find((x) => x.rosterId === s.partner.rosterId);
     return {
-      id: `suggestion${s.rank}`, rank: s.rank, partner_need: s.partner_need, give: s.give.name, get: s.get.name, note: s.note,
+      id: `suggestion${s.rank}`, partner_need: s.partner_need, give: s.give.name, get: s.get.name, note: s.note,
       partner: p ? { team: p.team, record: p.record, stance: p.stance, needs: p.needs, bye_holes: p.byes } : s.partner,
-      legacy: { row: brief(s), news: s.news, designations: designations(s), league_teams: f.teams, you: { stance: f.mine.stance, needs: f.mine.needs, surplus: f.mine.surplus }, partner: p && { team: p.team, record: p.record, stance: p.stance, needs: p.needs, surplus: p.surplus } },
     };
   });
 }
 
-/** The judge's named text: the card's suggestions. */
+/** Each suggestion with news as one record for the news check. */
+function newsRows(f: TradeFacts, card: FinderCard) {
+  return card.suggestions.filter((s) => s.news.length > 0).map((s) => {
+    const p = f.partners.find((x) => x.rosterId === s.partner.rosterId);
+    return {
+      id: `suggestion${s.rank}`, deal: brief(s), news: s.news, designations: designations(s), league_teams: f.teams,
+      you: { stance: f.mine.stance, needs: f.mine.needs, surplus: f.mine.surplus },
+      partner: p && { team: p.team, record: p.record, stance: p.stance, needs: p.needs, surplus: p.surplus },
+    };
+  });
+}
+
+/** The judge's named texts: the card's suggestions for partner and news checks. */
 export function tradeInputsOf(f: TradeFacts, content: string): Inputs {
-  return { suggestions: JSON.stringify(suggestions(f, parseCard<FinderCard>(content))) };
+  const card = parseCard<FinderCard>(content);
+  return { suggestions: JSON.stringify(suggestions(f, card)), news: JSON.stringify(newsRows(f, card)) };
 }
 export const tradeInputs = (f: TradeFacts) => async (_api: unknown, sealed: { content: string }): Promise<Inputs> => tradeInputsOf(f, sealed.content);
-
-// The news check stays on the 27B with its legacy unit: the card's row, then the other fields at the top.
-type Row = ReturnType<typeof suggestions>[number];
-registerSplitter('sleeper.tradeRows', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as Row[]).map((r) => ({ id: r.id, text: JSON.stringify(r.legacy.row), meta: r.legacy })));
 
 /** How each model check of tradeRubric is asked: per suggestion, each item alone with nothing shared. */
 export const tradeDeclaration: Declaration = {
   scopes: {
     suggestions: { split: { name: 'jsonItems', from: 'suggestions', pick: ['partner', 'partner_need', 'give', 'get', 'note'] }, piece: 'suggestion' },
     // News is searched for every dealable player, so with no source no row has any and the check is not scored.
-    news: { split: { name: 'sleeper.tradeRows', from: 'suggestions', where: [{ path: 'news', op: 'truthy' }] }, piece: 'row', context: metaFields(['news', 'designations', 'league_teams', 'you', 'partner']) },
+    news: { split: { name: 'jsonItems', from: 'news', pick: ['deal', 'news', 'designations', 'league_teams', 'you', 'partner'] }, piece: 'row' },
   },
   checks: {
     partner_modeled: { scope: 'suggestions', aggregate: SHARE, question: yes('Does `note` give a reason this partner would say yes from its `partner` row (its needs, bye holes, record or stance), not chart value alone?') },
