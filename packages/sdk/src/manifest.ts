@@ -79,8 +79,17 @@ export type ExtensionManifest = {
   actions?: Action<any>[];
   /** The event types the app's `subscribe` receives; absent means this extension's own namespace only. */
   listen?: readonly string[];
+  /** Whether agents selecting this extension get cross-session access and grants for every actionable app. */
+  crossSession?: boolean;
+  /** Third-party keyed services whose secrets stay on the distributor while container sessions reach them via `/proxy/<name>`. */
+  proxiedServices?: readonly ProxiedService[];
   evalAdapters?: EvalAdapter[];
 };
+
+/** A third-party keyed service whose secret stays on the distributor while a container session reaches it through `/proxy/<name>`. */
+export type ProxiedService =
+  | { name: string; urlEnv: string; defaultUrl?: string; secretEnv: string; header: string }
+  | { name: string; urlEnv: string; defaultUrl?: string; secretEnv: string; userEnv: string; userPlaceholder: string; auth: 'basic' };
 
 /** A replay's stand-in for an extension's service half: it serves the pinned world and captures deliveries. */
 export type EvalService = { env: Record<string, string>; captured: unknown[]; close(): Promise<void> };

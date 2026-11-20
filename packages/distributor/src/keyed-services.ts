@@ -1,21 +1,29 @@
+import type { ProxiedService } from '@quack/sdk';
+import { manifests } from '@quack/runtime/catalog';
 import { providerEnv, type DeploymentConfig } from '@quack/session';
 import type { CredentialBroker } from './credentials.ts';
 
 type Proxy = { broker: CredentialBroker; distributorUrl: string; token: string };
 const route = (p: Proxy, name: string) => `${p.distributorUrl}/proxy/${name}`;
+const defaultServices = manifests.flatMap((m) => m.proxiedServices ?? []);
 
 /** Services that take an API key: the session gets the broker route and its launch token in the slots its client reads; the real key is added server-side. */
-export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy): Record<string, string> {
+export function proxyKeyedServices(inherited: NodeJS.ProcessEnv, p: Proxy, services: readonly ProxiedService[] = defaultServices): Record<string, string> {
   const env: Record<string, string> = {};
-  if (inherited.QUACK_EXA_API_KEY) {
-    p.broker.register('QUACK_EXA', inherited.QUACK_EXA_URL ?? 'https://api.exa.ai', { 'x-api-key': inherited.QUACK_EXA_API_KEY });
-    Object.assign(env, { QUACK_EXA_URL: route(p, 'QUACK_EXA'), QUACK_EXA_API_KEY: p.token });
-  }
-  const { LANGFUSE_BASE_URL: base, LANGFUSE_PUBLIC_KEY: pub, LANGFUSE_SECRET_KEY: secret } = inherited;
-  if (base && pub && secret) {
-    p.broker.register('LANGFUSE', base, { authorization: `Basic ${Buffer.from(`${pub}:${secret}`).toString('base64')}` });
-    // The public key is not secret, but the real one stays server-side with its pair.
-    Object.assign(env, { LANGFUSE_BASE_URL: route(p, 'LANGFUSE'), LANGFUSE_PUBLIC_KEY: 'session', LANGFUSE_SECRET_KEY: p.token });
+  for (const s of services) {
+    const url = inherited[s.urlEnv] ?? s.defaultUrl;
+    const secret = inherited[s.secretEnv];
+    if (!url || !secret) continue;
+    if ('auth' in s) {
+      const user = inherited[s.userEnv];
+      if (!user) continue;
+      p.broker.register(s.name, url, { authorization: `Basic ${Buffer.from(`${user}:${secret}`).toString('base64')}` });
+      // The public key is not secret, but the real one stays server-side with its pair.
+      Object.assign(env, { [s.urlEnv]: route(p, s.name), [s.userEnv]: s.userPlaceholder, [s.secretEnv]: p.token });
+    } else {
+      p.broker.register(s.name, url, { [s.header]: secret });
+      Object.assign(env, { [s.urlEnv]: route(p, s.name), [s.secretEnv]: p.token });
+    }
   }
   return env;
 }

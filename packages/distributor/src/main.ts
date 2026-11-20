@@ -34,7 +34,7 @@ const manifests = await loadManifests();
 
 // A process that exits, stopped or crashed, is the catalog's stopped; the session cannot report its own end.
 const stopped = (key: string) => void catalog.stopped(key).catch((err) => console.error(`catalog: ${key} stop not recorded:`, err.message));
-const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker, onExit: stopped });
+const { driver, refuse, listenAddress, ready } = await sessionDriver(process.env, { dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, rubricFor: rubricFrom(manifests), runtime, sessionPort, broker, proxiedServices: manifests.flatMap((m) => m.proxiedServices ?? []), onExit: stopped });
 // Before any session starts, so each log has one owner while its stream is seeded.
 await ready;
 const backfilled = await backfillCatalog(catalog, dataDir, priceOf(parseDeployment(deployment)));
@@ -51,7 +51,7 @@ const push = openNotifications({
   artifacts: async (key) => (await catalog.listArtifacts({ session: key, pageSize: 1000 })).rows,
 });
 // QUACK_PROXY_SECRET is the value the reverse proxy sends in x-quack-proxy-secret; without it no identity header is believed.
-const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key)), events: eventsRoute(catalog, async (key, events) => {
+const sessions = { sessionOf: broker.sessionOf, crossSession: async (key: string) => crossSession(await pinnedDefinition(key), manifests), events: eventsRoute(catalog, async (key, events) => {
   await stream.publish(key, events);
   // Pushes leave after the ack, so a slow push service never holds a session's channel.
   void push.notify(key, events).catch((err) => console.error('push:', err));

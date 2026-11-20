@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { declaredEnv, deploymentEnv, resolveExtensions } from '@quack/session';
-import { catalog, declaredApps, deploymentExtensions, loadManifests, buildCatalog, manifests } from '../src/catalog.ts';
+import { catalog, crossSession, declaredApps, deploymentExtensions, loadManifests, buildCatalog, manifests } from '../src/catalog.ts';
 
 // The hard-coded catalog this one replaced: its entry names, per-extension env, and the workflow env table; app endpoints come primed, never declared.
 const SLEEPER = ['QUACK_EXA_API_KEY'];
@@ -78,4 +78,23 @@ test('an agent declares the apps it selects by name or by workflow, every sessio
   assert.deepEqual([...declaredApps({ extensions: { workflows: { workflow: 'sleeper.lineup' } } }, manifests)].sort(), ['capacity', 'sleeper'].sort());
   assert.deepEqual([...declaredApps({ extensions: { home: {} } }, manifests)].sort(), ['capacity', 'contracts', 'github', 'home', 'sleeper']);
   assert.deepEqual([...declaredApps(null, manifests)], ['capacity']);
+  assert.equal(crossSession({ extensions: { home: {} } }), true);
+  assert.equal(crossSession({ extensions: { coding: {} } }), false);
+});
+
+test('crossSession and declaredApps follow manifest declarations rather than hardcoded names or prefixes', () => {
+  const app = () => ({ handle: async () => {} });
+  const action = { name: 'do_thing', summary: 's', params: {} as never, start: async () => ({ session: 'k', title: 't' }) };
+  const custom = [
+    { name: 'hub', crossSession: true, app },
+    { name: 'home', app },
+    { name: 'tool', app, actions: [action] },
+    { name: 'svc', app, workflows: { 'custom.job': { build: () => null, env: [] } } },
+  ];
+  assert.equal(crossSession({ extensions: { hub: {} } }, custom), true);
+  assert.equal(crossSession({ extensions: { home: {} } }, custom), false);
+  assert.deepEqual([...declaredApps({ extensions: { hub: {} } }, custom)].sort(), ['hub', 'tool']);
+  assert.deepEqual([...declaredApps({ extensions: { home: {} } }, custom)], ['home']);
+  assert.deepEqual([...declaredApps({ extensions: { workflows: { workflow: 'custom.job' } } }, custom)], ['svc']);
+  assert.deepEqual([...declaredApps({ extensions: { workflows: { workflow: 'svc.unregistered' } } }, custom)], []);
 });

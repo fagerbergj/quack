@@ -7,7 +7,7 @@ import { tmpdir, type NetworkInterfaceInfo } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { credentialBroker, containerEnv, dockerApi, dockerLauncher, onSessionNetwork, parseDockerHost, parseHostConfig, reapSessions, sessionDirName, sessionHost, type DockerCall } from '../src/index.ts';
-import { proxyProviders } from '../src/keyed-services.ts';
+import { proxyKeyedServices, proxyProviders } from '../src/keyed-services.ts';
 import { sessionDriver } from '../src/session-driver.ts';
 
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -153,6 +153,38 @@ test('every provider is routed through the broker, keyed or not, and only keyed 
 test('provider ids that sanitize alike get separate routes', () => {
   const { config } = proxyProviders({ providers: { 'a.b': { baseUrl: 'http://one' }, a_b: { baseUrl: 'http://two' } } }, {}, { broker: credentialBroker(), distributorUrl: 'http://d', token: 't' });
   assert.deepEqual(Object.values(config.providers).map((p) => p.baseUrl), ['http://d/proxy/PROVIDER_a_b', 'http://d/proxy/PROVIDER_a_b_2']);
+});
+
+test('proxyKeyedServices proxies manifest-declared services including custom ones', async () => {
+  const seen: string[] = [];
+  const upstream = await listen((req, res) => {
+    seen.push(`${req.headers['x-api-key']} ${req.headers.authorization}`);
+    res.end('{}');
+  });
+  const broker = credentialBroker();
+  const token = broker.mint('a');
+  const p = { broker, distributorUrl: 'http://d', token };
+  // Default manifest services: Exa and Langfuse; incomplete Basic auth is skipped.
+  const defaults = proxyKeyedServices({ QUACK_EXA_API_KEY: 'exa-k', LANGFUSE_BASE_URL: upstream, LANGFUSE_SECRET_KEY: 'sk-only' }, p);
+  assert.deepEqual(defaults, { QUACK_EXA_URL: 'http://d/proxy/QUACK_EXA', QUACK_EXA_API_KEY: token });
+  assert.ok(broker.has('QUACK_EXA') && !broker.has('LANGFUSE'));
+  // Custom services: both header and basic auth.
+  const custom = proxyKeyedServices(
+    { ACME_KEY: 'acme-secret', BASIC_URL: upstream, BASIC_USER: 'u1', BASIC_PASS: 'p1' },
+    p,
+    [
+      { name: 'ACME', urlEnv: 'ACME_URL', defaultUrl: upstream, secretEnv: 'ACME_KEY', header: 'x-api-key' },
+      { name: 'BASIC_SVC', urlEnv: 'BASIC_URL', secretEnv: 'BASIC_PASS', userEnv: 'BASIC_USER', userPlaceholder: 'placeholder', auth: 'basic' },
+    ],
+  );
+  assert.deepEqual(custom, {
+    ACME_URL: 'http://d/proxy/ACME', ACME_KEY: token,
+    BASIC_URL: 'http://d/proxy/BASIC_SVC', BASIC_USER: 'placeholder', BASIC_PASS: token,
+  });
+  const front = await listen((req, res) => void broker.route(req, res).then((ok) => ok || res.writeHead(404).end()));
+  assert.equal((await fetch(`${front}/proxy/ACME/v1`, { headers: { 'x-api-key': token } })).status, 200);
+  assert.equal((await fetch(`${front}/proxy/BASIC_SVC/v1`, { headers: { authorization: `Basic ${Buffer.from(`placeholder:${token}`).toString('base64')}` } })).status, 200);
+  assert.deepEqual(seen, ['acme-secret undefined', `undefined Basic ${Buffer.from('u1:p1').toString('base64')}`]);
 });
 
 test('an operator can pass a named secret through', () => {

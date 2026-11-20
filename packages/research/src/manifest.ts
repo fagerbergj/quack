@@ -9,6 +9,7 @@ export const manifest: ExtensionManifest = {
   optional: ['judge'],
   actions: [researchQuestion],
   env: ['QUACK_EXA_API_KEY'],
+  proxiedServices: [{ name: 'QUACK_EXA', urlEnv: 'QUACK_EXA_URL', defaultUrl: 'https://api.exa.ai', secretEnv: 'QUACK_EXA_API_KEY', header: 'x-api-key' }],
   evalAdapters: [{ kind: reportKind.kind, judge: { rubric: researchRubric, declaration: reportDeclaration, inputs: recordedReportInputs } }],
   session: (config) => researchSessionExtensions(config as ResearchConfig),
 };

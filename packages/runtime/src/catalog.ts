@@ -35,13 +35,15 @@ export function buildCatalog(manifests: ExtensionManifest[]): { catalog: Catalog
 export const manifests = await loadManifests();
 export const { catalog, deploymentExtensions } = buildCatalog(manifests);
 
-/** The apps a session's agent declares: an extension it selects by name or by a workflow it binds, one every session gets, and every actionable one for the home agent. */
+/** Whether a session's agent holds the grant to read and start other sessions: any extension with `crossSession: true` grants it. */
+export const crossSession = (definition: { extensions?: Record<string, unknown> } | null, list: ExtensionManifest[] = manifests): boolean =>
+  list.some((m) => m.crossSession && Object.hasOwn(definition?.extensions ?? {}, m.name));
+
+/** The apps a session's agent declares: an extension it selects by name or by a workflow it binds, one every session gets, and every actionable one for a cross-session agent. */
 export function declaredApps(definition: { extensions?: Record<string, any> } | null, list: ExtensionManifest[] = manifests): Set<string> {
   const selected = definition?.extensions ?? {};
   const workflow = typeof selected.workflows?.workflow === 'string' ? selected.workflows.workflow : '';
-  const names = list.filter((m) => m.app && (m.deployment || m.name in selected || workflow.startsWith(`${m.name}.`) || (selected.home && m.actions?.length))).map((m) => m.name);
+  const allActions = crossSession(definition, list);
+  const names = list.filter((m) => m.app && (m.deployment || m.name in selected || Boolean(workflow && m.workflows && Object.hasOwn(m.workflows, workflow)) || (allActions && m.actions?.length))).map((m) => m.name);
   return new Set(names);
 }
-
-/** Whether a session's agent holds the grant to read and start other sessions: the home extension's tools and actions do, so agents selecting it get it and no other does. */
-export const crossSession = (definition: { extensions?: Record<string, unknown> } | null): boolean => Object.hasOwn(definition?.extensions ?? {}, 'home');
