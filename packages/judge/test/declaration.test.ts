@@ -159,7 +159,7 @@ test('a pitfall decided by one failing item skips the escalation the other unsur
   const decl: Declaration = { scopes: { rows: scope }, checks: { kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'all' } } } };
   const v = await rejudge(api, opts(rubricOf('kept', -3), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.equal(requests.length, 1, 'units sharing the guide are packed into one request');
-  assert.deepEqual(requests[0].state, { context: { guide: { rule: 'r' } }, items: [{ id: 'rows a', row: { id: 'a' } }, { id: 'rows b', row: { id: 'b' } }, { id: 'rows c', row: { id: 'c' } }] });
+  assert.deepEqual(requests[0].state, { context: { guide: { rule: 'r' } }, asks: ['Does it keep the rule?'], items: [{ id: 'rows a', row: { id: 'a' } }, { id: 'rows b', row: { id: 'b' } }, { id: 'rows c', row: { id: 'c' } }] });
   assert.deepEqual(escalated, [], 'the fold had decided, so nothing escalated');
   const k = v.checks[0];
   assert.deepEqual([k.met, k.notes, k.undecidedItems, k.resolvers, k.splitter], [true, ['rows a: flagged by clef (no reason given); re-verify it against the cited source before rewording it'], ['rows b'], { clef: 2 }, 'jsonItems']);

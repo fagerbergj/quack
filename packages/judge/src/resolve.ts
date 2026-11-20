@@ -26,7 +26,7 @@ export type Limit = ReturnType<typeof limiter>;
 const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
 // Part of every item-reuse key: bump it when request, point, packedPrompt, CRITERIA or the sdk's decide prompt change,
 // so answers given to the old prompts are asked again.
-export const PROMPT_VERSION = 1;
+export const PROMPT_VERSION = 2;
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
 const qid = (ask: Ask, i: number, packed: boolean) => (packed ? `${ask.id}#${i}` : ask.id);
 const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);
@@ -38,15 +38,21 @@ function asked(ask: Ask, instructions: string): ClassifierQuestion {
 /** Each question of a request with the id the judge reads its answer by, in the order the request numbers them. */
 const questionsOf = (items: Item[]) => items.flatMap((it, i) => it.checks.filter((c) => c.decisionModel !== false).map((c) => ({ id: qid(c, i, !!items[0].unit.shared), i, it, c })));
 
-// Clef reads a question's id as part of the question, and a check id's words can reverse its meaning;
-// the request numbers its questions instead.
+// Clef reads a question id as part of the question, so questions are numbered. Its time grows with bytes, so a packed
+// request names each item once, in `items`, and states a question asked of several items once, in `asks`.
 function request(items: Item[]) {
   const shared = items[0].unit.shared;
-  const questions: Record<string, ClassifierQuestion> = Object.fromEntries(questionsOf(items).map(({ i, it, c }, n) => [
+  const all = questionsOf(items);
+  if (!shared) return { state: items[0].unit.state, questions: Object.fromEntries(all.map(({ c }, n) => [`q${n}`, asked(c, c.question.instructions)])) };
+  const repeated = [...new Set(all.map((q) => q.c.id))].filter((id) => all.filter((q) => q.c.id === id).length > 1);
+  // Resolved once: the position of an id in `asks`, so the questions below do not rescan `repeated` per question.
+  const asksIndex = new Map(repeated.map((id, i) => [id, i]));
+  const questions: Record<string, ClassifierQuestion> = Object.fromEntries(all.map(({ i, c }, n) => [
     `q${n}`,
-    asked(c, shared ? `About items[${i}] (${it.unit.id}): ${c.question.instructions}` : c.question.instructions),
+    asked(c, asksIndex.has(c.id) ? `About items[${i}]: answer asks[${asksIndex.get(c.id)}].` : `About items[${i}]: ${c.question.instructions}`),
   ]));
-  const state: JsonObject = shared ? { context: shared, items: items.map((it) => ({ id: it.unit.id, ...it.unit.state })) } : items[0].unit.state;
+  const asks = repeated.map((id) => all.find((q) => q.c.id === id)!.c.question.instructions);
+  const state: JsonObject = { context: shared, ...(asks.length ? { asks } : {}), items: items.map((it) => ({ id: it.unit.id, ...it.unit.state })) };
   return { state, questions };
 }
 
