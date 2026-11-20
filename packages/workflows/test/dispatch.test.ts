@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { contentText, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { defineTool } from '@earendil-works/pi-durable';
+import { obj } from '@earendil-works/pi-schema';
 import { Artifacts, seal, type ArtifactKind } from '@quack/sdk';
 import type { DispatchingExtension } from '@quack/sdk';
 import { createSessionServer, openSession } from '@quack/session';
-import { defineWorkflow, outcomeOf, WorkflowDoc, workflowSessionExtensions } from '../src/index.ts';
+import { defineWorkflow, latestRun, outcomeOf, WorkflowDoc, workflowSessionExtensions } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -113,4 +115,67 @@ test('POST /resume reruns a failed run from its step, and answers 409 when nothi
   assert.equal((await resume()).status, 409);
   await new Promise((r) => server.close(r));
   await s.close();
+});
+
+test('chat tools work when a session restarts mid-chat-turn and resumes without dispatch', async () => {
+  const dir = await tmp();
+  const chatFlow = defineWorkflow({
+    name: 'chat-echo',
+    steps: [{ name: 'only', kind: 'code', run: async (c) => c.input }],
+    chat: {
+      prompt: 'Answer about the run.',
+      tools: [defineTool({
+        name: 'read_run',
+        description: 'Read the latest run.',
+        parameters: obj({}, { open: true }),
+        async execute(_args, api, c) {
+          const run = await latestRun(api, c);
+          return { output: [{ type: 'text', text: JSON.stringify(run?.results ?? null) }] };
+        },
+      })],
+    },
+  });
+
+  const openChat = (steps: FauxResponseStep[]) => {
+    const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+    faux.setResponses(steps);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const m = faux.getModel();
+    return openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'chat-echo' }, { 'chat-echo': chatFlow }) } });
+  };
+
+  let inFlight!: () => void;
+  const started = new Promise<void>((r) => { inFlight = r; });
+  const first = await openChat([
+    (_c, opts) => new Promise((_res, rej) => {
+      inFlight();
+      opts?.signal?.addEventListener('abort', () => rej(new Error('aborted')), { once: true });
+    }) as never,
+  ]);
+  const ran = await first.submit('ducks', 'start:1', true);
+  assert.equal(ran.status, 'done');
+  const firstTask = (await doc(first)).task;
+
+  const chat = await first.submit('Check the run and rerun it', undefined, false);
+  await started;
+  await first.close();
+
+  const seenResults: string[] = [];
+  const resumed = await openChat([
+    () => fauxAssistantMessage([fauxToolCall('read_run', {}), fauxToolCall('rerun_job', {})], { stopReason: 'toolUse' }),
+    (c) => {
+      for (const m of c.messages) if (m.role === 'toolResult') seenResults.push(contentText(m.content));
+      return fauxAssistantMessage('done');
+    },
+  ]);
+  const sub = await resumed.harness.submission(chat.submissionId as never, ctx);
+  const settled = await sub!.wait(ctx);
+  assert.equal(settled.status, 'done');
+  assert.ok(seenResults.some((r) => r.includes('"only":"ducks"')), `expected read_run result, got: ${JSON.stringify(seenResults)}`);
+  assert.ok(seenResults.some((r) => r.includes('Started run')), `expected rerun_job result, got: ${JSON.stringify(seenResults)}`);
+  const secondTask = (await doc(resumed)).task!;
+  assert.notEqual(secondTask, firstTask);
+  assert.equal((await outcomeOf(resumed.harness, secondTask)).status, 'completed');
+  await resumed.close();
 });
