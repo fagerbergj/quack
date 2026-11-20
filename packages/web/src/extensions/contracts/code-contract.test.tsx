@@ -4,6 +4,9 @@ import { expect, test, vi } from 'vitest';
 import { defaultFocus, focusView, HUB } from './class-model.ts';
 import { declarations } from './typescript-model.ts';
 
+// The diagram's d3/flow chain is cold on a sandbox's first import; load it here, outside any test's 5 s timeout.
+await Promise.all([import('./index.ts'), import('./CodeContract.tsx')]);
+
 const dts = `import type { Context } from '@earendil-works/chord/context';
 
 /** Where a store lives. */
