@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildModels, CURRENT_AGENT_FILE, withCurrentJudge, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, sessionFacts, startLifecycleSender, takeLaunchEndpoint, takeLaunchToken } from '@quack/session';
+import { buildModels, CURRENT_AGENT_FILE, withCurrentExtensions, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, sessionFacts, startLifecycleSender, takeLaunchEndpoint, takeLaunchToken } from '@quack/session';
 import { primeSessionEndpoint } from '@quack/sdk';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -24,7 +24,7 @@ primeSessionEndpoint(launch);
 const config = parseDeployment(readJson(env('QUACK_CONFIG')));
 const currentPath = join(env('QUACK_SESSION_DIR'), CURRENT_AGENT_FILE);
 const current = existsSync(currentPath) ? readJson(currentPath) : undefined;
-const definition = withCurrentJudge(readJson(env('QUACK_AGENT')), current);
+const definition = withCurrentExtensions(readJson(env('QUACK_AGENT')), current, catalog);
 // Only the providers this agent names are asked for their models, so one that is down cannot slow an agent that never uses it.
 const deployment = await resolveDeployment(config, fetch, referencedProviders(definition, config));
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions, current);

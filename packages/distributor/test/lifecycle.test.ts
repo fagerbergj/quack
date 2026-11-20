@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { CURRENT_AGENT_FILE, withCurrentJudge } from '@quack/session';
+import { CURRENT_AGENT_FILE, withCurrentExtensions, type Catalog } from '@quack/session';
 import { createDistributor, sessionDirName, sessionHost, type Launch } from '../src/index.ts';
 
 const cleanups: Array<() => unknown> = [];
@@ -133,7 +133,8 @@ test('a woken session keeps its pinned bundle but judges with its agent\'s curre
   await driver.ensure('contracts:a');
   const dir = launches[1].dir;
   const pinned = JSON.parse(await readFile(join(dir, 'agent-def', 'agent.json'), 'utf8'));
-  const runs = withCurrentJudge(pinned, JSON.parse(await readFile(join(dir, CURRENT_AGENT_FILE), 'utf8')));
+  const liveCatalog: Catalog = { contracts: () => [], judge: Object.assign(() => [], { configSource: 'current' as const }) };
+  const runs = withCurrentExtensions(pinned, JSON.parse(await readFile(join(dir, CURRENT_AGENT_FILE), 'utf8')), liveCatalog);
   assert.deepEqual(runs.extensions, { contracts: { v: 6 }, judge: { maxRevisions: 2, decisionModel: clef } }, 'the judge follows v13, everything else stays on v6');
   assert.equal(await readFile(join(dir, 'agent-def', 'prompt.md'), 'utf8'), 'prompt v6');
 

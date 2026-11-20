@@ -8,7 +8,7 @@ import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { gate } from '@quack/sdk';
-import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, withCurrentJudge, type Catalog } from '../src/index.ts';
+import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, withCurrentExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
   defaultModel: 'local/qwen3.8-27b',
@@ -90,7 +90,7 @@ test('a definition pinned before the judge was an extension is judged with the s
 
 test('a pinned definition is judged with its agent\'s current judge settings and keeps the rest of its pin', async () => {
   const clef = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-  const withJudge: Catalog = { ...catalog, contracts: () => [], judge: (config) => [{ name: `judge:${JSON.stringify(config)}` } as never] };
+  const withJudge: Catalog = { ...catalog, contracts: () => [], judge: Object.assign((config: unknown) => [{ name: `judge:${JSON.stringify(config)}` } as never], { configSource: 'current' as const }) };
   const dir = await mkdtemp(join(tmpdir(), 'quack-def-'));
   try {
     const path = join(dir, 'agent.json');
@@ -103,10 +103,23 @@ test('a pinned definition is judged with its agent\'s current judge settings and
     assert.equal(spec.model.modelId, 'qwen3.8-27b');
     const legacy = { name: 'reviewer', version: 4, model: 'local/qwen3.8-27b', extensions: { github: { maxRevisions: 2 } } };
     assert.equal(parseDefinition(legacy, parseDeployment(deployment), withJudge, { extensions: { github: {} } }).extensions.judge, undefined, 'a current bundle without the judge drops even settings lifted from an old pin');
-    assert.equal(referencedProviders(withCurrentJudge(JSON.parse(await readFile(path, 'utf8')), current), { ...deployment, providers: { ...deployment.providers, clef: { baseUrl: 'http://x' } } }).includes('clef'), true, 'the decision model\'s provider is resolved for the session');
+    assert.equal(referencedProviders(withCurrentExtensions(JSON.parse(await readFile(path, 'utf8')), current, withJudge), { ...deployment, providers: { ...deployment.providers, clef: { baseUrl: 'http://x' } } }).includes('clef'), true, 'the decision model\'s provider is resolved for the session');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('withCurrentExtensions replaces any extension with configSource current and keeps pinned ones', () => {
+  const mixed: Catalog = {
+    pinnedDefault: () => [],
+    pinnedExplicit: Object.assign(() => [], { configSource: 'pinned' as const }),
+    policy: Object.assign(() => [], { configSource: 'current' as const }),
+    dropped: Object.assign(() => [], { configSource: 'current' as const }),
+  };
+  const pinned = { name: 'a', version: 1, extensions: { pinnedDefault: { v: 1 }, pinnedExplicit: { v: 1 }, policy: { v: 1 }, dropped: { v: 1 } } };
+  const current = { name: 'a', version: 2, extensions: { pinnedDefault: { v: 2 }, pinnedExplicit: { v: 2 }, policy: { v: 2 }, extraPinned: { v: 2 } } };
+  const merged = withCurrentExtensions(pinned, current, mixed);
+  assert.deepEqual(merged.extensions, { pinnedDefault: { v: 1 }, pinnedExplicit: { v: 1 }, policy: { v: 2 } });
 });
 
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {
