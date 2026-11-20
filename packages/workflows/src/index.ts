@@ -1,16 +1,16 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import type { JsonValue } from '@earendil-works/chord';
-import { defineExtension, defineTask, defineTool, GenerationTask, hook, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
+import { defineExtension, defineTask, defineTool, GenerationTask, hook, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type ToolExecutionApi, type Tx } from '@earendil-works/pi-durable';
 import type { Dispatch, DispatchingExtension, Resume } from '@quack/sdk';
 import { type Message } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import { Failures } from '@quack/sdk';
-import { latestRun, type Chat, type ChatSession } from './chat.ts';
+import { latestRun, type Chat } from './chat.ts';
 import { WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, Wait, type Step, type StepContext } from './steps.ts';
 
 export { WorkflowDoc, type StepRecord } from './doc.ts';
-export { latestRun, type Chat, type ChatSession } from './chat.ts';
+export { latestRun, type Chat } from './chat.ts';
 export { Wait, type Step, type StepContext } from './steps.ts';
 
 type Results = Record<string, JsonValue>;
@@ -98,18 +98,29 @@ export function defineWorkflow(def: { name: string; steps: Step[]; chat?: Chat }
 
 const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 'pending', startedAt: null, durationMs: null, cost: 0, progress: null, error: null });
 
-// A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
-export async function startWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT): Promise<string> {
-  const seen = (await harness.snapshot(WorkflowDoc, root.id, ctx))?.task ?? null;
-  const live = seen !== null && (await harness.getTask(Number(seen) as never, ctx))?.state.status !== 'terminal';
-  return root.commit(async (tx) => {
-    const doc = await tx.doc(WorkflowDoc, root.id);
+type RunTarget = Pick<ToolExecutionApi, 'conversationId' | 'snapshot' | 'getTask' | 'commit'>;
+
+async function startIn(target: RunTarget, workflow: Workflow, input: JsonValue, request: string | null, ctx: Context): Promise<string> {
+  const seen = (await target.snapshot(WorkflowDoc, target.conversationId, ctx))?.task ?? null;
+  const live = seen !== null && (await target.getTask(Number(seen) as never, ctx))?.state.status !== 'terminal';
+  return target.commit(async (tx) => {
+    const doc = await tx.doc(WorkflowDoc, target.conversationId);
     if (doc.task && (doc.task !== seen || live || (request !== null && doc.request === request))) return doc.task;
     const created = String(await tx.createTask(workflow.task, { input }, { ownership: { kind: 'conversation' } }));
     Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending), kept: null });
-    (await tx.doc(Failures, root.id)).items = Object.fromEntries(workflow.steps.map((s) => [s.name, { error: null, run: Number(created), at: 0 }]));
+    (await tx.doc(Failures, target.conversationId)).items = Object.fromEntries(workflow.steps.map((s) => [s.name, { error: null, run: Number(created), at: 0 }]));
     return created;
   }, ctx);
+}
+
+// A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
+export function startWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT): Promise<string> {
+  return startIn({
+    conversationId: root.id,
+    snapshot: harness.snapshot.bind(harness),
+    getTask: harness.getTask.bind(harness),
+    commit: root.commit.bind(root),
+  }, workflow, input, request, ctx);
 }
 
 // Starts a new run at the failed step, keeping earlier results; null if the latest run did not fail.
@@ -175,15 +186,14 @@ export function workflowExtension(workflows: Workflow[]): Extension {
 const text = (t: string, isError = false) => ({ output: [{ type: 'text' as const, text: t }], isError });
 
 // The rerun a person asks for in chat starts the job as Run does: a fresh run on the earlier run's input, joined if one is live.
-const rerunTool = (workflow: Workflow, session: () => ChatSession) => defineTool({
+const rerunTool = (workflow: Workflow) => defineTool({
   name: 'rerun_job',
   description: "Start this session's job again on the same input, as the Run button does. The job takes no hint, so the request text does not change it; tell the person that. Returns at once; the new result appears in this session when the run ends.",
   parameters: obj({}, { open: true }),
   async execute(_args, api, ctx) {
-    const s = session();
-    const input = (await latestRun(s, ctx))?.input;
+    const input = (await latestRun(api, ctx))?.input;
     if (input === undefined) return text('There is no earlier run to repeat.', true);
-    return text(`Started run ${await startWorkflow(s.harness, s.root, workflow, input, `chat:${api.now()}`, ctx)}.`);
+    return text(`Started run ${await startIn(api, workflow, input, `chat:${api.now()}`, ctx)}.`);
   },
 });
 
@@ -196,10 +206,10 @@ const asChat = (prompt: string) => (request: { readonly messages: readonly Messa
   }),
 });
 
-function chatExtension(workflow: Workflow, chat: Chat, session: () => ChatSession): Extension {
+function chatExtension(workflow: Workflow, chat: Chat): Extension {
   return defineExtension({
     name: 'quack.workflow-chat',
-    tools: [...chat.tools(session), rerunTool(workflow, session)],
+    tools: [...chat.tools, rerunTool(workflow)],
     hooks: [hook(GenerationTask, { beforeRequest: asChat(chat.prompt) })],
   });
 }
@@ -207,9 +217,7 @@ function chatExtension(workflow: Workflow, chat: Chat, session: () => ChatSessio
 /** The bound workflow runs in place of the agent loop: the submission's text is its input, and its results are the answer. A message with no requestId is a person's, not a start, and goes to the chat loop when the workflow has one. */
 export function workflowSessionExtensions(config: unknown, from: Record<string, Workflow>): Extension[] {
   const workflow = boundWorkflow(config, from);
-  let current: ChatSession | undefined;
   const dispatch: Dispatch = async (session, input, requestId, wait) => {
-    current = session;
     if (workflow.chat && requestId === undefined) return undefined;
     const id = await startWorkflow(session.harness, session.root, workflow, input, requestId ?? null);
     if (!wait) return { submissionId: id, status: 'placed' };
@@ -221,7 +229,6 @@ export function workflowSessionExtensions(config: unknown, from: Record<string, 
     const id = await resumeWorkflow(harness, root, workflow);
     return id ? { submissionId: id, status: 'placed' } : null;
   };
-  const here = () => current ?? (() => { throw new Error('chat tool ran before any submission'); })();
-  return [{ ...workflowExtension([workflow]), dispatch, resume } as DispatchingExtension, ...(workflow.chat ? [chatExtension(workflow, workflow.chat, here)] : [])];
+  return [{ ...workflowExtension([workflow]), dispatch, resume } as DispatchingExtension, ...(workflow.chat ? [chatExtension(workflow, workflow.chat)] : [])];
 }
 export { manifest } from './manifest.ts';
