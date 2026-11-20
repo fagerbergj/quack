@@ -7,8 +7,14 @@ export function useStickToBottom() {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const prevTop = useRef(0);
   const [away, setAway] = useState(false);
-  const toBottom = () => scroller.current && (scroller.current.scrollTop = scroller.current.scrollHeight);
+  const toBottom = () => {
+    const el = scroller.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    prevTop.current = el.scrollTop;
+  };
   useLayoutEffect(() => {
     toBottom();
     // The scroller resizes too (the phone keyboard), which must not leave the newest message behind the composer.
@@ -18,8 +24,16 @@ export function useStickToBottom() {
   }, []);
   const onScroll = () => {
     const el = scroller.current!;
-    pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR;
-    setAway(!pinned.current);
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR;
+    const up = el.scrollTop < prevTop.current;
+    prevTop.current = el.scrollTop;
+    if (near) {
+      pinned.current = true;
+      setAway(false);
+    } else if (up) {
+      pinned.current = false;
+      setAway(true);
+    }
   };
   const jump = () => {
     pinned.current = true;

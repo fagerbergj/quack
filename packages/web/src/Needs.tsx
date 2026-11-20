@@ -27,7 +27,7 @@ export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: 
     if (busy) return;
     setBusy(decision);
     setError('');
-    void decideApproval(sessionKey, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(undefined));
+    void decideApproval(sessionKey, a.id, decision, decision === 'reject' ? reason.trim() : undefined).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(undefined));
   };
   const what = describe(a.args);
   const href = `#/s/${encodeURIComponent(sessionKey)}`;
@@ -56,7 +56,7 @@ export function ApprovalCard({ sessionKey, title, a, now, done }: { sessionKey: 
         {rejecting ? (
           <>
             <button type="button" aria-label={`Confirm reject ${title}`} disabled={!!busy} onClick={() => decide('reject')} className={prim}>{busy === 'reject' ? 'Rejecting…' : 'Confirm reject'}</button>
-            <button type="button" disabled={!!busy} onClick={() => setRejecting(false)} className={`${btn} border border-line bg-surface font-medium text-ink-2 disabled:opacity-50`}>Cancel</button>
+            <button type="button" disabled={!!busy} onClick={() => { setRejecting(false); setReason(''); }} className={`${btn} border border-line bg-surface font-medium text-ink-2 disabled:opacity-50`}>Cancel</button>
           </>
         ) : (
           <>

@@ -198,7 +198,7 @@ function Contract({ sessionKey, versions, newest, spec, status, approvals, runni
   const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
   const versionName = useCallback((n: number) => { const v = versions.find((x) => x.a.version === n); return v ? short(v, versions) : `#${n}`; }, [versions]);
   return (
-    <CommentsProvider sessionKey={sessionKey} pending={commentable} newest={newest.a.version} versionName={versionName} decided={decided} deps={[versions.length, approvals.length, running]}>
+    <CommentsProvider sessionKey={sessionKey} pending={commentable} newest={newest.a.version} viewing={to.a.version} versionName={versionName} decided={decided} deps={[versions.length, approvals.length, running]}>
     <div ref={top} className={layout}>
       <ReviewContext value={review}>
         {items.length > 0 && <Stepper onTop={() => top.current?.scrollIntoView?.({ block: 'start' })} />}

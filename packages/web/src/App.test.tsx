@@ -807,6 +807,17 @@ test('the chat width stays between its minimum and what leaves the pane its own,
   }
 });
 
+test.each(['onPointerCancel', 'onLostPointerCapture'] as const)('a split drag clears on %s so later pointer moves do not resize', (end) => {
+  const { result } = renderHook(() => useSplit());
+  const target = document.createElement('div');
+  act(() => result.current.separator.onPointerDown({ pointerId: 1, clientX: 400, currentTarget: target } as unknown as Parameters<typeof result.current.separator.onPointerDown>[0]));
+  act(() => result.current.separator.onPointerMove({ clientX: 460 } as unknown as Parameters<typeof result.current.separator.onPointerMove>[0]));
+  expect(result.current.separator['aria-valuenow']).toBe(CHAT_DEFAULT + 60);
+  act(() => result.current.separator[end]());
+  act(() => result.current.separator.onPointerMove({ clientX: 520 } as unknown as Parameters<typeof result.current.separator.onPointerMove>[0]));
+  expect(result.current.separator['aria-valuenow']).toBe(CHAT_DEFAULT + 60);
+});
+
 test('on a phone a session with a version opens on Chat, the pane a tab away; a pending question is counted on Chat', async () => {
   stubViewport(false);
   (live['ui%3Au1'] ??= {}).artifacts = [REPORT];

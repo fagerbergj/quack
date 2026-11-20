@@ -16,9 +16,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 // jsdom does no layout: the scroller reports the sizes the test sets and remembers where it was scrolled.
 function layout(scroller: HTMLElement) {
-  const box = { top: 0, height: 1000 };
+  const box = { top: 0, height: 1000, client: 400 };
   Object.defineProperty(scroller, 'scrollHeight', { get: () => box.height, configurable: true });
-  Object.defineProperty(scroller, 'clientHeight', { value: 400, configurable: true });
+  Object.defineProperty(scroller, 'clientHeight', { get: () => box.client, configurable: true });
   Object.defineProperty(scroller, 'scrollTop', { get: () => box.top, set: (v: number) => (box.top = v), configurable: true });
   return box;
 }
@@ -57,4 +57,21 @@ test('scrolled up, new messages do not move the reader, and Jump to latest retur
   expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
   await grow(box, 3600);
   expect(box.top).toBe(3600);
+});
+
+test('a viewport shrink or mobile tab unhide that fires scroll before ResizeObserver stays pinned to the bottom', async () => {
+  const { scroller, box } = await open();
+  // Simulated browser-clamped bottom: scrollHeight 1000, clientHeight 400, scrollTop 600.
+  await scrollTo(scroller, box, 600);
+  // Keyboard opens: clientHeight shrinks and scroll fires before ResizeObserver runs.
+  act(() => { box.client = 200; scroller.dispatchEvent(new Event('scroll')); });
+  expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
+  act(() => observers.forEach((cb) => cb()));
+  expect(box.top).toBe(1000);
+  // Tab hides (0x0) then unhides with scrollTop 0 before ResizeObserver runs.
+  act(() => { box.client = 0; box.height = 0; observers.forEach((cb) => cb()); });
+  act(() => { box.client = 400; box.height = 1200; box.top = 0; scroller.dispatchEvent(new Event('scroll')); });
+  expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
+  act(() => observers.forEach((cb) => cb()));
+  expect(box.top).toBe(1200);
 });

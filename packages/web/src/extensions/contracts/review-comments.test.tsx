@@ -269,3 +269,19 @@ test('with more than 20 drafts, the review sheet lets the caller choose up to 20
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your review of v2' })).toBeNull());
   expect(sent('POST')).toEqual([[`${APP.slice(1)}/reviews`, { comments: many.slice(1).map((c) => c.id), note: undefined }]]);
 });
+
+test('viewing an older version hides inline comment actions while keeping the newest version review bar intact', async () => {
+  pointer(false);
+  routes[`GET /sessions/${KEY}/artifacts/contract.spec/1`] = { content: JSON.stringify(v1) };
+  const pane = open('proposed', [draft('cmt_1')]);
+  await waitFor(() => expect(bar()).toHaveTextContent('1 draft comment'));
+  expect(await within(pane).findByRole('button', { name: 'Comment on GET /apps/sleeper/schedule' })).toBeInTheDocument();
+  await userEvent.click(within(pane).getByRole('button', { name: /^Compare to version/ }));
+  await userEvent.click(screen.getByRole('menuitem', { name: /^Version 1/ }));
+  await waitFor(() => expect(within(pane).queryByRole('button', { name: /^Comment on/ })).toBeNull());
+  expect(within(bar()).getByRole('button', { name: 'Review · 1' })).toBeInTheDocument();
+  expect(bar()).toHaveTextContent('1 draft comment');
+  expect(bar()).not.toHaveTextContent('draft is on');
+  await userEvent.click(within(pane).getByRole('button', { name: 'Follow the newest version' }));
+  expect(await within(pane).findByRole('button', { name: 'Comment on GET /apps/sleeper/schedule' })).toBeInTheDocument();
+});

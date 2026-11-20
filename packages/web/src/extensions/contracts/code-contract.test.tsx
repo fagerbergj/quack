@@ -203,3 +203,22 @@ test('a type card centres the diagram on it, so a type no tap in the diagram rea
   expect(within(diagram).getByRole('heading')).toHaveTextContent('around Limits');
   expect(within(screen.getByRole('article', { name: 'start' })).queryByRole('button', { name: 'Show in diagram' }), 'functions are not drawn').toBeNull();
 });
+
+test('a diagram tooltip near the bottom of the viewport flips above its box instead of overflowing', async () => {
+  const prevH = window.innerHeight;
+  Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
+  try {
+    const [{ contracts }] = await Promise.all([import('./index.ts'), import('./typescript-model.ts'), import('./CodeContract.tsx')]);
+    const spec = { kind: 'typescript', title: 'Stores', version: 1, intent: { purpose: 'p', nonGoals: [], audience: 'a', consumers: [], guarantees: [] }, document: dts, choices: [] };
+    render(<>{contracts.card!({ kind: 'contract.spec', version: 1, hash: 'h', content: JSON.stringify(spec), sealedAt: 1, verdict: null })}</>);
+    const diagram = await screen.findByRole('region', { name: 'Class diagram' });
+    const btn = await within(diagram).findByRole('button', { name: 'Centre the diagram on Manifest' });
+    vi.spyOn(btn, 'getBoundingClientRect').mockReturnValue({ left: 100, top: 550, bottom: 582, right: 240, width: 140, height: 32, x: 100, y: 550, toJSON() {} });
+    fireEvent.pointerEnter(btn, { pointerType: 'mouse' });
+    const tip = screen.getByRole('tooltip');
+    expect(tip.style.bottom).toBe('56px');
+    expect(tip.style.top).toBe('');
+  } finally {
+    Object.defineProperty(window, 'innerHeight', { value: prevH, configurable: true });
+  }
+});

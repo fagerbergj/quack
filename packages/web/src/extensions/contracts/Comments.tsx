@@ -15,19 +15,21 @@ type Open = { kind: 'new'; target: Target } | { kind: 'thread'; target: Target }
 type Ctx = {
   /** Set while a version waits on the person: the only one that takes comments. */
   pending?: { artifact: number; name: string; proposal: Approval };
+  /** True only while viewing the version up for approval, so inline comment actions never target a different version. */
+  canComment: boolean;
   byKey: Map<string, Comment[]>; all: Comment[]; drafts: Comment[]; caller?: Principal;
   /** The caller's drafts on a version no longer up for approval: they cannot be sent, so the page offers to remove or move them. */
   stranded: Comment[]; newest: number;
   open: (o: Open) => void; reload: () => void; versionName: (artifact: number) => string;
 };
-const NONE: Ctx = { byKey: new Map(), all: [], drafts: [], stranded: [], newest: 0, open: () => {}, reload: () => {}, versionName: (n) => `#${n}` };
+const NONE: Ctx = { canComment: false, byKey: new Map(), all: [], drafts: [], stranded: [], newest: 0, open: () => {}, reload: () => {}, versionName: (n) => `#${n}` };
 const CommentsContext = createContext<Ctx>(NONE);
 export const useComments = () => useContext(CommentsContext);
 
 const EMPTY: { comments: Comment[]; caller?: Principal } = { comments: [] };
 
 /** The comments on one contract and the sheets that make, send and read them; `deps` reload them as the session moves. */
-export function CommentsProvider({ sessionKey, pending, newest, versionName, decided, deps, children }: { sessionKey: string; pending?: Ctx['pending']; newest: number; versionName: Ctx['versionName']; decided: (id: string) => void; deps: unknown[]; children: ReactNode }) {
+export function CommentsProvider({ sessionKey, pending, newest, viewing, versionName, decided, deps, children }: { sessionKey: string; pending?: Ctx['pending']; newest: number; viewing: number; versionName: Ctx['versionName']; decided: (id: string) => void; deps: unknown[]; children: ReactNode }) {
   const { data, reload } = useLoad(() => listComments(sessionKey).catch(() => EMPTY), [sessionKey, ...deps], EMPTY);
   const [shown, open] = useState<Open>();
   const value = useMemo<Ctx>(() => {
@@ -35,13 +37,13 @@ export function CommentsProvider({ sessionKey, pending, newest, versionName, dec
     const mine = data.comments.filter((c) => c.state === 'draft' && isMe(c.author, data.caller));
     const drafts = mine.filter((c) => c.artifact === pending?.artifact);
     const stranded = mine.filter((c) => c.artifact !== pending?.artifact);
-    return { pending, byKey, all: data.comments, drafts, stranded, newest, caller: data.caller, open, reload, versionName };
-  }, [data, pending, newest, versionName, reload]);
+    return { pending, canComment: !!pending && viewing === pending.artifact, byKey, all: data.comments, drafts, stranded, newest, caller: data.caller, open, reload, versionName };
+  }, [data, pending, viewing, newest, versionName, reload]);
   const close = () => open(undefined);
   return (
     <CommentsContext value={value}>
       {children}
-      {shown?.kind === 'new' && pending && <NewComment sessionKey={sessionKey} target={shown.target} onClose={close} />}
+      {shown?.kind === 'new' && value.canComment && <NewComment sessionKey={sessionKey} target={shown.target} onClose={close} />}
       {shown?.kind === 'thread' && <Thread sessionKey={sessionKey} title={`Comments on ${shown.target.name}`} comments={value.byKey.get(anchorKey(shown.target.anchor)) ?? []} onClose={close} />}
       {shown?.kind === 'stranded' && <Thread sessionKey={sessionKey} title="Drafts that can't be sent" comments={value.stranded} onClose={close} />}
       {shown?.kind === 'all' && <Thread sessionKey={sessionKey} title="Review comments" comments={value.all.filter((c) => c.state !== 'draft')} onClose={close} />}
@@ -88,10 +90,10 @@ function RowMenu({ target }: { target: Target }) {
 /** An element's comment marker and, while a version waits on the person, its Comment action: an icon that shows on hover or focus with a
  * mouse, a row menu on a touch screen. Its row carries the `group/c` class. */
 export function CommentButton({ target }: { target: Target }) {
-  const { pending, byKey } = useComments();
+  const { canComment, byKey } = useComments();
   const touch = useMedia('(pointer: coarse)');
   const n = byKey.get(anchorKey(target.anchor))?.length ?? 0;
-  const action = pending && (touch ? <RowMenu target={target} /> : <CommentIcon target={target} />);
+  const action = canComment && (touch ? <RowMenu target={target} /> : <CommentIcon target={target} />);
   if (!n && !action) return null;
   return <span className="-my-2 ml-1 inline-flex flex-none items-center align-middle">{n > 0 && <Marker target={target} n={n} />}{action}</span>;
 }
@@ -104,12 +106,12 @@ function CommentIcon({ target }: { target: Target }) {
 
 /** The diagram strip's own Comment button, always shown: the strip is what a tap on a box opens. */
 export function StripComment({ target }: { target: Target }) {
-  const { pending, byKey, open } = useComments();
+  const { canComment, byKey, open } = useComments();
   const n = byKey.get(anchorKey(target.anchor))?.length ?? 0;
   const btn = 'flex min-h-11 cursor-pointer items-center gap-2 rounded-full border border-line bg-surface px-4 text-[14px] font-semibold text-ink hover:bg-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link';
   return (
     <>
-      {pending && <button type="button" onClick={() => open({ kind: 'new', target })} className={btn}>{bubble}Comment</button>}
+      {canComment && <button type="button" onClick={() => open({ kind: 'new', target })} className={btn}>{bubble}Comment</button>}
       {n > 0 && <button type="button" onClick={() => open({ kind: 'thread', target })} className={btn}>{n} {n === 1 ? 'comment' : 'comments'}</button>}
     </>
   );
