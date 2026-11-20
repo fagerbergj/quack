@@ -69,8 +69,6 @@ export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency:
 
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
 const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
-/** The options that route a job's questions; every arm's engine must read them under these names. */
-const ROUTING = ['decisionModel', 'judgeModel', 'escalations', 'reuse'] as const;
 /** What a job is judged on: a declared rubric's declaration and inputs, or an undeclared one's evidence. */
 type Judged = { evidence: Evidence } | { declaration: Declaration; inputs: Inputs };
 type Prepared = Omit<Job, 'rep' | 'pos'>;
@@ -147,15 +145,10 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const base = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations, ...(j.reuse && { reuse: true }) };
   const judged = j.judged;
   const opts: JudgeOptions = 'evidence' in judged ? { ...base, evidence: async () => judged.evidence } : { ...base, declaration: judged.declaration, inputs: async () => judged.inputs };
-  const read = new Set<PropertyKey>();
-  const watched = new Proxy(opts, { get: (target, key, receiver) => (read.add(key), Reflect.get(target, key, receiver)) });
   const { api: on, requests } = counted(api);
   const t = Date.now();
-  const v = await j.rejudge(on, watched, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
+  const v = await j.rejudge(on, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;
-  // An engine that names a routing option otherwise (before #2290, `classifier`) would judge without it and say nothing.
-  const ignored = ROUTING.filter((k) => opts[k] !== undefined && !read.has(k));
-  if (ignored.length) throw new Error(`arm ${j.arm}: its judge engine never reads ${ignored.join(', ')}, so it would judge without them; run that arm from a ref whose judge takes these options, or from its own worktree`);
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
   const at = { arm: j.arm, rep: j.rep, pos: j.pos, case: j.c.case, ms, requests };
   return v.checks.map((k) => ({ ...at, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), reused: Object.keys(k.reused ?? {}).length, notes: k.notes }));

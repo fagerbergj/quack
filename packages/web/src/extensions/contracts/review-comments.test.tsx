@@ -248,3 +248,24 @@ test('a Move whose anchor is gone from the new version keeps the old draft and s
   expect(await within(sheet).findByRole('alert')).toHaveTextContent('What this draft is about is not in v3, so it stays on v2. Remove it, or copy its text into a new comment.');
   expect(sent('DELETE')).toEqual([]);
 });
+
+test('with more than 20 drafts, the review sheet lets the caller choose up to 20 to send instead of failing with 400', async () => {
+  const many = Array.from({ length: 21 }, (_, i) => draft(`cmt_${i + 1}`));
+  routes[`POST ${APP}/reviews`] = REVIEW;
+  routes[ASK] = { resolved: true };
+  const { sheet } = await reviewOpen(many);
+  expect(sheet).toHaveTextContent('A review sends at most 20 comments; choose which to include (20 of 21 selected).');
+  const boxes = within(sheet).getAllByRole('checkbox');
+  expect(boxes).toHaveLength(21);
+  expect(boxes.slice(0, 20).every((b) => (b as HTMLInputElement).checked)).toBe(true);
+  expect((boxes[20] as HTMLInputElement).checked).toBe(false);
+  await userEvent.click(boxes[20]!);
+  expect(within(sheet).getByRole('button', { name: 'Send 21 comments' })).toBeDisabled();
+  expect(within(sheet).getByRole('alert')).toHaveTextContent('21 of 21 selected');
+  await userEvent.click(boxes[0]!);
+  const sendBtn = within(sheet).getByRole('button', { name: 'Send 20 comments' });
+  expect(sendBtn).toBeEnabled();
+  await userEvent.click(sendBtn);
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Your review of v2' })).toBeNull());
+  expect(sent('POST')).toEqual([[`${APP.slice(1)}/reviews`, { comments: many.slice(1).map((c) => c.id), note: undefined }]]);
+});

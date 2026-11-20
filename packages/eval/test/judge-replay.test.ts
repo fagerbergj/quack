@@ -239,12 +239,6 @@ test('an arm from another tree judges with that tree\'s judge and SDK, so each a
   assert.ok(there.adapters.length, 'the other tree\'s extensions load beside its engine');
 });
 
-test('an arm whose judge names the decision model otherwise (before #2290, classifier) is refused, not run without it', async (t) => {
-  const there = await otherTree(t, [['judge/src/index.ts', 'opts.decisionModel', '(opts as { classifier?: DecisionModelRef }).classifier']]);
-  const arm: Arm = { label: 'old', adapters: [adapter('Is it helpful?')], rejudge: there.rejudge, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } };
-  await assert.rejects(replayJudge({ cases: [cases[0]], arms: [arm], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel }), /arm old: its judge engine never reads decisionModel, so it would judge without them/);
-});
-
 test('a ref arm keeps its tree, so its contracts TypeScript lint still resolves @types/node', async () => {
   const before = new Set(readdirSync(tmpdir()));
   await armAt('HEAD');

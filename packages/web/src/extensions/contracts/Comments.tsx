@@ -178,7 +178,7 @@ export function anchorName(a: Anchor): { tag: string; name: string } {
   return { tag: 'Spec', name: s.filter((x) => !SEGMENT_SKIP.has(x)).join('.') || 'The whole document' };
 }
 
-function Draft({ sessionKey, c, held }: { sessionKey: string; c: Comment; held: boolean }) {
+function Draft({ sessionKey, c, held, checked, onToggle }: { sessionKey: string; c: Comment; held: boolean; checked?: boolean; onToggle?: () => void }) {
   const { reload } = useComments();
   const [editing, setEditing] = useState<string>();
   const [error, setError] = useState('');
@@ -188,6 +188,7 @@ function Draft({ sessionKey, c, held }: { sessionKey: string; c: Comment; held: 
   return (
     <li className="flex flex-col gap-1.5 border-t border-line py-3 first:border-t-0">
       <div className="flex items-center gap-2">
+        {onToggle && <input type="checkbox" checked={checked} onChange={onToggle} aria-label={`Include comment on ${name}`} className="h-4 w-4 flex-none cursor-pointer accent-link" />}
         <span className={tagCls}>{tag}</span><code className="min-w-0 flex-1 font-mono text-[13px] font-semibold [overflow-wrap:anywhere]">{name}</code>
         {!held && editing === undefined && <><button type="button" aria-label={`Edit comment on ${name}`} onClick={() => setEditing(c.body)} className={link}>Edit</button><button type="button" aria-label={`Remove comment on ${name}`} onClick={() => run(deleteComment(sessionKey, c.id))} className={link}>Remove</button></>}
       </div>
@@ -242,21 +243,47 @@ function useSend(sessionKey: string, decided: (id: string) => void, onClose: () 
   };
 }
 
+const MAX_PER_REVIEW = 20;
+
+function useDraftSelection(drafts: Comment[], pick: boolean) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(drafts.slice(0, MAX_PER_REVIEW).map((c) => c.id)));
+  const toggle = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const chosen = pick ? drafts.filter((c) => selected.has(c.id)).map((c) => c.id) : drafts.map((c) => c.id);
+  return { selected, chosen, toggle };
+}
+
+function ReviewLimitNote({ count, total }: { count: number; total: number }) {
+  const over = count > MAX_PER_REVIEW;
+  return <p role={over ? 'alert' : undefined} className={`m-0 text-[13px] ${over ? 'text-danger' : 'text-warning'}`}>A review sends at most {MAX_PER_REVIEW} comments; choose which to include ({count} of {total} selected).</p>;
+}
+
+function ReviewActions({ held, busy, count, words, onClose, onRelease, onResend, onSend }: { held?: string; busy: boolean; count: number; words: string; onClose: () => void; onRelease: (id: string) => void; onResend: (id: string) => void; onSend: () => void }) {
+  if (held) return <><button type="button" disabled={busy} onClick={() => onRelease(held)} className={sec}>Release</button><button type="button" disabled={busy} onClick={() => onResend(held)} className={prim}>{busy ? 'Sending…' : 'Send again'}</button></>;
+  return <><button type="button" onClick={onClose} className={sec}>Keep editing</button><button type="button" disabled={busy || !count || count > MAX_PER_REVIEW} onClick={onSend} className={prim}>{busy ? 'Sending…' : `Send ${words}`}</button></>;
+}
+
 function ReviewSheet({ sessionKey, decided, onClose }: { sessionKey: string; decided: (id: string) => void; onClose: () => void }) {
   const { pending, drafts } = useComments();
   const [note, setNote] = useState('');
   const s = useSend(sessionKey, decided, onClose);
   const held = s.stuck?.review.id ?? drafts.find((c) => c.review)?.review;
   const n = drafts.length;
-  const words = `${n} ${n === 1 ? 'comment' : 'comments'}`;
-  const actions = held
-    ? <><button type="button" disabled={s.busy} onClick={() => void s.release(held)} className={sec}>Release</button><button type="button" disabled={s.busy} onClick={() => void s.resend(held)} className={prim}>{s.busy ? 'Sending…' : 'Send again'}</button></>
-    : <><button type="button" onClick={onClose} className={sec}>Keep editing</button><button type="button" disabled={s.busy || !n} onClick={() => void s.send(drafts.map((c) => c.id), note)} className={prim}>{s.busy ? 'Sending…' : `Send ${words}`}</button></>;
+  const pick = !held && n > MAX_PER_REVIEW;
+  const { selected, chosen, toggle } = useDraftSelection(drafts, pick);
+  const count = chosen.length;
+  const words = `${count} ${count === 1 ? 'comment' : 'comments'}`;
+  const actions = <ReviewActions held={held} busy={s.busy} count={count} words={words} onClose={onClose} onRelease={(id) => void s.release(id)} onResend={(id) => void s.resend(id)} onSend={() => void s.send(chosen, note)} />;
   return (
     <Sheet title={`Your review of ${pending!.name}`} onClose={onClose} actions={actions}>
       {held ? <p role="status" className="m-0 rounded-xl bg-warning-bg px-3 py-2 text-warning">Your review is ready but was not sent{s.stuck ? `: ${s.stuck.why}` : ''}. Send it again, or release it to edit its comments.</p>
         : <p className="m-0 text-ink-2">{n ? `${words}. Sending them asks for changes to ${pending!.name}; each stays attached to what it is about.` : 'No draft comments. Comment on a part of the diagram or the spec first.'}</p>}
-      {n > 0 && <ul className="m-0 list-none p-0">{drafts.map((c) => <Draft key={c.id} sessionKey={sessionKey} c={c} held={!!held} />)}</ul>}
+      {pick && <ReviewLimitNote count={count} total={n} />}
+      {n > 0 && <ul className="m-0 list-none p-0">{drafts.map((c) => <Draft key={c.id} sessionKey={sessionKey} c={c} held={!!held} checked={selected.has(c.id)} onToggle={pick ? () => toggle(c.id) : undefined} />)}</ul>}
       {!held && n > 0 && (
         <label className="flex flex-col gap-1 text-[14px] font-semibold text-ink">
           Overall note (optional)
