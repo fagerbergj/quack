@@ -6,6 +6,7 @@ import { look } from './kinds.ts';
 import { Pond } from './Pond.tsx';
 import { Needs } from './Needs.tsx';
 import { age, group, pendingInput, titleOf, type Row } from './sessions.ts';
+import { composerKeyDown } from './composer.ts';
 
 const HOME_AGENT = 'quack';
 // The one standing conversation; every Home send lands in it.
@@ -54,6 +55,7 @@ function Ask({ failed }: { failed: boolean }) {
           id="ask"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => composerKeyDown(e, setInput)}
           placeholder="Ask about anything running, or start something new"
           className="field-grow min-h-[3lh] max-h-[10lh] resize-none bg-transparent text-[15.5px] leading-relaxed outline-none placeholder:text-muted"
         />
