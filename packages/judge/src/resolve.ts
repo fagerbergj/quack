@@ -45,9 +45,11 @@ function request(items: Item[]) {
   const all = questionsOf(items);
   if (!shared) return { state: items[0].unit.state, questions: Object.fromEntries(all.map(({ c }, n) => [`q${n}`, asked(c, c.question.instructions)])) };
   const repeated = [...new Set(all.map((q) => q.c.id))].filter((id) => all.filter((q) => q.c.id === id).length > 1);
+  // Resolved once: the position of an id in `asks`, so the questions below do not rescan `repeated` per question.
+  const asksIndex = new Map(repeated.map((id, i) => [id, i]));
   const questions: Record<string, ClassifierQuestion> = Object.fromEntries(all.map(({ i, c }, n) => [
     `q${n}`,
-    asked(c, repeated.includes(c.id) ? `About items[${i}]: answer asks[${repeated.indexOf(c.id)}].` : `About items[${i}]: ${c.question.instructions}`),
+    asked(c, asksIndex.has(c.id) ? `About items[${i}]: answer asks[${asksIndex.get(c.id)}].` : `About items[${i}]: ${c.question.instructions}`),
   ]));
   const asks = repeated.map((id) => all.find((q) => q.c.id === id)!.c.question.instructions);
   const state: JsonObject = { context: shared, ...(asks.length ? { asks } : {}), items: items.map((it) => ({ id: it.unit.id, ...it.unit.state })) };
