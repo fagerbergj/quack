@@ -69,6 +69,16 @@ test('a granted session reaches a non-page route, and a page route too; an ungra
   assert.equal((await fetch(`${base}/apps/demo/private`, { headers: as(allowed) })).status, 418);
   assert.equal((await fetch(`${base}/apps/demo`, { headers: as(allowed) })).status, 418);
   assert.equal((await fetch(`${base}/apps/demo`, { headers: as(ungranted) })).status, 403);
+  const basic = (t: string) => ({ authorization: `Basic ${Buffer.from(`u:${t}`).toString('base64')}` });
+  for (const headers of [{ 'x-api-key': ungranted }, basic(ungranted)]) {
+    assert.equal((await fetch(`${base}/apps/demo`, { headers })).status, 403);
+  }
+  for (const headers of [{ 'x-api-key': 'nope' }, basic('nope')]) {
+    assert.equal((await fetch(`${base}/apps/demo`, { headers })).status, 401);
+  }
+  for (const headers of [{ 'x-api-key': allowed }, basic(allowed)]) {
+    assert.equal((await fetch(`${base}/apps/demo/private`, { headers })).status, 418);
+  }
 });
 
 test('an unmounted app is a 404 problem, and a non-app path is left alone', async () => {

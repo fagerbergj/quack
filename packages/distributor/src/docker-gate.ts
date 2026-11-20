@@ -49,7 +49,7 @@ function checkHost(host: Record<string, any>, dir: string, p: SessionContainers)
   if (host.Runtime !== p.runtime) deny(`runtime ${String(host.Runtime)} is not ${p.runtime}`);
   if (host.NetworkMode !== p.network) deny(`network ${String(host.NetworkMode)} is not ${p.network}`);
   if (!Array.isArray(host.CapDrop) || !host.CapDrop.includes('ALL')) deny('HostConfig.CapDrop must include ALL');
-  if (!(host.SecurityOpt ?? []).every((o: unknown) => o === 'no-new-privileges')) deny('HostConfig.SecurityOpt may only hold no-new-privileges');
+  if (!Array.isArray(host.SecurityOpt) || host.SecurityOpt.length === 0 || !host.SecurityOpt.every((o: unknown) => o === 'no-new-privileges')) deny('HostConfig.SecurityOpt must hold only no-new-privileges');
   if (!isDeepStrictEqual({ Mounts: host.Mounts, Binds: host.Binds }, { Mounts: undefined, Binds: undefined, ...sessionMount(p.data, dir) })) deny('the only mount allowed is the session\'s own data directory');
 }
 

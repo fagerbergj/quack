@@ -14,6 +14,7 @@ import { crossSession } from '@quack/runtime/catalog';
 import { distributor } from '../../home/src/client.ts';
 import { withCredential } from '../../home/src/manifest.ts';
 import { readSession } from '../../home/src/tools.ts';
+import { appsGateway } from '../src/apps.ts';
 import { createDistributor, credentialBroker, processDriver, sessionDirName, type HostDriver } from '../src/index.ts';
 import { pinnedAgentPath } from '../src/process-driver.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
@@ -156,4 +157,30 @@ test('the public listener drops a peer it is told to refuse, such as a session c
   const driver = { running: () => [], wakes: async () => [], credential: () => undefined } as unknown as HostDriver;
   const base = await listening(createDistributor(driver, { refuse: (address) => address === '127.0.0.1' }));
   await assert.rejects(fetch(`${base}/sessions`));
+});
+
+test('a session on the session listener cannot bypass app grants via x-api-key or Basic, and identity headers are stripped', async () => {
+  const driver = { running: () => [], wakes: async () => [], credential: () => undefined } as unknown as HostDriver;
+  const broker = credentialBroker();
+  const ungranted = broker.mint('ungranted');
+  const granted = broker.mint('granted');
+  const seenHeaders: Array<Record<string, unknown>> = [];
+  const app = {
+    pages: [{ method: 'GET', path: '/' }],
+    handle: async (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => {
+      seenHeaders.push({ user: req.headers['x-authentik-username'], proof: req.headers['x-quack-proxy-secret'] });
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+    },
+  };
+  const routes = appsGateway({ demo: app }, broker.sessionOf, async (key) => new Set(key === 'granted' ? ['demo'] : []));
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, routes, sessions: { sessionOf: broker.sessionOf, crossSession: async () => false } });
+  const sessionBase = await listening(server.sessions);
+  const basic = (t: string) => ({ authorization: `Basic ${Buffer.from(`u:${t}`).toString('base64')}` });
+  for (const auth of [{ 'x-api-key': ungranted }, basic(ungranted), { authorization: `Bearer ${ungranted}` }]) {
+    const res = await fetch(`${sessionBase}/apps/demo`, { headers: { ...auth, ...PERSON } });
+    assert.equal(res.status, 403, `ungranted session via ${Object.keys(auth)[0]} must not reach page route`);
+  }
+  const ok = await fetch(`${sessionBase}/apps/demo`, { headers: { 'x-api-key': granted, ...PERSON } });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(seenHeaders, [{ user: undefined, proof: undefined }], 'identity headers stripped on session listener');
 });

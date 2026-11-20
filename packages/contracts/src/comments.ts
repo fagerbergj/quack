@@ -32,7 +32,7 @@ const refuse = (status: number, message: string): never => { throw new Refused(s
 
 // The gateway hands the app its headers as received: a launch credential is a session, the proxy's named person a person, else the tailnet.
 function callerOf(req: IncomingMessage): Principal | undefined {
-  if (req.headers.authorization !== undefined) return undefined;
+  if (req.headers.authorization !== undefined || req.headers['x-api-key'] !== undefined) return undefined;
   const name = req.headers['x-authentik-username'];
   return typeof name === 'string' && name ? { kind: 'person', id: name } : { kind: 'tailnet' };
 }

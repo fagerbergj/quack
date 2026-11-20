@@ -65,6 +65,14 @@ test('every comment and review route is a page route the gateway admits, and a s
   const admitted = [['GET', `${k}/comments`], ['POST', `${k}/comments`], ['PATCH', `${k}/comments/cmt_1`], ['DELETE', `${k}/comments/cmt_1`], ['POST', `${k}/comments/cmt_1:resolve`], ['POST', `${k}/reviews`], ['GET', `${k}/reviews/rev_1`], ['DELETE', `${k}/reviews/rev_1`]];
   for (const [method, path] of admitted) assert.ok(pages.some((p) => p.method === method && (p.path as RegExp).test(path!)), `${method} ${path}`);
   for (const [method, path] of admitted) assert.equal((await s.call('session', method!, path!.slice(k.length), method === 'GET' || method === 'DELETE' ? undefined : {})).status, 403, `${method} ${path}`);
+  for (const headers of [
+    { 'x-api-key': 'launch', 'x-authentik-username': 'ada' },
+    { 'x-api-key': 'launch' },
+    { authorization: `Basic ${Buffer.from('u:launch').toString('base64')}`, 'x-authentik-username': 'ada' },
+  ] as Array<Record<string, string>>) {
+    const res = await globalThis.fetch(`${s.url}${k}/comments`, { headers });
+    assert.equal(res.status, 403, `session credential ${Object.keys(headers).join('+')} must be refused`);
+  }
   assert.equal((await s.call('ada', 'PUT', '/comments')).status, 404);
   for (const key of ['contracts:missing', 'review:x', '%E0']) {
     assert.equal((await globalThis.fetch(`${s.url}/contracts/${key === '%E0' ? key : encodeURIComponent(key)}/comments`)).status, 404, key);
