@@ -57,3 +57,20 @@ test('a pending approval from the session socket shows with the reason field, an
   expect(lastPost()).toEqual({ resolution: { choice: 'reject', reason: 'no' } });
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
 });
+
+test('cancelling a rejection clears the reason and does not send it on a subsequent Approve', async () => {
+  live['ui%3Au1'] = { approvals: [{ id: 'a/2', tool: 'bash', args: { summary: 'Run check' }, requestedAt: 1 }] };
+  routes['PATCH /sessions/ui%3Au1/asks/a%2F2'] = { resolved: true };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const card = await screen.findByRole('region', { name: 'Approval' });
+  await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
+  await userEvent.type(within(card).getByRole('textbox', { name: 'Reason' }), 'wrong command');
+  await userEvent.click(within(card).getByRole('button', { name: 'Cancel' }));
+  await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }));
+  expect(within(card).getByRole('textbox', { name: 'Reason' })).toHaveValue('');
+  await userEvent.click(within(card).getByRole('button', { name: 'Cancel' }));
+  await userEvent.click(within(card).getByRole('button', { name: /^Approve/ }));
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Approval' })).toBeNull());
+  expect(lastPost()).toEqual({ resolution: { choice: 'approve' } });
+});

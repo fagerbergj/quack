@@ -179,7 +179,9 @@ function Caption({ id, legend, touch }: { id: string; legend: boolean; touch: bo
 }
 
 function Tip({ id, decl, at }: { id: string; decl: Decl; at: DOMRect }) {
-  const style = { left: Math.max(8, Math.min(at.left, innerWidth - 296)), top: at.bottom + 6 };
+  const left = Math.max(8, Math.min(at.left, innerWidth - 296));
+  const flip = at.bottom + 70 > innerHeight && at.top > innerHeight - at.bottom;
+  const style = flip ? { left, bottom: Math.max(8, innerHeight - at.top + 6) } : { left, top: Math.max(8, Math.min(at.bottom + 6, innerHeight - 70)) };
   return createPortal(<div id={id} role="tooltip" style={style} className="pointer-events-none fixed z-50 max-w-[280px] rounded-lg bg-ink px-2.5 py-1.5 text-[13px] leading-snug text-on-ink shadow-lift">{lede(decl.doc) || (decl.doc ? 'Its description is in the spec.' : 'No description.')}</div>, document.body);
 }
 

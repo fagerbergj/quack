@@ -43,6 +43,8 @@ export function useSplit() {
     onPointerDown: (e: PointerEvent<HTMLElement>) => { e.currentTarget.setPointerCapture?.(e.pointerId); drag.current = { x: e.clientX, w: width }; },
     onPointerMove: (e: PointerEvent) => move(e, false),
     onPointerUp: (e: PointerEvent) => { move(e, true); drag.current = undefined; },
+    onPointerCancel: () => { drag.current = undefined; },
+    onLostPointerCapture: () => { drag.current = undefined; },
   } as const;
   return { row, style: { '--chat-w': `${width}px` } as CSSProperties, separator };
 }
