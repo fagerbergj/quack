@@ -1,4 +1,4 @@
-import { useEffect, useId, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { CORE, HOME, PAGES, useBar, type Item } from './bottomBar.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { shortCommit, useVersion } from './useVersion.ts';
@@ -95,6 +95,11 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
   const tabs = bar.flatMap((r) => PAGES.find((p) => p.route === r) ?? []);
   // The sidebar honours the same picks as the bottom bar; the rest sit under More, as on the More page.
   const rest = [...CORE, ...MORE].filter((n) => !bar.includes(n.route));
+  const inRest = rest.some((n) => n.route === route);
+  const [moreOpen, setMoreOpen] = useState(() => inRest);
+  useEffect(() => {
+    if (inRest) setMoreOpen(true);
+  }, [inRest]);
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
     <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls}>
@@ -120,7 +125,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         <nav aria-label="Main" className="flex flex-none flex-col gap-0.5 px-3 pb-2 text-[13.5px]">
           {[HOME, ...tabs].map((n) => link(n, linkBase))}
           {/* Opens on its own when the current page is in it, so the rail always shows where you are. */}
-          <details className="group" open={rest.some((n) => n.route === route) || undefined}>
+          <details className="group" open={moreOpen} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
             <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-soft hover:text-ink [&::-webkit-details-marker]:hidden">
               <Icon route="grid" />
               More
