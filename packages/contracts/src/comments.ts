@@ -116,7 +116,6 @@ function commentOf(v: View, row: Row) {
     ...(addressedIn && { addressedIn }), ...(outdated && { outdated }), ...(row.resolved_at !== null && { resolvedAt: iso(row.resolved_at) }),
   };
 }
-export type Comment = ReturnType<typeof commentOf>;
 
 const reviewOf = (r: Review) => ({ id: r.id, artifact: r.artifact, askId: r.ask_id, ...(r.note !== null && { note: r.note }), comments: r.ids, by: JSON.parse(r.by) as Principal, preparedAt: iso(r.prepared_at), state: r.state, reason: r.reason });
 

@@ -5,7 +5,6 @@ import type { ArtifactKind, SealedArtifact } from '@quack/sdk';
 import { PullRequestDoc } from './checkout.ts';
 
 export const LABELS = ['blocking', 'suggestion', 'nit', 'question'] as const;
-export const ANCHORS = ['defect', 'delivery', 'security', 'design', 'scope', 'tests'] as const;
 export const VERDICTS = ['approve', 'comment', 'request_changes'] as const;
 
 export type Finding = { index: number; label: string; anchor?: string; path?: string; line?: number; text: string };
