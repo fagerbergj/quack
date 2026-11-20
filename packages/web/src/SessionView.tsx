@@ -342,13 +342,16 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const shown = studio ? undefined : paneVersions(items, focus);
   const label = studio?.label ?? (shown && artifactName(shown.a));
   const tab: Tab = !label ? 'chat' : (picked ?? (studio && !(asks.inChat && !asks.inPane) ? 'pane' : 'chat'));
+  const owned = useRef(asks.owned);
+  owned.current = asks.owned;
   // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
-  const steer: Send = async (input, whenBusy, images) => {
-    if (!asks.owned.length) return send(input, whenBusy, images);
+  const steer: Send = useCallback(async (input, whenBusy, images) => {
+    const pending = owned.current;
+    if (!pending.length) return send(input, whenBusy, images);
     if (!(await send(input, 'steer', images))) return false;
-    await Promise.all(asks.owned.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
+    await Promise.all(pending.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
     return true;
-  };
+  }, [sessionKey, send, decide, setError]);
   const panel = (t: Tab) => (label && tabbed ? { id: `${id}${t}`, role: 'tabpanel', 'aria-labelledby': `${id}${t}-tab` } : {});
   return { studio, label, tab, setTab, open, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
 }
