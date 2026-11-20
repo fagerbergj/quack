@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extensionDbPath, inProcessFetch, sendProblem, type App, type AppContext, type DeploymentFile, type ExtensionManifest, type LoopEvent } from '@quack/sdk';
+import { sessionToken } from './credentials.ts';
 
 const sendFailure = (res: ServerResponse, err: unknown) => (res.headersSent ? res.destroy() : sendProblem(res, 500, err instanceof Error ? err.message : String(err)));
 
@@ -16,7 +17,7 @@ export function appsGateway(apps: Record<string, App>, sessionOf: (token: string
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const name = /^\/apps\/([^/?]+)(?=[/?]|$)/.exec(req.url ?? '')?.[1];
     if (!name) return false;
-    const presented = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+    const presented = sessionToken(req);
     const session = presented === undefined ? undefined : sessionOf(presented);
     if (presented !== undefined && session === undefined) return sendProblem(res, 401, 'unauthorized'), true;
     const app = Object.hasOwn(apps, name) ? apps[name] : undefined;

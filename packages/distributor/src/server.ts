@@ -526,6 +526,8 @@ function sessionListener(route: (req: IncomingMessage, res: ServerResponse, who:
     try {
       const who = await caller(req);
       if (!who) return sendProblem(res, 401, 'unauthorized');
+      delete req.headers['x-authentik-username'];
+      delete req.headers[PROXY_PROOF];
       // Routed by the normalized path the policy saw, so a `..` cannot reach a route it refused.
       const { pathname, search } = new URL(req.url ?? '', 'http://distributor');
       req.url = pathname + search;
