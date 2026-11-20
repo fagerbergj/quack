@@ -5,6 +5,7 @@ import { remarkable } from './remarkable/index.ts';
 import { research } from './research.ts';
 import { schedules } from './schedules/index.ts';
 import { sleeper } from './sleeper/index.ts';
+import { subagent } from './subagent.tsx';
 
 // A new extension adds one import and one entry; session kinds match in this order.
-export const EXTENSIONS: Extension[] = [github, research, sleeper, remarkable, schedules, contracts];
+export const EXTENSIONS: Extension[] = [github, research, sleeper, remarkable, schedules, contracts, subagent];
