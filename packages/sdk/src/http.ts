@@ -19,6 +19,21 @@ export function sendProblem(res: ServerResponse, status: number, detail: string,
   res.writeHead(status, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ type: 'about:blank', title: STATUS_CODES[status] ?? 'Error', status, detail, error: detail, ...members }));
 }
 
+/** Answers 405 with an Allow header and an RFC 9457 problem body. */
+export function methodNotAllowed(res: ServerResponse, allow: string): void {
+  res.setHeader('allow', allow);
+  sendProblem(res, 405, 'method not allowed');
+}
+
+/** Decodes a URI component, returning undefined instead of throwing on malformed percent-encoding. */
+export function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Whether a body read failed on the app's own size limit, which the app answers 413. */
 export const tooLarge = (err: unknown) => err instanceof Error && err.message === 'body too large';
 

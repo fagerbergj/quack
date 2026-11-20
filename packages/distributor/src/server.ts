@@ -5,20 +5,13 @@ import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { SESSION_KEY, sessionsApi, type Caller, type Catalog } from '@quack/catalog';
-import { principalName, safeEqual, sendProblem, serviceHttp, type Principal, type Withdrawal } from '@quack/sdk';
+import { principalName, safeDecode, safeEqual, sendProblem, serviceHttp, type Principal, type Withdrawal } from '@quack/sdk';
 import { PRINCIPAL_HEADER, principalHeader, unrefTimer, type SetTimer } from '@quack/session';
 import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
 import { sessionRefusal, type SessionCaller } from './session-access.ts';
 
 export const { readBody, send, json } = serviceHttp();
-function safeDecode(s: string): string | undefined {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return undefined;
-  }
-}
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',

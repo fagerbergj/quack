@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { PageError, pageCursor, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
+import { methodNotAllowed, PageError, pageCursor, safeDecode, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { between, expiry, nextAfter, validate, type Schedule } from './schedule.ts';
 
 export type ServiceConfig = {
@@ -174,8 +174,6 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
     return { status: existed ? 200 : 201, body: view(rowOf(id)!) };
   }
 
-  const methodNotAllowed = (res: ServerResponse, allow: string) => (res.setHeader('allow', allow), sendProblem(res, 405, 'method not allowed'));
-
   async function handle(req: IncomingMessage, res: ServerResponse) {
     try {
       const url = new URL(req.url ?? '', 'http://x');
@@ -183,12 +181,8 @@ export function createSchedulesService(config: ServiceConfig): App & { tick(): P
       if (url.pathname === '/') return method === 'GET' ? send(res, 200, list(url)) : methodNotAllowed(res, 'GET');
       const one = /^\/([^/]+)$/.exec(url.pathname);
       if (!one) return sendProblem(res, 404, 'not found');
-      let id: string;
-      try {
-        id = decodeURIComponent(one[1]!);
-      } catch {
-        throw new BadRequest('scheduleId is not valid percent-encoding');
-      }
+      const id = safeDecode(one[1]!);
+      if (id === undefined) throw new BadRequest('scheduleId is not valid percent-encoding');
       if (method === 'PUT') {
         const { status, body: out } = register(id, await body(req));
         return send(res, status, out);

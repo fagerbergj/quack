@@ -36,8 +36,6 @@ function providerProblems(id: string, p: unknown): string[] {
   if (p.apiKeyEnv !== undefined && typeof p.apiKeyEnv !== 'string') problems.push(`providers.${id}.apiKeyEnv must be a string`);
   if (p.api !== undefined && p.api !== 'openai-completions' && p.api !== 'systemone') problems.push(`providers.${id}.api must be openai-completions or systemone`);
   if (p.capacity !== undefined && !positive(p.capacity)) problems.push(`providers.${id}.capacity must be a positive integer`);
-  // shortcut: the named refusal of the pre-rename key; drop it one release after capacity ships.
-  if (p.slots !== undefined) problems.push(`providers.${id}.slots was renamed to providers.${id}.capacity`);
   if (p.models === undefined) return problems;
   if (!isObject(p.models)) return [...problems, `providers.${id}.models must be an object`];
   return [...problems, ...Object.entries(p.models).flatMap(([m, l]) => limitProblems(`providers.${id}.models.${m}`, l))];
@@ -110,7 +108,6 @@ const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'e
 // The catalog is core: its store is named at the root, checked against stores like an extension's.
 function catalogProblems(catalog: unknown, stores: unknown, extensions: unknown): string[] {
   const problems = isObject(extensions) && Object.hasOwn(extensions, 'index') ? ['extensions.index is refused: the catalog is core, so name its store at catalog.store'] : [];
-  if (isObject(extensions) && Object.hasOwn(extensions, 'slots')) problems.push('extensions.slots was renamed to extensions.capacity');
   if (catalog === undefined) return problems;
   if (!isObject(catalog)) return [...problems, 'catalog must be an object'];
   problems.push(...Object.keys(catalog).filter((k) => k !== 'store').map((k) => `catalog.${k} is not a catalog key`));

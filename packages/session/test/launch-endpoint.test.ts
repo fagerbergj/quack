@@ -21,8 +21,3 @@ test('no pair is a session without a publisher; half a pair or an empty file fai
   await writeFile(join(dir, 'empty'), '');
   await assert.rejects(takeLaunchEndpoint({ QUACK_SESSION_LISTENER_URL: 'http://d', QUACK_LAUNCH_TOKEN_FILE: join(dir, 'empty') }), /holds no token/);
 });
-
-test('the pre-rename pair still reads, for the one release the env contract allows', async () => {
-  assert.deepEqual(await takeLaunchEndpoint({ QUACK_INDEX_URL: 'http://d', QUACK_INDEX_TOKEN: 't' }), { url: 'http://d', token: 't' });
-  assert.equal(await takeLaunchEndpoint({ QUACK_INDEX_URL: 'http://d' }), undefined);
-});

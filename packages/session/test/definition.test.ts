@@ -254,20 +254,15 @@ test('the root is closed: a removed or misspelled top-level key is rejected and 
   assert.throws(() => parseDeployment({ ...deployment, defaultModel: undefined }), /defaultModel must be "provider\/model"/);
   assert.throws(() => parseDeployment({ ...deployment, providers: {} }), /at least one provider/);
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 0 } } }), /providers\.local\.capacity must be a positive integer/);
-  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
-});
-
-test('the pre-rename slots keys are refused, naming capacity, with no alias', () => {
   assert.equal(parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 6 } } }).providers.local!.capacity, 6);
-  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', slots: 6 } } }), /providers\.local\.slots was renamed to providers\.local\.capacity/);
-  assert.throws(() => parseDeployment({ ...deployment, extensions: { slots: {} } }), /extensions\.slots was renamed to extensions\.capacity/);
-  assert.throws(() => parseDeployment({ ...deployment, extensions: { index: {}, slots: {} } }), (err: Error) => /extensions\.index is refused/.test(err.message) && /extensions\.slots was renamed/.test(err.message));
+  assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
 });
 
 test('stores and extensions are checked: kinds, postgres urlEnv, extension keys, and store references', () => {
   const ok = { stores: { main: { kind: 'postgres', urlEnv: 'QUACK_DATABASE_URL' }, local: { kind: 'sqlite' } }, extensions: { sleeper: { store: 'main', settings: { league: '1' } }, bare: {} } };
   assert.deepEqual(parseDeployment({ ...deployment, ...ok }).extensions?.bare, {});
   const bad = (extra: object) => () => parseDeployment({ ...deployment, ...extra });
+  assert.throws(bad({ extensions: { index: {} } }), /extensions\.index is refused/);
   assert.throws(bad({ stores: { x: { kind: 'mysql' } } }), /stores\.x\.kind must be sqlite or postgres/);
   assert.throws(bad({ stores: { x: { kind: 'postgres' } } }), /stores\.x\.urlEnv must name/);
   assert.throws(bad({ stores: { x: { kind: 'sqlite', urlEnv: 'U' } } }), /stores\.x\.urlEnv is not a sqlite store key/);

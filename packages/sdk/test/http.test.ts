@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Agent, createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { appEndpoint, inProcessFetch, invocationRequest, primeSessionEndpoint, safeEqual, sendProblem, serviceHttp, submitToSession } from '../src/index.ts';
+import { appEndpoint, inProcessFetch, invocationRequest, methodNotAllowed, primeSessionEndpoint, safeDecode, safeEqual, sendProblem, serviceHttp, submitToSession } from '../src/index.ts';
 
 async function serve(opts: Parameters<typeof serviceHttp>[0]) {
   const http = serviceHttp(opts);
@@ -129,4 +129,17 @@ test('sendProblem writes extension members after the standard ones and never let
   const res = await fetchOf({ ids: ['a'], type: 't', title: 'T', status: 200, detail: 'd', error: 'e' })('http://x/');
   assert.equal(res.headers.get('content-type'), 'application/problem+json');
   assert.deepEqual(await res.json(), { type: 'about:blank', title: 'Not Found', status: 404, detail: 'unknown ids', error: 'unknown ids', ids: ['a'] });
+});
+
+test('methodNotAllowed sets Allow and answers 405 problem+json', async () => {
+  const res = await inProcessFetch((_req, r) => methodNotAllowed(r, 'GET, PUT'))('http://x/');
+  assert.equal(res.status, 405);
+  assert.equal(res.headers.get('allow'), 'GET, PUT');
+  assert.equal(res.headers.get('content-type'), 'application/problem+json');
+  assert.deepEqual(await res.json(), { type: 'about:blank', title: 'Method Not Allowed', status: 405, detail: 'method not allowed', error: 'method not allowed' });
+});
+
+test('safeDecode decodes valid percent-encoding and returns undefined on malformed input', () => {
+  assert.equal(safeDecode('a%20b%3A1'), 'a b:1');
+  assert.equal(safeDecode('%E0%A4%A'), undefined);
 });
