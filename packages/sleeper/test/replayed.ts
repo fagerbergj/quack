@@ -10,8 +10,8 @@ const ids = (checks: Array<{ id: string }>) => checks.map((k) => k.id).sort();
 export async function replayed(record: SessionRecord, sealed: SealedArtifact) {
   const view = asJudged(record, sealed.kind, sealed.version);
   const adapters = manifest.evalAdapters!.filter((a) => a.kind === sealed.kind);
-  // A declared adapter declines another card by throwing, as judge replay reads it.
-  const rebuilt = (a: (typeof adapters)[number]) => (a.judge!.declaration ? a.judge!.inputs!(view, sealed.content).catch(() => undefined) : a.judge!.evidence!(view, sealed.content));
+  // An adapter declines another card by throwing, as judge replay reads it.
+  const rebuilt = (a: (typeof adapters)[number]) => a.judge!.inputs(view, sealed.content).catch(() => undefined);
   const all = await Promise.all(adapters.map(async (a) => ({ a, ev: await rebuilt(a) })));
   const hits = all.filter((h) => h.ev !== undefined);
   assert.equal(hits.length, 1, `${hits.length} adapters judge this card`);

@@ -3,7 +3,7 @@ import { contentText, type ClassifierModel, type ClassifierQuestion } from '@ear
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
 import { agentModel, decide, modelResolver, observeGeneration, inputTooLarge, parseDecision, retryModelCall, type RetrySeams } from '@quack/sdk';
-import { PASS_ONLY, type ModelSplit, type Question } from './declaration.ts';
+import { PASS_ONLY, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
 
@@ -253,35 +253,4 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);
   else await Promise.all(unsure.map(async (a) => done(a, await alone(a))));
   return asked.map((a) => out.get(a)!);
-}
-
-const ITEMS = /\[[\s\S]*\]/;
-
-function parseItems(text: string): Array<{ item: string; span: string }> | undefined {
-  try {
-    const list = JSON.parse(ITEMS.exec(text)?.[0] ?? 'null') as unknown;
-    if (!Array.isArray(list) || !list.every((x) => typeof x?.item === 'string' && typeof x?.span === 'string')) return undefined;
-    return list.map(({ item, span }) => ({ item, span }));
-  } catch {
-    return undefined;
-  }
-}
-
-const splitPrompt = (text: string, instruction = 'one distinct claim, ask or promise') =>
-  `Split the text below into items. An item is: ${instruction}.\nFor each item, state it in one sentence and quote the exact span of the text it comes from.\nAnswer with one JSON array and nothing else: [{"item": "<the item>", "span": "<exact quote from the text>"}]\n\nText:\n${text}`;
-
-/** The LLM splitter's model call: the judge model (the agent's own when unset), its split memoized per sealed version and scope. */
-export function modelSplit(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, ctx: Context): ModelSplit {
-  return async (text, o, role) => {
-    const key = `${memo}:split:${role}`;
-    const stored = await api.memo<Array<{ item: string; span: string }>>(key, ctx);
-    if (stored) return stored;
-    const ref = judgeModel ?? (await api.agent(ctx)).model;
-    const model = ref && api.models.getModel(ref.provider, ref.modelId);
-    if (!model) return undefined;
-    const messages = [{ role: 'user' as const, content: splitPrompt(text, o.instruction), timestamp: api.now() }];
-    const reply = await retryModelCall(`${ref.provider}/${ref.modelId}`, (fetch) => observeGeneration({ provider: model.provider, signal: ctx.abortSignal, messages }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal, fetch })), ctx.abortSignal);
-    const items = reply.stopReason === 'error' ? undefined : parseItems(contentText(reply.content));
-    return items && api.memo(key, items, ctx);
-  };
 }

@@ -1,5 +1,5 @@
 import type { JsonObject } from '@earendil-works/pi-durable';
-import { holds, itemIndependent, joined, keep, runSplitter, scoped, select } from './library.ts';
+import { holds, itemIndependent, joined, runSplitter, select } from './library.ts';
 import type { Evidence, Unit } from './rubric.ts';
 
 type JsonValue = JsonObject[string];
@@ -13,7 +13,7 @@ export type Chunk = {
   /** Stable key the context selectors can match on (a file path, an item's key). */
   key?: string;
   text: string;
-  /** Strategy-specific data that travels with the item (for instance, the span the LLM splitter quoted for it).
+  /** Strategy-specific data that travels with the item.
    *  For a grouped fold: the item's group key under the fold's `groupBy`, and its evidence, which goes on the unit's `shared`. */
   meta?: Record<string, unknown>;
 };
@@ -23,9 +23,6 @@ export type Where =
   | { path: string; op: 'truthy' | 'falsy' }
   | { path: string; op: 'eq' | 'ne'; value: unknown }
   | { path: string; op: 'eq' | 'ne'; as: string; field: string };
-
-/** The shape a deterministic splitter expects its input to have; when it does not, the declared `fallback` runs instead. */
-export type SplitExpect = { min?: number; max?: number; maxChars?: number };
 
 /** How a scope splits one or more inputs into the items a check is fanned out over. */
 export type SplitDecl = {
@@ -40,7 +37,6 @@ export type SplitDecl = {
   max?: number;
   names?: string[];
   path?: string;
-  filter?: 'added';
   where?: Where[];
   pick?: string[];
   of?: SplitDecl;
@@ -48,10 +44,6 @@ export type SplitDecl = {
   compare?: string;
   minShared?: number;
   top?: number;
-  instruction?: string;
-  expect?: SplitExpect;
-  fallback?: SplitDecl;
-  sweep?: SplitDecl;
 };
 
 /** A context selector: named extra state added to every item's request. */
@@ -60,7 +52,6 @@ export type SelectorDecl =
   | { name: 'sections'; from: string; names?: string[]; maxChars?: number }
   | { name: 'items'; from: string; sections?: string[]; skip?: string[]; strip?: string; maxChars?: number }
   | { name: 'json'; from: string; pick?: string[]; pointer?: string | { field: string } }
-  | { name: 'related'; chunker: SplitDecl; match: string | string[]; top?: number; min?: number; maxChars?: number; require?: boolean }
   | { name: 'join'; from: string; by?: string }
   | ({ name: string } & Record<string, unknown>);
 
@@ -72,10 +63,8 @@ export type Question = { type: 'bool'; instructions: string; pass?: ('yes' | 'no
 
 /** The fan-in: how the per-item answers fold into the check's result; a `grouped` fold folds each group's items with `inner`, then the groups' results with `outer`. */
 export type AggregateDecl = {
-  name: 'all' | 'any' | 'share' | 'atLeast' | 'coverageUnion' | 'grouped';
-  /** `atLeast`, or `grouped` with `outer: 'atLeast'`: the number of items (groups) that must hold. */
-  k?: number;
-  /** `share` and `coverageUnion`, or `grouped` with `outer: 'share'`: the share of items (groups) that must hold. */
+  name: 'all' | 'any' | 'share' | 'grouped';
+  /** `share`, or `grouped` with `outer: 'share'`: the share of items (groups) that must hold. */
   min?: number;
   by?: 'related' | 'answer' | 'either';
   /** `grouped` only, required: the field of the item's `meta` that holds its group key. */
@@ -83,7 +72,7 @@ export type AggregateDecl = {
   /** `grouped` only, required: the fold per group; a decided group's remaining items are not asked. */
   inner?: 'any' | 'all';
   /** `grouped` only, required: the fold over the groups' three-valued results. */
-  outer?: 'share' | 'all' | 'any' | 'atLeast';
+  outer?: 'share' | 'all' | 'any';
   pass?: string[];
 };
 
@@ -107,48 +96,8 @@ export type CheckDecl = {
 /** The named scopes, and, keyed by rubric check id, how each model check is judged. */
 export type Declaration = { scopes: Record<string, Scope>; checks: Record<string, CheckDecl> };
 
-/** Which splitter produced a scope's items and why a fallback ran; `failed` when the model splitter gave no usable split. */
-export type Splitting = { splitter: string; reason?: string; failed?: string };
-
-/** Asks the splitting model for the items of free-form text, each with the span it quotes; undefined when it gave no usable answer. */
-export type ModelSplit = (text: string, o: SplitDecl, role: string) => Promise<Array<{ item: string; span: string }> | undefined>;
-
-class SplitFailed extends Error {}
-
-const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
-const spanRe = (span: string) => new RegExp(flat(span).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
-const REST = '\u0000rest';
-
-// Spans the model made up are dropped; the sweep splits whatever text no kept span covers, so a missed item is still judged.
-async function llmSplit(inputs: Inputs, o: SplitDecl, model: ModelSplit | undefined, role: string): Promise<Chunk[]> {
-  const text = scoped(inputs, o);
-  const found = model && (await model(text, o, role));
-  if (!found) throw new SplitFailed('the splitting model gave no usable split');
-  const kept = found.filter((x) => flat(x.span) && flat(text).includes(flat(x.span)));
-  const chunks = keep(kept.map((x, n) => ({ id: `i${n + 1}`, text: x.item, meta: { span: x.span } })), o);
-  if (!o.sweep) return chunks;
-  const rest = kept.reduce((t, x) => t.replace(spanRe(x.span), ' '), text);
-  const extra = runSplitter({ ...inputs, [REST]: rest }, { ...o.sweep, from: REST, sections: undefined, skip: undefined });
-  return [...chunks, ...extra.map((c) => ({ ...c, id: `x${c.id}` }))];
-}
-
-const runSplit = (inputs: Inputs, o: SplitDecl, model: ModelSplit | undefined, role: string) =>
-  o.name === 'llm' ? llmSplit(inputs, o, model, role) : Promise.resolve(runSplitter(inputs, o));
-
-/** Why a deterministic split does not have the shape its input was expected to give, if it does not. */
-export function shapeProblem(pieces: Chunk[], e: SplitExpect | undefined): string | undefined {
-  if (e?.min !== undefined && pieces.length < e.min) return `fewer than ${e.min} items`;
-  if (e?.max !== undefined && pieces.length > e.max) return `more than ${e.max} items`;
-  if (e?.maxChars !== undefined && pieces.some((c) => c.text.length > e.maxChars!)) return `an item over ${e.maxChars} characters`;
-  return undefined;
-}
-
-async function split(inputs: Inputs, o: SplitDecl, model: ModelSplit | undefined, scope: string): Promise<{ chunks: Chunk[] } & Splitting> {
-  const chunks = await runSplit(inputs, o, model, scope);
-  const reason = o.fallback ? shapeProblem(chunks, o.expect) : undefined;
-  if (!reason) return { chunks, splitter: o.name };
-  return { chunks: await runSplit(inputs, o.fallback!, model, `${scope}:fallback`), splitter: `${o.name} -> ${o.fallback!.name}`, reason };
-}
+/** Which splitter produced a scope's items. */
+export type Splitting = { splitter: string };
 
 // JSON text goes to the model as JSON, not as an escaped string; any other text goes as it is.
 function asValue(text: string): JsonValue {
@@ -179,14 +128,14 @@ function crossHolds(inputs: Inputs, name: string, scope: Scope, chunk: Chunk): b
   });
 }
 
-// An item is dropped when a selector finds nothing it requires, or a cross-input `where` does not hold for it.
-function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitOther: (o: SplitDecl) => Chunk[], groupBy?: string): Built {
+// An item is dropped when a selector returns undefined, or a cross-input `where` does not hold for it.
+function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, groupBy?: string): Built {
   if (!crossHolds(inputs, name, scope, chunk)) return undefined;
   const state: JsonObject = { [scope.piece ?? 'piece']: asValue(chunk.text) };
   const { group, rest: shared } = grouping(name, chunk, groupBy);
   const related: Record<string, number> = {};
   for (const [as, sel] of Object.entries(scope.context ?? {})) {
-    const got = select(inputs, chunk, sel, splitOther);
+    const got = select(inputs, chunk, sel);
     if (got.value === undefined) return undefined;
     // A selector that reports matches with an empty value adds no field: an empty field reads to the model as a missing thing.
     if (got.value !== '' || got.matches === undefined) (itemIndependent(sel) ? shared : state)[as] = asValue(got.value);
@@ -200,27 +149,18 @@ function unitOf(inputs: Inputs, name: string, scope: Scope, chunk: Chunk, splitO
 /** `groups`: for each scope a grouped check reads, every unit's group key by unit id. */
 export type BuiltEvidence = { evidence: Evidence; splits: Record<string, Splitting>; groups?: Record<string, Record<string, string>> };
 
-/** Builds the units of every scope (or those `only` keeps) from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
-export async function buildEvidence(decl: Declaration, inputs: Inputs, model?: ModelSplit, only: (scope: Scope) => boolean = () => true): Promise<BuiltEvidence> {
+/** Builds the units of every scope from the inputs: one unit per item, its state the piece and item context, its shared the context every item sees. */
+export function buildEvidence(decl: Declaration, inputs: Inputs): BuiltEvidence {
   const evidence: Evidence = {};
   const splits: Record<string, Splitting> = {};
   const groups: Record<string, Record<string, string>> = {};
-  // A related selector's candidates are the same for every item, so each chunker runs once per build.
-  const cache = new Map<string, Chunk[]>();
-  const splitOther = (o: SplitDecl) => cache.get(JSON.stringify(o)) ?? cache.set(JSON.stringify(o), runSplitter(inputs, o)).get(JSON.stringify(o))!;
-  for (const [name, scope] of Object.entries(decl.scopes).filter(([, s]) => only(s))) {
-    try {
-      const { chunks, ...how } = await split(inputs, scope.split, model, name);
-      const groupBy = groupByOf(decl, name);
-      const built = chunks.map((c) => unitOf(inputs, name, scope, c, splitOther, groupBy)).filter((b) => b !== undefined);
-      evidence[name] = built.map((b) => b.unit);
-      if (groupBy) groups[name] = Object.fromEntries(built.map((b) => [b.unit.id, b.group!]));
-      splits[name] = how;
-    } catch (err) {
-      if (!(err instanceof SplitFailed)) throw err;
-      evidence[name] = [];
-      splits[name] = { splitter: scope.split.name, failed: err.message };
-    }
+  for (const [name, scope] of Object.entries(decl.scopes)) {
+    const chunks = runSplitter(inputs, scope.split);
+    const groupBy = groupByOf(decl, name);
+    const built = chunks.map((c) => unitOf(inputs, name, scope, c, groupBy)).filter((b) => b !== undefined);
+    evidence[name] = built.map((b) => b.unit);
+    if (groupBy) groups[name] = Object.fromEntries(built.map((b) => [b.unit.id, b.group!]));
+    splits[name] = { splitter: scope.split.name };
   }
   return { evidence, splits, ...(Object.keys(groups).length ? { groups } : {}) };
 }

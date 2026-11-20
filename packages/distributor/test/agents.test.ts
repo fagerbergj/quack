@@ -102,7 +102,7 @@ test('promotion survives a restart on a fresh agents dir, and the agents dir is 
 });
 
 test('an agent gets the rubric of the first selected extension whose eval adapter judges', () => {
-  const manifest = (name: string, rubric?: unknown): ExtensionManifest => ({ name, evalAdapters: [{ kind: 'k', judge: rubric ? { rubric, evidence: async () => undefined } : undefined }] });
+  const manifest = (name: string, rubric?: unknown): ExtensionManifest => ({ name, evalAdapters: [{ kind: 'k', judge: rubric ? { rubric, declaration: {}, inputs: async () => ({}) } : undefined }] });
   const pick = rubricFrom([manifest('github', rubric), manifest('research')]);
   assert.deepEqual([pick(['coding', 'github']), pick(['research']), pick([])], [rubric, undefined, undefined]);
 });

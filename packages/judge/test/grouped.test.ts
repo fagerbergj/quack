@@ -42,7 +42,6 @@ test('inner and outer folds combine: each group folds its items, the outer rule 
     [grouped('any', 'all'), false, ['C']],
     [grouped('all', 'any'), true, ['A', 'C']],
     [grouped('any', 'share'), 2 / 3, ['C']],
-    [grouped('all', 'atLeast', { k: 2 }), 1 / 3, ['A', 'C']],
   ];
   for (const [aggregate, met, failing] of cases) {
     const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(aggregate), abc));

@@ -223,7 +223,7 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual(['`e2e` passed on this head.', 'build=success.', 'The build passed.'].map((t) => namedSources(t, checks) > 0), [true, true, false], "the PR's own checks count when cited, not as bare words");
   const absent = ['Nothing imports `legacy` any more.', 'No callers of `x` are left.', '`rg legacy` finds nothing; no imports remain.', 'Searched the tree: nothing references `x`.'];
   assert.deepEqual(absent.map((t) => namedSources(t) > 0), [false, false, true, true], 'an absence claim is backed only by its search');
-  const built = await buildEvidence(reviewDeclaration, { review: '## Verified\n- CI `check` is green on this head.\n- Confirmed `x` is referenced nowhere.\n' }, undefined, (s) => s.piece === 'item');
+  const built = buildEvidence({ scopes: { verified: reviewDeclaration.scopes.verified }, checks: {} }, { review: '## Verified\n- CI `check` is green on this head.\n- Confirmed `x` is referenced nowhere.\n' });
   assert.deepEqual(built.evidence.verified.map((u) => [u.id, u.related]), [['verified item-1', { sources: 2 }], ['verified item-2', { sources: 0 }]]);
   assert.deepEqual(reviewDeclaration.checks.verified_names_evidence.aggregate, { name: 'share', by: 'either' }, 'a named source settles the item; the rest go to Clef');
 });

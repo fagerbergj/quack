@@ -105,7 +105,7 @@ test('a judge replay of an earlier version shows its adapter the session only up
   const dir = await recordedSession(['A', 'B', 'A']);
   const seen: number[][] = [];
   const rubric = { name: 'n', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'k', label: 'k', weight: 'gate' as const, code: () => ({ met: 1 }) }] }] };
-  const adapter: EvalAdapter = { kind: 'test.note', judge: { rubric, evidence: async (s) => (seen.push(s.artifacts['test.note'].map((v) => v.version)), {}) } };
+  const adapter: EvalAdapter = { kind: 'test.note', judge: { rubric, declaration: { scopes: {}, checks: {} }, inputs: async (s) => (seen.push(s.artifacts['test.note'].map((v) => v.version)), {}) } };
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   const models = createModels();
   models.setProvider(judge.provider);

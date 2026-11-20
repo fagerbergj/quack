@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { buildEvidence, checkDeclaration, PASS_ONLY, type Declaration, type ModelSplit } from '../src/declaration.ts';
+import { buildEvidence, checkDeclaration, PASS_ONLY, type Declaration } from '../src/declaration.ts';
 import { fold, metOf } from '../src/fold.ts';
 import { registerSelector, registerSplitter, rejudge, type Inputs, type JudgeOptions, type Rubric } from '../src/index.ts';
 
@@ -19,12 +19,9 @@ test('the fold decides as soon as no assignment of the undecided items can chang
   assert.equal(fold({ name: 'share', min: 0.5 }, [T, T, U, U]), T, 'share: half already holds');
   assert.equal(fold({ name: 'share', min: 0.75 }, [T, F, F, U]), F, 'share: three quarters can no longer hold');
   assert.equal(fold({ name: 'share', min: 0.75 }, [T, T, F, U]), U);
-  assert.equal(fold({ name: 'atLeast', k: 2 }, [T, U, T]), T);
-  assert.equal(fold({ name: 'atLeast', k: 2 }, [T, F, F]), F);
-  assert.equal(fold({ name: 'coverageUnion', min: 0.5 }, [T, F, U, U]), U);
 });
 
-test('met: a positive check holds when the fold is true, a pitfall is present when it is false; share and atLeast report the share', () => {
+test('met: a positive check holds when the fold is true, a pitfall is present when it is false; share reports the share', () => {
   assert.equal(metOf({ name: 'all' }, true, [T, T], false), true);
   assert.equal(metOf({ name: 'all' }, false, [T, F], true), true, 'a failing item makes the pitfall present');
   assert.equal(metOf({ name: 'any' }, true, [T, F], true), false);
@@ -35,9 +32,9 @@ test('met: a positive check holds when the fold is true, a pitfall is present wh
 const report = '# Title\nIntro.\n## Findings\n- Buses cost $2 million each. [s1]\n- The fleet has 38 buses.\n- ok\n## Notes\n- skip me please now\n';
 const cards = JSON.stringify({ rows: [{ id: 'r1', player: 'p1', action: 'start' }, { id: 'r2', player: 'p2', action: 'keep' }, { id: 'r3', player: 'p3', action: 'sit' }] });
 const facts = JSON.stringify({ p1: { injured: true }, p2: { injured: false }, p3: { injured: false } });
-const inputs: Inputs = { report, cards, facts, intent: JSON.stringify({ purpose: 'judge', guarantees: ['g'] }), files: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\ndiff --git a/src/b.ts b/src/b.ts\nnew file mode 100644\n@@ -0,0 +1 @@\n+z\n' };
+const inputs: Inputs = { report, cards, facts, intent: JSON.stringify({ purpose: 'judge', guarantees: ['g'] }) };
 
-test('a scope builds one unit per item: the piece, item context in state, context every item sees identically in shared', async () => {
+test('a scope builds one unit per item: the piece, item context in state, context every item sees identically in shared', () => {
   const decl: Declaration = {
     scopes: {
       rows: {
@@ -49,7 +46,7 @@ test('a scope builds one unit per item: the piece, item context in state, contex
     },
     checks: {},
   };
-  const { evidence, splits } = await buildEvidence(decl, inputs);
+  const { evidence, splits } = buildEvidence(decl, inputs);
   assert.deepEqual(evidence.rows.map((u) => u.id), ['rows r1', 'rows r2'], 'ids are scope-qualified and the where dropped the sit row');
   assert.deepEqual(evidence.rows[0], { id: 'rows r1', state: { row: { id: 'r1', player: 'p1', action: 'start' }, facts: { injured: true } }, related: { facts: 1 }, shared: { intent: 'judge' } });
   assert.deepEqual(evidence.whole[0].id, 'whole intent');
@@ -57,21 +54,18 @@ test('a scope builds one unit per item: the piece, item context in state, contex
   assert.deepEqual(splits.rows, { splitter: 'jsonItems' });
 });
 
-test('a cross-input where compares an item field against its joined record; related needs a match when it requires one', async () => {
+test('a cross-input where compares an item field against its joined record', () => {
   const decl: Declaration = {
     scopes: {
       injured: { split: { name: 'jsonItems', from: 'cards', path: 'rows', where: [{ path: 'action', op: 'ne', as: 'facts', field: 'injured' }] }, context: { facts: { name: 'join', from: 'facts', by: 'player' } } },
-      cited: { split: { name: 'listItems', from: 'report', sections: ['Findings'], strip: '\\[s\\d+\\]', minWords: 3 }, context: { file: { name: 'related', chunker: { name: 'diffFiles', from: 'files' }, match: ['names', 'overlap'], require: true } } },
     },
     checks: {},
   };
-  const { evidence } = await buildEvidence(decl, { ...inputs, report: '## Findings\n- src/a.ts swaps x for y [s1]\n- nothing about files here\n- ok\n' });
+  const { evidence } = buildEvidence(decl, inputs);
   assert.deepEqual(evidence.injured.map((u) => u.id), ['injured r1', 'injured r2', 'injured r3'], 'an action is never equal to an injury flag');
-  assert.deepEqual(evidence.cited.map((u) => [u.id, u.state.piece, u.related]), [['cited item-1', 'src/a.ts swaps x for y', { file: 1 }]], 'the item naming no file is dropped; the short one never split');
-  assert.match(String(evidence.cited[0].state.file), /^src\/a\.ts: diff --git a\/src\/a\.ts/, 'a candidate is shown under its key');
 });
 
-test('text splitters read sections, strip, match and cap, and a declared cut is marked in the context', async () => {
+test('text splitters read sections, strip, match and cap, and a declared cut is marked in the context', () => {
   const decl: Declaration = {
     scopes: {
       claims: { split: { name: 'sentences', from: 'report', skip: ['Notes'], match: '\\d', max: 1 }, context: { notes: { name: 'sections', from: 'report', names: ['Notes'], maxChars: 6 } } },
@@ -79,45 +73,29 @@ test('text splitters read sections, strip, match and cap, and a declared cut is 
     },
     checks: {},
   };
-  const { evidence } = await buildEvidence(decl, inputs);
+  const { evidence } = buildEvidence(decl, inputs);
   assert.deepEqual(evidence.claims.map((u) => u.state.piece), ['Buses cost $2 million each. [s1]']);
   assert.equal(evidence.claims[0].shared!.notes, '- skip\n… (cut at 6 characters)');
   assert.deepEqual(evidence.sections.map((u) => u.id), ['sections Notes']);
 });
 
-test('map-reduce pairs passages whose digests conflict', async () => {
+test('map-reduce pairs passages whose digests conflict', () => {
   const text = '- The fleet has 38 electric buses in service.\n- The fleet has 42 electric buses in service.\n- Tickets cost $2.\n';
   const decl: Declaration = { scopes: { pairs: { split: { name: 'digestPairs', from: 'x', of: { name: 'listItems', from: 'x' }, extract: 'numbers', compare: 'sameTermsOtherValue' } } }, checks: {} };
-  const { evidence } = await buildEvidence(decl, { x: text });
+  const { evidence } = buildEvidence(decl, { x: text });
   assert.deepEqual(evidence.pairs.map((u) => [u.id, u.state.piece]), [['pairs item-1|item-2', { first: 'The fleet has 38 electric buses in service.', second: 'The fleet has 42 electric buses in service.' }]]);
 });
 
-test('map-reduce compares a quantity by its figure, whatever its unit word', async () => {
+test('map-reduce compares a quantity by its figure, whatever its unit word', () => {
   const text = '- Each bus is rated at 190 km per charge.\n- Each bus is rated at 190 per charge.\n- Eligible farms are under 40 acres.\n- Eligible farms are under 60 acres.\n';
   const decl: Declaration = { scopes: { pairs: { split: { name: 'digestPairs', from: 'x', of: { name: 'listItems', from: 'x' }, extract: 'numbers', compare: 'sameTermsOtherValue' } } }, checks: {} };
-  const { evidence } = await buildEvidence(decl, { x: text });
+  const { evidence } = buildEvidence(decl, { x: text });
   assert.deepEqual(evidence.pairs.map((u) => u.id), ['pairs item-3|item-4']);
 });
 
-test('an off-shape input falls back to the llm splitter, whose made-up spans are dropped and whose sweep judges what it missed', async () => {
-  const calls: string[] = [];
-  const model: ModelSplit = async (text, _o, role) => {
-    calls.push(role);
-    return [{ item: 'buses cost two million', span: 'Buses cost $2   million each.' }, { item: 'invented', span: 'not in the text' }];
-  };
-  const llm = { name: 'llm', from: 'report', sections: ['Findings'], sweep: { name: 'listItems', from: 'report', strip: '\\[s\\d+\\]' } };
-  const decl: Declaration = { scopes: { asks: { split: { name: 'listItems', from: 'report', sections: ['Findings'], expect: { min: 5 }, fallback: llm } } }, checks: {} };
-  const { evidence, splits } = await buildEvidence(decl, inputs, model);
-  assert.deepEqual(splits.asks, { splitter: 'listItems -> llm', reason: 'fewer than 5 items' });
-  assert.deepEqual(calls, ['asks:fallback']);
-  assert.deepEqual(evidence.asks.map((u) => [u.id, u.state.piece]), [['asks i1', 'buses cost two million'], ['asks xitem-2', 'The fleet has 38 buses.'], ['asks xitem-3', 'ok']]);
-  const failed = await buildEvidence({ scopes: { asks: { split: llm } }, checks: {} }, inputs, async () => undefined);
-  assert.deepEqual([failed.evidence.asks, failed.splits.asks.failed], [[], 'the splitting model gave no usable split']);
-});
-
-test('a declaration error is loud: an input nobody provided, a splitter nobody registered, a second strategy under one name', async () => {
-  await assert.rejects(buildEvidence({ scopes: { s: { split: { name: 'whole', from: 'nope' } } }, checks: {} }, inputs), /reads input "nope"/);
-  await assert.rejects(buildEvidence({ scopes: { s: { split: { name: 'nope', from: 'report' } } }, checks: {} }, inputs), /no splitter "nope"/);
+test('a declaration error is loud: an input nobody provided, a splitter nobody registered, a second strategy under one name', () => {
+  assert.throws(() => buildEvidence({ scopes: { s: { split: { name: 'whole', from: 'nope' } } }, checks: {} }, inputs), /reads input "nope"/);
+  assert.throws(() => buildEvidence({ scopes: { s: { split: { name: 'nope', from: 'report' } } }, checks: {} }, inputs), /no splitter "nope"/);
   const mine = () => [];
   registerSplitter('test.mine', mine);
   registerSplitter('test.mine', mine);
@@ -205,21 +183,18 @@ test('a choice question holds on its pass options, from the decision model or th
   const probabilities: Record<string, Record<string, number>> = { q0: { good: 0.6, fine: 0.3, bad: 0.1 }, q1: { good: 0.1, fine: 0.1, bad: 0.8 }, q2: { good: 0.5, fine: 0, bad: 0.5 } };
   const { api, escalated } = fakeApi((q) => ({ type: 'choice', choice: 'good', confidence: 1, probabilities: probabilities[q] }), () => JSON.stringify({ choice: 'fine', confidence: 0.9, reason: 'ok' }));
   const question = { type: 'choice' as const, instructions: 'Grade it.', options: { good: 'it is good', fine: 'it will do', bad: 'it is not' } };
-  const decl: Declaration = { scopes: { rows: scope }, checks: { grade: { scope: 'rows', question, aggregate: { name: 'atLeast', k: 2, pass: ['good', 'fine'] } } } };
+  const decl: Declaration = { scopes: { rows: scope }, checks: { grade: { scope: 'rows', question, aggregate: { name: 'share', pass: ['good', 'fine'] } } } };
   const v = await rejudge(api, opts(rubricOf('grade', 3), decl), sealed, 'm', BACKGROUND_CONTEXT);
   assert.deepEqual(escalated, ['Grade it.'], 'c is a coin toss between holding and not, so it escalates');
   assert.deepEqual([v.checks[0].met, v.checks[0].notes], [2 / 3, ['rows b: flagged by clef (no reason given); re-verify it against the cited source before rewording it']]);
 });
 
-test('coverageUnion by related counts what code found and asks no model; a declaration that misses a check is refused', async () => {
-  const { api, requests } = fakeApi(() => ({ type: 'bool', probability: 0.5 }), () => yes);
+test('a declaration that misses a check or misconfigures decisionModel is refused', async () => {
+  const { api } = fakeApi(() => ({ type: 'bool', probability: 0.5 }), () => yes);
   const decl: Declaration = {
-    scopes: { rows: { split: { name: 'jsonItems', from: 'rows' }, context: { cite: { name: 'related', chunker: { name: 'listItems', from: 'review' }, match: 'overlap', min: 1 } } } },
-    checks: { cited: { scope: 'rows', question: { type: 'bool', instructions: 'Is it cited?' }, aggregate: { name: 'coverageUnion', by: 'related', min: 0.5 } } },
+    scopes: { rows: scope },
+    checks: { cited: { scope: 'rows', question: { type: 'bool', instructions: 'Is it cited?' }, aggregate: { name: 'share' } } },
   };
-  const v = await rejudge(api, opts(rubricOf('cited', 2), decl, { rows: JSON.stringify([{ id: 'a', text: 'alpha change' }, { id: 'b', text: 'beta change' }]), review: '- alpha change looks right\n' }), sealed, 'm', BACKGROUND_CONTEXT);
-  assert.equal(requests.length, 0);
-  assert.deepEqual([v.checks[0].met, v.checks[0].resolvers], [true, { code: 2 }]);
   await assert.rejects(rejudge(api, opts(rubricOf('other', 2), decl), sealed, 'm', BACKGROUND_CONTEXT), /no declaration for other; declared checks the rubric lacks: cited/);
   const routed = { ...decl, checks: { cited: { ...decl.checks.cited, decisionModel: true as never } } };
   await assert.rejects(rejudge(api, opts(rubricOf('cited', 2), routed), sealed, 'm', BACKGROUND_CONTEXT), /decisionModel may only be false or pass-only: cited/);
@@ -250,44 +225,12 @@ test('a share by related asks no model, and is met, not null, when code settles 
   assert.equal(requests.length, 0);
 });
 
-test('a registered selector that returns a string still adds its context, and counts no match', async () => {
+test('a registered selector that returns a string still adds its context, and counts no match', () => {
   const decl: Declaration = { scopes: { rows: { split: { name: 'jsonItems', from: 'rows' }, context: { seen: { name: 'test.plain' } } } }, checks: {} };
-  const { evidence } = await buildEvidence(decl, { rows: JSON.stringify([{ id: 'a' }]) });
+  const { evidence } = buildEvidence(decl, { rows: JSON.stringify([{ id: 'a' }]) });
   assert.deepEqual(evidence.rows[0], { id: 'rows a', state: { piece: { id: 'a' }, seen: 'seen a' } });
-  const empty = await buildEvidence(backedDecl('either'), sourced('backed'));
+  const empty = buildEvidence(backedDecl('either'), sourced('backed'));
   assert.deepEqual(empty.evidence.rows[0], { id: 'rows a', state: { piece: { text: 'backed' } }, related: { src: 1 } }, 'an empty value adds no field but its matches count');
-});
-
-test('the llm splitter asks the judge model once per sealed version: a rejudge under the same memo reuses its split', async () => {
-  const split = JSON.stringify([{ item: 'the bus count', span: 'The fleet has 38 buses.' }]);
-  const { api, escalated } = fakeApi(() => ({ type: 'bool', probability: 0.95 }), (name) => (name === 'split' ? `Here: ${split}` : yes));
-  const decl: Declaration = { scopes: { claims: { split: { name: 'llm', from: 'report', instruction: 'one factual claim' } } }, checks: { true_claim: { scope: 'claims', question: { type: 'bool', instructions: 'Is it true?' }, aggregate: { name: 'all' } } } };
-  const o = opts(rubricOf('true_claim', 2), decl, { report });
-  const first = await rejudge(api, o, sealed, 'm', BACKGROUND_CONTEXT);
-  await rejudge(api, o, sealed, 'm', BACKGROUND_CONTEXT);
-  assert.deepEqual(escalated, ['split'], 'one model split, then the memo');
-  assert.deepEqual([first.checks[0].met, first.checks[0].units, first.checks[0].splitter], [true, 1, 'llm']);
-});
-
-test('checks on deterministic scopes are asked while an llm split still runs; the verdict keeps rubric order', async () => {
-  const split = JSON.stringify([{ item: 'the bus count', span: 'The fleet has 38 buses.' }]);
-  const { api, requests } = fakeApi(() => ({ type: 'bool', probability: 0.95 }), () => split);
-  let release!: () => void;
-  const gate = new Promise<void>((r) => (release = r));
-  const models = (api as unknown as { models: { completeSimple: (...a: unknown[]) => Promise<unknown> } }).models;
-  const complete = models.completeSimple;
-  models.completeSimple = async (...a) => (await gate, complete(...a));
-  const decl: Declaration = {
-    scopes: { claims: { split: { name: 'llm', from: 'report' } }, rows: scope },
-    checks: { true_claim: { scope: 'claims', question: { type: 'bool', instructions: 'Is it true?' }, aggregate: { name: 'all' } }, kept: { scope: 'rows', question: { type: 'bool', instructions: 'Does it keep the rule?' }, aggregate: { name: 'all' } } },
-  };
-  const rubric: Rubric = { name: 'r', version: 1, threshold: 0.8, criteria: [{ id: 'c', checks: [{ id: 'true_claim', label: 'claim', weight: 2 }, { id: 'kept', label: 'kept', weight: 2 }] }] };
-  const judged = rejudge(api, opts(rubric, decl, { report }), sealed, 'm', BACKGROUND_CONTEXT);
-  for (let i = 0; i < 100 && !requests.length; i++) await Promise.resolve();
-  assert.equal(requests.length, 1, 'the rows were asked before the split came back');
-  release();
-  const v = await judged;
-  assert.deepEqual([requests.length, v.checks.map((k) => [k.id, k.met])], [2, [['true_claim', true], ['kept', true]]]);
 });
 
 test('a share pitfall asks every unsure item even after a flag, and costs its weight times the share flagged', async () => {
