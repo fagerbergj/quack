@@ -125,15 +125,6 @@ export async function decideApproval(key: string, id: string, decision: 'approve
   return false;
 }
 
-// Starts the contracts agent on a description as the define_contract action does; the distributor creates the session on first use.
-export async function startContract(description: string): Promise<string> {
-  const id = crypto.randomUUID();
-  const key = `contracts:${id}`;
-  const title = draftTitle(description);
-  await json(await fetch(`${base(key)}/invocations?agent=contracts`, { method: 'POST', body: JSON.stringify({ requestId: `ui-contract:${id}`, title, input: description }) }));
-  return key;
-}
-
 // The distributor refuses a socket for a key it does not know, so a conversation's first message goes through invocations, which create it.
 export const startSession = async (key: string, agent: string, input: string) =>
   void (await json(await fetch(`${base(key)}/invocations?agent=${encodeURIComponent(agent)}`, { method: 'POST', body: JSON.stringify({ input, requestId: `ui-start:${Date.now()}` }) })));
@@ -151,9 +142,3 @@ export const getVersion = () => (version ??= fetch('version').then((r) => json<V
 export const forgetVersion = () => { version = undefined; };
 // The build the server runs now, past any cache; getVersion stays the build this page loaded with.
 export const servedVersion = () => fetch('version', { cache: 'no-store' }).then((r) => json<Version>(r)).catch(() => null);
-
-// A working title from the description's first clause, cut at a word; the spec's own title takes over once it exists.
-export function draftTitle(description: string): string {
-  const first = description.replace(/\s+/g, ' ').trim().split(/(?<=[^\s]):\s|\.\s|\s\(/)[0]!;
-  return first.length <= 60 ? first : `${first.slice(0, 60).replace(/\s+\S*$/, '')}…`;
-}

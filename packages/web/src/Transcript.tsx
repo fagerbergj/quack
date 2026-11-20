@@ -8,7 +8,7 @@ import { Args } from './JsonView.tsx';
 import { Markdown } from './Markdown.tsx';
 import { Duck } from './Pond.tsx';
 import { same } from './same.ts';
-import { SubagentTranscript } from './Subagent.tsx';
+import { ToolCallExtra } from './slots.tsx';
 import type { View } from './view.ts';
 
 // Session view: user bubble, plain assistant prose, ONE collapsed activity line per run of work (thinking, tools),
@@ -80,7 +80,7 @@ function CallRow({ call, result }: { call: Call; result?: ToolResultMessage }) {
       <div className="mb-2 ml-[18px] flex flex-col gap-2">
         {call.argumentsError === undefined ? <Args value={call.arguments} /> : <Body body={call.argumentsError} />}
         {out !== undefined && <Body body={out} markdown={!result!.isError && MD_START.test(out)} />}
-        {call.name === 'subagent' && <SubagentTranscript details={result?.details} />}
+        <ToolCallExtra name={call.name} details={result?.details} />
       </div>
     </details>
   );

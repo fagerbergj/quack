@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { startContract } from '../../api.ts';
 import { Modal, useAction } from '../../Housekeeping.tsx';
 import type { Row } from '../../sessions.ts';
 import { useLoad } from '../../useLoad.ts';
-import { contractRecords, contractRows, type ContractRecord, type Tone } from './status.ts';
+import { contractRecords, contractRows, startContract, type ContractRecord, type Tone } from './status.ts';
 
 const TONE: Record<Tone, string> = { warn: 'bg-warning-bg text-warning', plain: 'bg-soft text-ink-2', ok: 'bg-success-bg text-success', bad: 'bg-danger/10 text-danger' };
 

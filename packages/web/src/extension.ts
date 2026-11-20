@@ -46,6 +46,8 @@ export type Extension = {
   label?: (sessionKey: string, kind: string, rows: SealedArtifact[]) => Promise<SealedArtifact[]>;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
+  /** Extra UI beneath a tool call row in the transcript (a subagent's child conversation). */
+  toolCall?: (name: string, details: unknown) => ReactNode;
   /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */
   opening?: (text: string, meta: readonly Record<string, unknown>[]) => ReactNode | undefined;
   /** A badge beside a session's name in the list and its header (a pull request's state); it draws nothing for a session that is not its own. */

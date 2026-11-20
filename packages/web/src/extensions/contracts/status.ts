@@ -1,4 +1,4 @@
-import { listAll } from '../../api.ts';
+import { json, listAll } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 
 export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
@@ -55,4 +55,19 @@ async function readVersions(key: string) {
   if (!res?.ok) return undefined;
   const body = (await res.json().catch(() => ({}))) as { versions?: Array<{ artifact: number; version: number; status: VersionStatus }> };
   return body.versions && { statuses: new Map(body.versions.map((v) => [v.artifact, v.status])), numbers: new Map(body.versions.map((v) => [v.artifact, v.version])) };
+}
+
+// A working title from the description's first clause, cut at a word; the spec's own title takes over once it exists.
+export function draftTitle(description: string): string {
+  const first = description.replace(/\s+/g, ' ').trim().split(/(?<=[^\s]):\s|\.\s|\s\(/)[0]!;
+  return first.length <= 60 ? first : `${first.slice(0, 60).replace(/\s+\S*$/, '')}…`;
+}
+
+// Starts the contracts agent on a description as the define_contract action does; the distributor creates the session on first use.
+export async function startContract(description: string): Promise<string> {
+  const id = crypto.randomUUID();
+  const key = `contracts:${id}`;
+  const title = draftTitle(description);
+  await json(await fetch(`sessions/${encodeURIComponent(key)}/invocations?agent=contracts`, { method: 'POST', body: JSON.stringify({ requestId: `ui-contract:${id}`, title, input: description }) }));
+  return key;
 }

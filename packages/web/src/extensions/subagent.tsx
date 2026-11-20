@@ -1,8 +1,8 @@
 import { useContext, useState } from 'react';
-import { conversationMessages } from './api.ts';
-import { SessionKeyContext } from './extension.ts';
-import { Markdown } from './Markdown.tsx';
-import { useLoad } from './useLoad.ts';
+import { conversationMessages } from '../api.ts';
+import { SessionKeyContext, type Extension } from '../extension.ts';
+import { Markdown } from '../Markdown.tsx';
+import { useLoad } from '../useLoad.ts';
 
 const idOf = (details: unknown) => (details as { conversationId?: unknown } | null | undefined)?.conversationId;
 
@@ -35,3 +35,7 @@ export function SubagentTranscript({ details }: { details: unknown }) {
     </details>
   );
 }
+
+export const subagent: Extension = {
+  toolCall: (name, details) => (name === 'subagent' ? <SubagentTranscript details={details} /> : null),
+};
