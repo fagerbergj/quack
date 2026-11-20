@@ -24,7 +24,7 @@ async function listen(server: Server) {
 // A fake GitHub API that verifies the app JWT the way GitHub does: RS256 over header.body, issuer = app id.
 const calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = [];
 const commented: string[] = [];
-const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123') => ({ id, user: { login }, state, body, commit_id, submitted_at: new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString() });
+const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123', node_id?: string) => ({ id, user: { login }, state, body, commit_id, ...(node_id ? { node_id } : {}), submitted_at: new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString() });
 // Out of order on purpose: pat's approval is listed before the request it supersedes. 100 older filler reviews push the rest onto page 2.
 const reviews = [
   ...Array.from({ length: 100 }, (_, i) => review(i - 200, `filler${i}`, 'COMMENTED')),
@@ -595,6 +595,39 @@ test('a sealed review is posted with the installation token, never handed to the
   const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
   assert.match(sent.body.body, /^## Verdict\nrequest_changes\n\n<!-- quack-delivery: rq-\d+ -->$/);
   assert.deepEqual({ ...sent.body, body: undefined }, { event: 'REQUEST_CHANGES', body: undefined, commit_id: 'abc123' });
+});
+
+test('posting a review minimizes the app\u2019s earlier ones with a node id; a person\u2019s and the new review are left alone', async () => {
+  const mine = review(51, 'quack-app[bot]', 'COMMENTED', 'earlier', 'old111', 'node-bot-1');
+  const theirs = review(52, 'maria', 'COMMENTED', 'still open', 'old111', 'node-human-1');
+  reviews.push(mine, theirs);
+  calls.length = 0;
+  try {
+    assert.equal((await postTo({ commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' })).status, 201);
+    const minimized = calls.filter((c) => c.path === '/graphql');
+    assert.equal(minimized.length, 1, 'the bot\u2019s other review has no node id; maria\u2019s is not the app\u2019s');
+    assert.match(minimized[0].body.query, /minimizeComment[\s\S]*OUTDATED/);
+    assert.deepEqual(minimized[0].body.variables, { id: 'node-bot-1' });
+    assert.equal(minimized[0].auth, 'token ghs_test');
+    assert.equal(minimized[0].version, undefined, 'GraphQL gets no REST version header');
+  } finally {
+    reviews.splice(reviews.indexOf(mine), 1);
+    reviews.splice(reviews.indexOf(theirs), 1);
+  }
+});
+
+test('a GraphQL failure minimizing old reviews is warned, never fails the post', async () => {
+  const mine = review(53, 'quack-app[bot]', 'COMMENTED', 'earlier', 'old111', 'node-bot-2');
+  reviews.push(mine);
+  graphqlErrors = true;
+  try {
+    const posted = await postTo({ commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' });
+    assert.equal(posted.status, 201);
+    assert.deepEqual(posted.body, { id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' });
+  } finally {
+    graphqlErrors = false;
+    reviews.splice(reviews.indexOf(mine), 1);
+  }
 });
 
 test("an approve on the app's own pull request posts as a comment that leads with the verdict", async () => {
