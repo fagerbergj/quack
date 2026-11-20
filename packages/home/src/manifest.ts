@@ -25,4 +25,5 @@ export const manifest: ExtensionManifest = {
   },
   app: homeApp,
   listen: ['run.ended'],
+  crossSession: true,
 };
