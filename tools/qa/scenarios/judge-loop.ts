@@ -61,10 +61,11 @@ const scenario: Scenario = {
       expect(/research\.report v1 is delivered, so it is final for this run and this change to artifacts\/report\.md was not sealed\./.test(results), 'the first refusal', results);
       expect(/research\.report v1 is delivered\. A second change after it was not sealed either, so this run is over\./.test(results), 'the second refusal', results);
     });
-    await ctx.step('the passed report shows its verdict beside the chat', async () => {
+    await ctx.step('the passed report shows its verdict beside the chat once expanded', async () => {
       const page = await ctx.browser.newPage({ viewport: { width: 1280, height: 900 } });
       try {
         await page.goto(`${ctx.url}/#/s/qa-judge-revise`);
+        await page.getByRole('button', { name: 'Show Report' }).click();
         await visible(paneOf(page, 'Report').getByText('Example.com is reserved for examples in documents.').first());
         await ctx.shot(page, 'judge-loop-revise-1280');
       } finally {

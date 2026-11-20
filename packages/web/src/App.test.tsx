@@ -445,6 +445,7 @@ test('a Sleeper card in a session links its Ask about this back to that session'
   (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'sleeper.cards', version: 1, hash: 'h', content: lineup.content, sealedAt: 1, verdict: null }];
   const ws = await openSession();
   ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Week 8 lineup' }));
   const asks = await screen.findAllByRole('link', { name: 'Ask about this' });
   for (const a of asks) expect(a).toHaveAttribute('href', '#/s/ui%3Au1');
 });
@@ -631,11 +632,11 @@ test('lists artifacts with their check status and failing criteria', async () =>
   expect(items[0]).toHaveTextContent("Review didn't pass its checks");
   expect(items[1]).toHaveTextContent(/Review ready/);
   expect(items[1]).not.toHaveTextContent(/Cards|github\.review|v2|sealed/);
-  // The pane beside the chat shows the newest version; Open on an older line shows that one there.
-  const pane = screen.getByRole('region', { name: 'Review' });
-  expect(within(pane).getByText('final review')).toBeInTheDocument();
+  // The pane starts collapsed; Open on an older line expands it to that version, and Follow newest jumps to the latest.
+  expect(screen.queryByRole('region', { name: 'Review' })).toBeNull();
   expect(section).not.toHaveTextContent('final review');
   await userEvent.click(within(items[0]).getByRole('button', { name: 'Open Review' }));
+  const pane = screen.getByRole('region', { name: 'Review' });
   expect(within(pane).getByText('draft one')).toBeInTheDocument();
   expect(within(pane).getByRole('button', { name: "Version: Version 1, didn't pass" })).toBeInTheDocument();
   await userEvent.click(within(pane).getByRole('button', { name: 'Follow the newest version' }));
@@ -756,14 +757,21 @@ test('assistant text renders as markdown with a table, highlighted code and cita
 
 const REPORT = { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', label: 'Cites a source that does not say it', weight: 3, met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', label: 'A claim has no date', weight: 2, met: 1, notes: [] }] } };
 
-test('a session shows chat full width until its first version seals, then that version beside the chat with its checks below', async () => {
+test('a non-studio artifact pane starts collapsed on desktop and expands/collapses via the header toggle, close button, or transcript card', async () => {
   const ws = await openSession();
   ws.frame(snapshot());
   await screen.findByRole('log', { name: 'Transcript' });
   expect(screen.queryByRole('region', { name: 'Report' })).toBeNull();
   expect(screen.queryByRole('separator')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Report$/ })).toBeNull();
   ws.frame({ type: 'artifacts', artifacts: [REPORT] });
-  const pane = await screen.findByRole('region', { name: 'Report' });
+  const toggle = await screen.findByRole('button', { name: 'Show Report' });
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('region', { name: 'Report' })).toBeNull();
+  expect(screen.queryByRole('separator')).toBeNull();
+  await userEvent.click(toggle);
+  expect(screen.getByRole('button', { name: 'Hide Report' })).toHaveAttribute('aria-expanded', 'true');
+  const pane = screen.getByRole('region', { name: 'Report' });
   expect(within(pane).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
   expect(screen.getByRole('log', { name: 'Transcript' })).not.toHaveTextContent('Gain is 1.9x');
   expect(within(pane).getByRole('button', { name: "Version: Version 2, didn't pass" })).toBeInTheDocument();
@@ -772,6 +780,26 @@ test('a session shows chat full width until its first version seals, then that v
   expect(pane).not.toHaveTextContent('citations.support');
   expect(screen.getByRole('separator', { name: 'Resize the chat' })).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Hide Report' }));
+  expect(screen.queryByRole('region', { name: 'Report' })).toBeNull();
+  expect(screen.queryByRole('separator')).toBeNull();
+  // Opening from the transcript expands the pane; the close button inside the pane collapses it again.
+  await userEvent.click(screen.getByRole('button', { name: 'Open Report version 2' }));
+  expect(screen.getByRole('region', { name: 'Report' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Close Report' }));
+  expect(screen.queryByRole('region', { name: 'Report' })).toBeNull();
+});
+
+test('a contract studio session still opens its pane beside chat by default on desktop', async () => {
+  routes['GET /sessions'] = { sessions: [sess('contracts:c1', { agent: 'contracts', title: 'Schedule API' })] };
+  routes[`GET /sessions/contracts%3Ac1/asks?${new URLSearchParams({ pageSize: '1000', q: 'type:question state:resolved' })}`] = { asks: [] };
+  location.hash = '#/s/contracts%3Ac1';
+  render(<App />);
+  FakeSocket.all[0]!.open();
+  FakeSocket.all[0]!.frame(snapshot());
+  expect(await screen.findByRole('region', { name: 'Contract' })).toBeInTheDocument();
+  expect(screen.getByRole('separator', { name: 'Resize the chat' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^(Show|Hide) Contract$/ })).toBeNull();
 });
 
 test('the divider resizes the chat from the keyboard within its bounds, and the width is remembered in this browser', async () => {
@@ -779,6 +807,7 @@ test('the divider resizes the chat from the keyboard within its bounds, and the 
   (live['ui%3Au1'] ??= {}).artifacts = [REPORT];
   const ws = await openSession();
   ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Report' }));
   const bar = await screen.findByRole('separator', { name: 'Resize the chat' });
   expect(bar).toHaveAttribute('aria-valuenow', String(CHAT_DEFAULT));
   bar.focus();
@@ -790,6 +819,7 @@ test('the divider resizes the chat from the keyboard within its bounds, and the 
   cleanup();
   render(<App />);
   FakeSocket.all.at(-1)!.open();
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Report' }));
   expect(await screen.findByRole('separator', { name: 'Resize the chat' })).toHaveAttribute('aria-valuenow', String(CHAT_MIN));
 });
 
@@ -1308,7 +1338,7 @@ async function openSleeper(artifacts: Array<ReturnType<typeof sealed>>, sessionO
   render(<App />);
 }
 
-// A card's checks come with its verdict over the session's own socket, so they render in the session view.
+// A card's checks come with its verdict over the session's own socket, so they render in the session view once the pane is expanded.
 async function openCard(artifacts: object[]) {
   routes['GET /sessions'] = { sessions: [sess(KEY, { agent: 'sleeper-lineup' })] };
   live[encodeURIComponent(KEY)] = { artifacts, approvals: [] };
@@ -1316,6 +1346,7 @@ async function openCard(artifacts: object[]) {
   render(<App />);
   FakeSocket.all[0]!.open();
   FakeSocket.all[0]!.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: /^Show / }));
 }
 
 test('Sleeper leads with the week strip and renders a lineup card, with no verdict tick', async () => {
@@ -1394,6 +1425,7 @@ test('in the pane, a failed check starts open, a passed one with a note is close
   (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nx', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks } }];
   const ws = await openSession();
   ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'Show Report' }));
   const pane = await screen.findByRole('region', { name: 'Report' });
   const row = (label: string) => within(pane).getByText(label).closest('details');
   expect(row('Quotes text that is not in the source')).toHaveAttribute('open');
@@ -1523,6 +1555,7 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   expect(within(done).getAllByRole('img', { name: 'Double-checked' })).toHaveLength(1);
   // The card, in the pane beside the chat, carries the one Posted link; the line drops its own.
   expect(within(done).queryByRole('link', { name: /Posted/ })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Show Review' }));
   expect(screen.getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
 });
 
@@ -2032,7 +2065,7 @@ describe('the session context rail', () => {
     ws.frame(snapshot({ entries: [entry('u', [{ role: 'user', content: opening, timestamp: 1 }])] }));
     return ws;
   }
-  // Beside a sealed version the pane takes the rail's column, so even at 1440px Details opens the rail as a sheet.
+  // Once the artifact pane is expanded it takes the rail's column, so even at 1440px Details opens the rail as a sheet.
   const details = async () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Details' }));
     return screen.getByRole('dialog', { name: 'Details' });
@@ -2045,8 +2078,11 @@ describe('the session context rail', () => {
     expect(screen.queryByRole('button', { name: 'Details' })).toBeNull();
   });
 
-  test('at 1440px beside a version, Details shows every section', async () => {
+  test('at 1440px with a collapsed artifact pane the rail sits beside chat; expanding the pane moves it to Details', async () => {
     await openReview(true);
+    expect(await screen.findByRole('complementary', { name: 'Context' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Details' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Show Review' }));
     expect(screen.queryByRole('complementary', { name: 'Context' })).toBeNull();
     const rail = await details();
     const pr = within(rail).getByRole('region', { name: 'Pull request' });
@@ -2072,21 +2108,21 @@ describe('the session context rail', () => {
 
   test('the card shows no checks row even when checks are recorded', async () => {
     await openReview(true, { checks: [check('test', 'completed', 'failure'), check('qa', 'in_progress', null), check('b', 'completed', 'success')] });
-    const pr = within(await details()).getByRole('region', { name: 'Pull request' });
+    const pr = within(await screen.findByRole('complementary', { name: 'Context' })).getByRole('region', { name: 'Pull request' });
     expect(await within(pr).findByText('2 files changed')).toBeInTheDocument();
     expect(within(pr).queryByText(/failed|running|passed|Checks|CI when/)).toBeNull();
   });
 
   test('one file reads singular and a zero side keeps its sign', async () => {
     await openReview(true, { files: [{ path: 'a.ts', additions: 5, deletions: 0 }] });
-    const pr = within(await details()).getByRole('region', { name: 'Pull request' });
+    const pr = within(await screen.findByRole('complementary', { name: 'Context' })).getByRole('region', { name: 'Pull request' });
     expect(await within(pr).findByText('1 file changed')).toBeInTheDocument();
     expect(within(pr).getByLabelText('5 added, 0 removed')).toHaveTextContent('+5 −0');
   });
 
   test('a card with no files has no list of rows', async () => {
     await openReview(true, { files: [] });
-    const pr = within(await details()).getByRole('region', { name: 'Pull request' });
+    const pr = within(await screen.findByRole('complementary', { name: 'Context' })).getByRole('region', { name: 'Pull request' });
     expect(await within(pr).findByText('#1 Cost per run')).toBeInTheDocument();
     expect(pr.querySelector('dl')).toBeNull();
   });
@@ -2094,7 +2130,7 @@ describe('the session context rail', () => {
   test('a version row scrolls the ledger to that version, and a pending approval to its card', async () => {
     const user = userEvent.setup();
     await openReview(true, { approvals: [{ id: 'a1', tool: 'push', args: { summary: 'Push the fix' }, requestedAt: 1 }] });
-    const rail = await details();
+    const rail = await screen.findByRole('complementary', { name: 'Context' });
     await user.click(await within(rail).findByRole('button', { name: /Review v1/ }));
     const target = vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1) as HTMLElement;
     expect(target.id).toMatch(/^v-github\.review-1-/);
