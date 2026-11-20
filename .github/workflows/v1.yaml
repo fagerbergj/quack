@@ -41,6 +41,7 @@ jobs:
       - run: go install github.com/oasdiff/oasdiff@v1.34.0 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - run: npx tsc -p tsconfig.json
       - run: npx tsc -p packages/web/tsconfig.json
+      - run: npm run knip
       - run: npm test
       # Gates only lines this change touches.
       - if: github.event_name == 'pull_request'

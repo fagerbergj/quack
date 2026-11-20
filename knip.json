@@ -1,0 +1,54 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      "entry": [
+        "tools/*.ts",
+        "tools/qa/run.ts",
+        "tools/qa/stack.ts",
+        "tools/qa/scenarios/*.ts"
+      ],
+      "project": ["tools/**/*.ts"],
+      "ignoreDependencies": ["liqe"]
+    },
+    "packages/distributor": {
+      "entry": [
+        "src/main.ts",
+        "src/docker-gate.ts",
+        "src/catalog-rebuild.ts"
+      ]
+    },
+    "packages/eval": {
+      "entry": [
+        "src/main.ts",
+        "src/replay-judge.ts"
+      ]
+    },
+    "packages/runtime": {
+      "entry": [
+        "src/extensions/coding.ts",
+        "src/extensions/codemode.ts"
+      ],
+      "ignoreDependencies": [
+        "@quack/contracts",
+        "@quack/github",
+        "@quack/home",
+        "@quack/judge",
+        "@quack/remarkable",
+        "@quack/research",
+        "@quack/schedules",
+        "@quack/sleeper",
+        "@quack/subagent",
+        "@quack/traces",
+        "@quack/workflows"
+      ]
+    },
+    "packages/session": {
+      "ignoreBinaries": ["go"]
+    },
+    "packages/web": {
+      "entry": ["public/sw.js"]
+    }
+  }
+}

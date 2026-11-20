@@ -46,5 +46,3 @@ export function openStore(path: string, now: () => Date) {
     close: () => db.close(),
   };
 }
-
-export type Store = ReturnType<typeof openStore>;

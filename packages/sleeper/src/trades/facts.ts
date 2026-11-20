@@ -33,7 +33,6 @@ export type TradeFacts = {
 
 export type FinderInput = LineupInput;
 export type TradeDeps = { client: SleeperClient };
-export type { NewsSearch } from '../ports.ts';
 
 // Kickers and defenses are streamed, not traded.
 export const TRADEABLE = POSITIONS.filter((p) => p !== 'K' && p !== 'DEF');
