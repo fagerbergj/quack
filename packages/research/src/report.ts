@@ -117,8 +117,8 @@ export function findingItems(report: string): Array<{ first: string; text: strin
 }
 
 /** Only the words, in order: punctuation, quote style, dashes, markdown emphasis and link targets differ between a page and a faithful quote of it. */
-// Space-padded so a quote matches whole words: "must" must not pass inside "mustn't", nor "able" inside "unable".
-const words = (s: string) => ` ${(s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ')} `;
+// Space-padded so a quote matches whole words; a kept JSON source's \n escapes are dropped, so an escape's n does not fuse with the quoted word.
+const words = (s: string) => ` ${(s.replace(/\\./g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(' ')} `;
 const MIN_QUOTE = 12;
 
 type Quote = { start: number; end: number; inner: string };

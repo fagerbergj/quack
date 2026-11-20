@@ -479,6 +479,13 @@ test('missingQuotes: punctuation the writer put inside the quote marks is not pa
   assert.deepEqual(missingQuotes('It notes "different places and different formats; " [s1]', [PAGE]), []);
 });
 
+// A kept source fetched from a JSON API carries its prose escaped, so a literal \\n sits before the sentence; the escape's
+// trailing character must not fuse with the quoted first word, or the quote reads as absent (prod research e6b79aaa).
+const ESCAPED_PAGE = '{"message": "feat(judge): the judge is an extension\\n\\nThe second slice of #2060. It follows judge contract v13 and SDK v15."}';
+test('missingQuotes: a quote whose kept source is a JSON API body is not reported missing by its newline escapes', () => {
+  assert.deepEqual(missingQuotes('The judge is the second slice of #2060: the commit page says "The second slice of #2060" [s1].', [ESCAPED_PAGE]), []);
+});
+
 test('quotedSpans: an inch mark after a digit neither opens nor closes a quote', () => {
   assert.deepEqual(quotedSpans('- The cabinet takes 19" rails, 600 mm wide and 23.6" deep, per the spec sheet [s2]'), []);
   assert.deepEqual(quotedSpans('- It takes 19" rails and the maker calls it "rated for continuous duty" [s2]'), ['rated for continuous duty']);
