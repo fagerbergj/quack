@@ -46,14 +46,13 @@ async function takeToken(file: string): Promise<string> {
   return token;
 }
 
-/** The variables that carry the session listener and this launch's outbound credential, and the pair they replaced; the runtime drops them all once read. */
-export const LAUNCH_ENV = ['QUACK_SESSION_LISTENER_URL', 'QUACK_LAUNCH_TOKEN_FILE', 'QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN'] as const;
+/** The variables that carry the session listener and this launch's outbound credential; the runtime drops them once read. */
+export const LAUNCH_ENV = ['QUACK_SESSION_LISTENER_URL', 'QUACK_LAUNCH_TOKEN_FILE'] as const;
 
 /** The session listener and the outbound credential the distributor handed this launch, the credential file removed once read; undefined when it handed neither. */
 export async function takeLaunchEndpoint(env: NodeJS.ProcessEnv = process.env): Promise<{ url: string; token: string } | undefined> {
   const { QUACK_SESSION_LISTENER_URL: url, QUACK_LAUNCH_TOKEN_FILE: file } = env;
   if (url && file) return { url, token: await takeToken(file) };
   if (url || file) throw new Error('QUACK_SESSION_LISTENER_URL and QUACK_LAUNCH_TOKEN_FILE are set together or not at all');
-  // shortcut: the pre-rename pair, read for one release as the env contract allows; drop it in the release after.
-  return env.QUACK_INDEX_URL && env.QUACK_INDEX_TOKEN ? { url: env.QUACK_INDEX_URL, token: env.QUACK_INDEX_TOKEN } : undefined;
+  return undefined;
 }

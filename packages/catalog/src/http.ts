@@ -1,6 +1,6 @@
 // The Sessions API's HTTP adapter (approved v9): the catalog's reads and a person's writes, in the approved wire shapes.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isSessionKey, SESSION_KEY, sendProblem, serviceHttp, tooLarge, withdrawnText, type Withdrawal } from '@quack/sdk';
+import { isSessionKey, safeDecode, SESSION_KEY, sendProblem, serviceHttp, tooLarge, withdrawnText, type Withdrawal } from '@quack/sdk';
 import type { Catalog, ListRequest } from './core.ts';
 import { CursorError } from './keyset.ts';
 import type { ArtifactRow, AskRow, Principal, SessionRow } from './port.ts';
@@ -54,9 +54,8 @@ function listRequest(params: URLSearchParams): ListRequest {
   return { q: params.get('q'), orderBy: params.get('orderBy'), ...(size !== null && { pageSize: Number(size) }), ...(params.get('pageToken') && { pageToken: params.get('pageToken')! }) };
 }
 
-const decode = (s: string) => { try { return decodeURIComponent(s); } catch { return undefined; } };
 const keyOf = (raw: string) => {
-  const key = decode(raw);
+  const key = safeDecode(raw);
   if (!key || !isSessionKey(key)) throw new Problem(400, 'invalid session key');
   return key;
 };
@@ -143,7 +142,7 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
 
   async function sub(req: IncomingMessage, url: URL, key: string, rest: string[], caller: Caller): Promise<unknown> {
     if (rest[0] === 'asks' && rest.length === 2) {
-      const id = decode(rest[1]!);
+      const id = safeDecode(rest[1]!);
       if (!id || !ASK_ID.test(id)) throw new Problem(400, 'invalid ask id');
       if (req.method === 'PATCH') return resolveAsk(req, key, id, caller);
       mayRead(caller, key);

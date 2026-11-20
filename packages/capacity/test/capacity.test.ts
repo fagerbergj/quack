@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,7 +7,6 @@ import { afterEach, test } from 'node:test';
 import { inProcessFetch, observeGeneration, primeSessionEndpoint, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
-import { adoptSlotsLedger } from '../src/manifest.ts';
 import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
 import { FakeClock } from './fake-clock.ts';
 
@@ -388,27 +387,6 @@ test('the gate\'s HTTP client speaks the routes: a queued or released lease is l
   const down = httpClient('http://capacity', 't', async () => new Response('{}', { status: 503 }));
   await assert.rejects(down.heartbeat('swap', holder), /answered 503/);
   await assert.rejects(down.acquire('swap', holder), /answered 503/);
-});
-
-test('the first boot after the rename takes over slots.db, so a resumed session keeps its place', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'quack-capacity-'));
-  try {
-    const old = new LeaseLedger({ dbPath: join(dir, 'slots.db'), capacity: { local: 1 }, ttlMs: TTL, now: clock.now });
-    old.acquire('local', 'github:o/r#1');
-    old.close();
-    const dbPath = join(dir, 'capacity.db');
-    adoptSlotsLedger(dbPath);
-    const ledger = new LeaseLedger({ dbPath, capacity: { local: 1 }, ttlMs: TTL, now: clock.now });
-    assert.equal(ledger.acquire('local', 'github:o/r#1').state, 'granted');
-    assert.equal(ledger.acquire('local', 'newcomer').state, 'queued');
-    ledger.close();
-    assert.deepEqual((await readdir(dir)).sort(), ['capacity.db']);
-    await writeFile(join(dir, 'slots.db'), '');
-    adoptSlotsLedger(dbPath);
-    assert.deepEqual((await readdir(dir)).sort(), ['capacity.db', 'slots.db'], 'an existing capacity.db is never replaced');
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
 });
 
 test('an agent that selects no capacity entry is gated when the session has a distributor and credential, and ungated when it does not', async () => {

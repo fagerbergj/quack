@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { sendProblem, serviceHttp, type App } from '@quack/sdk';
+import { methodNotAllowed, safeDecode, sendProblem, serviceHttp, type App } from '@quack/sdk';
 import { LeaseLedger } from './ledger.ts';
 
 export type ServiceConfig = {
@@ -18,14 +18,10 @@ const ENDPOINT = /^\/endpoints\/([^/]+)$/;
 
 class BadPath extends Error {}
 const decode = (segment: string) => {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    throw new BadPath(`${segment} is not valid percent-encoding`);
-  }
+  const decoded = safeDecode(segment);
+  if (decoded === undefined) throw new BadPath(`${segment} is not valid percent-encoding`);
+  return decoded;
 };
-
-const methodNotAllowed = (res: ServerResponse, allow: string) => (res.setHeader('allow', allow), sendProblem(res, 405, 'method not allowed'));
 
 export function createCapacityService(config: ServiceConfig): App & { stop(): void } {
   const ledger = new LeaseLedger({ dbPath: config.dbPath, capacity: config.capacity, ttlMs: config.leaseTtlMs ?? 30_000, now: config.now ?? Date.now });
