@@ -103,6 +103,8 @@ test('units that share context pack in order up to the cap; one without it goes 
   const one = decisionModelTokens(items[0].unit, checks);
   const ids = (cap: number | undefined) => pack(items, cap).map((g) => g.map((it) => it.unit.id));
   assert.deepEqual(ids(Math.ceil(one * 1.5)), [['a', 'b'], ['lone'], ['c', 'huge']], 'c and huge each exceed the cap, so they escalate as one');
+  const mixed = [item('over', 'w'.repeat(400)), item('small', 'x')];
+  assert.deepEqual(pack(mixed, Math.ceil(one * 1.5)).map((g) => g.map((it) => it.unit.id)), [['over'], ['small']], 'an over-cap unit no longer drags the group\'s fitting units into its escalation batch');
   assert.deepEqual(ids(undefined), [['a', 'b', 'c', 'huge'], ['lone']], 'without a decision model, shared-context units still pack to escalate together');
   const noClef = items.map((it) => ({ ...it, checks: it.checks.map((c) => ({ ...c, decisionModel: false as const })) }));
   assert.deepEqual(pack(noClef, Math.ceil(one * 1.5)).map((g) => g.map((it) => it.unit.id)), [['a', 'b', 'c', 'huge'], ['lone']], 'decisionModel-false items are not split by the decision model cap');

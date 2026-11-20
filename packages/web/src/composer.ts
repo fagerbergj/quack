@@ -11,7 +11,7 @@ export function composerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>, setValue:
     const start = el.selectionStart ?? el.value.length;
     const end = el.selectionEnd ?? start;
     setValue(`${el.value.slice(0, start)}\n${el.value.slice(end)}`);
-    queueMicrotask(() => el.setSelectionRange(start + 1, start + 1));
+    queueMicrotask(() => el.isConnected && el.setSelectionRange(start + 1, start + 1));
     return;
   }
   if (!isCoarsePointer()) {

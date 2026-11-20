@@ -262,6 +262,10 @@ test('with more than 20 drafts, the review sheet lets the caller choose up to 20
   await userEvent.click(boxes[20]!);
   expect(within(sheet).getByRole('button', { name: 'Send 21 comments' })).toBeDisabled();
   expect(within(sheet).getByRole('alert')).toHaveTextContent('21 of 21 selected');
+  // Deselecting everything disables the send at 0 selected, not just over the limit.
+  for (const b of boxes) await userEvent.click(b);
+  expect(within(sheet).getByRole('button', { name: 'Send 0 comments' })).toBeDisabled();
+  for (const b of boxes) await userEvent.click(b);
   await userEvent.click(boxes[0]!);
   const sendBtn = within(sheet).getByRole('button', { name: 'Send 20 comments' });
   expect(sendBtn).toBeEnabled();

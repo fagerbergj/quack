@@ -100,6 +100,7 @@ const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 
 
 type RunTarget = Pick<ToolExecutionApi, 'conversationId' | 'snapshot' | 'getTask' | 'commit'>;
 
+// A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
 async function startIn(target: RunTarget, workflow: Workflow, input: JsonValue, request: string | null, ctx: Context): Promise<string> {
   const seen = (await target.snapshot(WorkflowDoc, target.conversationId, ctx))?.task ?? null;
   const live = seen !== null && (await target.getTask(Number(seen) as never, ctx))?.state.status !== 'terminal';
@@ -113,7 +114,6 @@ async function startIn(target: RunTarget, workflow: Workflow, input: JsonValue, 
   }, ctx);
 }
 
-// A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
 export function startWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT): Promise<string> {
   return startIn({
     conversationId: root.id,

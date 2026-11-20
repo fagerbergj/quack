@@ -267,7 +267,6 @@ test('the root is closed: a removed or misspelled top-level key is rejected and 
   assert.throws(() => parseDeployment({ ...deployment, defaultModel: undefined }), /defaultModel must be "provider\/model"/);
   assert.throws(() => parseDeployment({ ...deployment, providers: {} }), /at least one provider/);
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 0 } } }), /providers\.local\.capacity must be a positive integer/);
-  assert.equal(parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 6 } } }).providers.local!.capacity, 6);
   assert.throws(() => parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', models: { m: { images: null } } } } }), /images must be a boolean/);
 });
 
@@ -295,6 +294,7 @@ test('models merge: discovered ids plus hand-written ones, a hand-written field 
   const fetched = listing([{ id: 'a', meta: { n_ctx: 8192 }, architecture: { input_modalities: ['text', 'image'] } }, { id: 'ids-only' }]);
   const resolved = await resolveDeployment(parseDeployment({ ...thin, providers: { local: { baseUrl: 'http://x/v1', models: { a: { contextWindow: 4096 }, peer: { contextWindow: 1000, images: false } } } } }), fetched);
   assert.deepEqual(resolved.providers.local.models, { a: { contextWindow: 4096, images: true }, 'ids-only': {}, peer: { contextWindow: 1000, images: false } });
+  assert.equal(parseDeployment({ ...deployment, providers: { local: { baseUrl: 'http://x/v1', capacity: 6 } } }).providers.local!.capacity, 6, 'a hand-written provider capacity is preserved');
   const built = buildModels(resolved);
   assert.deepEqual([built.getModel('local', 'a')?.input, built.getModel('local', 'peer')?.input, built.getModel('local', 'ids-only')], [['text', 'image'], ['text'], undefined]);
   const d = { name: 'x', version: 1, extensions: {} };

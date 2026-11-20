@@ -52,6 +52,15 @@ test('SessionView composer: plain Enter does not submit on coarse pointer', asyn
   expect(ws.sent).toEqual([]);
 });
 
+test('Home composer: plain Enter submits on the default fine-pointer viewport', async () => {
+  routes['POST /sessions/home%3Amain/invocations?agent=quack'] = { status: 'accepted' };
+  render(<App />);
+  const box = (await screen.findByRole('textbox', { name: 'What do you need?' })) as HTMLTextAreaElement;
+  await userEvent.type(box, 'hi there');
+  fireEvent.keyDown(box, { key: 'Enter' });
+  await waitFor(() => expect(fetchMock.mock.calls.some(([u]) => String(u).includes('sessions/home%3Amain/invocations'))).toBe(true));
+});
+
 test('Home composer: plain Enter submits and Shift+Enter / Ctrl+Enter / IME do not', async () => {
   routes['POST /sessions/home%3Amain/invocations?agent=quack'] = { status: 'accepted' };
   render(<App />);

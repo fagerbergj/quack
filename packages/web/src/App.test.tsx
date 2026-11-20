@@ -786,8 +786,13 @@ test('a non-studio artifact pane starts collapsed on desktop and expands/collaps
   // Opening from the transcript expands the pane; the close button inside the pane collapses it again.
   await userEvent.click(screen.getByRole('button', { name: 'Open Report version 2' }));
   expect(screen.getByRole('region', { name: 'Report' })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Close Report' }));
+  const close = screen.getByRole('button', { name: 'Close Report' });
+  expect(close.className).toContain('h-11');
+  expect(close.className).toContain('w-11');
+  expect(close.querySelector('svg')?.getAttribute('width')).toBe('18');
+  await userEvent.click(close);
   expect(screen.queryByRole('region', { name: 'Report' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Show Report' })).toHaveFocus();
 });
 
 test('a contract studio session still opens its pane beside chat by default on desktop', async () => {
