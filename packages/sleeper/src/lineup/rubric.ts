@@ -42,19 +42,35 @@ export function lineupRows(f: Facts, card: LineupCard) {
     const incumbent = f.current[r.slot] ? f.players[f.current[r.slot]!] : undefined;
     const b = f.baseline.find((x) => x.slot === r.slot);
     return {
-      id: r.slot, slot: r.slot, week: f.week, start: player(f.players[r.player.id]), action: r.action, why: r.why,
-      incumbent: player(incumbent) ?? null, baseline: b ? { name: b.name, proj: b.proj } : null, designations: designations(r, f), news: newsFor(r, f),
+      id: r.slot, slot: r.slot, start: player(f.players[r.player.id]), action: r.action, why: r.why,
+      incumbent: player(incumbent) ?? null, baseline: b ? { name: b.name, proj: b.proj } : null, designations: designations(r, f),
       // By membership, not slot: the baseline may seat the same player in RB2 that the card keeps in RB1.
       differs: changed(r, f) && !inBaseline.has(r.player.id),
-      // News is fetched only for close calls, so a row with news is a close call.
-      hasNews: (r.news?.length ?? 0) > 0,
       designated: !!r.player.inj || !!incumbent?.inj,
     };
   });
 }
 
-/** The judge's named texts: the facts the card was built on, and its unlocked rows. */
-export const lineupInputsOf = (f: Facts, content: string): Inputs => ({ facts: JSON.stringify(f), rows: JSON.stringify(lineupRows(f, parse(content))) });
+/** Close-call rows with the full card row (minus its duplicate news), full incumbent and baseline, week, news, and designations. */
+function closeCallRows(f: Facts, card: LineupCard) {
+  return card.starters.filter((r) => !r.locked && (r.news?.length ?? 0) > 0).map((r) => {
+    const { news: _, ...row } = r;
+    const incumbent = f.current[r.slot] ? f.players[f.current[r.slot]!] : undefined;
+    return {
+      id: r.slot, slot: r.slot, week: f.week, row,
+      incumbent: incumbent ?? null,
+      baseline: f.baseline.find((x) => x.slot === r.slot) ?? null,
+      news: newsFor(r, f),
+      designations: designations(r, f),
+    };
+  });
+}
+
+/** The judge's named texts: the facts the card was built on, its unlocked rows, and its close-call rows. */
+export function lineupInputsOf(f: Facts, content: string): Inputs {
+  const card = parse(content);
+  return { facts: JSON.stringify(f), rows: JSON.stringify(lineupRows(f, card)), close: JSON.stringify(closeCallRows(f, card)) };
+}
 export const lineupInputs = (f: Facts) => async (_api: unknown, sealed: { content: string }): Promise<Inputs> => lineupInputsOf(f, sealed.content);
 
 // Every row is its own request with nothing shared: batched, the 27B passed more.
@@ -65,7 +81,7 @@ export const lineupDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     differs: rows('differs', ['slot', 'start', 'action', 'why', 'incumbent', 'baseline']),
-    news: rows('hasNews', ['slot', 'week', 'start', 'action', 'why', 'incumbent', 'baseline', 'news', 'designations']),
+    news: { split: { name: 'jsonItems', from: 'close', pick: ['slot', 'week', 'row', 'incumbent', 'baseline', 'news', 'designations'] }, piece: 'close' },
     designated: rows('designated', ['slot', 'start', 'action', 'why', 'incumbent', 'designations']),
   },
   checks: {
