@@ -1,5 +1,5 @@
-import { registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric } from '@quack/judge';
-import { metaFields, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
+import type { CodeResult, Declaration, Evidence, Inputs, Rubric } from '@quack/judge';
+import { parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { TrendsCard } from './card.ts';
 import type { TrendsFacts } from './facts.ts';
 
@@ -14,13 +14,13 @@ function noBareIds(artifact: string, ev: Evidence): CodeResult {
   return share(items.length - bad.length, items.length, `${bad.map((i) => i.text.slice(0, 30)).join('; ')} carry a raw player id in their text`);
 }
 
-/** Each item as one record: what the source check reads, and the legacy unit conflict_stated keeps (the item, Sleeper's designation by name, the player's dated news). */
+/** Each item as one record: what the source and conflict checks read (the item, Sleeper's designation by name, the player's dated news). */
 function items(f: TrendsFacts, card: TrendsCard) {
   return card.items.map((i, n) => {
     const news = i.player ? (f.news[i.player.id] ?? []) : [];
     // Where Sleeper holds a designation and the web has a report on the same player, the two can conflict.
     const conflict = !!i.player?.inj && news.length > 0;
-    return { id: `item${n + 1}`, source: i.source, link: i.link, conflict, legacy: { item: i, since: f.since, news, designations: i.player ? { [i.player.name]: i.player.inj ?? 'none' } : {} } };
+    return { id: `item${n + 1}`, source: i.source, link: i.link, conflict, item: i, since: f.since, news, designations: i.player ? { [i.player.name]: i.player.inj ?? 'none' } : {} };
   });
 }
 
@@ -30,16 +30,12 @@ export function trendsInputsOf(f: TrendsFacts, content: string): Inputs {
 }
 export const trendsInputs = (f: TrendsFacts) => async (_api: unknown, sealed: { content: string }): Promise<Inputs> => trendsInputsOf(f, sealed.content);
 
-// The conflict check stays on the 27B with its legacy unit: the card's item, then the other fields at the top.
-type Item = ReturnType<typeof items>[number];
-registerSplitter('sleeper.trendRows', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as Item[]).map((r) => ({ id: r.id, text: JSON.stringify(r.legacy.item), meta: { ...r.legacy, conflict: r.conflict } })));
-
 /** How each model check of trendsRubric is asked: per item, each alone with nothing shared. A link is only ever a fetched report, so with no news source neither scope has items. */
 export const trendsDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     sourced: { split: { name: 'jsonItems', from: 'items', pick: ['source', 'link'], where: [{ path: 'link', op: 'truthy' }] }, piece: 'item' },
-    conflict: { split: { name: 'sleeper.trendRows', from: 'items', where: [{ path: 'conflict', op: 'truthy' }] }, piece: 'item', context: metaFields(['since', 'news', 'designations']) },
+    conflict: { split: { name: 'jsonItems', from: 'items', pick: ['item', 'since', 'news', 'designations'], where: [{ path: 'conflict', op: 'truthy' }] }, piece: 'item' },
   },
   checks: {
     // Weighing the item against the dated reports is a claim against evidence, which the decision model passes unread, so the 27B decides it.

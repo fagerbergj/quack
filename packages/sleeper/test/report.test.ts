@@ -144,16 +144,17 @@ test('the retro asks a signal only of knowable rows, hindsight only of the rest,
   const ev = (await buildEvidence(retroDeclaration, retroInputsOf(f, JSON.stringify(card)))).evidence;
   assert.deepEqual([ev.known.map((u) => u.id), ev.variance.map((u) => u.state.row)], [['known row1'], [{ why: 'y' }]]);
   assert.deepEqual(ev.lessons, [], 'no lessons, nothing to judge as actionable');
-  assert.deepEqual(Object.keys(ev.card[0].state), ['summary', 'lessons', 'won', 'left', 'swings'], 'the swing check keeps its legacy card unit');
+  assert.deepEqual(Object.keys(ev.card[0].state.card as object), ['summary', 'lessons', 'won', 'left', 'swings']);
   const taught = (await buildEvidence(retroDeclaration, retroInputsOf(f, JSON.stringify({ ...card, lessons: ['Start the higher floor.', 'Bid early.'] })))).evidence;
   assert.deepEqual(taught.lessons.map((u) => u.state.lesson), ['Start the higher floor.', 'Bid early.']);
 });
 
-test('the preview news check keeps its legacy game unit, and a recap has no news to check', async () => {
+test('the preview news check reads each game\'s news and designations, and a recap has no news to check', async () => {
   const f = await digestFacts(PREVIEW, fixtures, newsStub);
   const ev = (await buildEvidence(digestDeclaration, digestInputsOf(f, JSON.stringify(buildDigestCard(f, previewDecision))))).evidence;
-  assert.deepEqual(Object.keys(ev.preview[0].state), ['game', 'mode', 'news', 'designations']);
-  assert.deepEqual([ev.preview[0].id, ev.preview[0].state.mode, ev.preview[0].state.designations], ['preview game1', 'preview', { 'Wade Wide': 'Questionable' }]);
+  const preview = ev.preview[0].state.game as unknown as { mode: string; designations: Record<string, string> };
+  assert.deepEqual(Object.keys(preview), ['game', 'mode', 'news', 'designations']);
+  assert.deepEqual([ev.preview[0].id, preview.mode, preview.designations], ['preview game1', 'preview', { 'Wade Wide': 'Questionable' }]);
   assert.deepEqual(ev.games[0].state.game, { home: 'Mallard Mayhem 30', away: 'teal 26.67', margin: 3.33, note: previewDecision.notes[0].note });
   const recap = await digestFacts(RECAP, fixtures, newsStub);
   assert.deepEqual((await buildEvidence(digestDeclaration, digestInputsOf(recap, JSON.stringify(buildDigestCard(recap, digestDecision))))).evidence.preview, []);

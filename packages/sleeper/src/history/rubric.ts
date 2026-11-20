@@ -1,5 +1,5 @@
 import type { Declaration, Inputs, Rubric } from '@quack/judge';
-import { defect, metaFields, parseCard, SHARE, yes } from '../rubric-kit.ts';
+import { defect, parseCard, SHARE, yes } from '../rubric-kit.ts';
 import type { HistoryCard } from './card.ts';
 import type { HistoryFacts } from './facts.ts';
 
@@ -11,21 +11,21 @@ const brief = (s: HistoryCard['seasons'][number]) => ({
   draft: s.draft?.map((p) => ({ round: p.round, pick: p.pick, player: p.player.name, pos: p.player.pos, drafted_as: p.drafted_as, finished: p.finished, pts: p.pts, verdict: p.verdict })) ?? null,
 });
 
-/** The judge's named texts: one record per season the model wrote about, with the legacy row unit (that season's figures and the note), and the card unit (the summary, the declared rule and every season's note). */
+/** The judge's named texts: one record per season the model wrote about (its figures and note), and the card (summary, declared rule and every season's note). */
 export function historyInputsOf(_f: HistoryFacts, content: string): Inputs {
   const card = parse(content);
-  const rows = card.seasons.filter((s) => s.note).map((s) => ({ id: `season${s.season}`, season: s.season, note: s.note, legacy: { season: brief(s), note: s.note } }));
-  const legacy = { summary: card.summary, definitions: card.definitions, seasons: card.seasons.map((s) => ({ season: s.season, record: brief(s).record, eff: s.eff, note: s.note })) };
-  return { seasons: JSON.stringify(rows), card: JSON.stringify([{ id: 'card', legacy }]) };
+  const rows = card.seasons.filter((s) => s.note).map((s) => ({ id: `season${s.season}`, season: s.season, figures: brief(s), note: s.note }));
+  const summary = { summary: card.summary, definitions: card.definitions, seasons: card.seasons.map((s) => ({ season: s.season, record: brief(s).record, eff: s.eff, note: s.note })) };
+  return { seasons: JSON.stringify(rows), card: JSON.stringify(summary) };
 }
 export const historyInputs = (f: HistoryFacts) => async (_api: unknown, sealed: { content: string }): Promise<Inputs> => historyInputsOf(f, sealed.content);
 
 /** How each model check of historyRubric is asked: of the card or per season's note, each item alone with nothing shared. */
 export const historyDeclaration: Declaration = {
   scopes: {
-    card: { split: { name: 'sleeper.legacy', from: 'card', path: 'summary' }, piece: 'summary', context: metaFields(['definitions', 'seasons']) },
+    card: { split: { name: 'whole', from: 'card' }, piece: 'card' },
     notes: { split: { name: 'jsonItems', from: 'seasons', pick: ['season', 'note'] }, piece: 'row' },
-    row: { split: { name: 'sleeper.legacy', from: 'seasons', path: 'season' }, piece: 'season', context: metaFields(['note']) },
+    row: { split: { name: 'jsonItems', from: 'seasons', pick: ['figures', 'note'] }, piece: 'row' },
   },
   checks: {
     luck_process_split: { scope: 'card', aggregate: SHARE, question: yes('Does it separate lineup execution and the draft, which the manager controls, from schedule luck (points against) and player-outcome luck?') },

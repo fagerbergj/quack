@@ -222,11 +222,11 @@ test('news is searched for close calls only and each row carries the links of it
   assert.deepEqual(c.candidates[0].news.map((n) => [n.player, n.url]), [['Felix Free', item.url], ['Dan Dash', item.url]]);
 });
 
-test('a claim\'s news check keeps the legacy unit: the card\'s row, then the league currency, its news and both players\' designations', async () => {
+test('a claim\'s news check reads the card\'s row with the league currency, its news and both players\' designations', async () => {
   const f = { ...(await factsOf()), news: { '300': [item] } };
   const c = buildWaiversCard(f, rollingDecision);
   const ev = (await buildEvidence(waiversDeclaration, waiversInputsOf(f, JSON.stringify(c)))).evidence;
-  const close = ev.close[0].state as unknown as { row: { why: string }; news: Array<{ url: string }>; designations: Record<string, string>; waiver_type: string };
+  const close = ev.close[0].state.row as unknown as { row: { why: string }; news: Array<{ url: string }>; designations: Record<string, string>; waiver_type: string };
   assert.deepEqual(Object.keys(close), ['row', 'week', 'waiver_type', 'my_priority', 'faab_left', 'teams', 'news', 'designations']);
   assert.deepEqual([close.row.why, close.news.map((n) => n.url), close.designations, close.waiver_type], [c.candidates[0].why, [item.url], { 'Felix Free': 'none', 'Dan Dash': 'none' }, 'rolling']);
   // News is fetched only for close calls, so only the claim with news is asked about it; every claim is asked the rest.

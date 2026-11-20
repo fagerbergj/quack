@@ -1,5 +1,5 @@
-import { registerSplitter, type CodeResult, type Declaration, type Evidence, type Inputs, type Rubric } from '@quack/judge';
-import { defect, metaFields, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
+import type { CodeResult, Declaration, Evidence, Inputs, Rubric } from '@quack/judge';
+import { defect, parseCard, share, SHARE, yes } from '../rubric-kit.ts';
 import type { Candidate, WaiversCard } from './card.ts';
 import { worth, type WaiverFacts } from './facts.ts';
 
@@ -46,12 +46,12 @@ function byeCoverage(artifact: string, ev: Evidence): CodeResult {
 /** Sleeper's designation by player name, so a check never pins one player's injury on another. */
 const designations = (r: Candidate) => Object.fromEntries([r.player, r.drop.player].map((p) => [p.name, p.inj ?? 'none']));
 
-/** Each claim as one record: what the decision-model checks read, and the legacy unit close_call_news keeps. */
+/** Each claim as one record: what the usage, crowd-metric and close-call checks read. */
 function claims(f: WaiverFacts, card: WaiversCard) {
   return card.candidates.map((r) => ({
     id: `claim${r.rank}`, rank: r.rank, why: r.why,
     add: { name: r.player.name, pos: r.player.pos, team: r.player.team, inj: r.player.inj, proj: r.proj, owned_pct: r.owned_pct, adds_24h: r.adds_24h, bye: r.bye },
-    close: { row: r, week: f.week, waiver_type: f.waiverType, my_priority: f.myPriority, faab_left: f.faabLeft, teams: f.teams, news: r.news ?? [], designations: designations(r) },
+    row: r, week: f.week, waiver_type: f.waiverType, my_priority: f.myPriority, faab_left: f.faabLeft, teams: f.teams, news: r.news ?? [], designations: designations(r),
   }));
 }
 
@@ -63,18 +63,15 @@ export function waiversInputsOf(f: WaiverFacts, content: string): Inputs {
 }
 export const waiversInputs = (f: WaiverFacts) => async (_api: unknown, sealed: { content: string }): Promise<Inputs> => waiversInputsOf(f, sealed.content);
 
-// Checks that stay on the 27B read the legacy unit: the card's row, then the other fields at the top. News is fetched only for close calls.
-type Claim = ReturnType<typeof claims>[number];
-registerSplitter('sleeper.waiverRows', (inputs, o) => (JSON.parse(inputs[String(o.from)]) as Claim[]).map((c) => ({ id: c.id, text: JSON.stringify(c.close.row), meta: c.close })));
-const LEGACY_FIELDS = metaFields(['week', 'waiver_type', 'my_priority', 'faab_left', 'teams', 'news', 'designations']);
+const ROW_FIELDS = ['row', 'week', 'waiver_type', 'my_priority', 'faab_left', 'teams', 'news', 'designations'];
 
 /** How each model check of waiversRubric is asked: per claim or of the card, each item alone with nothing shared. */
 export const waiversDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     claims: { split: { name: 'jsonItems', from: 'claims', pick: ['rank', 'add', 'why'] }, piece: 'claim' },
-    rows: { split: { name: 'sleeper.waiverRows', from: 'claims' }, piece: 'row', context: LEGACY_FIELDS },
-    close: { split: { name: 'sleeper.waiverRows', from: 'claims', where: [{ path: 'news', op: 'truthy' }] }, piece: 'row', context: LEGACY_FIELDS },
+    rows: { split: { name: 'jsonItems', from: 'claims', pick: ROW_FIELDS }, piece: 'row' },
+    close: { split: { name: 'jsonItems', from: 'claims', pick: ROW_FIELDS, where: [{ path: 'news', op: 'truthy' }] }, piece: 'row' },
     card: { split: { name: 'whole', from: 'card' }, piece: 'card' },
   },
   checks: {
