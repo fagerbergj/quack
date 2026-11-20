@@ -247,9 +247,10 @@ function More({ running, onAbort, manage, link }: { running: boolean; onAbort: (
   );
 }
 
-type HeaderProps = Facts & { back: { href: string; label: string }; onDetails?: () => void; children: ReactNode };
+type ArtifactToggle = { label: string; open: boolean; toggle: () => void };
+type HeaderProps = Facts & { back: { href: string; label: string }; artifact?: ArtifactToggle; onDetails?: () => void; children: ReactNode };
 
-function Header({ back, onDetails, children, ...facts }: HeaderProps) {
+function Header({ back, artifact, onDetails, children, ...facts }: HeaderProps) {
   return (
     <div className="flex min-h-[calc(3.5rem+env(safe-area-inset-top,0px))] items-center gap-0.5 border-b border-line bg-canvas/70 px-1 pt-[env(safe-area-inset-top,0px)] lg:gap-1 lg:px-3">
       <a href={back.href} aria-label={back.label} title={back.label} className={`${iconBtn} lg:hidden`}>
@@ -259,6 +260,11 @@ function Header({ back, onDetails, children, ...facts }: HeaderProps) {
         <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={facts.name.icon} /></svg>
       </span>
       <Title {...facts} />
+      {artifact && (
+        <button type="button" aria-label={artifact.label} title={artifact.label} aria-expanded={artifact.open} onClick={artifact.toggle} className={`${iconBtn} aria-expanded:bg-soft aria-expanded:text-ink`}>
+          <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4" /></svg>
+        </button>
+      )}
       {/* Below 1440px the rail is a sheet and this is its only way in, so it stays one tap away, not in the menu. */}
       {onDetails && (
         <button type="button" aria-label="Details" title="Details" onClick={onDetails} className={iconBtn}>
@@ -328,20 +334,27 @@ function asksOf(studio: ReturnType<typeof studioFor>, approvals: Approval[], que
   return { owned, cards, inPane: owned.length + (studio ? questions.length : 0), inChat: cards.length + (studio ? 0 : questions.length) };
 }
 
-// A session has a pane beside the chat once it has something to show there: a studio always, any other session from its first sealed version.
-// Until the person picks a tab on a phone, it opens on the chat; a studio, whose contract is the point, opens on its pane unless an ask waits on the chat.
+const tabFor = (label: string | undefined, picked: Tab | undefined, studio: ReturnType<typeof studioFor>, asks: ReturnType<typeof asksOf>): Tab =>
+  !label ? 'chat' : (picked ?? (studio && !(asks.inChat && !asks.inPane) ? 'pane' : 'chat'));
+
+// A studio pane opens beside the chat by default; other sessions start collapsed on desktop and expand on demand.
+// Below lg, a studio opens on its pane unless an ask waits on the chat; other sessions open on the chat tab.
 function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
   const studio = studioFor(sessionKey);
   const [picked, setTab] = useState<Tab>();
+  const [expanded, setExpanded] = useState(false);
   const [focus, setFocus] = useState<SealedArtifact>();
-  const open = useCallback((a: SealedArtifact) => (setFocus(a), setTab('pane')), []);
+  const open = useCallback((a: SealedArtifact) => (setFocus(a), setExpanded(true), setTab('pane')), []);
+  const toggle = useCallback(() => setExpanded((v) => !v), []);
+  const close = useCallback(() => setExpanded(false), []);
   const id = useId();
   // Below lg the tabs show one column at a time, so each column is the tab panel its tab controls.
   const tabbed = !useDesktop();
   const asks = asksOf(studio, approvals, questions);
   const shown = studio ? undefined : paneVersions(items, focus);
   const label = studio?.label ?? (shown && artifactName(shown.a));
-  const tab: Tab = !label ? 'chat' : (picked ?? (studio && !(asks.inChat && !asks.inPane) ? 'pane' : 'chat'));
+  const paneOpen = Boolean(studio || (shown && expanded));
+  const tab = tabFor(label, picked, studio, asks);
   const owned = useRef(asks.owned);
   owned.current = asks.owned;
   // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
@@ -353,7 +366,10 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
     return true;
   }, [sessionKey, send, decide, setError]);
   const panel = (t: Tab) => (label && tabbed ? { id: `${id}${t}`, role: 'tabpanel', 'aria-labelledby': `${id}${t}-tab` } : {});
-  return { studio, label, tab, setTab, open, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
+  const headerToggle: ArtifactToggle | undefined = !studio && shown && !tabbed
+    ? { label: `${paneOpen ? 'Hide' : 'Show'} ${label}`, open: paneOpen, toggle }
+    : undefined;
+  return { studio, label, paneOpen, tabbed, headerToggle, tab, setTab, open, close, focus, setFocus, shown, asks, id, panel, send: steer, busy: running && !asks.owned.length };
 }
 type Live = ReturnType<typeof usePane>;
 
@@ -382,16 +398,16 @@ function PaneTabs({ live: { label, tab, setTab, asks, id } }: { live: Live }) {
 
 type SideProps = StudioProps & { live: Live; rail: ReactNode; meta: readonly Record<string, unknown>[] };
 
-// Beside the chat: the studio's pane or the newest artifact once there is one, else the context rail.
+// Beside the chat: the studio's pane or an expanded artifact pane (always mounted as a tabpanel below lg), else the context rail.
 function Side({ live, rail, meta, ...props }: SideProps) {
-  if (!live.label) return rail;
+  if (!live.paneOpen && !(live.label && live.tabbed)) return rail;
   const Pane = live.studio?.Pane;
   return (
     <section aria-label={live.panel('pane').role ? undefined : live.label} {...live.panel('pane')} className={`min-h-0 min-w-0 flex-1 overflow-y-auto ${live.tab === 'pane' ? '' : 'max-lg:hidden'}`}>
       {/* Questions come first in a studio pane, so the person answers them there instead of on the chat tab. */}
       {Pane && props.questions.length > 0 && <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-4 px-4 pt-4 sm:px-5"><SessionQuestions sessionKey={props.sessionKey} items={props.questions} /></div>}
       {Pane ? <Pane {...props} />
-        : live.shown && <ArtifactView sessionKey={props.sessionKey} {...live.shown} onPick={live.setFocus} onFollow={live.focus && (() => live.setFocus(undefined))} now={{ running: props.running, meta }} />}
+        : live.shown && <ArtifactView sessionKey={props.sessionKey} {...live.shown} onPick={live.setFocus} onFollow={live.focus && (() => live.setFocus(undefined))} onClose={live.tabbed ? undefined : live.close} now={{ running: props.running, meta }} />}
     </section>
   );
 }
@@ -400,6 +416,9 @@ function JumpToLatest({ away, onClick }: { away: boolean; onClick: () => void })
   if (!away) return null;
   return <button type="button" aria-label="Jump to latest" title="Jump to latest" onClick={onClick} className={`${iconBtn} pointer-events-auto self-end bg-soft shadow-lift ring-1 ring-line-strong`}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6" /></svg></button>;
 }
+
+// Below lg the chat fills the width on its tab and hides on the other; from lg it is a resizable column when the pane is open.
+const chatClass = (live: Live) => [live.paneOpen && 'lg:w-(--chat-w) lg:max-w-[calc(100%-360px)] lg:min-w-[320px] lg:flex-none', live.label && live.tab !== 'chat' && 'max-lg:hidden'].filter(Boolean).join(' ');
 
 export function SessionView({ sessionKey, agent, name, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
@@ -411,7 +430,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const live = usePane(sessionKey, items, approvals, standing.questions, send, pending.decide, setError, view.running);
   const split = useSplit();
   // The pane takes the room the rail would; the rail then opens as the Details sheet at any width.
-  const details = useDetails(!live.label);
+  const details = useDetails(!live.paneOpen);
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
@@ -419,11 +438,10 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
   const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
-  // Below lg the chat fills the width on its tab and hides on the other; from lg it is a resizable column beside the pane.
-  const chat = live.label ? `lg:w-(--chat-w) lg:max-w-[calc(100%-360px)] lg:min-w-[320px] lg:flex-none ${live.tab === 'chat' ? '' : 'max-lg:hidden'}` : '';
+  const chat = chatClass(live);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} onDetails={details.show}>
+      <Header sessionKey={sessionKey} name={name} back={sessionKey.startsWith('home:') ? { href: '#/', label: 'Home' } : { href: '#/sessions', label: 'Sessions' }} status={status} tone={tone} spend={spend ?? view.spend} archived={manage?.archived} artifact={live.headerToggle} onDetails={details.show}>
         <More link={externalLink(sessionKey)} running={state === 'open' && view.running} onAbort={abort} manage={manage && { archived: manage.archived, exportHref: exportUrl(sessionKey), rename: () => setDialog('rename'), remove: () => setDialog('delete'), archive: () => archiveSession(sessionKey, !manage.archived).then(manage.changed, (e: Error) => setError(e.message)) }} />
       </Header>
       {manage && dialog === 'rename' && <RenameDialog current={name.full} save={(t) => renameSession(sessionKey, t).then(manage.changed)} onClose={() => setDialog(null)} />}
@@ -452,7 +470,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
           </div>
         </div>
       </div>
-      {live.label && <div {...split.separator} className="relative hidden w-px flex-none cursor-col-resize bg-line outline-none before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-line-strong focus-visible:bg-link focus-visible:ring-2 focus-visible:ring-link lg:block" />}
+      {live.paneOpen && <div {...split.separator} className="relative hidden w-px flex-none cursor-col-resize bg-line outline-none before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-line-strong focus-visible:bg-link focus-visible:ring-2 focus-visible:ring-link lg:block" />}
       <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />

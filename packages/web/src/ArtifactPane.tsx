@@ -36,14 +36,20 @@ function Body({ a, now }: { a: SealedArtifact; now?: { running: boolean; meta: r
 export const paneLayout = 'mx-auto flex w-full max-w-[1100px] min-w-0 flex-col gap-4 px-4 pt-4 pb-10 sm:px-5';
 
 /** One artifact with its version row, as the session pane and the artifact's own page both draw it; `now` is the live run, for the newest version. */
-export function ArtifactView({ sessionKey, versions, a, onPick, onFollow, now }: { sessionKey: string; versions: SealedArtifact[]; a: SealedArtifact; onPick: (v: SealedArtifact) => void; onFollow?: () => void; now?: { running: boolean; meta: readonly Record<string, unknown>[] } }) {
+export function ArtifactView({ sessionKey, versions, a, onPick, onFollow, onClose, now }: { sessionKey: string; versions: SealedArtifact[]; a: SealedArtifact; onPick: (v: SealedArtifact) => void; onFollow?: () => void; onClose?: () => void; now?: { running: boolean; meta: readonly Record<string, unknown>[] } }) {
   const pick = (n?: number) => { const v = versions.find((x) => versionOf(x) === n); if (v) onPick(v); };
+  const closeLabel = `Close ${artifactName(a)}`;
   return (
     <div className={paneLayout}>
       <div className="flex items-center gap-1.5">
         <VersionMenu name="Version" items={itemsOf(versions)} value={versionOf(a)} onPick={pick} />
         <span className="flex-1" />
         {onFollow && <FollowNewest onClick={onFollow} />}
+        {onClose && (
+          <button type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className="grid h-8 w-8 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        )}
       </div>
       <SessionKeyContext value={sessionKey}><Loaded sessionKey={sessionKey} a={a} what={`version ${versionOf(a)}`}>{(full) => <Body a={full} now={a === versions[0] ? now : undefined} />}</Loaded></SessionKeyContext>
       {a.verdict && <CheckResult verdict={a.verdict} open={!a.verdict.passed} />}

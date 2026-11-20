@@ -43,7 +43,7 @@ const scenario: Scenario = {
   stack: { seed: 'artifacts', apps: ['contracts'] },
   async run(ctx) {
     for (const p of PANES) {
-      await eachView(ctx, `${p.name}: the newest version beside the chat, its own tab on a phone, which opens on Chat`, async (page, label) => {
+      await eachView(ctx, `${p.name}: studio opens beside chat, others start collapsed and expand on demand; phone uses tabs`, async (page, label) => {
         await fakeServices(page);
         await page.goto(`${ctx.url}/${s(p.key)}`);
         const pane = paneOf(page, p.pane);
@@ -52,12 +52,25 @@ const scenario: Scenario = {
           const opens = p.name === 'contract' ? p.pane : 'Chat';
           if ((await page.getByRole('tab', { name: new RegExp(`^${opens}`) }).getAttribute('aria-selected')) !== 'true') throw new Error(`a phone does not open on the ${opens} tab`);
           await page.getByRole('tab', { name: new RegExp(`^${p.pane}`) }).click();
+        } else if (p.name !== 'contract') {
+          const toggle = page.getByRole('button', { name: `Show ${p.pane}` });
+          await visible(toggle);
+          if ((await toggle.getAttribute('aria-expanded')) !== 'false') throw new Error(`${p.name} toggle did not start collapsed`);
+          if (await pane.count()) throw new Error(`${p.name} pane started open on desktop`);
+          await toggle.click();
         }
         await visible(pane.getByText(p.shows).first());
         if (!phone(label)) await visible(page.getByRole('separator', { name: 'Resize the chat' }));
         if (p.name === 'review') await chipTarget(page);
         await ctx.shot(page, `${p.name}-${label}`);
-        if (!phone(label)) return;
+        if (!phone(label)) {
+          if (p.name !== 'contract') {
+            await page.getByRole('button', { name: `Close ${p.pane}` }).click();
+            await visible(page.getByRole('button', { name: `Show ${p.pane}` }));
+            if (await pane.count()) throw new Error(`${p.name} pane did not collapse`);
+          }
+          return;
+        }
         await fillsWidth(page, pane, `the ${p.pane} pane`);
         await page.getByRole('tab', { name: /^Chat/ }).click();
         await fillsWidth(page, transcript(page), 'the chat', 32);
@@ -86,12 +99,14 @@ const scenario: Scenario = {
       try {
         const page = await context.newPage();
         await page.goto(`${ctx.url}/${s('research:qa-langfuse')}`);
+        await page.getByRole('button', { name: 'Show Report' }).click();
         const bar = page.getByRole('separator', { name: 'Resize the chat' });
         await bar.focus();
         for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
         const width = await bar.getAttribute('aria-valuenow');
         if (width !== '536') throw new Error(`width after four steps: ${width}`);
         await page.reload();
+        await page.getByRole('button', { name: 'Show Report' }).click();
         await visible(bar);
         if ((await bar.getAttribute('aria-valuenow')) !== width) throw new Error('the width was not remembered');
         await ctx.shot(page, 'divider-wider-1280');
