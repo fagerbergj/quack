@@ -221,15 +221,19 @@ async function escalateGroup(api: ToolExecutionApi, s: Settings, unsure: Pending
   await Promise.all(subBatches(unsure, windowOf(model)).map(async (batch) => {
     const held = batch.map((p) => s.hold?.ready(p.unit, p.check)).filter((w) => w !== undefined);
     if (held.length) await Promise.all(held);
-    const replies = await s.escalations(() => askBatch(api, s, model, batch.filter((p) => need(p.unit, p.check)), ctx));
-    await Promise.all(batch.map(async (p) => {
-      const r = replies.get(p);
-      await done(p, r ? { met: passing(p.check).includes(r.choice), resolver, note: r.reason } : await alone(p));
-    }));
+    const missed = await s.escalations(async () => {
+      const replies = await askBatch(api, s, model, batch.filter((p) => need(p.unit, p.check)), ctx);
+      for (const p of batch) {
+        const r = replies.get(p);
+        if (r) await done(p, { met: passing(p.check).includes(r.choice), resolver, note: r.reason });
+      }
+      return batch.filter((p) => !replies.get(p));
+    });
+    await Promise.all(missed.map((p) => alone(p)));
   }));
 }
 
-type Alone = (p: Pending) => Promise<Answer | undefined> | undefined;
+type Alone = (p: Pending) => Promise<void>;
 type Done = (p: Pending, a: Answer | undefined) => Promise<void>;
 
 // One decision-model request per packed group; confident answers stand and are counted first, so a decided check asks no more.
@@ -255,10 +259,11 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
   s.hold?.heard(asked);
   const unsure = asked.filter((x) => !sure(x.p, x.check));
-  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(() => (need(a.unit, a.check) ? escalate(api, s, a.unit, a.check, ctx) : Promise.resolve(undefined))) : undefined);
+  // Count each escalated answer before releasing the slot, so the next waiter's need() sees a deciding pass.
+  const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await escalate(api, s, a.unit, a.check, ctx) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.
   const alone = (a: Pending) => s.hold?.ready(a.unit, a.check)?.then(() => go(a)) ?? go(a);
   if (packed && unsure.length > 1) await escalateGroup(api, s, unsure, ctx, need, alone, done);
-  else await Promise.all(unsure.map(async (a) => done(a, await alone(a))));
+  else await Promise.all(unsure.map((a) => alone(a)));
   return asked.map((a) => out.get(a)!);
 }
