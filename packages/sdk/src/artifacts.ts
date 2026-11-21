@@ -3,7 +3,7 @@ import type { JsonObject } from '@earendil-works/pi-durable';
 import type { Context } from '@earendil-works/chord/context';
 import { obj } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTool, LiveDoc, wrapTool, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
-import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
+import { createBashTool, createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
 import { assertSealFits } from './channel.ts';
 import { runSealGates, SealRefused } from './gates.ts';
 
@@ -214,6 +214,37 @@ const declared = new Map<string, ArtifactKind>();
 /** The kind a session's artifactsExtension declared under this name, so other extensions (the judge) can read its path and tool. */
 export const artifactKind = (name: string): ArtifactKind | undefined => declared.get(name);
 
+// Shell commands can edit an artifact file without write/edit; record the new hash so unsubmitted() catches it.
+function trackBashWrites(tool: ToolRegistration, kinds: ArtifactKind[]): ToolRegistration {
+  return {
+    ...tool,
+    async execute(args, api, ctx) {
+      const result = await tool.execute(args, api, ctx);
+      if (result.isError || !api.env) return result;
+      const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+      const input = (await newestInput(api, ctx)) ?? '';
+      const changed: Array<{ kind: string; hash: string }> = [];
+      for (const k of kinds) {
+        const read = await api.env.readTextFile(k.path, ctx);
+        if (!read.ok) continue;
+        const hash = sha256(read.value);
+        const entry = doc?.kinds[k.kind];
+        if (hash !== entry?.written?.hash && hash !== entry?.versions.at(-1)?.hash) changed.push({ kind: k.kind, hash });
+      }
+      if (changed.length) {
+        await api.commit(async (tx) => {
+          const draft = await tx.doc(Artifacts, api.conversationId);
+          for (const { kind, hash } of changed) {
+            draft.kinds[kind] ??= { versions: [] };
+            draft.kinds[kind].written = { hash, input };
+          }
+        }, ctx);
+      }
+      return result;
+    },
+  };
+}
+
 // Writes to a declared artifact path report every schema problem at once, without blocking the write; a kind naming a tool gets its seal tool.
 export function artifactsExtension(kinds: ArtifactKind[]) {
   for (const k of kinds) declared.set(k.kind, k);
@@ -223,6 +254,7 @@ export function artifactsExtension(kinds: ArtifactKind[]) {
     wraps: [
       wrapTool(createWriteTool() as ToolRegistration, (t) => validateAfter(t, kinds)),
       wrapTool(createEditTool() as ToolRegistration, (t) => validateAfter(t, kinds)),
+      wrapTool(createBashTool() as ToolRegistration, (t) => trackBashWrites(t, kinds)),
     ],
   });
 }

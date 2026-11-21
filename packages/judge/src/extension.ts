@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord/context';
-import { defineExtension, GenerationTask, hook, ROOT_CONVERSATION_ID, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { defineExtension, GenerationTask, hook, LiveDoc, ROOT_CONVERSATION_ID, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { artifactKind, Artifacts, gate, unsubmitted, type ArtifactKind, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkDeclaration, type Declaration, type Inputs } from './declaration.ts';
 import { check, report, type JudgeOptions, type Verdict } from './index.ts';
@@ -50,33 +50,45 @@ async function overtaken(api: ToolExecutionApi, declared: ArtifactKind, last: Se
   return now && now !== last.basis ? `${declared.kind} v${last.version} was written against ${last.basis}, not ${now}. Write ${declared.path} for ${now} and call ${declared.tool} before you finish.` : undefined;
 }
 
+const MAX_UNSUBMITTED_RETRIES = 2;
+
 // A run may not finish before each sealed-by-tool kind's newest version passed or was released at the limit and holds the run's last change to its file,
 // unless the kind's refuse says there is nothing to submit.
-const yieldHook = () => hook(GenerationTask, {
-  async onYield(_answer, hookApi, ctx) {
-    // Only the root conversation delivers artifacts; owned child conversations such as subagents yield freely.
-    if (hookApi.conversationId !== ROOT_CONVERSATION_ID) return undefined;
-    // refuse and basis read committed state only, which the hook's api also serves.
-    const api = hookApi as unknown as ToolExecutionApi;
-    const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-    for (const [kind, how] of registry) {
-      const declared = artifactKind(kind);
-      if (!declared?.tool) continue;
-      const { path, tool } = declared;
-      if (await how.refuse?.(api, ctx)) continue;
-      const last = doc?.kinds[kind]?.versions.at(-1);
-      const v = last?.verdict as Verdict | null | undefined;
-      if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
-      const stale = await overtaken(api, declared, last, ctx);
-      if (stale) return { continue: stale };
-      if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
-      if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
-      const pending = await unsubmitted(api, declared, ctx);
-      if (pending) return { continue: pending };
-    }
-    return undefined;
-  },
-});
+const yieldHook = () => {
+  let run = '';
+  let unsubmittedRetries = 0;
+  return hook(GenerationTask, {
+    async onYield(_answer, hookApi, ctx) {
+      // Only the root conversation delivers artifacts; owned child conversations such as subagents yield freely.
+      if (hookApi.conversationId !== ROOT_CONVERSATION_ID) return undefined;
+      // refuse and basis read committed state only, which the hook's api also serves.
+      const api = hookApi as unknown as ToolExecutionApi;
+      const current = String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
+      if (current !== run) [run, unsubmittedRetries] = [current, 0];
+      const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+      for (const [kind, how] of registry) {
+        const declared = artifactKind(kind);
+        if (!declared?.tool) continue;
+        const { path, tool } = declared;
+        if (await how.refuse?.(api, ctx)) continue;
+        const last = doc?.kinds[kind]?.versions.at(-1);
+        const v = last?.verdict as Verdict | null | undefined;
+        if (!last) return { continue: `Write ${path} and call ${tool} before you finish.` };
+        const stale = await overtaken(api, declared, last, ctx);
+        if (stale) return { continue: stale };
+        if (!v) return { continue: `Call ${tool} to check ${path} before you finish.` };
+        if (!v.passed && !v.limitReached) return { continue: `${kind} v${last.version} failed its checks. Revise ${path} using the feedback, then call ${tool} again.` };
+        const pending = await unsubmitted(api, declared, ctx);
+        if (pending) {
+          if (unsubmittedRetries >= MAX_UNSUBMITTED_RETRIES) return undefined;
+          unsubmittedRetries++;
+          return { continue: pending };
+        }
+      }
+      return undefined;
+    },
+  });
+};
 
 let unregister: (() => void) | undefined;
 
