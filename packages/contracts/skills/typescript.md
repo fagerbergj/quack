@@ -7,7 +7,11 @@ A rule marked check is enforced mechanically; a rule marked ask is a choice for 
 Settle these before drafting: who provides each value (core or an extension), who consumes it, and which direction a value flows, because a change that is safe for one side breaks the other. Read the code that implements and calls the surface first; a convention you find beats any default below.
 
 ### One fact per entry
-An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
+An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters.
+
+Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated.
+
+To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
 
 ### document
 Check. A `.d.ts` module of `export type`, `export interface`, `export declare function` and `export declare const`. It compiles on its own with `strict` on. It imports only `@earendil-works/*` packages and `node:` built-ins.
@@ -28,7 +32,15 @@ Ask. Suggested: a discriminated union with a literal `kind` field over several b
 Check. No `any` in an exported signature and no default export. Use `unknown` and narrow it, or name the type. Ask whether a class belongs in the surface. Suggested: none, unless callers need its behavior; a type or interface describes shape without tying callers to an implementation.
 
 ### compatibility
-Check. The diff compiles each export from the old and the new version in both directions. If the new type does not fit the old one, values core now produces break old consumers (a widened union or a changed type). If the old type does not fit the new one, values extensions already provide break (a new required field, a narrowed return type). A removed export is breaking, including a re-exported name. A new export or a new optional field is safe. Removing an optional field is not reported, so judge it yourself and list it in `compatibility`. Re-exported names are checked for removal only, and `export *` is refused: list the names. Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A break names its callers and one migration: what they change to keep working.
+Check.
+
+The diff compiles each export from the old and the new version in both directions.
+
+If the new type does not fit the old one, values core now produces break old consumers (a widened union or a changed type). If the old type does not fit the new one, values extensions already provide break (a new required field, a narrowed return type). A removed export is breaking, including a re-exported name.
+
+A new export or a new optional field is safe. Removing an optional field is not reported, so judge it yourself and list it in `compatibility`. Re-exported names are checked for removal only, and `export *` is refused: list the names.
+
+Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A break names its callers and one migration: what they change to keep working.
 
 ### versioning
 Ask. Suggested: compatible changes ship in place; a break gets a new export name (`FooV2`) kept beside the old while both are in use.

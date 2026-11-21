@@ -1,0 +1,4 @@
+# lintdec project policy for quack
+exclude:
+  - '**/fixtures/**'
+  - '**/test-fixtures/**'
