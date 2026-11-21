@@ -71,18 +71,16 @@ export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency:
 const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
 /** What a job is judged on: the rubric's declaration and inputs. */
 type Judged = { declaration: Declaration; inputs: Inputs };
-type Prepared = Omit<Job, 'rep' | 'pos'>;
+type Prepared = Omit<Job, 'rep' | 'pos'> & { found: Set<string> };
 type Job = { arm: string; rejudge: typeof rejudge; decisionModel?: DecisionModelRef; reuse?: boolean; rep: number; pos: number; c: Case; rubric: Rubric; content: string; judged: Judged };
 
-/** The rubric cut to the watched checks (by id or criterion.id), so only those are judged; a name that matches nothing is an error. */
-function watch(rubric: Rubric, names: string[] | undefined): Rubric {
-  if (!names?.length) return rubric;
+/** The rubric cut to the watched checks (by id or criterion.id), skipping names this arm's rubric lacks. */
+function watch(rubric: Rubric, names: string[] | undefined): { rubric: Rubric; found: Set<string> } {
+  if (!names?.length) return { rubric, found: new Set() };
   const hit = (cid: string, id: string) => names.includes(id) || names.includes(`${cid}.${id}`);
   const criteria = rubric.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => hit(c.id, k.id)) })).filter((c) => c.checks.length);
-  const found = criteria.flatMap((c) => c.checks.flatMap((k) => [k.id, `${c.id}.${k.id}`]));
-  const missing = names.filter((n) => !found.includes(n));
-  if (missing.length) throw new Error(`${rubric.name}@${rubric.version} has no check ${missing.join(', ')}`);
-  return { ...rubric, criteria };
+  const found = new Set(criteria.flatMap((c) => c.checks.flatMap((k) => [k.id, `${c.id}.${k.id}`])));
+  return { rubric: { ...rubric, criteria }, found };
 }
 
 // An adapter that throws is declining the case for a reason (what the recording lacks); a case file without content is an error.
@@ -96,8 +94,8 @@ async function prepare(arm: Arm, c: Case): Promise<Prepared | Declined> {
   for (const a of arm.adapters.filter((x) => x.kind === c.kind && x.judge)) {
     const judged = await judgedBy(a, c, record, content).catch((err: Error) => void reasons.add(err.message));
     if (!judged) continue;
-    const rubric = watch(a.judge!.rubric as Rubric, c.checks);
-    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, reuse: arm.reuse, c, content, rubric, judged: { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
+    const { rubric, found } = watch(a.judge!.rubric as Rubric, c.checks);
+    return { arm: arm.label, rejudge: arm.rejudge ?? rejudge, decisionModel: arm.decisionModel, reuse: arm.reuse, c, content, rubric, found, judged: { ...judged, declaration: declared(judged.declaration, rubric, c.units) } };
   }
   return { arm: arm.label, case: c.case, reason: [...reasons].join('; ') || `no declaration serves ${c.kind} with these inputs` };
 }
@@ -203,6 +201,12 @@ export async function replayJudge(o: Options): Promise<Replayed> {
   const declined = all.filter((p): p is Declined => 'reason' in p);
   const prepared = all.filter((p): p is Prepared => !('reason' in p));
   if (!prepared.length) throw new Error(`every case was declined: ${declined.map((d) => `${d.arm} ${d.case}: ${d.reason}`).join('; ')}`);
+  // A watched check is valid if at least one arm's rubric has it, so a new check can run alongside main.
+  for (const c of o.cases) {
+    const forCase = c.checks?.length ? prepared.filter((p) => p.c === c) : [];
+    const missing = forCase.length ? c.checks!.filter((n) => !forCase.some((p) => p.found.has(n))) : [];
+    if (missing.length) throw new Error(`${c.case}: no check ${missing.join(', ')} in any arm`);
+  }
   const seed = o.seed ?? randomInt(2 ** 31);
   const queue = batches(prepared, o, seed);
   const rows: Row[] = [];
@@ -279,11 +283,12 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
   return out.length ? ['', 'disagreements (case check: met per repeat by arm, then the notes each arm gave):', ...out] : [];
 }
 
-/** The replay table: per case and check, met per repeat and decision-model/escalation counts for each arm; then per-arm counts and seconds, the seed, the disagreements and the declined cases. */
-export function table({ rows, declined, seed }: Replayed, arms: string[]): string {
-  const keys = [...new Set(rows.map(keyOf))].sort();
+/** The replay table: per case and check, met per repeat and counts per arm; `reportChecks` filters displayed rows while keeping full-round per-arm timing and counts. */
+export function table({ rows, declined, seed }: Replayed, arms: string[], reportChecks?: string[]): string {
+  const shown = reportChecks?.length ? rows.filter((r) => reportChecks.includes(r.check)) : rows;
+  const keys = [...new Set(shown.map(keyOf))].sort();
   const cell = (arm: string, key: string) => {
-    const rs = of(rows, arm, key);
+    const rs = of(shown, arm, key);
     return [rs.map((r) => fmt(r.met)).join(' '), `${rs.reduce((n, r) => n + r.clef, 0)}/${rs.reduce((n, r) => n + r.esc, 0)}`];
   };
   const head = ['case', 'check', ...arms.map((a) => `met ${a}`), ...arms.map((a) => `clef/esc ${a}`)];
@@ -294,5 +299,5 @@ export function table({ rows, declined, seed }: Replayed, arms: string[]): strin
   const md = [head, head.map(() => '---'), ...lines].map((l) => `| ${l.join(' | ')} |`);
   const skipped = declined.length ? ['', 'declined:', ...declined.map((d) => `- ${d.arm} ${d.case}: ${d.reason}`)] : [];
   const seedLine = seed === undefined ? [] : [`arm order seed ${seed}`];
-  return [...md, '', ...perArm(rows, arms), ...seedLine, ...disagreements(rows, arms, keys), ...skipped].join('\n');
+  return [...md, '', ...perArm(rows, arms), ...seedLine, ...disagreements(shown, arms, keys), ...skipped].join('\n');
 }
