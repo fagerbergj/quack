@@ -38,7 +38,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks; reviewDeclaration says how each model check is asked.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 9,
+  version: 10,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -158,7 +158,7 @@ export const reviewDeclaration: Declaration = {
     contradicted: { scope: 'finding', aggregate: SHARE, decisionModel: false, question: defect('Does the cited code contradict this finding?') },
     // Clef answers this without weighing the consequence a finding states, so it goes to the judge model.
     says_why: { scope: 'finding', aggregate: SHARE, decisionModel: false, question: yes('Does this finding say why it matters: the risk, the principle or the benefit, not only that something is wrong?') },
-    shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show the whole change — a fenced block with a language tag for more than one line, or inline backticks when it fits on one line (or does it propose no specific change)?') },
+    shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show the whole change in a fenced block with a language tag, or in inline backticks when it fits on one line (or does it propose no specific change)?') },
     answerable: { scope: 'finding', aggregate: SHARE, question: yes('Could the author act on or answer this finding without guessing what is meant?') },
     no_reason_given: { scope: 'finding', aggregate: SHARE, question: defect('Does this finding only assert that something is wrong, with no reason at all?') },
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
