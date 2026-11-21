@@ -14,9 +14,21 @@ Replay the same case under the baseline's agent definition and the candidate's, 
 QUACK_LOCAL_API_KEY=... node packages/eval/src/main.ts run items.json ab deployment.json agents/contracts/agent.json --arm base=<trunk ref> --arm cand=. --guides packages/contracts/skills --out ab.jsonl
 ```
 
-A dataset ending in `.json` is a local file of items, and such a run needs no Langfuse and publishes nothing; any other dataset name is read from Langfuse with the `LANGFUSE_*` variables, and each arm's results are published there as the run `<run-name>-<label>`. `main.ts dataset items.json <agent> <good|bad|-> <session-dir>...` adds recorded sessions to such a file, and an item can also be written by hand: `{ "id": "status", "input": { "inputs": ["Define a REST contract for GET /status ..."], "pins": {} } }`. An arm is `label=ref`: `.` is this tree; another ref replays on the agent bundle's directory (`agent.json` and its prompt) as it stood at that ref and, for each `--guides` directory under `packages/`, that directory from the ref over a copy of this tree's packages, so extension code stays this tree's in both arms. An item's arms run one after another, never at once; `--concurrency` runs that many items together.
+A dataset ending in `.json` is a local file of items, and such a run needs no Langfuse and publishes nothing; any other dataset name is read from Langfuse with the `LANGFUSE_*` variables, and each arm's results are published there as the run `<run-name>-<label>`.
 
-Each recorded input is sent once the run before it settles. The replay answers the run's asks: a question takes the item's next recorded answer when it is one of the options (or free text where the question takes it), else its suggested option; an approval takes the item's next recorded verdict, and the replay stops at the first approval past them. `--suggested` drops the recorded answers, and `--verdict approve|stop|reject:<reason>`, repeated, replaces the recorded verdicts; a contracts review round is a rejection whose reason carries the review's `quack-review` block. Each arm prints a line per item with its scores, each kind's sealed versions (pass, or fail with the gates that failed), and the asks it answered, then a summary per arm; `--out` appends each result with its sealed versions' content and verdicts as JSON lines.
+`main.ts dataset items.json <agent> <good|bad|-> <session-dir>...` adds recorded sessions to such a file, and an item can also be written by hand: `{ "id": "status", "input": { "inputs": ["Define a REST contract for GET /status ..."], "pins": {} } }`.
+
+An arm is `label=ref`: `.` is this tree; another ref replays on the agent bundle's directory (`agent.json` and its prompt) as it stood at that ref and, for each `--guides` directory under `packages/`, that directory from the ref over a copy of this tree's packages, so extension code stays this tree's in both arms.
+
+An item's arms run one after another, never at once; `--concurrency` runs that many items together.
+
+Each recorded input is sent once the run before it settles.
+
+The replay answers the run's asks: a question takes the item's next recorded answer when it is one of the options (or free text where the question takes it), else its suggested option; an approval takes the item's next recorded verdict, and the replay stops at the first approval past them.
+
+`--suggested` drops the recorded answers, and `--verdict approve|stop|reject:<reason>`, repeated, replaces the recorded verdicts; a contracts review round is a rejection whose reason carries the review's `quack-review` block.
+
+Each arm prints a line per item with its scores, each kind's sealed versions (pass, or fail with the gates that failed), and the asks it answered, then a summary per arm; `--out` appends each result with its sealed versions' content and verdicts as JSON lines.
 
 ### Evidence for a judge or rubric change
 
@@ -26,11 +38,44 @@ Replay the same recorded cases under the baseline and the candidate, three times
 QUACK_LOCAL_API_KEY=... QUACK_CLEF_API_KEY=... node packages/eval/src/replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --decision-model clef/clef --arm base=<trunk ref> --arm cand=. --repeat 3 --concurrency 2 --rows rows.jsonl
 ```
 
-`cases.json` is an array of `{ case, kind, checks?, units?, session?, version?, content?, evidence?, inputs? }`. `kind` picks the extension's eval adapter: its rubric with its declaration and inputs builder, or, for a rubric not yet declared, its evidence builder. `session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter from the recording as it stood when that version was sealed, through the same builder the live judge uses: `research.report` (fetch log, kept source files, request), `contract.spec` (artifacts, approvals, answered questions, workspace files) and every Sleeper card (the facts step result of the workflow run that sealed it; for an undeclared job, with the news checks dropped when the recorded verdict says the job had no news source, as the live judge drops them). `content` and `evidence` (scope to units), or `inputs` (name to text) for a declared rubric, give them inline for a kind whose adapter cannot rebuild them, such as `github.review`. `checks` (`id` or `criterion.id`) limits the run to the checks being watched, and `units` (ids such as `finding-14`) to those units of an undeclared rubric's evidence, or to those items of the watched checks' scopes of a declared one (an item's id, or its unit's `claim finding-14`), so one finding of a long report is a case of its own. An arm is `label=ref[:decision-model][:reuse]`: `.` is this tree, any other value is a git ref whose extensions, judge engine and SDK all load from that ref, so an arm sees a change to `packages/judge` or `packages/sdk` as well as one to a rubric. The decision model is `none` or `provider/model`; without one the arm takes `--decision-model`, or none. Every arm judges each case fresh unless it ends in `:reuse`: then, in each repeat, the cases of one recorded `session` are judged one after another in `version` order against an item-reuse store of their own, as the live gate judges a session's drafts, and an answer decided for one version is not asked again for the next. Without `--arm` it runs one arm, `current=.`. `--escalations` bounds each case's concurrent judge-model calls (4 by default, as in the live judge), so the judge model sees at most `--concurrency` times that at once.
+`cases.json` is an array of `{ case, kind, checks?, units?, session?, version?, content?, evidence?, inputs? }`.
 
-Arms run case by case, not as blocks: each repeat goes through the cases in order, and each case is judged under every arm in an order shuffled by `--seed` (random when unset, and printed first), so over cases and repeats every arm takes every place about equally and neither load nor the model server's prefix cache favours one arm. A `:reuse` arm's batch, one session's drafts in version order against one store, takes the place of its first draft and runs whole; the other arms' cases of that session come before or after it, or alongside it under `--concurrency`. `--rows` appends each case's rows to a JSON-lines file as the case finishes, so a stopped run keeps what it judged, and `replay-judge.ts --table rows.jsonl` prints the table from such a file. A row is one check of one case under one arm: `met`, its place (`pos`, 1 first), the items the decision model settled (`clef`), the items escalated (`esc`) and the items reused from an earlier draft (`reused`), and the case's judge milliseconds (`ms`) and model requests by model id (`requests`).
+`kind` picks the extension's eval adapter: its rubric with its declaration and inputs builder, or, for a rubric not yet declared, its evidence builder.
 
-A replay rebuilds a `contract.spec` version's evidence as the session stood at its seal: the versions, approvals and answers recorded by then, and each file of a git clone in the workspace as the commit the clone's reflog says HEAD held then, since a session goes on pulling after it seals a version. A file the commit lacks (such as `node_modules`), or one in a clone made after the seal, is read as it is on disk. A ref through a symlink out of the workspace (an early session's `app -> /app`, the image's own tree) resolves in no replay, as it resolves in no live judge today. A replayed code gate applies the arm's rubric and contracts code, so it can differ from the verdict prod recorded under older ones: `contract.spec@4` has no `baseline_matches`, and older code counted an approval only once it was recorded, and matched versions and answer links by other rules. Compare a replay's code gates with prod only where prod judged with the same rubric and code; the model checks compare either way.
+`session` is a recorded session directory whose last (or `version`th) artifact of that kind is judged, with evidence rebuilt by the adapter from the recording as it stood when that version was sealed, through the same builder the live judge uses.
+The builders are `research.report` (fetch log, kept source files, request), `contract.spec` (artifacts, approvals, answered questions, workspace files), and every Sleeper card (the facts step result of the workflow run that sealed it; for an undeclared job, with the news checks dropped when the recorded verdict says the job had no news source, as the live judge drops them).
+
+`content` and `evidence` (scope to units), or `inputs` (name to text) for a declared rubric, give them inline for a kind whose adapter cannot rebuild them, such as `github.review`.
+
+`checks` (`id` or `criterion.id`) limits the run to the checks being watched, and `units` (ids such as `finding-14`) to those units of an undeclared rubric's evidence, or to those items of the watched checks' scopes of a declared one (an item's id, or its unit's `claim finding-14`), so one finding of a long report is a case of its own.
+
+An arm is `label=ref[:decision-model][:reuse]`: `.` is this tree, any other value is a git ref whose extensions, judge engine and SDK all load from that ref, so an arm sees a change to `packages/judge` or `packages/sdk` as well as one to a rubric.
+
+The decision model is `none` or `provider/model`; without one the arm takes `--decision-model`, or none.
+
+Every arm judges each case fresh unless it ends in `:reuse`: then, in each repeat, the cases of one recorded `session` are judged one after another in `version` order against an item-reuse store of their own, as the live gate judges a session's drafts, and an answer decided for one version is not asked again for the next.
+
+Without `--arm` it runs one arm, `current=.`.
+
+`--escalations` bounds each case's concurrent judge-model calls (4 by default, as in the live judge), so the judge model sees at most `--concurrency` times that at once.
+
+Arms run case by case, not as blocks: each repeat goes through the cases in order, and each case is judged under every arm in an order shuffled by `--seed` (random when unset, and printed first), so over cases and repeats every arm takes every place about equally and neither load nor the model server's prefix cache favours one arm.
+
+A `:reuse` arm's batch, one session's drafts in version order against one store, takes the place of its first draft and runs whole; the other arms' cases of that session come before or after it, or alongside it under `--concurrency`.
+
+`--rows` appends each case's rows to a JSON-lines file as the case finishes, so a stopped run keeps what it judged, and `replay-judge.ts --table rows.jsonl` prints the table from such a file.
+
+A row is one check of one case under one arm: `met`, its place (`pos`, 1 first), the items the decision model settled (`clef`), the items escalated (`esc`) and the items reused from an earlier draft (`reused`), and the case's judge milliseconds (`ms`) and model requests by model id (`requests`).
+
+A replay rebuilds a `contract.spec` version's evidence as the session stood at its seal: the versions, approvals and answers recorded by then, and each file of a git clone in the workspace as the commit the clone's reflog says HEAD held then, since a session goes on pulling after it seals a version.
+
+A file the commit lacks (such as `node_modules`), or one in a clone made after the seal, is read as it is on disk.
+
+A ref through a symlink out of the workspace (an early session's `app -> /app`, the image's own tree) resolves in no replay, as it resolves in no live judge today.
+
+A replayed code gate applies the arm's rubric and contracts code, so it can differ from the verdict prod recorded under older ones: `contract.spec@4` has no `baseline_matches`, and older code counted an approval only once it was recorded, and matched versions and answer links by other rules.
+
+Compare a replay's code gates with prod only where prod judged with the same rubric and code; the model checks compare either way.
 
 To measure a decision-model change, run two arms on the same tree:
 
@@ -38,11 +83,25 @@ To measure a decision-model change, run two arms on the same tree:
 ... replay-judge.ts --cases cases.json --deployment deployment.json --judge local/qwen3.8-27b --arm base=.:none --arm clef=.:clef/clef --repeat 3
 ```
 
-It prints a markdown table of per-repeat `met` (a decided fold as 1 or 0; null: no unit or an undecided fold, the check does not count) and decision-model/escalation counts per case and check for each arm, then per arm its model requests by model, the items the decision model settled, escalated and reused (counts the arm order cannot bias), then its median and p90 judge seconds per case overall and by place, then the seed, then every case and check whose `met` values differ between arms with each arm's values and the judge's notes, for adjudicating false positives, and last any case an adapter declined with what its recording lacks. Paste it into the PR with the cases' provenance.
+It prints a markdown table of per-repeat `met` (a decided fold as 1 or 0; null: no unit or an undecided fold, the check does not count) and decision-model/escalation counts per case and check for each arm.
+Then, per arm: its model requests by model, the items the decision model settled, escalated and reused (counts the arm order cannot bias), its median and p90 judge seconds per case overall and by place, and the seed.
+Last: every case and check whose `met` values differ between arms, with each arm's values and the judge's notes, for adjudicating false positives, and any case an adapter declined with what its recording lacks.
+
+Paste it into the PR with the cases' provenance.
 
 ## Agent bundles
 
-`agents/<name>/agent.json` is closed. Its keys are `name` (`[\w-][\w.-]*`) and `version` (positive integer) and `extensions` (name to config object), all required, and optional `status` (`draft` or `promoted`), `description` (string), `model` (`provider/modelId`), `prompt` (a bare file name beside `agent.json`, no `/` or `\`), `exec` (`timeoutSeconds` only) and `retention` (`idleDays` only). An unknown key, a bad value or a prompt path leaves the bundle unoffered by the distributor, fails `tools/bundle-locks.ts` and fails the validator. Pinned copies in the data dir are history: they are never checked against this and load through the loader's compatibility shims. A session runs on the copy it was pinned to, except its judge settings (`extensions.judge`), which it takes from its agent's current bundle each time its process starts, so a woken session judges its next version with the current decision model; a session whose agent no longer has a bundle does not start. The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
+`agents/<name>/agent.json` is closed.
+
+Its keys are `name` (`[\w-][\w.-]*`) and `version` (positive integer) and `extensions` (name to config object), all required, and optional `status` (`draft` or `promoted`), `description` (string), `model` (`provider/modelId`), `prompt` (a bare file name beside `agent.json`, no `/` or `\`), `exec` (`timeoutSeconds` only) and `retention` (`idleDays` only).
+
+An unknown key, a bad value or a prompt path leaves the bundle unoffered by the distributor, fails `tools/bundle-locks.ts` and fails the validator.
+
+Pinned copies in the data dir are history: they are never checked against this and load through the loader's compatibility shims.
+
+A session runs on the copy it was pinned to, except its judge settings (`extensions.judge`), which it takes from its agent's current bundle each time its process starts, so a woken session judges its next version with the current decision model; a session whose agent no longer has a bundle does not start.
+
+The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
 
 ## Checking a rollout
 

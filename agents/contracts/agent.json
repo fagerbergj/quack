@@ -1,6 +1,6 @@
 {
   "name": "contracts",
-  "version": 15,
+  "version": 17,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
