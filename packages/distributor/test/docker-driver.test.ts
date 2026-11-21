@@ -15,14 +15,6 @@ after(async () => {
   for (const fn of cleanups) await fn();
 });
 
-async function until(probe: () => boolean, ms = 15_000) {
-  const deadline = Date.now() + ms;
-  while (!probe()) {
-    if (Date.now() > deadline) throw new Error('timed out');
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
-
 const listen = async (handler: Parameters<typeof createServer>[1]) => {
   const server = createServer(handler).listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
@@ -37,6 +29,8 @@ function fakeDocker(sessionUrl: string) {
   const containers = new Map<string, Fake>();
   const calls: string[] = [];
   const waiters = new Map<string, Array<() => void>>();
+  let onStart: (() => void) | undefined;
+  const nextStart = () => new Promise<void>((r) => (onStart = r));
   const api: DockerCall = async (method, path, body) => {
     calls.push(`${method} ${path}`);
     const [route] = path.split('?');
@@ -46,7 +40,12 @@ function fakeDocker(sessionUrl: string) {
       containers.set(created, { name: created, body: body as Record<string, any>, started: false, exit: () => { containers.delete(created); waiters.get(created)?.forEach((f) => f()); } });
       return { status: 201, body: { Id: created } };
     }
-    if (method === 'POST' && route.endsWith('/start')) return containers.get(name)!.started = true, { status: 204, body: undefined };
+    if (method === 'POST' && route.endsWith('/start')) {
+      containers.get(name)!.started = true;
+      onStart?.();
+      onStart = undefined;
+      return { status: 204, body: undefined };
+    }
     if (method === 'POST' && route.endsWith('/wait')) {
       if (!containers.has(name)) return { status: 404, body: { message: `No such container: ${name}` } };
       await new Promise<void>((r) => waiters.set(name, [...(waiters.get(name) ?? []), r]));
@@ -57,7 +56,7 @@ function fakeDocker(sessionUrl: string) {
     if (method === 'GET' && route === '/containers/json') return { status: 200, body: [...containers.values()].map((c) => ({ Id: c.name })) };
     return { status: 400, body: undefined };
   };
-  return { api, containers, calls, sessionUrl };
+  return { api, containers, calls, sessionUrl, nextStart };
 }
 
 async function setup(inheritedEnv: NodeJS.ProcessEnv = {}, defaultAgent?: string, egressProxy?: string) {
@@ -99,8 +98,13 @@ test('stop stops the container and lets the session start again; a crash restart
   await driver.ensure('a');
   assert.equal(docker.containers.size, 1, 'restarted after a stop');
   const first = [...docker.containers.values()][0];
+  const restarted = docker.nextStart();
   first.exit();
-  await until(() => docker.containers.size === 1 && driver.running().includes('a') && docker.containers.get(first.name) !== first);
+  await restarted;
+  await driver.ensure('a');
+  assert.equal(docker.containers.size, 1);
+  assert.ok(driver.running().includes('a'));
+  assert.notEqual(docker.containers.get(first.name), first);
 });
 
 test('the container gets no secrets: keyed services are proxied, the distributor is reached with the launch token, the rest is dropped', async () => {

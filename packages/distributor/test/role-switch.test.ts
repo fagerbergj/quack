@@ -81,9 +81,16 @@ test('a submission naming another agent is refused while a run is open', async (
   const { invoke, snapshot, base } = await start('gate-session.ts');
   const key = 'github:o/r#8';
   await invoke(key, { input: 'review', requestId: 'r-1' }, 'reviewer');
-  const get = (path: string) => fetch(`${base}/sessions/${encodeURIComponent(key)}${path}`).then((r) => r.json()) as Promise<Record<string, any>>;
-  for (let i = 0; i < 750 && !(await get('/ping')).waitingOnHuman; i++) await new Promise((r) => setTimeout(r, 20));
-  assert.equal((await get('/ping')).waitingOnHuman, true);
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
+    ws.addEventListener('error', reject, { once: true });
+    ws.addEventListener('message', (e) => {
+      const msg = JSON.parse(String(e.data)) as { type?: string; approvals?: unknown[] };
+      if (msg.type === 'standing' && msg.approvals?.length) { ws.close(); resolve(); }
+    });
+  });
+  const ping = await fetch(`${base}/sessions/${encodeURIComponent(key)}/ping`).then((r) => r.json()) as Record<string, any>;
+  assert.equal(ping.waitingOnHuman, true);
 
   assert.equal((await invoke(key, { input: 'fix' }, 'implementer')).status, 409);
   assert.equal((await snapshot(key)).agent, 'reviewer');
