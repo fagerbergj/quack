@@ -364,3 +364,32 @@ test('submits that keep changing stop at the revision limit: the version release
   assert.equal(service.posted.length, 1, 'v3 went out at the limit with its failures marked');
   await session.close();
 });
+
+test('non-https and scheme-less made-up review links are caught, and repeated bad links stop at the retry bound', async () => {
+  const { again, seen, session } = await rereview((step) => [
+    step(write(resolved)), step(call('submit_review', {})),
+    step(fauxAssistantMessage('Approve: http://github.com/acme/widgets/pull/7#pullrequestreview-111')),
+    step(fauxAssistantMessage('Approve: github.com/acme/widgets/pull/7#pullrequestreview-222')),
+    step(fauxAssistantMessage('Approve: github.com/acme/widgets/pull/7#pullrequestreview-333')),
+  ]);
+  assert.equal(again.status === 'done' && again.answer, 'Approve: github.com/acme/widgets/pull/7#pullrequestreview-333');
+  assert.match(seen[6], /Your reply links http:\/\/github\.com\/acme\/widgets\/pull\/7#pullrequestreview-111/);
+  assert.match(seen[7], /Your reply links github\.com\/acme\/widgets\/pull\/7#pullrequestreview-222/);
+  assert.equal(seen.length, 8, 'two send-backs then the third reply ends the run');
+  await session.close();
+});
+
+test('a review file edited via bash is caught as unsubmitted, and repeated unsubmitted yields stop at the retry bound', async () => {
+  const { again, seen, service, session } = await rereview((step) => [
+    step(call('bash', { command: `printf '%s\n' ${JSON.stringify(resolved)} > artifacts/review.md` })),
+    step(fauxAssistantMessage('Approve 1.')),
+    step(fauxAssistantMessage('Approve 2.')),
+    step(fauxAssistantMessage('Approve 3.')),
+  ]);
+  assert.equal(again.status === 'done' && again.answer, 'Approve 3.');
+  assert.match(seen[5], /artifacts\/review\.md changed after github\.review v1/);
+  assert.match(seen[6], /artifacts\/review\.md changed after github\.review v1/);
+  assert.equal(seen.length, 7, 'two send-backs then the third reply ends the run');
+  assert.equal(service.posted.length, 1, 'unsubmitted bash edit was never posted');
+  await session.close();
+});

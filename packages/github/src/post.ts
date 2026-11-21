@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord/context';
-import { defineExtension, GenerationTask, hook, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { defineExtension, GenerationTask, hook, LiveDoc, type Extension, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { feedback, judged, type Verdict } from '@quack/judge';
 import { Artifacts, artifactsExtension, attachLink, gate, sealedVersion, type GateVerdict, type SealedArtifact } from '@quack/sdk';
 import { checkoutTool, liveHead, PullRequestDoc, type SessionConfig } from './checkout.ts';
@@ -55,20 +55,29 @@ async function refuseAfterSkip(api: ToolExecutionApi, ctx: Context) {
   return skipped && `Nothing to submit: ${skipped}. This run is over.`;
 }
 
-const REVIEW_LINK = /https:\/\/github\.com\/[^\s)>\]]+#pullrequestreview-\d+/g;
+const REVIEW_LINK = /(?:https?:\/\/)?github\.com\/[^\s)>\]]+#pullrequestreview-\d+/gi;
+const MAX_LINK_RETRIES = 2;
+const canonicalLink = (u: string) => u.replace(/^(?:http:\/\/)?(?=github\.com\/)/i, 'https://');
 
 // A review link in a reply must be one GitHub returned for this session's post; a model-written id is no proof of one.
-const linkHook = () => hook(GenerationTask, {
-  async onYield(answer, api, ctx) {
-    const text = answer.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n');
-    const versions = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions ?? [];
-    const posted = [...new Set(versions.flatMap((v) => v.links?.map((l) => l.url) ?? []))];
-    const made = [...new Set(text.match(REVIEW_LINK))].filter((url) => !posted.includes(url));
-    if (!made.length) return undefined;
-    const real = posted.length ? `The reviews it posted: ${posted.join(', ')}.` : 'It has posted no review.';
-    return { continue: `Your reply links ${made.join(' and ')}, but this session posted no such review. ${real} Reply again without that link.` };
-  },
-});
+const linkHook = () => {
+  let run = '';
+  let retries = 0;
+  return hook(GenerationTask, {
+    async onYield(answer, api, ctx) {
+      const current = String((await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0] ?? '');
+      if (current !== run) [run, retries] = [current, 0];
+      const text = answer.content.flatMap((p) => (p.type === 'text' ? [p.text] : [])).join('\n');
+      const versions = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions ?? [];
+      const posted = [...new Set(versions.flatMap((v) => v.links?.map((l) => l.url) ?? []))];
+      const made = [...new Set(text.match(REVIEW_LINK))].filter((url) => !posted.includes(canonicalLink(url)));
+      if (!made.length || retries >= MAX_LINK_RETRIES) return undefined;
+      retries++;
+      const real = posted.length ? `The reviews it posted: ${posted.join(', ')}.` : 'It has posted no review.';
+      return { continue: `Your reply links ${made.join(' and ')}, but this session posted no such review. ${real} Reply again without that link.` };
+    },
+  });
+};
 
 export type GithubSessionConfig = SessionConfig & { /** Which job this agent does; reviewer unless set. */ role?: 'reviewer' | 'implementer' };
 
