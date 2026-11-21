@@ -77,7 +77,7 @@ test('a grandfathered string guarantee keeps its key when another is inserted, a
 
 test('each promising sentence of the purpose is one judge-model item; provenance is not; the two checks share the old weight of 4', async (t) => {
   const s = spec();
-  s.intent.purpose = 'Show the Sleeper page the live week and when each job runs next. It only reads. Provenance: v2 was approved after the epoch change.';
+  s.intent.purpose = 'Show the Sleeper page the live week and when each job runs next. It only reads. Provenance: v2 was approved after the epoch change. Provenance: Derived from issue #123.';
   const { evidence } = await builtOf(s);
   assert.deepEqual(evidence.purpose.map((u) => u.state.sentence), ['Show the Sleeper page the live week and when each job runs next.', 'It only reads.']);
   assert.ok(evidenceOf(evidence.purpose[0]).some((e) => e.part === OP));
@@ -86,4 +86,13 @@ test('each promising sentence of the purpose is one judge-model item; provenance
   assert.match(failed.check('delivers_purpose').notes[0], /^purpose .+: No part reports the live week\.$/);
   const weights = contractRubric.criteria.flatMap((c) => c.checks).filter((k) => ['meets_intent', 'delivers_purpose'].includes(k.id)).map((k) => k.weight);
   assert.deepEqual(weights, [3, 1]);
+});
+
+test('with no guarantees, meets_intent has no items and counts toward neither side while delivers_purpose still scores', async (t) => {
+  const s = spec();
+  s.intent.guarantees = [];
+  s.intent.purpose = 'Show the Sleeper page the live week. It only reads.';
+  const res = await judged(t, s, ['meets_intent', 'delivers_purpose'], () => 'no', { choice: 'yes', reason: 'Shown in GET.' });
+  assert.deepEqual([res.check('meets_intent').met, res.check('meets_intent').units], [null, 0]);
+  assert.deepEqual([res.check('delivers_purpose').met, res.check('delivers_purpose').units], [true, 2]);
 });

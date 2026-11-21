@@ -205,8 +205,8 @@ function partsFor(text: string, parts: Part[], top: number, minShared: number): 
   const kept = ranked.filter((x) => x.s >= minShared);
   const best = (kept.length ? kept : ranked).slice(0, top);
   const root = scored.find((x) => x.p.root);
-  // A failing guarantee's note names its first part, so the part sharing the most terms goes first: a name the guarantee only
-  // happens to use as a word ("session's") keeps a part in, but does not make it the most relevant.
+  // Order evidence by shared terms so the most relevant part comes first: a name the guarantee only
+  // happens to use as a word ("session's") keeps a part in, not first.
   return (root && !best.includes(root) ? [...best, root] : best).sort((a, b) => b.shared - a.shared).map((x) => x.p);
 }
 
@@ -244,7 +244,7 @@ registerSplitter('contract.guarantees', (inputs, o) => promiseItems(inputs, o, (
 // nothing the document must provide; every other sentence is a promise, judged as a guarantee is.
 const PROVENANCE = /^(provenance\b|v\d+\b)|\bwas approved\b/i;
 const purposeSentences = (intent: { purpose: string }): Entry[] =>
-  (intent.purpose ?? '').split(/(?<=[.;:])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
+  (intent.purpose ?? '').split(/(?<=[.;])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
 registerSplitter('contract.purposeSentences', (inputs, o) => promiseItems(inputs, o, purposeSentences));
 
 // The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
@@ -278,7 +278,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
 const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
 // Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
-// and a departure nobody cited is what the check is for. The document itself is meets_intent's to read.
+// and a departure nobody cited is what the check is for. Promises read at most four parts plus the root via meets_intent and delivers_purpose.
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
@@ -301,8 +301,8 @@ export const contractDeclaration: Declaration = {
     // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
     // queued behind it made the round slower than the one question they replaced.
     meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
-    // Known miss: an operation the purpose promises may pass on prose or a schema that describes it, though no path defines it;
-    // the break gate still catches one removed from an approved contract.
+    // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
+    // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
