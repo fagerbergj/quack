@@ -7,7 +7,11 @@ Sources: RFC 9110 and 9457, OpenAPI 3.1, Zalando RESTful API Guidelines, Google 
 Settle these before drafting: purpose and non-goals, audience (internal or external), consumers and how they couple to the contract (generated SDKs, gateway, cache keys), guarantees (compatibility, idempotency, consistency, limits, authorization), deprecation terms. Read the house convention in the code first: an existing OpenAPI file, gateway routing, error shape, auth. A convention you find beats any default below.
 
 ### One fact per entry
-An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
+An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters.
+
+Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated.
+
+To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
 
 ### document
 Check. OpenAPI 3.1.x, self-contained: references stay inside the document, none remote.
@@ -25,7 +29,13 @@ Check. Errors are `application/problem+json` (RFC 9457) unless the house convent
 Check. A JSON object at the top level, never a bare array. Treat objects as open for extension; clients ignore unknown fields. Use `id` as an opaque string. Dates are RFC 3339.
 
 ### compatibility
-Check. These break callers: removing or renaming a field (optional ones too), adding a required request field, changing any type (widening included, since generated code changes), changing a default, narrowing an enum or loosening it in a response without extensible semantics, tightening validation, renaming a resource, changing auth, adding paging later. Adding optional response fields, new operations and loosened input validation are safe. Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers and one migration: what they change to keep working.
+Check.
+
+These break callers: removing or renaming a field (optional ones too), adding a required request field, changing any type (widening included, since generated code changes), changing a default, narrowing an enum or loosening it in a response without extensible semantics, tightening validation, renaming a resource, changing auth, adding paging later.
+
+Adding optional response fields, new operations and loosened input validation are safe.
+
+Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers and one migration: what they change to keep working.
 
 ### deprecation
 Check. `deprecated: true` plus a description saying where callers go. Signal with `Deprecation` and `Sunset` headers. Watch usage before sunset; get consent from known callers first.
@@ -34,7 +44,11 @@ Check. `deprecated: true` plus a description saying where callers go. Signal wit
 Check. Document auth with a `security` block. It records authentication and proves nothing about authorization: per operation, note who may call, which object boundary applies, which fields are writable, and the limits (OWASP API1 to API10).
 
 ### versioning
-Ask. First the house convention; an existing unversioned route keeps its shape. Otherwise suggest Google's model (AIP-185): a major version only, as the first path segment (`/v1`); compatible changes ship in place; a new major only for a breaking change; `v1alpha` and `v1beta` for unstable channels. Alternatives, with their trade-offs: a query parameter (Azure: easy for gateways and caches to ignore, but versions leak into every cache key) or a media type (Zalando: keeps URLs stable, but is harder for SDKs, CDNs and browsers).
+Ask. First the house convention; an existing unversioned route keeps its shape.
+
+Otherwise suggest Google's model (AIP-185): a major version only, as the first path segment (`/v1`); compatible changes ship in place; a new major only for a breaking change; `v1alpha` and `v1beta` for unstable channels.
+
+Alternatives, with their trade-offs: a query parameter (Azure: easy for gateways and caches to ignore, but versions leak into every cache key) or a media type (Zalando: keeps URLs stable, but is harder for SDKs, CDNs and browsers).
 
 ### naming
 Ask. Property case (snake or camel, one only), enum value case, whether enums are extensible. Resource names are plural nouns in kebab-case with no verbs.

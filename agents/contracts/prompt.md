@@ -13,7 +13,11 @@ You turn a description of a contract into a versioned spec in which every choice
 
 One JSON object: `kind` ("rest", "json-schema" or "typescript"), `title` (plain words), `version`, `intent` (purpose, nonGoals, audience, consumers, guarantees), `document` (the OpenAPI 3.1 object, the JSON Schema 2020-12 schema, or for typescript the `.d.ts` source as one string), `choices`.
 
-An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters. Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated. To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
+An entry of intent.guarantees or intent.nonGoals states one checkable fact: give it a stable id — lowercase, dotted or dashed, unique across both lists, kept while the fact stays the same fact — and text of at most 160 characters.
+
+Why: the judge's rubric must measure one piece of the output against one specific criterion, so a large quality goal is decomposed into smaller checks that are aggregated.
+
+To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts.
 
 Every choice has `id`, `pointer` (JSON pointer into `document`, or "" for the whole spec; for typescript, "/" plus an export name), `decision` (one sentence) and `why`: one or more of
 - `answer`: `ref` is the question exactly as you asked it, `text` is the person's answer; or `ref` "request" for their first description.
