@@ -245,3 +245,21 @@ test('a ref arm keeps its tree, so its contracts TypeScript lint still resolves 
   const { lintTypeScript } = (await import(pathToFileURL(join(dir, 'packages/contracts/src/index.ts')).href)) as typeof import('@quack/contracts');
   assert.deepEqual(await lintTypeScript('/** Provided here, consumed by callers. */\nexport type Pid = NodeJS.Process["pid"];\n'), []);
 });
+
+test('watch skips checks an arm lacks (erroring only if no arm has them) and table filters reported checks while keeping full-round per-arm counts', async () => {
+  const baseAdapter = adapter('Is it helpful?');
+  const candRubric: Rubric = { name: 'acme', version: 2, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 2 }, { id: 'extra', label: 'L extra', weight: 1 }] }] };
+  const candDecl = { scopes: { note: { split: { name: 'jsonItems', from: 'note' } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' as const }, question: { type: 'bool' as const, instructions: 'Is it helpful?' } }, extra: { scope: 'note', aggregate: { name: 'share' as const }, question: { type: 'bool' as const, instructions: 'Extra?' } } } };
+  const candAdapter: EvalAdapter = { kind: 'acme.note', judge: { rubric: candRubric, declaration: candDecl, inputs: async () => ({}) } };
+  const pair: Arm[] = [{ label: 'base', adapters: [baseAdapter] }, { label: 'cand', adapters: [candAdapter] }];
+  // Watching a check only cand has succeeds across both arms.
+  const watched = await replayJudge({ cases: [{ ...cases[0], checks: ['helpful', 'extra'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([true, true, true]), judgeModel });
+  assert.deepEqual(watched.rows.map((r) => `${r.arm}:${r.check}`).sort(), ['base:helpful', 'cand:extra', 'cand:helpful']);
+  // Full-round judging with table(..., ['extra']) shows only extra in rows while per-arm still counts both cand checks.
+  const full = await replayJudge({ cases: [{ ...cases[0], checks: undefined }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([true, true, true]), judgeModel });
+  const md = table(full, ['base', 'cand'], ['extra']);
+  assert.match(md, /\| a \| extra \|/);
+  assert.doesNotMatch(md, /\| a \| helpful \|/);
+  assert.match(md, /- cand: requests 2 \(j 2\); items decision model 0, escalated 2/);
+  await assert.rejects(replayJudge({ cases: [{ ...cases[0], checks: ['missing'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /no check missing/);
+});

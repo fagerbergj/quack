@@ -47,7 +47,9 @@ The builders are `research.report` (fetch log, kept source files, request), `con
 
 `content` and `evidence` (scope to units), or `inputs` (name to text) for a declared rubric, give them inline for a kind whose adapter cannot rebuild them, such as `github.review`.
 
-`checks` (`id` or `criterion.id`) limits the run to the checks being watched, and `units` (ids such as `finding-14`) to those units of an undeclared rubric's evidence, or to those items of the watched checks' scopes of a declared one (an item's id, or its unit's `claim finding-14`), so one finding of a long report is a case of its own.
+`checks` (`id` or `criterion.id`) limits the run to the checks being watched (skipping names an arm's rubric lacks, and failing only if no arm has the check), and `units` (ids such as `finding-14`) to those units of an undeclared rubric's evidence, or to those items of the watched checks' scopes of a declared one (an item's id, or its unit's `claim finding-14`), so one finding of a long report is a case of its own.
+
+Timing claims need full-round judging (no `checks` filter on the case, because a filtered replay skips other checks that share the decision-model lane); pass `--report-checks <id>` to filter the printed table and disagreements while keeping full-round per-arm timing and counts.
 
 An arm is `label=ref[:decision-model][:reuse]`: `.` is this tree, any other value is a git ref whose extensions, judge engine and SDK all load from that ref, so an arm sees a change to `packages/judge` or `packages/sdk` as well as one to a rubric.
 
