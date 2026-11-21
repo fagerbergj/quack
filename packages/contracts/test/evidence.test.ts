@@ -192,12 +192,12 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('with Clef on, Clef answers every choice and every definition code did not settle, and only meets_intent escalates to the judge model', async (t) => {
+test('with Clef on, Clef answers every choice and every definition code did not settle, and the judge model every guarantee', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
-  judge.setResponses([fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'every guarantee has a mechanism' }))]);
+  judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
   const models = createModels();
   models.setProvider(judge.provider);
-  // Every definition is named by an intent entry and no choice or definition departs, so no pitfall is present.
+  // Every guarantee holds, every definition is named by an intent entry and nothing departs, so no pitfall is present.
   const clef = await fakeClef(t, (q) => (q.includes('named or implied') ? 'yes' : 'no'));
   models.setProvider(clef.provider);
   const adapters = manifest.evalAdapters!;
@@ -212,13 +212,13 @@ test('with Clef on, Clef answers every choice and every definition code did not 
   const ev = await evidenceOf(lifecycle);
   const asked = ev.definition.filter((u) => !u.related?.covered).length;
   assert.deepEqual(by, {
-    meets_intent: { met: 1, clef: 0, esc: 1 },
+    meets_intent: { met: 1, clef: 0, esc: ev.guarantee.length },
     contradicts_guide: { met: 0, clef: 23, esc: 0 },
     adds_unasked: { met: 0, clef: asked, esc: 0 },
     implements_non_goal: { met: 0, clef: 0, esc: 0 },
   });
   const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
   assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit');
+  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit, and none for a guarantee');
   assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
 });

@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { createModels, fauxProvider } from '@earendil-works/pi-ai';
-import { replayJudge } from '@quack/eval';
-import { buildEvidence, rejudge, score, type CheckResult, type Unit, type Verdict } from '@quack/judge';
-import { contractDeclaration, contractRubric, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
+import { score, type CheckResult, type Unit } from '@quack/judge';
+import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
 import { reuseKey } from '../../judge/src/reuse.ts';
-import { fakeClef } from './clef.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
+import { evidenceOf, judged as judgedChecks } from './judging.ts';
 
 // The schedule spec with one more operation that no choice decides and no definition uses: past runs, which a non-goal excludes.
 function withHistory(): ContractSpec {
@@ -21,29 +19,8 @@ function withHistory(): ContractSpec {
 }
 
 const HISTORY = 'definition GET /apps/sleeper/history';
-const inputsOf = (spec: ContractSpec) => {
-  const content = JSON.stringify(spec);
-  const sealed = { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 10, verdict: null };
-  return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined }, content);
-};
-const evidenceOf = async (spec: ContractSpec) => (await buildEvidence(contractDeclaration, await inputsOf(spec))).evidence;
 const unit = (units: Unit[], id: string) => units.find((u) => u.id === id)!;
-
-// Judges the two checks with Clef answering by `pick`; the judge model has no replies, so a question that reached it would stay undecided.
-async function judged(t: TestContext, spec: ContractSpec, pick: (q: string) => string) {
-  const models = createModels();
-  models.setProvider(fauxProvider({ provider: 'judge', models: [{ id: 'j' }] }).provider);
-  const clef = await fakeClef(t, pick);
-  models.setProvider(clef.provider);
-  let verdict: Verdict | undefined;
-  const capture: typeof rejudge = async (...args) => (verdict = await rejudge(...args));
-  await replayJudge({
-    cases: [{ case: 'history', kind: 'contract.spec', checks: ['adds_unasked', 'implements_non_goal'], content: JSON.stringify(spec), inputs: await inputsOf(spec) }],
-    arms: [{ label: 'clef', adapters: manifest.evalAdapters!, rejudge: capture, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
-    repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
-  });
-  return { check: (id: string) => verdict!.checks.find((k) => k.id === id)!, asked: clef.requests.flatMap((r) => Object.values(r.questions)) };
-}
+const judged = (t: TestContext, spec: ContractSpec, pick: (q: string) => string) => judgedChecks(t, spec, ['adds_unasked', 'implements_non_goal'], pick);
 
 const NAMED = 'named or implied';
 const IMPLEMENTS = 'implement the non-goal';

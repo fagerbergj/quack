@@ -1,6 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { isAbsolute, relative, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
@@ -186,6 +187,66 @@ function nonGoalPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
 registerSplitter('contract.nonGoalPairs', nonGoalPairs);
 registerSelector('contract.held', (_i, c) => ({ value: '', matches: Number(c.meta?.held ?? 0) }));
 
+// A guarantee's group key: its fact id, or for a grandfathered string its first words and a hash of its text, which an insert does not move.
+const guaranteeKey = (e: Entry) => e.label ?? `${e.text.split(/\s+/).slice(0, 6).join(' ')} #${createHash('sha256').update(e.text).digest('hex').slice(0, 6)}`;
+
+/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. */
+type Part = { id: string; name?: string; text: string; evidence: unknown; root?: true };
+
+// The parts a guarantee is checked against, best first: one it names, then by shared terms; with none above the bar, the best few anyway,
+// so every guarantee is asked. The root holds spec-wide rules (additionalProperties, security, the stated scope), so it is always asked.
+function partsFor(text: string, parts: Part[], top: number, minShared: number): Part[] {
+  const terms = termsOf(text);
+  const scored = parts.map((p, i) => {
+    const shared = [...termsOf(p.text)].filter((t) => terms.has(t)).length;
+    return { p, i, shared, s: (p.name && mentions(p.name).test(text) ? 1000 : 0) + shared };
+  });
+  const ranked = [...scored].sort((a, b) => b.s - a.s || a.i - b.i);
+  const kept = ranked.filter((x) => x.s >= minShared);
+  const best = (kept.length ? kept : ranked).slice(0, top);
+  const root = scored.find((x) => x.p.root);
+  // A failing guarantee's note names its first part, so the part sharing the most terms goes first: a name the guarantee only
+  // happens to use as a word ("session's") keeps a part in, but does not make it the most relevant.
+  return (root && !best.includes(root) ? [...best, root] : best).sort((a, b) => b.shared - a.shared).map((x) => x.p);
+}
+
+// The definitions, the rest of the document and the decided choices: a guarantee the code cannot show, such as layering or a
+// budget the judge measures, is carried by the choice that decides it.
+function partsOf(spec: Pick<ContractSpec, 'document' | 'choices'>, kind: ContractSpec['kind']): Part[] {
+  const defs = kinds[kind].definitions(spec.document).filter((d) => /[\p{L}\p{N}]/u.test(textOf(d)));
+  const choices = (spec.choices ?? []).map((c): Part => {
+    const evidence = { decision: c.decision, why: c.why.map((w) => w.text) };
+    return { id: `choice ${c.id}`, text: JSON.stringify(evidence), evidence };
+  });
+  // The root goes with every promise, so its examples, which make nothing hold, stay out of the evidence.
+  const shown = (d: Definition) => (d.rest && typeof d.definition === 'object' && d.definition !== null ? { ...d.definition, examples: undefined } : d.definition);
+  return [...defs.map((d): Part => ({ id: d.id, name: d.name, text: textOf(d), evidence: shown(d), ...(d.rest && { root: true as const }) })), ...choices];
+}
+
+// One item per promise; its evidence is the parts that may make it hold (named or sharing the most terms, the decided choices, the root),
+// most relevant first, so one judge-model question per promise reads them together.
+function promiseItems(inputs: Inputs, o: SplitDecl, promisesOf: (intent: Partial<Intent> & { purpose: string }) => Entry[]): Chunk[] {
+  const [specInput, kindInput] = [o.from].flat();
+  const spec = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'intent' | 'document' | 'choices'>;
+  const parts = partsOf(spec, inputs[kindInput] as ContractSpec['kind']);
+  return promisesOf(spec.intent).map((g) => {
+    const evidence = partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ part: p.id, text: p.evidence }));
+    return { id: guaranteeKey(g), text: g.text, meta: { evidence } };
+  });
+}
+registerSelector('contract.evidence', (_i, c) => JSON.stringify((c.meta as { evidence: unknown[] }).evidence));
+
+// A grandfathered guarantee over the fact limit holds several facts, and no one part may give them all: each sentence is a guarantee.
+// With none, the check has no items and counts toward neither side; delivers_purpose still scores the intent.
+registerSplitter('contract.guarantees', (inputs, o) => promiseItems(inputs, o, (intent) => entriesOf(intent, ['guarantees'])));
+
+// A purpose sentence that only records history (a "Provenance:" note, or one opening with a version such as "v5 corrects…") promises
+// nothing the document must provide; every other sentence is a promise, judged as a guarantee is.
+const PROVENANCE = /^(provenance\b|v\d+\b)|\bwas approved\b/i;
+const purposeSentences = (intent: { purpose: string }): Entry[] =>
+  (intent.purpose ?? '').split(/(?<=[.;:])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
+registerSplitter('contract.purposeSentences', (inputs, o) => promiseItems(inputs, o, purposeSentences));
+
 // The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const spec = parseSpec(sealed.content) as ContractSpec;
@@ -221,7 +282,9 @@ const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, 
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
-    spec: { split: { name: 'whole', from: 'spec' }, piece: 'spec' },
+    // One item per guarantee, and one per promising sentence of the purpose; the evidence is the parts each may hold in.
+    guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
+    purpose: { split: { name: 'contract.purposeSentences', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { evidence: { name: 'contract.evidence' } } },
     choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
     // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
     definition: {
@@ -235,7 +298,12 @@ export const contractDeclaration: Declaration = {
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
-    meets_intent: { scope: 'spec', aggregate: { name: 'all' }, question: { type: 'bool', instructions: 'Does the document deliver the purpose in the intent, and does every guarantee in the intent have a mechanism in the document (a header, a status code, a schema rule)?' } },
+    // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
+    // queued behind it made the round slower than the one question they replaced.
+    meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // Known miss: an operation the purpose promises may pass on prose or a schema that describes it, though no path defines it;
+    // the break gate still catches one removed from an approved contract.
+    delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
@@ -343,7 +411,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 9,
+  version: 10,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -360,7 +428,9 @@ export const contractRubric: Rubric = {
       { id: 'breaking_named', label: 'A breaking change names no caller', weight: 'gate', code: breakingNamed },
     ] },
     { id: 'matches_intent', checks: [
-      { id: 'meets_intent', label: "The spec doesn't deliver the intent", weight: 4 },
+      // The old meets_intent's weight, split: each miss alone still fails a spec; the purpose, one broad statement, counts least.
+      { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 3 },
+      { id: 'delivers_purpose', label: "The document doesn't deliver the intent's purpose", weight: 1 },
       { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },
       // The two halves of "unasked" share the weight it had alone.
       { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -2 },
