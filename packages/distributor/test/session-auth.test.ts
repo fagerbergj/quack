@@ -30,17 +30,6 @@ const listening = async (server: Server) => {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 };
 
-// Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
-async function until<T>(probe: () => Promise<T | undefined>, ms = 15_000): Promise<T> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > deadline) throw new Error('timed out');
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
-
 // One distributor whose sessions run the gated fixture: `quack` selects the home extension, `reviewer` does not.
 async function start() {
   const [dataDir, agentsDir] = [await mkdtemp(join(tmpdir(), 'quack-auth-')), await mkdtemp(join(tmpdir(), 'quack-auth-agents-'))];
@@ -64,9 +53,13 @@ async function start() {
   const [base, sessionBase] = [await listening(server), await listening(server.sessions)];
   const path = (key: string, rest = '') => `/sessions/${encodeURIComponent(key)}${rest}`;
   const invoke = async (key: string, agent: string) => assert.equal((await fetch(`${base}${path(key, '/invocations')}?agent=${agent}`, { method: 'POST', body: JSON.stringify({ input: 'post it' }) })).status, 202);
-  const pending = (key: string) => until(async () => {
-    const { approvals } = (await (await fetch(base + path(key, '/approvals'))).json()) as { approvals: Array<{ id: string }> };
-    return approvals.length ? approvals : undefined;
+  const pending = (key: string) => new Promise<Array<{ id: string }>>((resolve, reject) => {
+    const ws = new WebSocket(`${base.replace('http', 'ws')}${path(key, '/ws')}`);
+    ws.addEventListener('error', reject, { once: true });
+    ws.addEventListener('message', (e) => {
+      const msg = JSON.parse(String(e.data)) as { type?: string; approvals?: Array<{ id: string }> };
+      if (msg.type === 'standing' && msg.approvals?.length) { ws.close(); resolve(msg.approvals); }
+    });
   });
   const asSession = (key: string, url: string, init: RequestInit = {}) => fetch(sessionBase + url, { ...init, headers: { authorization: `Bearer ${held.get(key)}`, ...(init.headers as Record<string, string>) } });
   return { driver, base, sessionBase, path, invoke, pending, asSession, held, catalog, dataDir };

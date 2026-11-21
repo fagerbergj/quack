@@ -93,16 +93,27 @@ test('a session in retry backoff reports its wake time, so the distributor can s
 const abort = () => fail('Provider finish_reason: abort');
 type Opened = Awaited<ReturnType<typeof open>>;
 const failures = async (s: Opened['session']) => failedRows(await s.harness.snapshot(Failures, s.root.id, BACKGROUND_CONTEXT));
-// Waits for the run to settle; the deadline only matters when the code is broken, and it fails loudly instead of letting the next assert guess.
-const settle = async (check: () => Promise<boolean>) => {
-  for (const deadline = Date.now() + 15_000; !(await check()); await new Promise((r) => setTimeout(r, 20))) if (Date.now() > deadline) throw new Error('the run never settled');
-};
 const answered = async (s: Opened['session']) => (await s.messages(5)).some((m) => m.text === 'Paris');
+
+async function awaitWatch(watch: { start: (cb: () => Promise<void>) => void; stop: () => Promise<unknown> }, check: () => Promise<boolean>) {
+  if (await check()) return void (await watch.stop());
+  await new Promise<void>((resolve) => {
+    watch.start(async () => { if (await check()) resolve(); });
+  });
+  await watch.stop();
+}
+
+const waitAnswer = async (s: Opened['session']) => awaitWatch(await s.root.watch(BACKGROUND_CONTEXT), () => answered(s));
+const waitFailure = async (s: Opened['session']) => {
+  await s.root.commit(async (tx) => { await tx.doc(Failures, s.root.id); }, BACKGROUND_CONTEXT);
+  const watch = (await s.harness.watchDoc(Failures, s.root.id, BACKGROUND_CONTEXT))!;
+  await awaitWatch(watch, async () => (await failures(s)).length > 0);
+};
 
 test('a provider abort is retried once and the run completes without a failure', async () => {
   const { session, faux } = await open('abort-once', [abort(), fauxAssistantMessage('Paris')]);
   await session.submit('Capital of France?', 'q');
-  await settle(() => answered(session));
+  await waitAnswer(session);
   assert.equal(faux.state.callCount, 2);
   assert.deepEqual(await failures(session), []);
   await session.close();
@@ -111,13 +122,13 @@ test('a provider abort is retried once and the run completes without a failure',
 test('a second abort records a failure that resume accepts, and the rerun clears it', async () => {
   const { session, faux } = await open('abort-twice', [abort(), abort(), fauxAssistantMessage('Paris')]);
   await session.submit('Capital of France?', 'q');
-  await settle(async () => (await failures(session)).length > 0);
+  await waitFailure(session);
   assert.match((await failures(session))[0].error, /abort/);
   assert.equal(faux.state.callCount, 2);
   const failed = (await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT))!.items.model;
   assert.ok(failed.run > 0);
   assert.equal((await session.resume() as { status: string }).status, 'placed');
-  await settle(() => answered(session));
+  await waitAnswer(session);
   assert.deepEqual(await failures(session), []);
   // The index orders a row by its run, so the clear must outrank the failure it supersedes.
   const cleared = (await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT))!.items.model;
@@ -130,7 +141,7 @@ test('an abort whose queued follow-up already started keeps its retry for that r
   const { session, faux } = await open('abort-followup', [abort(), abort(), fauxAssistantMessage('Paris')]);
   await session.submit('first', 'q1');
   await session.submit('second', 'q2', false, 'followUp');
-  await settle(() => answered(session));
+  await waitAnswer(session);
   assert.equal(faux.state.callCount, 3);
   await session.close();
 });
@@ -138,7 +149,7 @@ test('an abort whose queued follow-up already started keeps its retry for that r
 test('two concurrent resumes do not throw', async () => {
   const { session } = await open('double-resume', [abort(), abort(), fauxAssistantMessage('Paris')]);
   await session.submit('Capital of France?', 'q');
-  await settle(async () => (await failures(session)).length > 0);
+  await waitFailure(session);
   const results = await Promise.all([session.resume(), session.resume()]);
   assert.ok(results.some((r) => typeof r === 'object' && r?.status === 'placed'));
   await session.close();
@@ -147,7 +158,7 @@ test('two concurrent resumes do not throw', async () => {
 test('a model failure present at open is recorded, not retried', async () => {
   const first = await open('crash-window', [abort(), abort()]);
   await first.session.submit('hi', 'q');
-  await settle(async () => (await failures(first.session)).length > 0);
+  await waitFailure(first.session);
   await first.session.root.commit(async (tx) => { delete (await tx.doc(Failures, first.session.root.id)).items.model; }, BACKGROUND_CONTEXT);
   await first.session.close();
   const again = await open('crash-window', [fauxAssistantMessage('never')]);
@@ -159,7 +170,7 @@ test('a model failure present at open is recorded, not retried', async () => {
 test('a non-abort model error records a failure at once without a rerun', async () => {
   const { session, faux } = await open('bad-request-failure', [fail('400 invalid request'), fauxAssistantMessage('never')]);
   await session.submit('hi', 'q', true);
-  await settle(async () => (await failures(session)).length > 0);
+  await waitFailure(session);
   assert.equal(faux.state.callCount, 1);
   assert.match((await failures(session))[0].error, /400/);
   await session.close();
