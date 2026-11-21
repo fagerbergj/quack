@@ -128,8 +128,8 @@ export async function decideApproval(key: string, id: string, decision: 'approve
 // The distributor refuses a socket for a key it does not know, so a conversation's first message goes through invocations, which create it.
 export const postInvocation = async (key: string, agent: string, body: Record<string, unknown>) =>
   void (await json(await fetch(`${base(key)}/invocations?agent=${encodeURIComponent(agent)}`, { method: 'POST', body: JSON.stringify(body) })));
-export const startSession = async (key: string, agent: string, input: string) =>
-  void (await json(await fetch(`${base(key)}/invocations?agent=${encodeURIComponent(agent)}`, { method: 'POST', body: JSON.stringify({ input, requestId: `ui-start:${Date.now()}` }) })));
+export const startSession = (key: string, agent: string, input: string) =>
+  postInvocation(key, agent, { input, requestId: `ui-start:${Date.now()}` });
 
 export function socketUrl(key: string, agent?: string) {
   const url = new URL(`${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`, location.href);
