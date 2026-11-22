@@ -32,6 +32,14 @@ test('a good deployment loads every bundle and pinned snapshot', async () => {
   assert.deepEqual(await validate({ ...o, fetch: noList }), { loaded: 2, failures: [] });
 });
 
+test('a pinned snapshot whose model left the deployment loads against its agent\'s current bundle', async () => {
+  const gone = { ...agent, model: 'local/gone' };
+  const o = layout({ 'deployment.json': config, 'agents/a/agent.json': agent, 'data/s1/agent-def/agent.json': gone });
+  assert.deepEqual(await validate({ ...o, fetch: noList }), { loaded: 2, failures: [] });
+  const orphan = layout({ 'deployment.json': config, 'data/s1/agent-def/agent.json': gone });
+  assert.equal((await validate({ ...orphan, fetch: noList })).failures.length, 1, 'with no current bundle the pinned model is what runs');
+});
+
 test('a bundle parse error and a snapshot with an unknown extension fail with their paths', async () => {
   const o = layout({ 'deployment.json': config, 'agents/bad/agent.json': '{', 'data/s1/agent-def/agent.json': { ...agent, extensions: { bogus: {} } }, 'data/s2/agent-def/agent.json': agent });
   const r = await validate({ ...o, fetch: noList });

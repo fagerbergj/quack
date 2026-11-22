@@ -258,14 +258,17 @@ function withJudge(raw: Record<string, unknown>, catalog: Catalog): Record<strin
 /** The current bundle's agent.json of a session's agent, which the distributor writes into the session dir before each start. */
 export const CURRENT_AGENT_FILE = 'agent-current.json';
 
-// Extensions declaring configSource: 'current' follow the agent's current bundle; the rest stays pinned.
+// The model and extensions declaring configSource: 'current' follow the agent's current bundle; the prompt and the rest stay pinned.
 export function withCurrentExtensions<T>(pinned: T, current: unknown, catalog: Catalog): T {
-  if (!isObject(pinned) || !isObject(pinned.extensions) || !isObject(current) || !isObject(current.extensions)) return pinned;
+  if (!isObject(pinned) || !isObject(current)) return pinned;
+  // A current bundle without a model drops the pin so the deployment default applies, as it does for the bundle itself.
+  const { model: _pinnedModel, ...rest } = pinned;
+  const run: Record<string, unknown> = { ...rest, ...(current.model !== undefined && { model: current.model }) };
+  if (!isObject(pinned.extensions) || !isObject(current.extensions)) return run as T;
   const live = new Set(Object.entries(catalog).filter(([, e]) => e.configSource === 'current').map(([name]) => name));
-  if (!live.size) return pinned;
-  const rest = Object.entries(pinned.extensions).filter(([name]) => !live.has(name));
+  const kept = Object.entries(pinned.extensions).filter(([name]) => !live.has(name));
   const fromCurrent = Object.entries(current.extensions).filter(([name]) => live.has(name));
-  return { ...pinned, extensions: Object.fromEntries([...rest, ...fromCurrent]) } as T;
+  return { ...run, extensions: Object.fromEntries([...kept, ...fromCurrent]) } as T;
 }
 
 function extensionProblems(extensions: unknown, deployment: DeploymentConfig, catalog: Catalog): string[] {
