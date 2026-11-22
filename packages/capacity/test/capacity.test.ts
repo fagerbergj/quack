@@ -412,6 +412,20 @@ test('a completion inside inSessionSlot reaches the gate as shared, and one outs
   assert.deepEqual(seen.slice(-2), [false, true]);
 });
 
+test('a shared call riding the run\'s held lease never reports a wait; a call queued for its own lease does', async () => {
+  fresh(2);
+  const g = gate('s');
+  await g.begin('swap');
+  const ride = await g.begin('swap', undefined, true);
+  assert.equal(notes.s ?? null, null, 'riding takes no lease of its own, so nothing queues');
+  g.end(ride);
+  // Capacity 2 is full with s and a second holder, so the run's next own call queues and reports.
+  await gate('o').begin('swap');
+  void g.begin('swap').catch(() => {});
+  await clock.settle();
+  assert.deepEqual(notes.s, { since: clock.now(), ahead: 0, provider: 'swap' });
+});
+
 test('with several calls queued on different providers, the report is the oldest wait whole: its since, ahead and provider', async () => {
   table = new LeaseLedger({ dbPath: ':memory:', capacity: { x: 1, y: 1 }, ttlMs: TTL, now: clock.now });
   open.push(table);
