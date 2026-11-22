@@ -1,7 +1,7 @@
 // What code can read of a report's claims without a model: the figures a sentence states, and whether two sentences may state one thing two ways.
 
-/** A figure as shown, with the words that follow it (its unit), the words around it (what it measures) and the token right after it. */
-export type Figure = { value: string; unit: Set<string>; near: Set<string>; next: string };
+/** A figure as shown, with the words that follow it (its unit), the words around it (what it measures) and the unit written right after it. */
+export type Figure = { value: string; unit: Set<string>; near: Set<string>; unitToken: string };
 
 const STOP = new Set('the and for per of to a an in at on or vs is are by it its as be with that this from have has which what when will does into also than then there their each only more most over such both been were they them where while about after before your these those would could should other under being every using used make made need very much many same just like within without here not no can may all any one'.split(' '));
 const UNITS = /(\d)(am|pm|mm|cm|in|ft|lb|lbs|kg|u|ru|k|m|gb|tb|mb|w|v|hz|%|")(?![\p{L}\d])/giu;
@@ -31,8 +31,9 @@ export function figures(text: string): Figure[] {
     // A currency sign is the figure's unit as much as a word after it is; a date's unit is "date", which its month and year were.
     const date = m?.[2].includes('-') ? ['date'] : [];
     const unit = wordsOf([...ts.slice(i + 1, i + 3), m?.[1] ?? '', ...date]);
-    const next = m?.[1] ? '$' : (ts[i + 1] ?? '').toLowerCase();
-    return m ? [{ value: m[2].replace(/,/g, ''), unit, near: wordsOf([...ts.slice(Math.max(0, i - 3), i), ...ts.slice(i + 1, i + 4), ...date]), next }] : [];
+    // A sentence's period or a closing quote stays on the token after a figure ("in."); it is no part of the unit.
+    const unitToken = m?.[1] ? '$' : (/^(\p{L}+|")/u.exec((ts[i + 1] ?? '').toLowerCase())?.[1] ?? '');
+    return m ? [{ value: m[2].replace(/,/g, ''), unit, near: wordsOf([...ts.slice(Math.max(0, i - 3), i), ...ts.slice(i + 1, i + 4), ...date]), unitToken }] : [];
   });
 }
 
@@ -161,16 +162,21 @@ export function derivations(text: string): Derivation[] {
 /** Whether the value shown is the value computed at the precision shown: within one in its last shown digit. */
 export const recomputes = (d: Derivation) => Math.abs(d.computed - Number(d.shown)) <= 10 ** -decimals(d.shown) + 1e-9;
 
-/** Every number a text shows outside a model code (AR3104, IP54): a range's ends, a quoted "$1,401.99" or a "$159/month" too, which
- *  figures() reads as no figure. */
-export const bareNumbers = (text: string) => [...isoDates(text).matchAll(/(?<![\p{L}\d.,-])(?:\d{4}-\d\d-\d\d|\d[\d,]*(?:\.\d+)?)/gu)].map((m) => m[0].replace(/,/g, ''));
+/** Every number a text shows outside a model code (AR3104, IP54) or a link: a range's ends, a quoted "$1,401.99" or a "$159/month" too,
+ *  which figures() reads as no figure. */
+export const bareNumbers = (text: string) => [...isoDates(text.replace(/\]\([^)]*\)|https?:\/\/\S+/g, ' ')).matchAll(/(?<![\p{L}\d.,-])(?:\d{4}-\d\d-\d\d|\d[\d,]*(?:\.\d+)?)/gu)].map((m) => m[0].replace(/,/g, ''));
 
 /** Whether `v` restates `known`: one value, shown no more precisely, so 1,067 restates 1,066.8 but 44.45 does not restate a 44. */
 export const restates = (v: string, known: string) => sameValue(known, v) && decimals(known) >= decimals(v);
 
 const ALIAS: Record<string, string> = { lbs: 'lb', ru: 'u', '"': 'in' };
 /** The unit a figure is written in, when code can tell: a currency sign, or a length or mass unit right after it ("lbs" is "lb"). */
-export const measureOf = (f: Figure) => (f.next === '$' ? '$' : SCALE[f.next] ? (ALIAS[f.next] ?? f.next) : undefined);
+export const measureOf = (f: Figure) => (f.unitToken === '$' ? '$' : SCALE[f.unitToken] ? (ALIAS[f.unitToken] ?? f.unitToken) : undefined);
+
+/** A traced figure: its value and, when code can tell, its unit, so a reached 140 mm does not trace a $140. */
+export type Known = { value: string; unit?: string };
+/** Whether `v`, written in `unit`, restates `k`; a figure whose unit code cannot tell matches any unit. */
+export const restatesKnown = (v: string, unit: string | undefined, k: Known) => restates(v, k.value) && !(unit && k.unit && unit !== k.unit);
 
 // A figure's unit: its currency sign or the convertible unit right after it, else its first word after it ("CFM"); none, and it takes
 // the next figure's, as in "566 + 460 + 300 = 1,326 mm" or "1070 vs 978 mm".
@@ -189,20 +195,22 @@ function convertTo(value: number, from: string | undefined, to: string, rackUnit
 
 /** Figures of `text` that are arithmetic in words over traced figures of `text` and `context`: one of them in another unit ("24U (1,066.8 mm)"),
  *  or the sum or difference of two ("~140 mm margin" beside 743 and 604 mm), at the precision shown. Wider scopes clear untraced inputs by chance. */
-export function reached(text: string, context: string, traced: (v: string, unit?: string) => boolean, rackUnit: boolean): string[] {
+export function reached(text: string, context: string, traced: (v: string, unit?: string) => boolean, rackUnit: boolean): Known[] {
   const [own, before] = [figures(text), figures(context)];
   const all = [...before, ...own];
   const units = unitsOf(all);
-  const out: string[] = [];
-  const known = (i: number) => traced(all[i].value, measureOf(all[i])) || out.includes(all[i].value);
+  const out: Known[] = [];
+  const known = (i: number) => traced(all[i].value, measureOf(all[i])) || out.some((o) => restatesKnown(all[i].value, measureOf(all[i]), o));
   own.forEach((f, k) => {
     const [i, to] = [before.length + k, units[before.length + k]];
     if (!to || known(i)) return;
-    const vs = all.flatMap((g, j) => (j !== i && known(j) ? [{ v: convertTo(Number(g.value), units[j], to, rackUnit), unit: units[j] }] : [])).filter((x) => x.v !== undefined);
+    // Only an operand already in `to` or converted into it survives, so its unit has a SCALE entry unless it is `to` itself.
+    const vs = all.flatMap((g, j) => (j !== i && known(j) ? [{ v: convertTo(Number(g.value), units[j], to, rackUnit), unit: units[j] }] : [])).filter((o): o is { v: number; unit: string | undefined } => o.v !== undefined);
     const hit = (computed: number) => recomputes({ text, inputs: [], shown: f.value, computed });
     // A sum converts into a finer unit only: summed from millimetres, a whole U or inch is within ±1 of something by chance.
-    const parts = vs.filter((x) => x.unit === to || SCALE[x.unit ?? ''][1] >= SCALE[to][1]).map((x) => x.v!);
-    if (vs.some((x) => hit(x.v!)) || parts.some((a, x) => parts.slice(x + 1).some((b) => hit(a + b) || hit(Math.abs(a - b))))) out.push(f.value);
+    const parts = vs.filter((o) => o.unit === to || SCALE[o.unit ?? ''][1] >= SCALE[to][1]).map((o) => o.v);
+    const sums = parts.some((a, n) => parts.slice(n + 1).some((b) => hit(a + b) || hit(Math.abs(a - b))));
+    if (vs.some((o) => hit(o.v)) || sums) out.push({ value: f.value, unit: measureOf(f) });
   });
   return out;
 }

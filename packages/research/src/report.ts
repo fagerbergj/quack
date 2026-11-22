@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { bareNumbers, derivations, figures, figuresClash, measureOf, namesClash, numberWords, RACK_UNIT, reached, recomputes, restates, sameValue, type Figure } from './claims.ts';
+import { bareNumbers, derivations, figures, figuresClash, measureOf, namesClash, numberWords, RACK_UNIT, reached, recomputes, restatesKnown, sameValue, type Figure, type Known } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -408,7 +408,6 @@ function derivedArithmetic(artifact: string): CodeResult {
   return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? wrong.map((d) => `"${d.text.trim()}" shows ${d.shown}; its inputs give ${shownAt(d)}`).join('; ') : undefined };
 }
 
-type Known = { value: string; unit?: string };
 /** What a derived figure may trace to: each figure of a cited finding or of Assumptions, with its unit, and each number they show that
  *  figures() cannot read ("76–826 mm", a quoted "$1,401.99"), with none; a unit keeps a finding's 42.13 in from tracing a 42U. */
 function tracedInputs(cited: string[], assumed: string): Known[] {
@@ -422,12 +421,12 @@ function tracedInputs(cited: string[], assumed: string): Known[] {
 function derivedInputsTraced(artifact: string, ev: Evidence): CodeResult {
   const cited = [...findingItems(artifact).map((f) => f.text), ...statements(artifact).filter((s) => s.section === 'findings').map((s) => s.text)].filter((t) => citedIds(t).length);
   const known = tracedInputs(cited, sectionBody(artifact, ['assumptions']));
-  const traced = (v: string, unit?: string) => known.some((k) => restates(v, k.value) && !(unit && k.unit && unit !== k.unit));
+  const traced = (v: string, unit?: string) => known.some((k) => restatesKnown(v, unit, k));
   const stated = placed(artifact).filter(derivedSection);
   const derived = stated.flatMap((s) => derivations(s.text));
   // A result whose inputs trace traces too, so a later sentence may restate it; a second pass reaches results built on results.
   for (const d of [...derived, ...derived]) if (recomputes(d) && d.inputs.every((v) => traced(v))) known.push({ value: d.shown });
-  for (const s of [...stated, ...stated]) known.push(...reached(s.text, s.before ?? '', traced, traced(RACK_UNIT)).map((value) => ({ value })));
+  for (const s of [...stated, ...stated]) known.push(...reached(s.text, s.before ?? '', traced, traced(RACK_UNIT)));
   // "0U" names a mounting style (a zero-U PDU rides the rails), not a quantity taken from anywhere.
   const zeroU = (f: Figure) => Number(f.value) === 0 && (f.unit.has('u') || f.unit.has('ru'));
   const all = stated.flatMap((s) => figures(s.text).filter((f) => !zeroU(f)).map((f) => ({ value: f.value, unit: measureOf(f), at: s.text })));

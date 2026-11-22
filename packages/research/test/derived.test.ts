@@ -99,6 +99,7 @@ test('derived_inputs_traced: arithmetic written in words traces from traced figu
 test('derived_inputs_traced: a number figures() cannot read in a finding still traces, but only at no more precision than shown', () => {
   assert.equal(traced('Rails take devices up to 826 mm; CDW sells it at $1,401.99 and rents at $159.', '- Rails adjust for equipment 3 to 32.5 in (76–826 mm) deep. [s1]\n- CDW lists "$1,401.99" and "$159/month". [s1]').met, 1, 'a range end and quoted prices');
   assert.equal(traced('A rack unit is 44.45 mm.', '- The shelf is 27–44 in deep. [s1]').met, 0, 'the 44 of a range is not the 44.45 of a constant');
+  assert.equal(traced('It shipped in 2024.', '- See [the guide](https://example.com/2024/tips) and https://example.com/2024 for rails. [s1]').met, 0, 'a link\'s path is no figure');
   assert.equal(traced('Mounting height is ~1,067 mm.', '- 24U gives 1,066.8 mm. [s1]').met, 1, 'a rounder restatement traces');
 });
 
@@ -108,6 +109,8 @@ test('derived_inputs_traced: a rack-unit conversion in words traces only when 1U
   assert.equal(code('derived_inputs_traced', `## Summary\nx\n## Assumptions\n- 1U = 44.45 mm (EIA-310).\n## Findings\n- A 42U enclosure is the next size up. [s1]\n${extra}`).met, 1);
   const listed = (findings: string, extra: string) => code('derived_inputs_traced', `## Summary\nx\n## Assumptions\n- 1U = 44.45 mm (EIA-310).\n## Findings\n${findings}\n## Analysis\n${extra}`);
   assert.equal(listed('- The cabinet is 24U; the AR3104 is 42.13 in deep. [s1]', '- Buy a 42U cabinet.\n').met, 0, 'a finding\'s 42.13 in is not a 42U');
+  assert.equal(listed('- The cabinet is 24U; the AR3104 is 42.13 in. [s1]', '- Buy a 42U cabinet.\n').met, 0, 'nor when its unit ends the sentence');
+  assert.equal(listed('- The rail is 743 mm and the tower 604 mm. [s1]', '- The 604 mm tower fits the 743 mm rail with ~140 mm to spare.\n- A shelf costs $140.\n').met, 3 / 4, 'a reached 140 mm keeps its unit, so it does not trace a $140');
   assert.equal(listed('- The stack needs 1,260 mm; the tower is 566 mm. [s1]', '- Stacked, 1,260 mm and 566 mm need a 42U cabinet.\n').met, 2 / 3, 'a whole U summed from millimetres is chance, not arithmetic');
   assert.equal(listed('- The cabinet is 24U; the towers stack to 1,226 mm. [s1]', '- The 1,226 mm stack is ~160 mm more than the 24U area.\n').met, 1, 'a sum in a finer unit converts its operands');
 });
