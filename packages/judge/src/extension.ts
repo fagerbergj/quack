@@ -103,7 +103,7 @@ export function judgeSession(config: JudgeConfig): Extension[] {
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const count = (v: unknown, min: number) => v === undefined || (Number.isInteger(v) && (v as number) >= min);
+const countOk = (v: unknown, min: number) => v === undefined || (Number.isInteger(v) && (v as number) >= min);
 const ref = (v: unknown, cap: boolean) => v === undefined || (isObject(v) && typeof v.provider === 'string' && typeof v.modelId === 'string' && (!cap || (Number.isInteger(v.maxInputTokens) && (v.maxInputTokens as number) > 0)));
 
 /** Problems with an agent's `extensions.judge`. */
@@ -113,8 +113,8 @@ export function configProblems(config: unknown): string[] {
   const known = ['maxRevisions', 'decisionModel', 'judgeModel', 'escalations'];
   return [
     ...Object.keys(config).filter((k) => !known.includes(k)).map((k) => `judge.${k} is not a judge setting; known: ${known.join(', ')}`),
-    ...(count(config.maxRevisions, 0) ? [] : ['judge.maxRevisions must be a non-negative integer']),
-    ...(count(config.escalations, 1) ? [] : ['judge.escalations must be a positive integer']),
+    ...(countOk(config.maxRevisions, 0) ? [] : ['judge.maxRevisions must be a non-negative integer']),
+    ...(countOk(config.escalations, 1) ? [] : ['judge.escalations must be a positive integer']),
     ...(ref(config.decisionModel, true) ? [] : ['judge.decisionModel must be { provider, modelId, maxInputTokens }']),
     ...(ref(config.judgeModel, false) ? [] : ['judge.judgeModel must be { provider, modelId }']),
   ];

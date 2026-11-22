@@ -263,7 +263,7 @@ test('an error is problem+json with type, title, status, detail and error', asyn
   const { api } = await start(':memory:');
   const res = await api('PUT', '/daily', { agent: 'a' });
   assert.equal(res.type, 'application/problem+json');
-  assert.deepEqual(res.json, { type: 'about:blank', title: 'Bad Request', status: 400, detail: res.json.detail, error: res.json.detail });
+  assert.deepEqual(res.json, { type: 'about:blank', title: 'Bad Request', status: 400, detail: 'need id, sessionKey and input', error: 'need id, sessionKey and input' });
 });
 
 test('a wrong method is 405 with Allow, an unknown path a 404 problem', async () => {

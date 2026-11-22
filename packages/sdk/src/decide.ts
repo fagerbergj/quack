@@ -121,7 +121,10 @@ export function modelResolver(provider: string, modelId: string, seams?: RetrySe
       if (!model) return undefined;
       const request = { provider: model.provider, signal: ctx.abortSignal, messages: [{ role: 'user' as const, content: prompt(point), timestamp: api.now() }] };
       const reply = await retryModelCall(`${provider}/${modelId}`, (fetch) => observeGeneration(request, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal, fetch })), ctx.abortSignal, seams);
-      if (reply.stopReason === 'error') console.error(`decide: ${provider}/${modelId} answered with an error: ${reply.errorMessage}`);
+      if (reply.stopReason === 'error') {
+        console.error(`decide: ${provider}/${modelId} answered with an error: ${reply.errorMessage}`);
+        return undefined;
+      }
       return parseDecision(contentText(reply.content), point);
     },
   };

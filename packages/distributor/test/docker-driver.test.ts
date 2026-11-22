@@ -340,8 +340,13 @@ test('a container that exits while starting fails the start and leaves no token'
   const dir = await mkdtemp(join(tmpdir(), 'quack-dead-'));
   await mkdir(join(dir, 'abc'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
+  let token = '';
+  const mint = broker.mint.bind(broker);
+  broker.mint = (key: string) => (token = mint(key));
   const launch = dockerLauncher({ api: dead, broker, image: 'i', runtime: 'runsc', network: 'n', data: { hostDir: '/h' }, distributorUrl: 'http://d', inherit: () => ({}), urlFor: () => 'http://127.0.0.1:9', sleep: async () => {}, startTimeoutMs: 1000 });
   await assert.rejects(launch({ key: 'a', dir: join(dir, 'abc'), agentPath: undefined }), /exited during start/);
+  assert.match(token, /^[0-9a-f]{64}$/, 'the launch minted a credential before the start failed');
+  assert.equal(broker.sessionOf(token), undefined, 'the failed launch revokes its credential');
 });
 
 test('a container that cannot be created fails the start and leaves no token', async () => {

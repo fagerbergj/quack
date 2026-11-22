@@ -226,10 +226,10 @@ test('selecting a session opens it in the main pane and marks its row', async ()
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
 });
 
-const homeExists = () => (routes['GET /sessions'] = { sessions: [sess('home:main')] });
+const seedHome = () => (routes['GET /sessions'] = { sessions: [sess('home:main')] });
 
 async function startFromHome(text: string) {
-  homeExists();
+  seedHome();
   render(<App />);
   await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), text);
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -1705,7 +1705,7 @@ test('a failed session that is not running is on Home with Run again; a running 
 
 test('the Home box opens a home: session for the quack agent and seeds its first message', async () => {
   phoneAt('#/');
-  homeExists();
+  seedHome();
   render(<App />);
   const send = screen.getByRole('button', { name: 'Send' });
   expect(send).toBeDisabled();
@@ -1873,7 +1873,7 @@ describe('images', () => {
   });
 
   test('a photo attached on Home seeds the home:main session and clears once accepted', async () => {
-    homeExists();
+    seedHome();
     render(<App />);
     await userEvent.type(await screen.findByRole('textbox', { name: 'What do you need?' }), 'what is this?');
     await userEvent.upload(screen.getByTestId('attach-input'), photo);
