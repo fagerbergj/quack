@@ -2209,17 +2209,37 @@ test('the composer shows Stop while a run is in progress with an empty input', a
 
 test('typing during a run swaps Stop back to Send', async () => {
   const ws = await openSession();
-  ws.frame(snapshot({ run: {} }));
+  ws.frame(snapshot());
+  ws.frame(view({ run: true }));
   expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hi');
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
 });
 
-test('a failed composer stop is reported', async () => {
-  routes['POST /sessions/ui%3Au1/abort'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
+test('Stop with a message queued aborts the run and leaves the queue chip', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = { aborted: true };
   const ws = await openSession();
-  ws.frame(snapshot({ run: {} }));
-  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
+  ws.frame(snapshot());
+  ws.frame(view({ run: true }));
+  ws.frame({ type: 'queued', items: [{ id: 's1', text: 'turn left' }] });
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  expect(stop).toHaveAttribute('title', 'Stop this run; queued messages still send');
+  await userEvent.click(stop);
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(screen.getByText('turn left')).toBeInTheDocument();
+});
+
+test('a failed composer stop is reported', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = new Fail(403, { title: 'Forbidden', detail: 'not allowed to stop this session' });
+  const ws = await openSession();
+  ws.frame(snapshot());
+  ws.frame(view({ run: true }));
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  await userEvent.click(stop);
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('not allowed to stop this session');
+  expect(alert.parentElement).toContainElement(stop);
+  expect(stop).toBeEnabled();
+  expect(stop).toHaveAttribute('aria-busy', 'false');
 });
