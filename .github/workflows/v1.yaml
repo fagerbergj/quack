@@ -38,7 +38,11 @@ jobs:
       # The reMarkable render tests draw a v6 page with rmc.
       - run: pip install --no-deps -r packages/remarkable/requirements.txt
       # The contracts tests diff OpenAPI versions with oasdiff; keep the pin in step with the Dockerfile.
-      - run: go install github.com/oasdiff/oasdiff@v1.34.0 && echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: |
+          curl -fsSL -o oasdiff.tgz https://github.com/oasdiff/oasdiff/releases/download/v1.34.0/oasdiff_1.34.0_linux_amd64.tar.gz
+          echo "7c88e09fd500b231af2819eb21f6fdfc7bcdfe2741d2c1937c59e7b72c8a575a  oasdiff.tgz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin" && tar -xzf oasdiff.tgz -C "$HOME/.local/bin" oasdiff
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: npx tsc -p tsconfig.json
       - run: npx tsc -p packages/web/tsconfig.json
       - run: npm run knip
