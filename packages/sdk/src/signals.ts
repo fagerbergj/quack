@@ -27,6 +27,15 @@ export async function whileWaiting<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+const runEndListeners = new Set<() => void>();
+/** Hears the session's run end, however it ended: an answer, a failure, an abort or a stop. */
+export function onRunEnded(listener: () => void): () => void {
+  runEndListeners.add(listener);
+  return () => void runEndListeners.delete(listener);
+}
+/** Called by the session's lifecycle sender when a run ends. */
+export const runEnded = () => runEndListeners.forEach((l) => l());
+
 /** `provider` names the model endpoint a gate may need to hold capacity on; `signal` lets that wait be cancelled. */
 export type GenerationRequest = { systemPrompt?: string; messages: Message[]; provider?: string; signal?: AbortSignal };
 export type Generation = GenerationRequest & { start: number; message: AssistantMessage };

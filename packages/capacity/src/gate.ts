@@ -70,6 +70,8 @@ export class CapacityGate {
       this.#o.setNote(null);
       throw err;
     }
+    // A run that ended while this call queued cleared the calls; this one still ends through end().
+    this.#calls.add(call);
     return call;
   }
 
@@ -83,12 +85,14 @@ export class CapacityGate {
     for (const l of spare) void this.#drop(l);
   }
 
-  /** The run waits on something other than its own next model call (a person, a child run), or ended: it gives its leases back. */
+  /** The run waits on something other than its own next model call (a person, a child run): it gives its leases back. */
   idle(): Promise<void> {
     return this.#calls.size === 0 ? this.release() : Promise.resolve();
   }
 
+  /** The run ended: every lease goes back, also those of calls an abort cut off before their response. */
   async release(): Promise<void> {
+    this.#calls.clear();
     await Promise.all([...this.#leases].map((l) => this.#drop(l)));
   }
 

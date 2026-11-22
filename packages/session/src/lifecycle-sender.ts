@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { Conversation, ConversationId, ConversationView, Harness, TaskGraph } from '@earendil-works/pi-durable';
-import { Approvals, Failures, failedRows, onGeneration } from '@quack/sdk';
+import { Approvals, Failures, failedRows, onGeneration, runEnded } from '@quack/sdk';
 import { append, LifecycleStream, openRun, readStream, type PriceOf, type SessionFacts, type Spend, type WireEvent } from './lifecycle.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -179,7 +179,12 @@ export async function startLifecycleSender(session: { harness: Harness; root: Co
   let changing = Promise.resolve();
   const settle = () => {
     const next = changing.then(async () => {
-      if ((looping || tasked) !== running) await runChanged((running = !running));
+      if ((looping || tasked) !== running) {
+        running = !running;
+        // Heard before the record commits, so a resource gate (capacity) frees its slot without waiting on the catalog.
+        if (!running) runEnded();
+        await runChanged(running);
+      }
       await flush();
     });
     changing = next.catch(() => {});

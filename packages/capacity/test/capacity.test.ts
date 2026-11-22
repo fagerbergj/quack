@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, test } from 'node:test';
+import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { inProcessFetch, observeGeneration, primeSessionEndpoint, whileWaiting } from '@quack/sdk';
-import { agentSpec } from '@quack/session';
+import { agentSpec, openSession, startLifecycleSender } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
 import { FakeClock } from './fake-clock.ts';
@@ -306,6 +307,66 @@ test('a queued call claiming a spare lease marks it busy before releasing its ow
   await clock.settle();
   assert.ok(second?.lease, 'the queued call took the spare lease');
   assert.equal(third, undefined, 'a concurrent call must not steal the spare lease while the waiter drops its queued one');
+});
+
+// A session with the gate and the lifecycle sender, which is what hears a run end; a waiter queues once the run holds the slot.
+async function gatedSession(steps: FauxResponseStep[], limit = 1) {
+  const faux = fauxProvider({ models: [{ id: 'm' }] });
+  faux.setResponses(steps);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  table = new LeaseLedger({ dbPath: ':memory:', capacity: { [m.provider]: limit }, ttlMs: TTL, now: clock.now });
+  open.push(table);
+  const dir = await mkdtemp(join(tmpdir(), 'quack-capacity-'));
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: capacitySessionExtensions({}, gate('s')) }, retry: { enabled: false } });
+  const sender = await startLifecycleSender(session, { url: 'http://d', token: 't', key: 'k', facts: async () => ({ agent: 'a', version: 1, createdAt: 0 }), fetch: async () => Response.json({ acked: 0 }), setTimer: () => () => {} });
+  const close = async () => (await sender.stop(), await session.close(), await rm(dir, { recursive: true, force: true }));
+  return { session, provider: m.provider, close };
+}
+// Bounded well under the lease TTL, so a slot that comes back here was released, not lapsed.
+async function within(ms: number, done: () => boolean) {
+  for (let t = 0; t < ms && !done(); t += 500) await clock.advance(500);
+  return done();
+}
+const hangs: FauxResponseStep = (_c, o) => new Promise((_, no) => o?.signal?.addEventListener('abort', () => no(o.signal!.reason)));
+
+test('a run that fails gives its slot to the waiter at once', async () => {
+  let fail!: () => void;
+  const failing = new Promise<void>((r) => (fail = r));
+  const { session, provider, close } = await gatedSession([async () => { await failing; throw new Error('boom'); }]);
+  void session.submit('go');
+  assert.ok(await within(5000, () => heldBy().includes('s')));
+  const waiter = { granted: false };
+  void gate('w').begin(provider).then(() => (waiter.granted = true));
+  await clock.advance(2000);
+  assert.equal(waiter.granted, false);
+  fail();
+  assert.ok(await within(5000, () => waiter.granted), 'granted on release, before the lease TTL');
+  await close();
+});
+
+test('an aborted run (quack stop) gives its in-flight call\'s slot back at once', async () => {
+  const { session, provider, close } = await gatedSession([hangs]);
+  void session.submit('go');
+  assert.ok(await within(5000, () => heldBy().includes('s')));
+  const waiter = { granted: false };
+  void gate('w').begin(provider).then(() => (waiter.granted = true));
+  await session.abort('service');
+  assert.ok(await within(5000, () => waiter.granted), 'granted on release, before the lease TTL');
+  await close();
+});
+
+test('an aborted in-flight call leaves no busy lease, so the next run takes the slot', async () => {
+  const { session, close } = await gatedSession([hangs, fauxAssistantMessage('done')]);
+  void session.submit('first');
+  assert.ok(await within(5000, () => heldBy().includes('s')));
+  await session.abort('service');
+  let answered = false;
+  void session.submit('second', undefined, true).then(() => (answered = true));
+  assert.ok(await within(5000, () => answered), 'a leaked busy lease would queue the next call behind its own session');
+  assert.ok(await within(5000, () => heldBy().length === 0));
+  await close();
 });
 
 // The app as the /apps gateway hands it requests, relative to its mount; no socket.

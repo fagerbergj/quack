@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
-import { appEndpoint, gateGenerations, onWaiting, statusNote } from '@quack/sdk';
+import { appEndpoint, gateGenerations, onRunEnded, onWaiting, statusNote } from '@quack/sdk';
 import { CapacityGate, httpClient, type GateOptions, type GatedCall } from './gate.ts';
 
 export type CapacityConfig = Partial<Pick<GateOptions, 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
@@ -30,6 +30,8 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
   gateGenerations({ before: (provider, signal) => g.begin(provider, signal), after: (call) => g.end(call as GatedCall) });
   // A generation's lease is paired with its task, so calls finishing out of order free their own.
   const calls = new Map<string, GatedCall>();
+  // An aborted request never reaches afterResponse, so the run's end takes back busy leases too.
+  onRunEnded(() => (calls.clear(), void g.release()));
   return [defineExtension({
     name: 'capacity',
     hooks: [hook(GenerationTask, {
@@ -48,7 +50,6 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
         calls.delete(String(api.taskId));
         if (call) g.end(call);
       },
-      onYield: async () => (await g.idle(), undefined),
     })],
   })];
 }
