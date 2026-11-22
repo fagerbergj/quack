@@ -32,7 +32,7 @@ function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?:
   return { decision, reason };
 }
 
-type Invocation = { input: string; requestId?: string; wait?: boolean; whenBusy?: 'followUp'; title?: string; meta?: Record<string, unknown> };
+type Invocation = { input: string; requestId?: string; wait?: boolean; whenBusy?: 'followUp' | 'steer'; title?: string; meta?: Record<string, unknown> };
 
 const isMeta = (m: unknown): m is Record<string, unknown> => typeof m === 'object' && m !== null && !Array.isArray(m) && typeof (m as { id?: unknown }).id === 'string';
 
@@ -42,10 +42,10 @@ function parseInvocation(body: unknown): Invocation | string {
   if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
   if (wait !== undefined && typeof wait !== 'boolean') return 'wait must be a boolean';
-  if (whenBusy !== undefined && whenBusy !== 'followUp') return 'whenBusy must be followUp';
+  if (![undefined, 'followUp', 'steer'].includes(whenBusy as string)) return 'whenBusy must be followUp or steer';
   if (title !== undefined && typeof title !== 'string') return 'title must be a string';
   if (meta !== undefined && !isMeta(meta)) return 'meta must be an object with a string id';
-  return { input, requestId, wait, whenBusy, title, meta };
+  return { input, requestId, wait, whenBusy: whenBusy as Invocation['whenBusy'], title, meta };
 }
 
 // `who` is the principal the distributor named, or undefined when it named none.
