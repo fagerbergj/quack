@@ -11,7 +11,7 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
-import { Artifacts, artifactsExtension, seal, type ArtifactKind } from '@quack/sdk';
+import { Artifacts, artifactsExtension, gateGenerations, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { check, feedback, progressOf, report, score, settled, type CheckResult, type Declaration, type Inputs, type JudgeOptions, type Plan, type Rubric } from '../src/index.ts';
 
@@ -120,6 +120,9 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   clefCalls.length = 0;
   // Clef is unsure whether f2 says why (0.5); everything else it answers confidently, preference_only at exactly the 0.2 edge.
   const baseUrl = await fakeClef((q, unit) => (q.includes('say why') && unit === 'f2' ? 0.5 : q.includes('only on preference') ? 0.2 : 0.95));
+  // The worker's own turns go through its generation task, so every gated direct completion here is the judge's.
+  const shared: boolean[] = [];
+  const off = gateGenerations({ before: async (_p, _s, sh) => void shared.push(sh === true), after: () => {} });
   const good = '## Takeaway\nFix the off-by-one.\n## Verdict\nrequest_changes\n## Findings\n- blocking: src/x.ts:12 off by one\n- nit: src/y.ts:3 rename\n';
   const { done, versions } = await run(baseUrl, 8192, [
     tool('write', { path: 'artifacts/review.md', content: good.replace('## Verdict\nrequest_changes\n', '') }),
@@ -130,7 +133,9 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
     yes,
     fauxAssistantMessage('Submitted v2.'),
   ]);
+  off();
   assert.equal(done.status === 'done' && done.answer, 'Submitted v2.');
+  assert.ok(shared.length > 0 && shared.every(Boolean), 'the judge\'s escalations run under the session\'s own slot');
   assert.deepEqual(versions[0].gatesFailed, ['structured_verdict.verdict_present']);
   assert.equal(versions[0].passed, false);
 

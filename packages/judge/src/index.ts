@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { Artifacts, attachVerdict, type SealedArtifact } from '@quack/sdk';
+import { Artifacts, attachVerdict, inSessionSlot, type SealedArtifact } from '@quack/sdk';
 import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
@@ -233,7 +233,8 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: Bu
   const items = reuse ? reuseItems(itemsOf(plans), byKey, reuse) : itemsOf(plans);
   settings.hold.expect(items);
   await publish();
-  await Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need)));
+  // The round's model calls ride the session's own capacity slot; the escalation limit bounds them.
+  await inSessionSlot(() => Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need))));
   return plans.map(finalize);
 }
 

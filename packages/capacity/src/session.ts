@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
-import { appEndpoint, gateGenerations, onWaiting, statusNote } from '@quack/sdk';
+import { appEndpoint, gateGenerations, onRunEnded, onWaiting, statusNote } from '@quack/sdk';
 import { CapacityGate, httpClient, type GateOptions, type GatedCall } from './gate.ts';
 
-export type CapacityConfig = Partial<Pick<GateOptions, 'graceMs' | 'capMs' | 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
+export type CapacityConfig = Partial<Pick<GateOptions, 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
 
 /** The deployment's gate: installed for every session the runtime primed with a distributor to reach, otherwise nothing. */
 export function capacityFromEnv(env: Record<string, string | undefined> = process.env) {
@@ -20,16 +20,18 @@ function reachable() {
   }
 }
 
-/** The session half: a lease on the model endpoint per run, taken before a request and kept between the run's turns. Without a service it installs nothing. */
+/** The session half: a lease on the model endpoint per run, taken before a request and kept until the run ends or waits on a person or a child run. Without a service it installs nothing. */
 export function capacitySessionExtensions(config: CapacityConfig, gate?: CapacityGate): Extension[] {
   const holder = config.holder ?? randomUUID();
   if (!gate && !(config.serviceUrl && config.serviceToken)) return [];
   const g = gate ?? new CapacityGate({ ...config, holder, client: httpClient(config.serviceUrl!, config.serviceToken!), setNote: statusNote.set });
   onWaiting((n) => n > 0 && void g.idle());
   // Direct completions (the judge, workflow model steps) bypass GenerationTask, so they take the same lease.
-  gateGenerations({ before: (provider, signal) => g.begin(provider, signal), after: (call) => g.end(call as GatedCall) });
+  gateGenerations({ before: (provider, signal, shared) => g.begin(provider, signal, shared), after: (call) => g.end(call as GatedCall) });
   // A generation's lease is paired with its task, so calls finishing out of order free their own.
   const calls = new Map<string, GatedCall>();
+  // An aborted request never reaches afterResponse, so the run's end takes back busy leases too.
+  onRunEnded(() => (calls.clear(), void g.release()));
   return [defineExtension({
     name: 'capacity',
     hooks: [hook(GenerationTask, {
@@ -48,7 +50,6 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
         calls.delete(String(api.taskId));
         if (call) g.end(call);
       },
-      onYield: async () => (await g.idle(), undefined),
     })],
   })];
 }
