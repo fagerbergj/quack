@@ -117,6 +117,14 @@ test('a new session checks its agent version against the hash recorded at first 
   assert.deepEqual(await readdir(dataDir), ['agent-versions']);
 });
 
+test('a version edited in place after the host stored it is refused before any session pins it, so history and pins agree', async () => {
+  const { driver, agentsDir } = await host(['reviewer']);
+  await driver.agents();
+  await writeFile(join(agentsDir, 'reviewer', 'prompt.md'), 'edited without a version bump');
+  await assert.rejects(driver.ensure('github:a#1', 'reviewer'), /changed since it was first used/);
+  assert.equal((await driver.agent('reviewer'))?.prompt, 'reviewer prompt', 'the stored version keeps the content first seen');
+});
+
 
 test('a woken session keeps its pinned bundle but judges with its agent\'s current one, and fails clearly once that bundle is removed', async () => {
   const { driver, launches, agentsDir } = await host();

@@ -113,6 +113,8 @@ Before `compose up` with a new image, run its validator against the prod config,
 docker run --rm -v <data>:/data:ro -v <config>:/config/deployment.json:ro -e QUACK_CONFIG=/config/deployment.json -e QUACK_AGENTS_DIR=/app/agents -e QUACK_DATA_DIR=/data <new-image> node packages/runtime/src/validate.ts
 ```
 
+`QUACK_AGENTS_DIR` may instead name a directory mounted from the host; mount the same directory into the validator. The distributor reads it on every agent listing, so a bundle added there is offered without a restart. The first time the distributor stores a version it records that bundle's content hash at `agent-versions/<name>/<version>/digest` in the data dir, and a new session of that version is refused with a 409 asking for a version bump once the bundle no longer matches. `version.lock` is the repo's CI check; the distributor never reads it.
+
 ## Session containers
 
 With `QUACK_SESSION_DRIVER=docker`, each session runs in its own container from `QUACK_SESSION_IMAGE` under `QUACK_SESSION_RUNTIME` (gVisor's `runsc` by default), with only its own directory of the data volume mounted. Two more containers join the sessions on their network:

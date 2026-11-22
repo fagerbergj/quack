@@ -160,6 +160,10 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
   // Each agent.json is read fresh, so a new session binds to the newest definition; bind() then snapshots it for that session (DEP-3).
   // Each version is copied once into the data dir (every registry run awaits that one copy), so history outlives the image's agents dir; its promotion marker lives there too.
   const kept = new Map<string, Promise<void>>();
+  async function store(name: string, version: number, dir: string) {
+    await keepVersion(opts.dataDir, dir, opts.rubricFor);
+    await firstDigest(name, version, await digest(dir));
+  }
   async function registry(): Promise<Array<AgentInfo & { path: string; retention?: unknown }>> {
     const dirs = opts.agentsDir ? await readdir(opts.agentsDir, { withFileTypes: true }).catch(() => []) : [];
     const found = await Promise.all(dirs.filter((d) => d.isDirectory()).map(async (d) => {
@@ -171,7 +175,7 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
       const bad = bundleProblems(def);
       if (bad.length) return void console.error(`agent bundle ${path} is invalid and not offered:\n- ${bad.join('\n- ')}`);
       const id = `${def.name}@${def.version}`;
-      if (!kept.has(id)) kept.set(id, keepVersion(opts.dataDir, dir, opts.rubricFor).catch(() => void kept.delete(id)));
+      if (!kept.has(id)) kept.set(id, store(def.name, def.version, dir).catch(() => void kept.delete(id)));
       await kept.get(id);
       const status: AgentStatus = def.status === 'promoted' || (await exists(join(versionDir(opts.dataDir, def.name, def.version), 'promoted'))) ? 'promoted' : 'draft';
       return { name: def.name, version: def.version, status, path, retention: def.retention?.idleDays, ...(typeof def.model === 'string' && { model: def.model }), ...(typeof def.description === 'string' && { description: def.description }) };
@@ -185,14 +189,18 @@ export function sessionHost(opts: { dataDir: string; agentsDir?: string; default
     return defaultPath ? ((await readJson(defaultPath).catch(() => null))?.name as string | undefined) ?? '' : '';
   }
 
-  // A version is immutable: the first session pinned to it records its content hash beside the stored version, and a source that differs is refused.
+  // A version is immutable: its content hash is recorded beside the stored version when it is first stored or pinned, and a source that differs is refused.
+  // Recording at store time matters for a mounted agents dir, edited while the host runs: the stored copy and the pinned one must agree.
   async function assertUnforked(name: string, source: string) {
     const version = (await readJson(source).catch(() => null))?.version;
     if (typeof version !== 'number') return;
     const want = await digest(dirname(source));
+    if ((await firstDigest(name, version, want)) !== want) throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
+  }
+
+  async function firstDigest(name: string, version: number, want: string): Promise<string> {
     const record = join(versionDir(opts.dataDir, name, version), 'digest');
-    const known = (await readText(record)) ?? (await recordDigest(record, want));
-    if (known !== want) throw new AgentError(409, `agent ${name} version ${version} changed since it was first used; bump its version`);
+    return (await readText(record)) ?? (await recordDigest(record, want));
   }
 
   // `wx` keeps the first writer's hash when two sessions race.
