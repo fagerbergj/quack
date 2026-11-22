@@ -219,6 +219,13 @@ test('a claim on the last line keeps its last character when pr.md ends without 
   assert.deepEqual(claimedCommands('# t\n\nHow verified: `npm test` broke').map((c) => c.line), ['How verified: `npm test` broke']);
 });
 
+test('a code name pr.md says was added, which neither the diff nor the repository holds, fails deliver', async () => {
+  const { session, run, seen } = await claiming('echo ok', ['echo ok'], ' Added `bumpHelper`.');
+  await run;
+  assert.match(seen.at(-1)!, /names `bumpHelper`, which is in neither the diff nor the repository/);
+  await session.close();
+});
+
 test('a backticked commit id outside the commits made since checkout fails deliver', async () => {
   const { session, run, seen } = await claiming('echo ok', ['echo ok'], ' Fixed in `deadbeef1`.');
   await run;

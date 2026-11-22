@@ -3,7 +3,7 @@ import { int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
 import { conventions, findRecord, liveHead, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
-import { sessionRuns, unbackedClaims } from './claims.ts';
+import { diffClaims, namedCode, sessionRuns, unbackedClaims } from './claims.ts';
 import { branchTaken, checkoutIssue, editPull, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
 import { renderFeedback } from './feedback.ts';
 
@@ -78,6 +78,16 @@ async function problems(r: Repo, from: string, onBranch: string, what = 'pull re
   return found;
 }
 
+// The PR text's claims about the diff that the commits since `from` contradict.
+async function contradicted(r: Repo, from: string, text: string) {
+  const changed = new Map((await out(r, 'diff', '--name-status', `${from}..HEAD`)).split('\n').filter(Boolean).map((l) => { const [s, ...p] = l.split('\t'); return [p.at(-1)!, s] as const; }));
+  const paths = [...new Set([...(await out(r, 'ls-tree', '-r', '--name-only', from)).split('\n'), ...(await out(r, 'ls-tree', '-r', '--name-only', 'HEAD')).split('\n')])];
+  const names = namedCode(text);
+  // git grep exits 1 with no output when nothing matches; any other failure still throws.
+  const hits = names.length ? await out(r, 'grep', '-o', '-h', '-F', '-w', ...names.flatMap((n) => ['-e', n]), 'HEAD', from).catch((e: Error) => { if (e.message.endsWith('failed: ')) return ''; throw e; }) : '';
+  return diffClaims(text, { changed, paths }, new Set(hits.split('\n')));
+}
+
 // Runs once the approver said yes: the push goes out only if the remote head is still the one checked out.
 function pushTool(config: SessionConfig, dir: string): ToolRegistration {
   return gated(defineTool({
@@ -145,7 +155,7 @@ export function deliverTool(config: SessionConfig) {
       const text = await api.env!.readTextFile(PR_BODY, ctx);
       if (!text.ok) found.push(`${PR_BODY} cannot be read; write it first`);
       else if (!text.value.trim()) found.push(`${PR_BODY} is empty`);
-      if (text.ok) found.push(...unbackedClaims(text.value, await sessionRuns(api, ctx), (await out(r, 'log', '--format=%H', `${t.from}..HEAD`)).split('\n')));
+      if (text.ok) found.push(...unbackedClaims(text.value, await sessionRuns(api, ctx), (await out(r, 'log', '--format=%H', `${t.from}..HEAD`)).split('\n')), ...await contradicted(r, t.from, text.value));
       if (!found.length && t.work) found.push(await branchTaken(api, config, dir, t.work, await out(r, 'rev-parse', 'HEAD'), ctx));
       if (found.some(Boolean)) return reply(`Not delivered; fix these and call deliver again:\n- ${found.filter(Boolean).join('\n- ')}`, true);
       const { artifact: sealed } = await seal(api, prBodyKind, ctx);
