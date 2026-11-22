@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { invocationRequest, sendProblem, serviceHttp, submitToSession, tooLarge, type App } from '@quack/sdk';
 import { GithubError, NoInstallation, RateLimited, type GithubApp } from './app.ts';
 import { allReviews, reviewFeedback } from './feedback.ts';
-import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused, settled } from './notice.ts';
+import { fixQueued, fixRefused, fixSteered, noticeFor, reviewQueued, reviewRefused, settled } from './notice.ts';
 import { pullEventStream } from './events.ts';
 import { MIRROR_PATH, pullOf, pullStates } from './pulls.ts';
 import { waitingQueue, type WaitingStore } from './queue.ts';
@@ -94,11 +94,11 @@ type Queued = {
 };
 type WorkQueue = ReturnType<typeof waitingQueue<Queued>>;
 
-// One waiting review per PR, so a newer push or /review replaces an older one; a /fix waits beside it under its own key.
-const queueKey = (q: Queued) => (q.role === 'reviewer' ? `${q.sessionKey} review` : q.sessionKey);
+// One waiting review per PR, so a newer push or /review replaces an older one, and one push notice per branch; each /fix keeps its own delivery.
+const queueKey = (q: Queued) => (q.role === 'reviewer' ? `${q.sessionKey} review` : q.pushedHead ? `${q.sessionKey} branch` : `${q.sessionKey} fix ${q.requestId}`);
 const expired = (q: Queued) => Date.now() - q.at >= QUEUE_TTL_MS;
-// A steered /fix waits under its own delivery, so no instruction replaces another; a person's pushes coalesce per branch.
-const steerKey = (q: Queued) => (q.role === 'reviewer' ? queueKey(q) : q.pushedHead ? `${q.sessionKey} branch` : `${q.sessionKey} fix ${q.requestId}`);
+// A person's push, which only a running implementer hears: it never starts a run.
+const notice = (q: Queued) => q.role === 'implementer' && !!q.pushedHead;
 const submissionOf = (q: Queued) => ({ key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(q.meta && { meta: q.meta }) });
 const unreachable = (err: unknown) => new Response(JSON.stringify({ detail: `the distributor is unreachable: ${String(err)}` }), { status: 503 });
 const submit = (config: ServiceConfig, q: Queued) => submitToSession(config.distributorUrl, submissionOf(q), config.fetch).catch(unreachable);
@@ -154,15 +154,14 @@ async function dropReason(app: GithubApp, q: Queued): Promise<string | undefined
 
 // Whether the session is mid-run as this item's agent: another agent's session answers 409, a missing one 404.
 async function steering(config: ServiceConfig, q: Queued): Promise<boolean> {
-  if (!q.steer) return false;
   const res = await (config.fetch ?? fetch)(`${config.distributorUrl}/sessions/${encodeURIComponent(q.sessionKey)}/ping?agent=${encodeURIComponent(q.agent)}`).catch(() => undefined);
   const ping = res?.ok ? ((await res.json().catch(() => ({}))) as { status?: string; waitingOnHuman?: boolean }) : {};
   return ping.status === 'HealthyBusy' || ping.waitingOnHuman === true;
 }
 
-// Its own request id: the session dedupes a resend each sweep, and the run that may follow it is not deduped against it.
-async function steer(config: ServiceConfig, q: Queued): Promise<boolean> {
-  const { url, body } = invocationRequest(config.distributorUrl, { key: q.sessionKey, agent: q.agent, input: q.steer!, requestId: `${q.requestId}/steer` });
+// Its own request id, per role: the session dedupes a resend, and neither the run that may follow nor the other role's steer of one push is deduped against it.
+async function steer(config: ServiceConfig, q: Queued, input: string): Promise<boolean> {
+  const { url, body } = invocationRequest(config.distributorUrl, { key: q.sessionKey, agent: q.agent, input, requestId: `${q.requestId}/steer/${q.role}` });
   const res = await (config.fetch ?? fetch)(url, { method: 'POST', body: JSON.stringify({ ...JSON.parse(body), whenBusy: 'steer' }) }).catch(unreachable);
   if (!res.ok) console.warn(`github: steer for ${q.sessionKey} refused (${res.status}): ${await problemOf(res)}`);
   return res.ok;
@@ -172,12 +171,13 @@ async function steer(config: ServiceConfig, q: Queued): Promise<boolean> {
 // A review push waits out a steered run too: once it ends, the head starts a run unless a review already covers it. An implementer's is done once heard.
 async function startQueued(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued): Promise<boolean> {
   if (await dropReason(app, q)) return true;
-  if (await steering(config, q)) {
-    if (expired(q)) return (await comment(app, q, refusedNote(q, 'the steered run did not finish in 6 hours')), true);
-    return (await steer(config, q)) && q.role === 'implementer';
+  if (q.steer && (await steering(config, q))) {
+    // Past the queue's age limit a steer is given up on, refused or not; a person's push notice goes silently.
+    if (expired(q)) return (notice(q) || (await comment(app, q, refusedNote(q, 'the steered run did not finish in 6 hours'))), true);
+    return (await steer(config, q, q.steer)) && q.role === 'implementer';
   }
   // A person's push to a branch no implementer works on any more starts nothing.
-  if (q.role === 'implementer' && q.pushedHead) return true;
+  if (notice(q)) return true;
   const before = postedCount(state, q);
   const upstream = await submit(config, q);
   if (upstream.ok && q.role === 'reviewer') watchRun(app, config, state, q, before);
@@ -208,8 +208,13 @@ async function steerImplementer(app: GithubApp, config: ServiceConfig, queue: Wo
   const t = branchMoved(event, hook, `${await app.slug()}[bot]`);
   const q = t && queuedOf(t, config.implementerAgent, requestId);
   if (!q || !(await steering(config, q))) return false;
-  await queue.add(steerKey(q), q);
+  await queue.add(queueKey(q), q);
   return true;
+}
+
+async function queueSteer(app: GithubApp, queue: WorkQueue, q: Queued) {
+  const prior = await queue.add(queueKey(q), q);
+  if (q.role === 'implementer' && !prior) await comment(app, q, fixSteered).catch((err) => console.warn(`github: could not say on ${q.sessionKey} that /fix was steered: ${String(err)}`));
 }
 
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState, states: States, queue: WorkQueue) {
@@ -220,16 +225,17 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   if (recordState(states, event, hook)) return send(res, 200, { recorded: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run.
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
-  const moved = await steerImplementer(app, config, queue, event, hook, requestId);
+  // Best effort: a missed steer costs a hint, since deliver refuses a stale head anyway, while a throw here would fail the review below.
+  const moved = await steerImplementer(app, config, queue, event, hook, requestId).catch((err) => (console.warn(`github: could not check whether a person moved the branch: ${String(err)}`), false));
   const trigger = triggerFor(event, hook, config.label);
   const agent = trigger?.role === 'implementer' ? config.implementerAgent : config.agent;
-  if (!trigger || !agent) return send(res, moved ? 202 : 200, moved ? { queued: true } : { ignored: true });
+  if (!trigger || !agent) return moved ? send(res, 202, { queued: true }) : send(res, 200, { ignored: true });
   const queued = queuedOf(trigger, agent, requestId);
   const dropped = await dropReason(app, queued);
   if (dropped) return send(res, 200, { session: trigger.sessionKey, dropped });
   queued.meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
-  // The queue's sweep sends the steer, so pushes inside one poll interval coalesce into one for the newest head.
-  if (await steering(config, queued)) return (await queue.add(steerKey(queued), queued), send(res, 202, { session: trigger.sessionKey, queued: true }));
+  // The queue's sweep sends the steer: review pushes inside one poll interval coalesce into one for the newest head, and each /fix is said once.
+  if (queued.steer && (await steering(config, queued))) return (await queueSteer(app, queue, queued), send(res, 202, { session: trigger.sessionKey, queued: true }));
   const before = postedCount(state, queued);
   const upstream = await submit(config, queued);
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.

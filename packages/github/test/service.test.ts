@@ -8,9 +8,10 @@ import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../sr
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused } from '../src/notice.ts';
+import { fixQueued, fixRefused, fixSteered, noticeFor, reviewQueued, reviewRefused } from '../src/notice.ts';
 import { steerInput } from '../src/webhook.ts';
 import { sqliteWaiting } from '../src/waiting-store.ts';
+import type { GithubApp } from '../src/app.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -256,6 +257,7 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
   const { svc, url } = await fixService();
   try {
     busy = true;
+    runningAgent = 'reviewer';
     assert.equal(await postFix(url, 'd-q1'), 202);
     assert.equal(await postFix(url, 'd-q1'), 202, 'a redelivery');
     assert.deepEqual(commented, [fixQueued]);
@@ -265,6 +267,7 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
     assert.equal(invocations.length, 0, 'still mid-run, still waiting');
     assert.equal(metaReads(), before, 'retries reuse the stored opening-card data');
     busy = false;
+    runningAgent = undefined;
     await svc.sweep();
     await svc.sweep();
     assert.equal(invocations.length, 1, 'started once');
@@ -274,6 +277,7 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
     assert.equal(invocations[0].body.meta.id, 'abc123');
   } finally {
     busy = false;
+    runningAgent = undefined;
     svc.stop();
   }
 });
@@ -361,7 +365,7 @@ test('a push while the reviewer runs is sent as a steer; once that run ends with
     assert.equal(invocations.length, 0, 'no follow-up queued in the session');
     await svc.sweep();
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-st1/steer', 'steer'], ['github-delivery:d-st1/steer', 'steer']], 'a resend is the same steer');
+    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-st1/steer/reviewer', 'steer'], ['github-delivery:d-st1/steer/reviewer', 'steer']], 'a resend is the same steer');
     assert.equal(invocations[0].body.input, steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: 'def456' }));
     runningAgent = undefined;
     await svc.sweep();
@@ -419,7 +423,7 @@ test('two quick pushes while the reviewer runs make one steer for the newest hea
     assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st3', to: url }), 202);
     assert.equal(await deliver('pull_request', pushed('0ff1ce'), { id: 'd-st4', to: url }), 202);
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-st4/steer']);
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-st4/steer/reviewer']);
     assert.match(invocations[0].body.input, /head is now 0ff1ce/);
     assert.doesNotMatch(invocations[0].body.input, /def456/);
     undo = reviewedAt('0ff1ce');
@@ -438,17 +442,20 @@ test('a /fix while the implementer runs is sent as a steer, each instruction its
   const { svc, url } = await fixService();
   try {
     runningAgent = 'implementer';
+    commented.length = 0;
     assert.equal(await postFix(url, 'd-fs1'), 202);
+    assert.equal(await postFix(url, 'd-fs1'), 202, 'a redelivery');
     assert.equal(await deliver('issue_comment', { ...fixComment, comment: { ...fixComment.comment, body: '/fix and the lint error' } }, { id: 'd-fs2', to: url }), 202);
     assert.equal(await deliver('issue_comment', { ...fixComment, comment: { ...fixComment.comment, body: 'looks close' } }, { id: 'd-fs3', to: url }), 200);
     assert.equal(invocations.length, 0, 'no follow-up queued in the session');
     await svc.sweep();
     await svc.sweep();
     assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]).sort(), [
-      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs1/steer', 'steer'],
-      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs2/steer', 'steer'],
+      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs1/steer/implementer', 'steer'],
+      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs2/steer/implementer', 'steer'],
     ], 'one steer each, not resent');
-    assert.match(invocations.find((i) => i.body.requestId === 'github-delivery:d-fs1/steer')!.body.input, /^someone sent \/fix on pull request acme\/widgets#7 while you work\. Instruction: the cache test\n/);
+    assert.match(invocations.find((i) => i.body.requestId === 'github-delivery:d-fs1/steer/implementer')!.body.input, /^someone sent \/fix on pull request acme\/widgets#7\. Instruction: the cache test\nIf you are already changing it/);
+    assert.deepEqual(commented, [fixSteered, fixSteered], 'each /fix is answered once, a redelivery not again');
   } finally {
     runningAgent = undefined;
     svc.stop();
@@ -467,13 +474,62 @@ test("a person's pushes to the branch while the implementer runs make one steer 
     assert.equal(await deliver('pull_request', branchPush('b0b000', 'Quack-App[bot]'), { id: 'd-bm3', to: url }), 200, 'its own push');
     await svc.sweep();
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]), [['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-bm2/steer', 'steer']]);
-    assert.match(invocations[0].body.input, /^dev pushed to the branch of pull request acme\/widgets#7 while you work: it is now at 0ff1ce\. .*call checkout_task again/);
+    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]), [['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-bm2/steer/implementer', 'steer']]);
+    assert.match(invocations[0].body.input, /^dev pushed to the branch of pull request acme\/widgets#7: it is now at 0ff1ce\. .*call checkout_task again/);
     runningAgent = undefined;
     assert.equal(await deliver('pull_request', branchPush('c0ffee', 'dev'), { id: 'd-bm4', to: url }), 200);
     await svc.sweep();
     assert.equal(invocations.length, 1);
   } finally {
+    runningAgent = undefined;
+    svc.stop();
+  }
+});
+
+test("a person's push queued while the implementer ran starts nothing once it has stopped", async () => {
+  invocations.length = 0;
+  const store = sqliteWaiting(':memory:');
+  const { svc, url } = await fixService({ waiting: store });
+  try {
+    runningAgent = 'implementer';
+    assert.equal(await deliver('pull_request', branchPush('def456', 'dev'), { id: 'd-bm5', to: url }), 202);
+    runningAgent = undefined;
+    await svc.sweep();
+    assert.equal(invocations.length, 0);
+    assert.deepEqual(await store.list(), []);
+  } finally {
+    runningAgent = undefined;
+    svc.stop();
+  }
+});
+
+test("a GitHub fault while checking a push's pusher still starts the review the push asks for", async () => {
+  invocations.length = 0;
+  const down = { slug: async () => { throw new Error('GitHub 502'); }, asInstallation: async () => ({ status: 404, json: undefined, link: '' }) } as unknown as GithubApp;
+  const url = await listen(serveApp(createGithubService(down, { ...config, implementerAgent: 'implementer', queuePollMs: 3_600_000 })));
+  assert.equal(await deliver('pull_request', { ...pushed('def456'), sender: { login: 'dev' } }, { id: 'd-bm7', to: url }), 202);
+  assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId]), [['/sessions/github:acme/widgets#7/invocations?agent=reviewer', 'github-delivery:d-bm7']]);
+});
+
+test('a steer the session keeps refusing is given up on at the queue age limit', async (t) => {
+  invocations.length = 0;
+  const store = sqliteWaiting(':memory:');
+  const { svc, url } = await fixService({ waiting: store });
+  try {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    runningAgent = 'implementer';
+    assert.equal(await deliver('pull_request', branchPush('def456', 'dev'), { id: 'd-bm6', to: url }), 202);
+    busy = true;
+    busyStatus = 400;
+    await svc.sweep();
+    assert.equal((await store.list()).length, 1, 'refused, so it waits');
+    t.mock.timers.tick(6 * 3600_000);
+    await svc.sweep();
+    assert.deepEqual(await store.list(), []);
+    assert.equal(invocations.length, 0);
+  } finally {
+    busy = false;
+    busyStatus = 409;
     runningAgent = undefined;
     svc.stop();
   }
