@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
-import { artifactName, ledger, ledgerId } from './Artifacts.tsx';
-import { versionOf } from './delivered.ts';
+import { artifactName, ledgerId } from './Artifacts.tsx';
+import { delivered, versionOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
 import { compact, needId, spendLabel } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
@@ -39,15 +39,15 @@ const RECENT_VERSIONS = 3;
 function Versions({ items }: { items: SealedArtifact[] }) {
   const [all, setAll] = useState(false);
   const kind = items.reduce<SealedArtifact | undefined>((n, a) => (!n || a.sealedAt >= n.sealedAt ? a : n), undefined)?.kind;
-  const every = ledger(items).filter(({ a }) => a.kind === kind).reverse();
+  const every = delivered(items.filter((a) => a.kind === kind));
   if (!every.length) return null;
   const older = every.length - RECENT_VERSIONS;
   const rows = all ? every : every.slice(0, RECENT_VERSIONS);
   return (
     <section aria-labelledby="rail-versions">
       <h2 id="rail-versions" className={head}>Versions</h2>
-      <ul className="m-0 flex list-none flex-col gap-1 p-0">
-        {rows.map(({ a }) => (
+      <ul id="rail-version-list" className="m-0 flex list-none flex-col gap-1 p-0">
+        {rows.map((a) => (
           <li key={ledgerId(a)}>
             <button type="button" onClick={() => jump(ledgerId(a))} className={`${jumpBtn} flex-col gap-0.5`}>
               <span className="flex w-full items-center gap-2">
@@ -61,7 +61,7 @@ function Versions({ items }: { items: SealedArtifact[] }) {
         ))}
       </ul>
       {older > 0 && (
-        <button type="button" aria-expanded={all} onClick={() => setAll(!all)} className="mt-1 min-h-11 cursor-pointer border-0 bg-transparent px-0 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline lg:min-h-8">
+        <button type="button" aria-expanded={all} aria-controls="rail-version-list" onClick={() => setAll(!all)} className="mt-1 min-h-11 cursor-pointer border-0 bg-transparent px-0 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline lg:min-h-8">
           {all ? 'Show fewer versions' : `${older} older ${older === 1 ? 'version' : 'versions'}`}
         </button>
       )}

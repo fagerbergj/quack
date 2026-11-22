@@ -39,6 +39,24 @@ test('a long version history shows the latest three, newest first, and the rest 
   expect(screen.getByRole('button', { name: 'Show fewer versions' })).toHaveAttribute('aria-expanded', 'true');
 });
 
+test('a fourth version earns a singular disclosure that collapses again', async () => {
+  versionsOf(4);
+  const more = screen.getByRole('button', { name: '1 older version' });
+  expect(more).toHaveAttribute('aria-controls', 'rail-version-list');
+  await userEvent.click(more);
+  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(4);
+  await userEvent.click(screen.getByRole('button', { name: 'Show fewer versions' }));
+  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
+  expect(screen.getByRole('button', { name: '1 older version' })).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('a version sealed again counts once, by its newest seal', () => {
+  const again = { kind: 'review', version: 2, sealedAt: 2500, content: '', summary: '' } as never;
+  render(<RailBody sessionKey="ui:u1" title="t" view={{ items: [] } as never} meta={[]} items={[sealed(1), sealed(2), again, sealed(3), sealed(4)]} approvals={[]} questions={[]} />);
+  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
+  expect(screen.getByRole('button', { name: '1 older version' })).toBeInTheDocument();
+});
+
 test('three versions or fewer have no disclosure', () => {
   versionsOf(3);
   expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
