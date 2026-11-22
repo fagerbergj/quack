@@ -135,9 +135,11 @@ type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
 type Send = (i: string, w?: 'steer' | 'followUp', images?: Img[]) => Promise<boolean>;
 
 // The composer owns its draft, so a keystroke re-renders it alone, never the transcript.
-const Composer = memo(function Composer({ sessionKey, state, busy, send, queued, unqueue }: { sessionKey: string; state: SocketState; busy: boolean; send: Send; queued: Queued[]; unqueue: Unqueue }) {
+const Composer = memo(function Composer({ sessionKey, state, busy, send, queued, unqueue, onStop }: { sessionKey: string; state: SocketState; busy: boolean; send: Send; queued: Queued[]; unqueue: Unqueue; onStop: () => Promise<unknown> }) {
   const { input, setInput, attach } = useSeed(sessionKey, state, send);
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState('');
   const submit = async (e: SubmitEvent) => {
     e.preventDefault();
     if (sending || (!input.trim() && !attach.images.length)) return;
@@ -147,17 +149,30 @@ const Composer = memo(function Composer({ sessionKey, state, busy, send, queued,
     setSending(false);
   };
   const empty = !input.trim() && !attach.images.length;
+  const stop = async () => {
+    setStopping(true);
+    setStopError('');
+    try { await onStop(); } catch (e) { setStopError((e as Error).message); } finally { setStopping(false); }
+  };
+  const btn = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50';
   return (
     <>
       {queued.map((q) => <QueuedChip key={q.id} text={q.text} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
       <Pending attach={attach} />
+      {stopError && <p role="alert" className="pointer-events-auto m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2 text-[13px] text-danger">{stopError}</p>}
       <form onSubmit={submit} {...attach.handlers} className="focus-ring pointer-events-auto flex items-center gap-1 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-1 shadow-lift ring-1 ring-line-strong transition">
         <AttachButton attach={attach} />
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => composerKeyDown(e, setInput)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="field-grow max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
-        <button type="submit" disabled={state !== 'open' || empty || sending} aria-label="Send" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
-        </button>
+        {busy && empty ? (
+          <button type="button" onClick={stop} disabled={state !== 'open' || stopping} aria-busy={stopping} aria-label="Stop" title={queued.length ? 'Stop this run; queued messages still send' : 'Stop this run'} className={btn}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>
+          </button>
+        ) : (
+          <button type="submit" disabled={state !== 'open' || empty || sending} aria-label="Send" className={btn}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+          </button>
+        )}
       </form>
     </>
   );
@@ -428,7 +443,8 @@ const chatClass = (live: Live) => [live.paneOpen && 'lg:w-(--chat-w) lg:max-w-[c
 export function SessionView({ sessionKey, agent, name, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
   const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
-  const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
+  const stopRun = useCallback(() => abortRun(sessionKey), [sessionKey]);
+  const abort = () => stopRun().catch((e: Error) => setError(e.message));
   const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
@@ -471,7 +487,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
         <div className="pointer-events-none absolute inset-x-0 bottom-0 max-lg:group-has-[[data-answer]]/pane:hidden bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[860px] flex-col gap-2">
             <JumpToLatest away={bottom.away} onClick={bottom.jump} />
-            <Composer sessionKey={sessionKey} state={state} busy={live.busy} send={live.send} queued={queued} unqueue={unqueue} />
+            <Composer sessionKey={sessionKey} state={state} busy={live.busy} send={live.send} queued={queued} unqueue={unqueue} onStop={stopRun} />
           </div>
         </div>
       </div>

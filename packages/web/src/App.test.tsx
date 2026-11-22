@@ -2193,3 +2193,53 @@ test('a contract session reads its own title and its last run on its row, and th
   render(<App />);
   expect(await screen.findByRole('heading', { name: /Roster API/ })).toBeInTheDocument();
 });
+
+test('the composer shows Stop while a run is in progress with an empty input', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = { aborted: true };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  ws.frame(view({ run: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  ws.frame(view({}));
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+});
+
+test('typing during a run swaps Stop back to Send', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot());
+  ws.frame(view({ run: true }));
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hi');
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+});
+
+test('Stop with a message queued aborts the run and leaves the queue chip', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = { aborted: true };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  ws.frame(view({ run: true }));
+  ws.frame({ type: 'queued', items: [{ id: 's1', text: 'turn left' }] });
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  expect(stop).toHaveAttribute('title', 'Stop this run; queued messages still send');
+  await userEvent.click(stop);
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(screen.getByText('turn left')).toBeInTheDocument();
+});
+
+test('a failed composer stop is reported', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = new Fail(403, { title: 'Forbidden', detail: 'not allowed to stop this session' });
+  const ws = await openSession();
+  ws.frame(snapshot());
+  ws.frame(view({ run: true }));
+  const stop = screen.getByRole('button', { name: 'Stop' });
+  await userEvent.click(stop);
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('not allowed to stop this session');
+  expect(alert.parentElement).toContainElement(stop);
+  expect(stop).toBeEnabled();
+  expect(stop).toHaveAttribute('aria-busy', 'false');
+});
