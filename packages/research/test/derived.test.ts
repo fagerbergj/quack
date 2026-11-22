@@ -85,6 +85,36 @@ test('derived_inputs_traced: "0U" names a zero-U PDU, not a figure to trace', ()
   assert.equal(traced('Leave room for a vertical 0U PDU on a rail.', '- The cabinet has 4 rails. [s1]').met, 1);
 });
 
+test('derived_inputs_traced: arithmetic written in words traces from traced figures of its sentence or the one before; nothing else does', () => {
+  const findings = '- The SR24UBFFD has 743 mm of usable depth, 1,000 lb capacity and weighs 209 lb; Marketek sells it at $1,512.61 and the AR3104 at $2,200. [s1]';
+  const ok = traced('x', findings, '## Analysis\n- The 604 mm tower fits the 743 mm depth with ~140 mm margin.\n- Usable payload is ~790 lb (1,000 lb minus the 209 lb unit).\n- Marketek has it at $1,512.61 against the AR3104\'s $2,200.\n- The Tripp Lite is ~$687 cheaper.\n', 'My tower is 604 mm deep.');
+  assert.equal(ok.met, 7 / 9);
+  assert.match(ok.detail!, /^140 in .* cite no finding .*\. 604 in .* come from the request/, 'a result of the request\'s 604 is untraced too');
+  const assumed = (extra: string) => code('derived_inputs_traced', `## Summary\nx\n## Assumptions\n- The tower is 604 mm deep.\n## Findings\n${findings}\n## Analysis\n${extra}`);
+  assert.equal(assumed('- The 604 mm tower fits the 743 mm depth with ~140 mm margin.\n').met, 1);
+  assert.equal(assumed('- The tower fits.\n- Nothing else.\n- So it leaves ~140 mm.\n').met, 0, 'operands two sentences away do not reach');
+  assert.equal(assumed('- A 650 mm tower fits the 743 mm depth with ~93 mm margin.\n').met, 1 / 3, 'an untraced operand does not trace its result');
+});
+
+test('derived_inputs_traced: a number figures() cannot read in a finding still traces, but only at no more precision than shown', () => {
+  assert.equal(traced('Rails take devices up to 826 mm; CDW sells it at $1,401.99 and rents at $159.', '- Rails adjust for equipment 3 to 32.5 in (76–826 mm) deep. [s1]\n- CDW lists "$1,401.99" and "$159/month". [s1]').met, 1, 'a range end and quoted prices');
+  assert.equal(traced('A rack unit is 44.45 mm.', '- The shelf is 27–44 in deep. [s1]').met, 0, 'the 44 of a range is not the 44.45 of a constant');
+  assert.equal(traced('It shipped in 2024.', '- See [the guide](https://example.com/2024/tips) and https://example.com/2024 for rails. [s1]').met, 0, 'a link\'s path is no figure');
+  assert.equal(traced('Mounting height is ~1,067 mm.', '- 24U gives 1,066.8 mm. [s1]').met, 1, 'a rounder restatement traces');
+});
+
+test('derived_inputs_traced: a rack-unit conversion in words traces only when 1U = 44.45 mm is listed', () => {
+  const extra = '## Analysis\n- You need 42U (~1,867 mm) of mounting space.\n';
+  assert.equal(traced('x', '- A 42U enclosure is the next size up. [s1]', extra).met, 1 / 2);
+  assert.equal(code('derived_inputs_traced', `## Summary\nx\n## Assumptions\n- 1U = 44.45 mm (EIA-310).\n## Findings\n- A 42U enclosure is the next size up. [s1]\n${extra}`).met, 1);
+  const listed = (findings: string, extra: string) => code('derived_inputs_traced', `## Summary\nx\n## Assumptions\n- 1U = 44.45 mm (EIA-310).\n## Findings\n${findings}\n## Analysis\n${extra}`);
+  assert.equal(listed('- The cabinet is 24U; the AR3104 is 42.13 in deep. [s1]', '- Buy a 42U cabinet.\n').met, 0, 'a finding\'s 42.13 in is not a 42U');
+  assert.equal(listed('- The cabinet is 24U; the AR3104 is 42.13 in. [s1]', '- Buy a 42U cabinet.\n').met, 0, 'nor when its unit ends the sentence');
+  assert.equal(listed('- The rail is 743 mm and the tower 604 mm. [s1]', '- The 604 mm tower fits the 743 mm rail with ~140 mm to spare.\n- A shelf costs $140.\n').met, 3 / 4, 'a reached 140 mm keeps its unit, so it does not trace a $140');
+  assert.equal(listed('- The stack needs 1,260 mm; the tower is 566 mm. [s1]', '- Stacked, 1,260 mm and 566 mm need a 42U cabinet.\n').met, 2 / 3, 'a whole U summed from millimetres is chance, not arithmetic');
+  assert.equal(listed('- The cabinet is 24U; the towers stack to 1,226 mm. [s1]', '- The 1,226 mm stack is ~160 mm more than the 24U area.\n').met, 1, 'a sum in a finer unit converts its operands');
+});
+
 test('derivations: an operand may carry a label, and a traced sum of labelled operands traces its result', () => {
   assert.deepEqual(derivations('Your tower stack: Define 7 XL 566 mm + Define 5 ~460 mm + mATX ~200 mm = **~1,226 mm** for the three cases alone').map((d) => [d.inputs, d.shown, recomputes(d)]), [[['566', '460', '200'], '1226', true]]);
   const report = '## Summary\nx\n## Assumptions\n- The mATX case is about 200 mm tall.\n## Findings\n- The Define 7 XL is 566 mm tall and the Define 5 is 460 mm tall. [s1]\n## Analysis\n- Your tower stack: Define 7 XL 566 mm + Define 5 ~460 mm + mATX ~200 mm = ~1,226 mm.\n- The three cases need ~1,226 mm.\n';
