@@ -11,7 +11,8 @@
   "scripts": {
     "knip": "knip",
     "postinstall": "node tools/patch-liqe.ts",
-    "test": "node --test --import ./tools/leak-check.ts --test-timeout=30000 'packages/*/test/*.test.ts' 'tools/*.test.ts' && npm test -w @quack/web",
+    "test": "npm run test:node && npm test -w @quack/web",
+    "test:node": "node --test --import ./tools/leak-check.ts --test-timeout=30000 ${TEST_SHARD:+--test-shard=$TEST_SHARD} 'packages/*/test/*.test.ts' 'tools/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json && tsc -p packages/web/tsconfig.json",
     "sloplint": "node tools/sloplint.ts"
   },
