@@ -2193,3 +2193,33 @@ test('a contract session reads its own title and its last run on its row, and th
   render(<App />);
   expect(await screen.findByRole('heading', { name: /Roster API/ })).toBeInTheDocument();
 });
+
+test('the composer shows Stop while a run is in progress with an empty input', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = { aborted: true };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  ws.frame(view({ run: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
+  ws.frame(view({}));
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+});
+
+test('typing during a run swaps Stop back to Send', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot({ run: {} }));
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'hi');
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+});
+
+test('a failed composer stop is reported', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = new Fail(409, { title: 'Conflict', detail: 'refused by the server' });
+  const ws = await openSession();
+  ws.frame(snapshot({ run: {} }));
+  await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('refused by the server');
+});
