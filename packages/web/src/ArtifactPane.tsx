@@ -1,10 +1,11 @@
+import { useEffect, useState } from 'react';
 import type { SealedArtifact, Verdict } from './api.ts';
 import { artifactCard, artifactName } from './Artifacts.tsx';
 import { CheckResult } from './CheckResult.tsx';
 import { delivered, versionOf } from './delivered.ts';
 import { SessionKeyContext } from './extension.ts';
 import { Content } from './JsonView.tsx';
-import { Loaded } from './useContent.tsx';
+import { Loaded, useContent } from './useContent.tsx';
 import { FollowNewest, VersionMenu, type VersionItem } from './VersionMenu.tsx';
 
 /** The versions the pane offers and the one it shows: the focused artifact's kind, else the kind sealed last; the focused version, else the newest. */
@@ -16,13 +17,34 @@ export function paneVersions(items: SealedArtifact[], focus?: SealedArtifact): {
 }
 
 // Over REST a version has no verdict at all, so it gets no status; null means its checks are still running.
+const mark = (d: string) => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
 const statusOf = (v: Verdict | null | undefined): Pick<VersionItem, 'status' | 'badge'> => {
   if (v === undefined) return {};
-  if (v === null) return { status: 'checking', badge: { text: 'checking', cls: 'bg-soft text-muted' } };
-  return v.passed ? { status: 'passed', badge: { text: 'passed', cls: 'bg-success-bg text-success' } } : { status: "didn't pass", badge: { text: 'failed', cls: 'bg-danger-bg text-danger' } };
+  if (v === null) return { status: 'checking', badge: { text: 'Checking', cls: 'bg-line text-muted', icon: mark('M5 12h.01M12 12h.01M19 12h.01') } };
+  return v.passed ? { status: 'passed', badge: { text: 'Passed', cls: 'bg-success-bg text-success', icon: mark('M5 12.5l4.5 4.5L19 7.5') } } : { status: "didn't pass", badge: { text: 'Failed', cls: 'bg-danger-bg text-danger', icon: mark('M6 6l12 12M18 6L6 18') } };
 };
 const itemsOf = (versions: SealedArtifact[]): VersionItem[] =>
   versions.map((v) => ({ id: versionOf(v), short: `v${versionOf(v)}`, name: `Version ${versionOf(v)}`, ...statusOf(v.verdict) })).reverse();
+
+const iconButton = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-default disabled:opacity-40';
+
+/** Copies a version's raw content (Markdown for a report); the icon turns to a tick and a status says "Copied" for two seconds. */
+function CopyButton({ text }: { text?: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <>
+      <button type="button" aria-label="Copy" title={copied ? 'Copied' : 'Copy'} disabled={text === undefined} onClick={() => navigator.clipboard.writeText(text ?? '').then(() => setCopied(true), () => undefined)} className={iconButton}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{copied ? <path d="M5 12.5l4.5 4.5L19 7.5" /> : <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></>}</svg>
+      </button>
+      <span role="status" className="sr-only">{copied ? 'Copied' : ''}</span>
+    </>
+  );
+}
 
 function Body({ a, now }: { a: SealedArtifact; now?: { running: boolean; meta: readonly Record<string, unknown>[] } }) {
   return artifactCard(a, now) ?? (
@@ -39,14 +61,16 @@ export const paneLayout = 'mx-auto flex w-full max-w-[1100px] min-w-0 flex-col g
 export function ArtifactView({ sessionKey, versions, a, onPick, onFollow, onClose, now }: { sessionKey: string; versions: SealedArtifact[]; a: SealedArtifact; onPick: (v: SealedArtifact) => void; onFollow?: () => void; onClose?: () => void; now?: { running: boolean; meta: readonly Record<string, unknown>[] } }) {
   const pick = (n?: number) => { const v = versions.find((x) => versionOf(x) === n); if (v) onPick(v); };
   const closeLabel = `Close ${artifactName(a)}`;
+  const { content } = useContent(sessionKey, a);
   return (
     <div className={paneLayout}>
       <div className="flex items-center gap-1.5">
         <VersionMenu name="Version" items={itemsOf(versions)} value={versionOf(a)} onPick={pick} />
         <span className="flex-1" />
+        <CopyButton text={content} />
         {onFollow && <FollowNewest onClick={onFollow} />}
         {onClose && (
-          <button type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link">
+          <button type="button" aria-label={closeLabel} title={closeLabel} onClick={onClose} className={iconButton}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         )}

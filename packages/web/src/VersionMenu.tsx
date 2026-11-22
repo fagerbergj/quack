@@ -1,13 +1,16 @@
+import type { ReactNode } from 'react';
 import { useMenu } from './useMenu.ts';
 
 /** One version as the picker lists it: `short` on the button ("v2"), `name` in the menu, `status` in words and as a coloured badge, `note` muted in the menu only. */
-export type VersionItem = { id: number; short: string; name: string; status?: string; badge?: { text: string; cls: string }; note?: string };
+export type VersionItem = { id: number; short: string; name: string; status?: string; badge?: { text: string; cls: string; icon?: ReactNode }; note?: string };
 
 const item = 'flex min-h-11 w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 text-left text-[13px] text-ink hover:bg-soft aria-[current=true]:font-semibold lg:min-h-9';
 const chevron = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>;
 
 function Badge({ b }: { b?: VersionItem['badge'] }) {
-  return b ? <span aria-hidden="true" className={`rounded px-1.5 text-[10.5px] font-semibold tracking-wide whitespace-nowrap uppercase ${b.cls}`}>{b.text}</span> : null;
+  if (!b) return null;
+  const cls = `${b.cls} ${b.icon ? 'grid h-5 w-5 place-items-center rounded-full' : 'rounded px-1.5 text-[10.5px] font-semibold tracking-wide whitespace-nowrap uppercase'}`;
+  return <span aria-hidden="true" title={b.icon ? b.text : undefined} className={cls}>{b.icon ?? b.text}</span>;
 }
 
 const spoken = (v: VersionItem) => `${v.name}${v.status ? `, ${v.status}` : ''}`;
