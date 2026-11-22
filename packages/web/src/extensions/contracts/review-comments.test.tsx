@@ -176,8 +176,9 @@ test('a rejection reason carrying a review reads as its note and how many commen
   expect(reasonText('Plain words.')).toBe('Plain words.');
   routes[`GET /sessions/${KEY}/asks`] = { asks: [{ session: KEY, id: 'p/1', type: 'approval', state: 'resolved', createdAt: '2026-11-01T01:00:00.000Z', toolCall: { tool: 'propose_contract', args: { artifact: 2 } }, resolution: { by: ada, choice: 'reject', reason: REVIEW.reason } }] };
   open('changes_requested', [], []);
-  await waitFor(() => expect(bar()).toHaveTextContent('Changes asked for v2'));
-  expect(bar()).toHaveTextContent('Note. 1 comment');
+  // The title comes from the socket; the note comes from the asks fetch, which lands later.
+  await waitFor(() => expect(bar()).toHaveTextContent('Note. 1 comment'));
+  expect(bar()).toHaveTextContent('Changes asked for v2');
   expect(bar()).not.toHaveTextContent('quack-review');
   const { contracts } = await import('./index.ts');
   const { container } = render(<>{contracts.card!({ kind: 'contract.changes', version: 1, hash: 'h', content: JSON.stringify({ version: 2, note: REVIEW.reason }), sealedAt: 1, verdict: null })}</>);
