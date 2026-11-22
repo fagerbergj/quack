@@ -10,7 +10,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
-import { steerInput } from '../src/service.ts';
+import { steerInput } from '../src/webhook.ts';
 import { cleanup, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);

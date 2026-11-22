@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused } from '../src/notice.ts';
-import { steerInput } from '../src/service.ts';
+import { steerInput } from '../src/webhook.ts';
 import { sqliteWaiting } from '../src/waiting-store.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -332,7 +332,7 @@ test('a review that finds another agent in the session is queued, a newer push r
     runningAgent = 'implementer';
     busyDetail = 'session is mid-run as agent implementer; reviewer can start once it finishes';
     assert.equal(await deliver('pull_request', labeled, { id: 'd-rq1', to: url }), 202, 'handled, so never redelivered');
-    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-rq2', to: url }), 202);
+    assert.equal(await deliver('pull_request', { ...pushed('def456'), sender: { login: 'quack-app[bot]' } }, { id: 'd-rq2', to: url }), 202);
     assert.deepEqual(commented, [reviewQueued], 'said once, not once per push');
     await svc.sweep();
     assert.equal(invocations.length, 0);
@@ -428,6 +428,52 @@ test('two quick pushes while the reviewer runs make one steer for the newest hea
     assert.equal(invocations.length, 1, 'the steered run reviewed the head');
   } finally {
     undo();
+    runningAgent = undefined;
+    svc.stop();
+  }
+});
+
+test('a /fix while the implementer runs is sent as a steer, each instruction its own; a plain comment steers nothing', async () => {
+  invocations.length = 0;
+  const { svc, url } = await fixService();
+  try {
+    runningAgent = 'implementer';
+    assert.equal(await postFix(url, 'd-fs1'), 202);
+    assert.equal(await deliver('issue_comment', { ...fixComment, comment: { ...fixComment.comment, body: '/fix and the lint error' } }, { id: 'd-fs2', to: url }), 202);
+    assert.equal(await deliver('issue_comment', { ...fixComment, comment: { ...fixComment.comment, body: 'looks close' } }, { id: 'd-fs3', to: url }), 200);
+    assert.equal(invocations.length, 0, 'no follow-up queued in the session');
+    await svc.sweep();
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]).sort(), [
+      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs1/steer', 'steer'],
+      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs2/steer', 'steer'],
+    ], 'one steer each, not resent');
+    assert.match(invocations.find((i) => i.body.requestId === 'github-delivery:d-fs1/steer')!.body.input, /^someone sent \/fix on pull request acme\/widgets#7 while you work\. Instruction: the cache test\n/);
+  } finally {
+    runningAgent = undefined;
+    svc.stop();
+  }
+});
+
+const branchPush = (sha: string, login: string) => ({ ...pushed(sha), pull_request: { ...pushed(sha).pull_request, labels: [] }, sender: { login } });
+
+test("a person's pushes to the branch while the implementer runs make one steer for the newest head; its own push and an idle implementer make none", async () => {
+  invocations.length = 0;
+  const { svc, url } = await fixService();
+  try {
+    runningAgent = 'implementer';
+    assert.equal(await deliver('pull_request', branchPush('def456', 'dev'), { id: 'd-bm1', to: url }), 202);
+    assert.equal(await deliver('pull_request', branchPush('0ff1ce', 'dev'), { id: 'd-bm2', to: url }), 202);
+    assert.equal(await deliver('pull_request', branchPush('b0b000', 'Quack-App[bot]'), { id: 'd-bm3', to: url }), 200, 'its own push');
+    await svc.sweep();
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]), [['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-bm2/steer', 'steer']]);
+    assert.match(invocations[0].body.input, /^dev pushed to the branch of pull request acme\/widgets#7 while you work: it is now at 0ff1ce\. .*call checkout_task again/);
+    runningAgent = undefined;
+    assert.equal(await deliver('pull_request', branchPush('c0ffee', 'dev'), { id: 'd-bm4', to: url }), 200);
+    await svc.sweep();
+    assert.equal(invocations.length, 1);
+  } finally {
     runningAgent = undefined;
     svc.stop();
   }
