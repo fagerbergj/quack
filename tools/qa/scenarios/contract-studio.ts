@@ -34,7 +34,7 @@ const scenario: Scenario = {
       await page.keyboard.press('Escape');
       // The seeded break names `runs[].at`, so the changed field is marked as breaking a caller.
       const at = pane.locator('li[data-ptr$="/properties/at"]');
-      await visible(at.getByText('Breaks a caller', { exact: true }));
+      await visible(at.getByRole('img', { name: 'Breaks a caller' }));
       await at.scrollIntoViewIfNeeded();
       await ctx.shot(page, `studio-rest-changed-${label}`);
       if (label.startsWith('400')) {
