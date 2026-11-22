@@ -53,14 +53,25 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
   );
 }
 
-function Section({ name, rows, kind, selected, now }: { name: string; rows: Row[]; kind: Kind; selected?: string; now: number }) {
+// The Recent list is every session, so a plain view renders the newest few and expands in place; a search result is already narrowed.
+export const RECENT_CAP = 50;
+
+function Section({ name, rows, kind, selected, now, cap }: { name: string; rows: Row[]; kind: Kind; selected?: string; now: number; cap?: number }) {
+  const [all, setAll] = useState(false);
   if (!rows.length) return null;
+  const hidden = cap !== undefined && !all ? Math.max(0, rows.length - cap) : 0;
+  const visible = hidden ? rows.slice(0, cap) : rows;
   return (
     <section aria-label={name}>
       <p className="m-0 px-4 pt-[18px] pb-1.5 text-xs font-semibold tracking-[.06em] text-muted uppercase lg:px-4 lg:pt-3 lg:pb-1 lg:text-[11px]">{`${name} · ${rows.length}`}</p>
       <div className="flex flex-col gap-px">
-        {rows.map((r) => <RowLink key={r.key} r={r} kind={kind === 'needs' && r.failures.length ? 'failed' : kind} current={r.key === selected} now={now} />)}
+        {visible.map((r) => <RowLink key={r.key} r={r} kind={kind === 'needs' && r.failures.length ? 'failed' : kind} current={r.key === selected} now={now} />)}
       </div>
+      {cap !== undefined && rows.length > cap && (
+        <button type="button" aria-expanded={all} onClick={() => setAll(!all)} className="mx-2 mt-1 min-h-11 w-[calc(100%-1rem)] rounded-xl px-2 text-left text-[13px] text-muted hover:bg-soft/70">
+          {all ? 'Show fewer' : `Show ${hidden} more`}
+        </button>
+      )}
     </section>
   );
 }
@@ -96,7 +107,7 @@ export function SessionList({ rows, selected, error, now }: { rows: Row[] | unde
         {rows && rows.length > 0 && shown?.length === 0 && <p className="px-4 pt-3 text-[13px] text-muted">No sessions match.</p>}
         <Section name="Needs you" rows={g.needs} kind="needs" selected={selected} now={now} />
         <Section name="Running" rows={g.running} kind="running" selected={selected} now={now} />
-        <Section name="Recent" rows={g.recent} kind="recent" selected={selected} now={now} />
+        <Section name="Recent" rows={g.recent} kind="recent" selected={selected} now={now} cap={plain ? RECENT_CAP : undefined} />
       </div>
     </section>
   );
