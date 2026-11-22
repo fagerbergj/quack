@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
-import { conventions, findRecord, liveHead, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
+import { conventions, findRecord, liveHead, git, gitExit, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
 import { diffClaims, namedCode, sessionRuns, unbackedClaims } from './claims.ts';
 import { branchTaken, checkoutIssue, editPull, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
 import { renderFeedback } from './feedback.ts';
@@ -80,12 +80,14 @@ async function problems(r: Repo, from: string, onBranch: string, what = 'pull re
 
 // The PR text's claims about the diff that the commits since `from` contradict.
 async function contradicted(r: Repo, from: string, text: string) {
-  const changed = new Map((await out(r, 'diff', '--name-status', `${from}..HEAD`)).split('\n').filter(Boolean).map((l) => { const [s, ...p] = l.split('\t'); return [p.at(-1)!, s] as const; }));
+  // Without --no-renames a moved file is one R line, so "new `b`" or "removed `a`" would read as false.
+  const changed = new Map((await out(r, 'diff', '--name-status', '--no-renames', `${from}..HEAD`)).split('\n').filter(Boolean).map((l) => { const [s, ...p] = l.split('\t'); return [p.at(-1)!, s] as const; }));
   const paths = [...new Set([...(await out(r, 'ls-tree', '-r', '--name-only', from)).split('\n'), ...(await out(r, 'ls-tree', '-r', '--name-only', 'HEAD')).split('\n')])];
   const names = namedCode(text);
-  // git grep exits 1 with no output when nothing matches; any other failure still throws.
-  const hits = names.length ? await out(r, 'grep', '-o', '-h', '-F', '-w', ...names.flatMap((n) => ['-e', n]), 'HEAD', from).catch((e: Error) => { if (e.message.endsWith('failed: ')) return ''; throw e; }) : '';
-  return diffClaims(text, { changed, paths }, new Set(hits.split('\n')));
+  const grep = names.length ? await gitExit(r.api, ['-C', r.dir, 'grep', '-o', '-h', '-F', '-w', ...names.flatMap((n) => ['-e', n]), 'HEAD', from], r.config, r.remote, r.ctx) : { code: 1, output: '' };
+  // grep exits 1 when nothing matches; any other outcome means the lookup did not happen, so no name is judged.
+  const found = grep.code === 0 || grep.code === 1 ? new Set(grep.output.split('\n')) : undefined;
+  return diffClaims(text, { changed, paths }, found);
 }
 
 // Runs once the approver said yes: the push goes out only if the remote head is still the one checked out.

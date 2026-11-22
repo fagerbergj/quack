@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { diffClaims, namedCode } from '../src/claims.ts';
 
@@ -38,8 +39,43 @@ test('a docs-only or no-Go claim fails on a diff that breaks it, and holds on on
   ]);
 });
 
-test('fenced blocks, commands, commit ids and plain words are not names', () => {
-  const text = 'Added `npm test`, `deadbeef1`, `done` and `pass-only`.\n\n```\nAdded `src/ghost.ts` and `ghostFn`\n```\n';
+test('fenced blocks, commands, commit ids, plain words and bare file names are not names', () => {
+  const text = 'Added `npm test`, `deadbeef1`, `done`, `pass-only` and `knip.json`.\n\n```\nAdded `src/ghost.ts` and `ghostFn`\n```\n';
   assert.deepEqual(namedCode(text), []);
   assert.deepEqual(diffClaims(text, d, new Set()), []);
+});
+
+test('a root file such as a Makefile is a file in the tree, not a code name to grep for', () => {
+  assert.deepEqual(diffClaims('Added a `Makefile` target.', facts({ Makefile: 'A' }, []), new Set()), []);
+});
+
+test('a name cited in a sentence that adds nothing is not checked, even beside one that does', () => {
+  assert.deepEqual(diffClaims('- Added the panel; it renders `TaskGraphView` from the plugin.', d, new Set()), []);
+});
+
+test('a quoted phrase is a mention, not a claim', () => {
+  const text = 'The gate refuses a body that says "docs-only" while touching code, or "New `src/app.ts`" for a modified file.';
+  assert.deepEqual(diffClaims(text, d, new Set()), []);
+});
+
+test('docs-only allows doc assets under docs/', () => {
+  assert.deepEqual(diffClaims('Docs-only change.', facts({ 'docs/api.md': 'M', 'docs/diagram.svg': 'A' }, []), new Set()), []);
+});
+
+test('without a name lookup no code name is judged, and paths still are', () => {
+  assert.deepEqual(diffClaims('Added `parseLimit()` in `src/apps.ts`.', d, undefined), ['artifacts/pr.md names `src/apps.ts`, which is in neither the diff nor the repository']);
+});
+
+type Case = { id: string; base?: string; text?: string; find?: string; replace?: string; append?: string; falseClaims: string[]; changed: Record<string, string>; paths: string[]; found: string[]; flags: string[] };
+const CORPUS = JSON.parse(readFileSync(new URL('../../../test-fixtures/claims/corpus.json', import.meta.url), 'utf8')) as Case[];
+
+// Real PR bodies, labelled by hand against their diffs, plus marked edits of them; each keeps the tree facts its spans reach.
+test('the labelled corpus: no flag where every claim is true, and each recorded catch still fires', () => {
+  const texts = new Map(CORPUS.map((c) => [c.id, c.text]));
+  for (const c of CORPUS) {
+    const base = texts.get(c.base ?? c.id)!;
+    const text = c.text ?? (c.append ? `${base}\n\n${c.append}` : base.replace(c.find!, c.replace!));
+    const flags = diffClaims(text, { changed: new Map(Object.entries(c.changed)), paths: c.paths }, new Set(c.found));
+    assert.deepEqual(flags, c.falseClaims.length ? c.flags : [], c.id);
+  }
 });

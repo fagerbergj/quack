@@ -30,16 +30,20 @@ export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?:
 const ASKPASS = fileURLToPath(new URL('./askpass.mjs', import.meta.url));
 const CONVENTIONS = ['AGENTS.md', 'CLAUDE.md'];
 
-async function run(api: ToolExecutionApi, label: string, argv: string[], config: SessionConfig, remote: string, ctx: Context) {
+/** A git run with its exit code, which is undefined when the command could not run at all. */
+export async function gitExit(api: ToolExecutionApi, args: string[], config: SessionConfig, remote: string, ctx: Context) {
   let output = '';
   // The service secret reaches only this git child; credential helpers are off so nothing is stored.
   const env = { GIT_ASKPASS: ASKPASS, GIT_TERMINAL_PROMPT: '0', QUACK_GITHUB_URL: config.serviceUrl, QUACK_GITHUB_TOKEN: config.serviceToken, QUACK_GH_REMOTE: remote };
-  const result = await api.env!.exec(argv, { env, onOutput: (t) => { output += t; } }, ctx);
-  if (!result.ok || result.value.exitCode !== 0) throw new Error(`git ${label} failed: ${output.slice(-500)}`);
-  return output;
+  const result = await api.env!.exec(['git', '-c', 'credential.helper=', ...args], { env, onOutput: (t) => { output += t; } }, ctx);
+  return { code: result.ok ? result.value.exitCode : undefined, output };
 }
 
-export const git = (api: ToolExecutionApi, args: string[], config: SessionConfig, remote: string, ctx: Context) => run(api, args[0], ['git', '-c', 'credential.helper=', ...args], config, remote, ctx);
+export async function git(api: ToolExecutionApi, args: string[], config: SessionConfig, remote: string, ctx: Context) {
+  const { code, output } = await gitExit(api, args, config, remote, ctx);
+  if (code !== 0) throw new Error(`git ${args[0]} failed: ${output.slice(-500)}`);
+  return output;
+}
 
 export const remoteFor = (config: SessionConfig, owner: string, repo: string) => `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
 

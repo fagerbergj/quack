@@ -60,10 +60,13 @@ const PATH = /^[\w@.-]+(\/[\w@.-]+)*(\/|\.[A-Za-z]{1,5})$/;
 const CODE = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 const proseFree = (text: string) => text.replace(/^```[\s\S]*?^```/gm, '');
 
-// A span names a path when it has a slash and ends in an extension or a slash; a code name when it reads as camelCase, snake_case, Capitalized, dotted or called.
+const FILE = /\.(?:json|jsonc|ya?ml|toml|mdx?|tsx?|[cm]?js|go|mod|sum|py|sh|lock|txt|css|html|svg|png)$/i;
+
+// A span names a path when it has a slash and ends in an extension or a slash; a code name when it reads as camelCase, snake_case, Capitalized, dotted or called. A bare file name is neither.
 function nameOf(span: string): { path?: string; code?: string } {
   const s = span.replace(/:\d+(-\d+)?$/, '').replace(/^\.\//, '');
   if (s.includes('/')) return PATH.test(s) ? { path: s } : {};
+  if (FILE.test(s)) return {};
   const bare = s.replace(/\(\)$/, '');
   if (!CODE.test(bare) || SHA.test(bare)) return {};
   const last = bare.split('.').at(-1)!;
@@ -85,11 +88,14 @@ const SAYS: { re: RegExp; ok: (statuses: string[]) => boolean; claim: string }[]
 
 // A "no", "not" or "never" earlier in the clause, outside backticks, flips what a phrase claims, so the phrase is skipped.
 const negated = (text: string, at: number) => /\b(?:no|not|never)\b|n't\b/i.test(text.slice(0, at).replace(/`[^`\n]*`/g, '').split(/[.;:!?\n]/).at(-1)!);
+// A phrase after an odd number of double quotes on its line is quoted: the text mentions the phrase rather than claiming it.
+const quoted = (text: string, at: number) => (text.slice(text.lastIndexOf('\n', at - 1) + 1, at).replace(/`[^`]*`/g, '').match(/["“”]/g)?.length ?? 0) % 2 === 1;
+const claims = (text: string, at: number) => !negated(text, at) && !quoted(text, at);
 
 function pathClaims(text: string, d: DiffFacts) {
   return SAYS.flatMap(({ re, ok, claim }) => [...text.matchAll(re)].flatMap((m) => {
     const path = nameOf(m[1] ?? m[2]).path;
-    if (!path || !matches(d.paths, path).length || negated(text, m.index)) return [];
+    if (!path || !matches(d.paths, path).length || !claims(text, m.index)) return [];
     return ok(matches(d.changed.keys(), path).map((f) => d.changed.get(f)![0])) ? [] : [`${PR} says \`${path}\` ${claim}`];
   }));
 }
@@ -98,11 +104,12 @@ const LANGS: Record<string, RegExp> = { go: /\.go$/, typescript: /\.tsx?$/, java
 
 function scopeClaims(text: string, changed: string[]) {
   const found: string[] = [];
-  const notDocs = changed.find((f) => !/\.md$/.test(f));
-  const docsOnly = [...text.matchAll(/\b(?:docs?|documentation)-only\b/gi)].some((m) => !negated(text, m.index));
+  const notDocs = changed.find((f) => !/\.(?:mdx?|rst|txt)$/.test(f) && !f.startsWith('docs/'));
+  const docsOnly = [...text.matchAll(/\b(?:docs?|documentation)-only\b/gi)].some((m) => claims(text, m.index));
   if (notDocs && docsOnly) found.push(`${PR} says the change is docs-only, but the diff touches ${notDocs}`);
   // Only an unqualified "no Go changes" that ends its clause; "no Go changes outside X" is a narrower claim.
   for (const m of text.matchAll(/\bno (go|typescript|javascript|python)(?: code)? changes?(?=\s*(?:[.,;:)]|$))/gim)) {
+    if (!claims(text, m.index)) continue;
     const hit = changed.find((f) => LANGS[m[1].toLowerCase()].test(f));
     if (hit) found.push(`${PR} says there are no ${m[1]} changes, but the diff touches ${hit}`);
   }
@@ -111,18 +118,20 @@ function scopeClaims(text: string, changed: string[]) {
 
 const CUE = /\b(?:add(?:s|ed|ing)?|new|introduc(?:e|es|ed|ing)|renam(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|exports?|exported|remov(?:e|es|ed|ing)|delet(?:e|es|ed|ing)|drop(?:s|ped)?)\b/i;
 
-// A path counts only under one of the repo's top directories, and a code name only in a paragraph or list item that says something was added or removed, so another repo's files, workspace files and dependency APIs cited as context are not flagged.
-function ghosts(body: string, d: DiffFacts, found: Set<string>) {
+// A path counts only under one of the repo's top directories, and a code name only in a sentence that says something was added or removed, so another repo's files, workspace files and dependency APIs cited as context are not flagged.
+function ghosts(body: string, d: DiffFacts, found: Set<string> | undefined) {
   const roots = new Set(d.paths.filter((p) => p.includes('/')).map((p) => p.split('/')[0]));
-  return [...new Set(body.split(/\n\s*\n|\n(?=\s*(?:[-*+]|\d+\.)\s)/).flatMap((block) => spans(block).flatMap((s) => {
+  const files = new Set(d.paths.map((p) => p.split('/').at(-1)!));
+  const sentences = body.split(/\n\s*\n|\n(?=\s*(?:[-*+]|\d+\.)\s)|(?<=[.!?;])\s+/);
+  return [...new Set(sentences.flatMap((sentence) => spans(sentence).flatMap((s) => {
     const { path, code } = nameOf(s.code);
     if (path) return roots.has(path.split('/')[0]) && !matches(d.paths, path).length ? [path] : [];
-    return code && CUE.test(block) && !found.has(code) ? [code] : [];
+    return code && found && !files.has(s.code) && CUE.test(sentence) && !found.has(code) ? [code] : [];
   })))];
 }
 
-/** Each claim about the diff that the diff contradicts: a named path, or a code name said to be added or removed, that exists nowhere, a file said to be new, deleted, changed or unchanged that is not, and a docs-only or no-Go scope the diff breaks. `found` holds the code names a search of the base and HEAD trees found. */
-export function diffClaims(text: string, d: DiffFacts, found: Set<string>): string[] {
+/** Each claim about the diff that the diff contradicts: a named path, or a code name said to be added or removed, that exists nowhere, a file said to be new, deleted, changed or unchanged that is not, and a docs-only or no-Go scope the diff breaks. `found` holds the code names a search of the base and HEAD trees found, or is undefined when the search did not run, which leaves names unjudged. */
+export function diffClaims(text: string, d: DiffFacts, found: Set<string> | undefined): string[] {
   const body = proseFree(text);
   const missing = ghosts(body, d, found).map((g) => `${PR} names \`${g}\`, which is in neither the diff nor the repository`);
   return [...missing, ...pathClaims(body, d), ...scopeClaims(body, [...d.changed.keys()])];
