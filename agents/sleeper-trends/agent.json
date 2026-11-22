@@ -1,8 +1,7 @@
 {
   "name": "sleeper-trends",
-  "version": 6,
+  "version": 7,
   "status": "draft",
-  "model": "local/qwen3.8-flash-next",
   "prompt": "prompt.md",
   "extensions": {
     "judge": {

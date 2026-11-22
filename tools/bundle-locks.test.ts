@@ -10,3 +10,7 @@ test('every agent bundle matches its version.lock; changing content needs a vers
     assert.equal(committed, lock, `${dir} changed without a version bump: raise "version" in agent.json, then run node tools/bundle-locks.ts`);
   }
 });
+
+test('no shipped bundle names a model: the deployment\'s defaultModel is the operator\'s choice', async () => {
+  for (const { dir } of await bundleLocks()) assert.equal(JSON.parse(await readFile(join(dir, 'agent.json'), 'utf8')).model, undefined, `${dir}/agent.json names a model`);
+});
