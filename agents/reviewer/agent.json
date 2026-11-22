@@ -1,8 +1,8 @@
 {
   "name": "reviewer",
-  "version": 15,
+  "version": 16,
   "status": "promoted",
-  "model": "local/qwen3.8-27b",
+  "model": "local/qwen3.8-flash-next",
   "prompt": "prompt.md",
   "extensions": {
     "judge": {

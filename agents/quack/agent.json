@@ -1,8 +1,8 @@
 {
   "name": "quack",
-  "version": 2,
+  "version": 3,
   "status": "draft",
-  "model": "local/qwen3.8-27b",
+  "model": "local/qwen3.8-flash-next",
   "prompt": "prompt.md",
   "extensions": {
     "home": {},
