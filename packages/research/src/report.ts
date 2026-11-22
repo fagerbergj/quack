@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type SelectorDecl, type SplitDecl } from '@quack/judge';
 import type { ArtifactKind, RecordedSession, SealedArtifact } from '@quack/sdk';
-import { derivations, figures, figuresClash, namesClash, numberWords, recomputes, sameValue, type Figure } from './claims.ts';
+import { bareNumbers, derivations, figures, figuresClash, measureOf, namesClash, numberWords, RACK_UNIT, reached, recomputes, restates, sameValue, type Figure } from './claims.ts';
 import { sourcePath, SourcesDoc, type SourceRecord } from './tools.ts';
 
 const CITATION = /\[(s\d+)\]/g;
@@ -408,20 +408,30 @@ function derivedArithmetic(artifact: string): CodeResult {
   return { met: all.length ? (all.length - wrong.length) / all.length : 1, detail: wrong.length ? wrong.map((d) => `"${d.text.trim()}" shows ${d.shown}; its inputs give ${shownAt(d)}`).join('; ') : undefined };
 }
 
+type Known = { value: string; unit?: string };
+/** What a derived figure may trace to: each figure of a cited finding or of Assumptions, with its unit, and each number they show that
+ *  figures() cannot read ("76–826 mm", a quoted "$1,401.99"), with none; a unit keeps a finding's 42.13 in from tracing a 42U. */
+function tracedInputs(cited: string[], assumed: string): Known[] {
+  const texts = [...cited, assumed];
+  const unread = texts.flatMap((t) => bareNumbers(t).filter((v) => !figures(t).some((f) => f.value === v)));
+  return [...texts.flatMap(figures).map((f) => ({ value: f.value, unit: measureOf(f) })), ...[...unread, ...cited.flatMap(numberWords)].map((value) => ({ value }))];
+}
+
 /** Every figure outside Findings and Assumptions is a figure of a cited finding, one Assumptions lists, or one the report recomputes from those.
  *  A finding is any cited sentence of the Findings section, so a finding written as a paragraph counts as one written as a bullet. */
 function derivedInputsTraced(artifact: string, ev: Evidence): CodeResult {
   const cited = [...findingItems(artifact).map((f) => f.text), ...statements(artifact).filter((s) => s.section === 'findings').map((s) => s.text)].filter((t) => citedIds(t).length);
-  const known = [...[...cited.flatMap(figures), ...figures(sectionBody(artifact, ['assumptions']))].map((f) => f.value), ...cited.flatMap(numberWords)];
-  const traced = (v: string) => known.some((k) => sameValue(k, v));
-  const stated = derivedStatements(artifact);
+  const known = tracedInputs(cited, sectionBody(artifact, ['assumptions']));
+  const traced = (v: string, unit?: string) => known.some((k) => restates(v, k.value) && !(unit && k.unit && unit !== k.unit));
+  const stated = placed(artifact).filter(derivedSection);
   const derived = stated.flatMap((s) => derivations(s.text));
   // A result whose inputs trace traces too, so a later sentence may restate it; a second pass reaches results built on results.
-  for (const d of [...derived, ...derived]) if (recomputes(d) && d.inputs.every(traced)) known.push(d.shown);
+  for (const d of [...derived, ...derived]) if (recomputes(d) && d.inputs.every((v) => traced(v))) known.push({ value: d.shown });
+  for (const s of [...stated, ...stated]) known.push(...reached(s.text, s.before ?? '', traced, traced(RACK_UNIT)).map((value) => ({ value })));
   // "0U" names a mounting style (a zero-U PDU rides the rails), not a quantity taken from anywhere.
   const zeroU = (f: Figure) => Number(f.value) === 0 && (f.unit.has('u') || f.unit.has('ru'));
-  const all = stated.flatMap((s) => figures(s.text).filter((f) => !zeroU(f)).map((f) => ({ value: f.value, at: s.text })));
-  const loose = all.filter((f) => !traced(f.value));
+  const all = stated.flatMap((s) => figures(s.text).filter((f) => !zeroU(f)).map((f) => ({ value: f.value, unit: measureOf(f), at: s.text })));
+  const loose = all.filter((f) => !traced(f.value, f.unit));
   // The owner's rule counts a figure from the request as untraced too; it is named apart so a reader can tell the two kinds of gap.
   const asked = figures(String(ev.request?.[0]?.state.request ?? '')).map((f) => f.value);
   const fromRequest = loose.filter((f) => asked.some((v) => sameValue(v, f.value)));
