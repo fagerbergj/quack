@@ -3,9 +3,23 @@ import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 
 // One process owns one session, so these are module state. They are how session-half extensions
 // see each other: a gate that waits on a person tells a resource gate (capacity) the run is not generating.
-let note: string | null = null;
-/** A short status the session reports through /ping (for example "Waiting for model capacity (2 ahead)"); null clears it. */
-export const statusNote = { get: () => note, set: (text: string | null) => void (note = text) };
+
+/** A session queued for a slot on its model endpoint (a provider id): when it began waiting (epoch ms) and how many are ahead of it. */
+export type ModelWait = { since: number; ahead: number; provider: string };
+let wait: ModelWait | null = null;
+const waitListeners = new Set<(w: ModelWait | null) => void>();
+/** The session's wait for a model slot (the capacity extension sets it); null when it is not queued. */
+export const modelWait = {
+  get: () => wait,
+  set(w: ModelWait | null) {
+    wait = w;
+    waitListeners.forEach((l) => l(w));
+  },
+  subscribe(listener: (w: ModelWait | null) => void): () => void {
+    waitListeners.add(listener);
+    return () => void waitListeners.delete(listener);
+  },
+};
 
 let waiting = 0;
 const listeners = new Set<(waiting: number) => void>();

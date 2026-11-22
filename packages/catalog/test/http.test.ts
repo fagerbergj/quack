@@ -12,7 +12,7 @@ const T0 = Date.parse('2026-11-01T00:00:00Z');
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-const deps = { refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
+const deps = { waits: {} as Record<string, { since: number; ahead: number; provider: string }>, refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
 let base = '';
 let catalog: ReturnType<typeof createCatalog>;
 
@@ -20,13 +20,14 @@ const ev = (seq: number, type: string, data: unknown, id = `${type}:${seq}`) => 
 
 // Each test gets its own catalog: several write to it (rename, resolve, delete).
 beforeEach(async () => {
-  Object.assign(deps, { refuse: undefined, answered: [], sessionSays: true });
+  Object.assign(deps, { waits: {}, refuse: undefined, answered: [], sessionSays: true });
   const dir = await mkdtemp(join(tmpdir(), 'quack-sessions-api-'));
   const store = sqliteCatalog(join(dir, 'c.sqlite'), { currency: 'USD' });
   let n = 0;
   catalog = createCatalog({ store, journal: fileJournal(join(dir, 'journal')), now: () => T0 + 99_000, newId: () => `r${++n}`, log: () => {} });
   const api: SessionsApiDeps = {
     deleteSession: async () => (deps.refuse ? { refused: deps.refuse } : 'deleted'),
+    waiting: (key) => deps.waits[key],
     answer: async (_key, _ask, r) => { deps.answered.push(r); return deps.sessionSays; },
   };
   const route = sessionsApi(catalog, api);
@@ -73,6 +74,13 @@ test('the session list is one keyset page of v8 rows: Money as a decimal string,
   assert.deepEqual((league.body.sessions as Array<{ key: string }>).map((r) => r.key).sort(), ['sleeper:platinum:1', 'sleeper:platinum:2']);
   const exact = await call('GET', `/sessions?q=${encodeURIComponent('cost.amountMicros:9007199254740993')}`);
   assert.deepEqual((exact.body.sessions as Array<{ key: string }>).map((r) => r.key), ['sleeper:platinum:2']);
+});
+
+test('a running session queued for a model slot carries its wait; an idle one never does', async () => {
+  deps.waits = { 'review:monorepo': { since: 5, ahead: 1, provider: 'local' }, 'sleeper:platinum:1': { since: 5, ahead: 0, provider: 'local' } };
+  const list = (await call('GET', '/sessions')).body.sessions as Array<{ key: string; waiting?: unknown }>;
+  assert.deepEqual(list.map((r) => [r.key, r.waiting]).sort(), [['review:monorepo', { since: 5, ahead: 1, provider: 'local' }], ['sleeper:platinum:1', undefined], ['sleeper:platinum:2', undefined]]);
+  assert.deepEqual((await call('GET', '/sessions/review:monorepo')).body.waiting, { since: 5, ahead: 1, provider: 'local' });
 });
 
 test('a bad q, pageSize, orderBy or pageToken is a 400 problem', async () => {

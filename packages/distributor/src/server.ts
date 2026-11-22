@@ -5,7 +5,7 @@ import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { SESSION_KEY, sessionsApi, type Caller, type Catalog } from '@quack/catalog';
-import { principalName, safeDecode, safeEqual, sendProblem, serviceHttp, type Principal, type Withdrawal } from '@quack/sdk';
+import { principalName, safeDecode, safeEqual, sendProblem, serviceHttp, type ModelWait, type Principal, type Withdrawal } from '@quack/sdk';
 import { PRINCIPAL_HEADER, principalHeader, unrefTimer, type SetTimer } from '@quack/session';
 import { sessionToken } from './credentials.ts';
 import { AgentError, type HostDriver } from './process-driver.ts';
@@ -142,7 +142,7 @@ type SessionAuth = { sessionOf(token: string): string | undefined; crossSession(
 // The Sessions API's caller: the catalog's Principal names a person by id, the session's by name.
 const callerOf = (who: Principal): Caller => (who.kind === 'person' ? { kind: 'person', id: who.name } : who);
 
-type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
+type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; waiting?: ModelWait | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
 export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; /** Routes beside the sessions': web push, mounted apps, the credential broker. */ routes?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; /** The proxy's secret: an identity header counts only beside it in PROXY_PROOF, and without one it never does. */ proxySecret?: string; /** Who a launch credential on the session listener belongs to, whether that session may reach others, and the lifecycle channel it reports on. */ sessions?: SessionAuth; /** The session catalog the Sessions API serves. */ catalog?: Catalog; /** Peers the public listener drops at connect, such as session containers' network. */ refuse?: (address: string | undefined) => boolean; now?: () => number; setTimer?: SetTimer } = {}) {
@@ -159,7 +159,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const serving = new Map<string, number>();
   // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
   const active = new Map<string, boolean>();
-  const notes = new Map<string, string>();
+  // Each running session's wait for a model slot as of its last sweep, overlaid on its Sessions API row.
+  const waits = new Map<string, ModelWait>();
   const wakeTimers = new Map<string, () => void>();
   // Sessions whose busy marker (a wake time of "now") is on disk; written by the sweep so a crash still restarts them.
   const marked = new Set<string>();
@@ -228,7 +229,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
   async function stopSession(key: string, at: number | undefined) {
     active.delete(key);
-    notes.delete(key);
+    waits.delete(key);
     marked.delete(key);
     wakeFailures.delete(key);
     const stop = driver.stop(key).finally(() => stopping.delete(key));
@@ -258,8 +259,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   async function sweepOnce() {
     for (const key of driver.running()) {
       try {
-        const { status, wake, waitingOnHuman, note } = await ping(key);
-        notes.set(key, note ?? '');
+        const { status, wake, waitingOnHuman, waiting } = await ping(key);
+        if (waiting) waits.set(key, waiting);
+        else waits.delete(key);
         active.set(key, status === 'HealthyBusy' || Boolean(waitingOnHuman));
         await mark(key, status === 'HealthyBusy', wake?.at);
         if (!idle(key)) continue;
@@ -408,7 +410,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     if (!(await driver.remove(key))) return 'absent';
     arm(key, undefined);
     active.delete(key);
-    notes.delete(key);
+    waits.delete(key);
     console.log(`session ${key} deleted`);
     return 'deleted';
   }
@@ -440,7 +442,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     });
     return out;
   }
-  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer });
+  const api = opts.catalog && sessionsApi(opts.catalog, { deleteSession: removeSession, answer, waiting: (key) => waits.get(key) });
 
   // A submission naming another agent changes the session's role if no run is active; an open run, a pending approval or a sleep is still a run.
   // shortcut: a busy session is refused (409) rather than queued as the next run; queue it if callers need follow-ups across roles.

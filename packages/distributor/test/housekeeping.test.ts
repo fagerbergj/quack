@@ -13,7 +13,7 @@ const cleanups: Array<() => void> = [];
 after(() => cleanups.forEach((fn) => fn()));
 
 // A real driver over a temp data dir; `busy` names a session whose process answers /ping mid-run.
-async function start(opts: { busy?: string; waiting?: string[] } = {}) {
+async function start(opts: { busy?: string; waiting?: string[]; ping?: object } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-house-'));
   cleanups.push(() => void rm(dataDir, { recursive: true, force: true }));
   for (const key of ['idle', 'busy', 'asking']) {
@@ -21,7 +21,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
     await writeFile(join(dataDir, sessionDirName(key), 'session-key'), key);
     await writeFile(join(dataDir, sessionDirName(key), 'agent'), '');
   }
-  const upstream = createServer((req, res) => res.end(JSON.stringify(req.url === '/export' ? { transcript: [], artifacts: [] } : { status: 'HealthyBusy' }))).listen(0);
+  const upstream = createServer((req, res) => res.end(JSON.stringify(req.url === '/export' ? { transcript: [], artifacts: [] } : opts.ping ?? { status: 'HealthyBusy' }))).listen(0);
   cleanups.push(() => upstream.close());
   const real = processDriver({ command: [], dataDir });
   const driver: HostDriver = { ...real, running: () => (opts.busy ? [opts.busy] : []), ensure: async () => `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, setWake: async () => {} };
@@ -44,7 +44,7 @@ async function start(opts: { busy?: string; waiting?: string[] } = {}) {
     const res = await fetch(url(path), { method, headers: { ...PERSON, ...headers }, ...(method !== 'GET' && { body: JSON.stringify(body) }) });
     return { status: res.status, type: res.headers.get('content-type'), body: (await res.json()) as { error?: string; detail?: string; title?: string; status?: number; state?: string } };
   };
-  const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; state: string }> }).sessions;
+  const listed = async () => ((await (await fetch(url('/sessions'))).json()) as { sessions: Array<{ key: string; title?: string; state: string; waiting?: { since: number; ahead: number; provider: string } }> }).sessions;
   return { url, call, listed, catalog, dataDir, sweep: () => server.sweep() };
 }
 
@@ -55,6 +55,14 @@ test('the public listener serves the Sessions API from the catalog: rename, arch
   assert.equal((await call('PATCH', '/sessions/idle', { state: 'archived' })).body.state, 'archived');
   assert.equal((await call('PATCH', '/sessions/idle', { state: 'stopped' })).body.state, 'stopped');
   assert.equal((await call('PATCH', '/sessions/idle', { archived: true })).status, 200, 'v1 archived is no longer a field; the write changes nothing');
+});
+
+test('a running session whose process reports a wait for a model slot carries it on its row after the next sweep', async () => {
+  const { listed, sweep } = await start({ busy: 'busy', ping: { status: 'HealthyBusy', waiting: { since: 5, ahead: 2, provider: 'local' } } });
+  assert.equal((await listed()).find((s) => s.key === 'busy')?.waiting, undefined);
+  await sweep();
+  assert.deepEqual((await listed()).find((s) => s.key === 'busy')?.waiting, { since: 5, ahead: 2, provider: 'local' });
+  assert.equal((await listed()).find((s) => s.key === 'idle')?.waiting, undefined);
 });
 
 test('archive is refused for a running session, and the title stays as it was', async () => {

@@ -6,11 +6,13 @@ export type Spend = { cost: number; tokens: Tokens };
 /** Money as the Sessions API sends it: millionths of the unit as a decimal string. */
 export type Money = { currencyCode: string; amountMicros: string };
 export type Failure = { step: string; error: string };
+/** A running session queued for a model slot: when it began waiting (epoch ms) and how many are ahead. */
+export type ModelWait = { since: number; ahead: number; provider: string };
 export type SessionState = 'running' | 'idle' | 'stopped' | 'archived';
 /** A session row of the catalog; dates are RFC 3339. */
 export type Session = {
   key: string; agent: string; title?: string; state: SessionState; createdAt: string; lastActivity: string; cost: Money; tokens: Tokens;
-  pendingAsks: number; oldestAskAt?: string; lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Failure[] };
+  pendingAsks: number; oldestAskAt?: string; waiting?: ModelWait; lastRun?: { outcome: 'succeeded' | 'denied' | 'failed' | 'aborted'; endedAt: string; failedSteps: Failure[] };
 };
 export const spendOf = (s: Pick<Session, 'cost' | 'tokens'>): Spend => ({ cost: Number(s.cost.amountMicros) / 1e6, tokens: s.tokens });
 export type AgentSummary = { name: string; version: number; status: 'draft' | 'promoted'; model?: string; description?: string };

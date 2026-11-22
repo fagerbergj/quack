@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
-import { gateGenerations, inProcessFetch, inSessionSlot, observeGeneration, onRunEnded, primeSessionEndpoint, runEnded, whileWaiting } from '@quack/sdk';
+import { gateGenerations, inProcessFetch, inSessionSlot, observeGeneration, onRunEnded, primeSessionEndpoint, runEnded, whileWaiting, type ModelWait } from '@quack/sdk';
 import { agentSpec, openSession, startLifecycleSender } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
@@ -27,9 +27,9 @@ const direct = (t: LeaseLedger): LeaseClient => ({
   release: async (e, h) => void t.release(e, h),
 });
 
-const notes: Record<string, string | null> = {};
+const notes: Record<string, ModelWait | null> = {};
 function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void } = {}) {
-  return new CapacityGate({ client, holder, clock, setNote: (n) => void (notes[holder] = n), ...extra });
+  return new CapacityGate({ client, holder, clock, setWait: (w) => void (notes[holder] = w), ...extra });
 }
 function begin(g: CapacityGate) {
   const state = { granted: false };
@@ -45,7 +45,7 @@ test('seven concurrent runs on capacity 6: six hold leases, the seventh waits an
   const states = gates.map(begin);
   await clock.settle();
   assert.deepEqual(states.map((s) => s.granted), [true, true, true, true, true, true, false]);
-  assert.equal(notes.s6, 'Waiting for model capacity (0 ahead)');
+  assert.deepEqual(notes.s6, { since: clock.now(), ahead: 0, provider: 'swap' });
   gates[0].end();
   await gates[0].release();
   await clock.advance(1000);
@@ -62,7 +62,7 @@ test('waiters are served first in, first out', async () => {
   await clock.advance(10);
   const sc = begin(c);
   await clock.settle();
-  assert.equal(notes.c, 'Waiting for model capacity (1 ahead)');
+  assert.deepEqual(notes.c, { since: clock.now(), ahead: 1, provider: 'swap' });
   await a.release();
   await clock.advance(1000);
   assert.deepEqual([sb.granted, sc.granted], [true, false]);
@@ -237,6 +237,26 @@ test('a waiter does not displace a holder after eleven minutes, and gets the slo
   assert.deepEqual([waiter.granted, heldBy()], [true, ['w']]);
 });
 
+test('a queued run reports when it began waiting and how many are ahead, and clears it when granted or cancelled', async () => {
+  fresh(1);
+  const [a, b, c] = ['a', 'b', 'c'].map((h) => gate(h));
+  begin(a);
+  begin(b);
+  const ac = new AbortController();
+  void c.begin('swap', ac.signal).catch(() => {});
+  await clock.settle();
+  const queuedAt = clock.now();
+  await clock.advance(3000);
+  assert.deepEqual(notes.b, { since: queuedAt, ahead: 0, provider: 'swap' });
+  assert.deepEqual(notes.c, { since: queuedAt, ahead: 1, provider: 'swap' });
+  ac.abort();
+  await clock.advance(1000);
+  assert.equal(notes.c, null, 'a cancelled wait no longer reports');
+  await a.release();
+  await clock.advance(1000);
+  assert.equal(notes.b, null);
+});
+
 test('parallel calls in one session take one lease each and queue past the capacity', async () => {
   fresh(2);
   const g = gate('s');
@@ -245,7 +265,7 @@ test('parallel calls in one session take one lease each and queue past the capac
   await clock.settle();
   assert.deepEqual(calls.map((c) => c.granted), [true, true, false]);
   assert.deepEqual(heldBy().sort(), ['s', 's#1']);
-  assert.equal(notes.s, 'Waiting for model capacity (0 ahead)');
+  assert.deepEqual(notes.s, { since: clock.now(), ahead: 0, provider: 'swap' });
   g.end(tokens[0]);
   await clock.advance(1000);
   assert.equal(calls[2].granted, true, 'the call that ended hands its lease to the queued one of the same run');
@@ -390,6 +410,30 @@ test('a completion inside inSessionSlot reaches the gate as shared, and one outs
   await inSessionSlot(() => observeGeneration({ provider: 'x', messages: [] }, reply));
   off();
   assert.deepEqual(seen.slice(-2), [false, true]);
+});
+
+test('with several calls queued on different providers, the report is the oldest wait whole: its since, ahead and provider', async () => {
+  table = new LeaseLedger({ dbPath: ':memory:', capacity: { x: 1, y: 1 }, ttlMs: TTL, now: clock.now });
+  open.push(table);
+  await gate('hx').begin('x');
+  await gate('hy').begin('y');
+  void gate('rival').begin('x').catch(() => {});
+  await clock.settle();
+  const g = gate('s');
+  const ac = new AbortController();
+  void g.begin('x', ac.signal).catch(() => {});
+  await clock.settle();
+  const oldest = clock.now();
+  await clock.advance(1000);
+  void g.begin('y').catch(() => {});
+  await clock.settle();
+  const later = clock.now();
+  await clock.advance(1000);
+  // The x call is oldest with one ahead; the later y call has none ahead, and must not lower the report.
+  assert.deepEqual(notes.s, { since: oldest, ahead: 1, provider: 'x' });
+  ac.abort();
+  await clock.advance(1000);
+  assert.deepEqual(notes.s, { since: later, ahead: 0, provider: 'y' });
 });
 
 test('calls finishing out of order free their own lease, not the newest one', async () => {
