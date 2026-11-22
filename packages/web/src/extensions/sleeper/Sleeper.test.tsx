@@ -5,6 +5,7 @@ import type { Session } from '../../api.ts';
 import { rowOf } from '../../sessions.ts';
 import { sess } from '../../test-harness.ts';
 import { Sleeper } from './Sleeper.tsx';
+import { addsOf } from './shapes.tsx';
 import digest7 from './fixtures/7-digest.json';
 import retro7 from './fixtures/7-retro.json';
 import history8 from './fixtures/8-history.json';
@@ -56,15 +57,17 @@ test('a card shows as soon as its own read lands, while a slow session is still 
   expect(screen.queryByRole('article', { name: 'League history' })).toBeNull();
 });
 
-test('the current week is one scroll: the lineup, then each job\'s latest result with Open', async () => {
+test('the current week is one scroll: the lineup, then each job\'s latest result, each header a closed toggle', async () => {
   page();
   expect(await screen.findByRole('heading', { name: 'Week 9' })).toBeInTheDocument();
-  expect(await screen.findByText('Substation Supremacy')).toBeInTheDocument();
+  expect(await within(screen.getByRole('banner')).findByText('Substation Supremacy')).toBeInTheDocument();
   expect(await screen.findByText('Running now')).toBeInTheDocument();
   for (const name of ['Week 8 waivers', 'Week 8 trade finder', 'Week 8 trends', 'Week 7 recap', 'Week 7 retro', 'League history']) {
-    expect(await screen.findByRole('article', { name })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: `Open ${name}` })).toBeInTheDocument();
+    const article = within(await screen.findByRole('article', { name }));
+    expect(article.getByRole('heading', { level: 2 })).toContainElement(article.getByRole('button', { expanded: false }));
   }
+  expect(screen.queryByRole('button', { name: /^Open\b/ })).toBeNull();
+  expect(screen.queryByText(/Open ›/)).toBeNull();
   expect(screen.getByRole('button', { name: 'Later week' })).toBeDisabled();
   expect(document.body).not.toHaveTextContent(/\bcard\b|\bv\d+\b|version|sleeper\.cards|Waiver claims/i);
 });
@@ -81,7 +84,7 @@ test("the current week's lineup shows the live card and when it locks", async ()
 
 test('waivers open to ranked claims, who to drop, why and the news', async () => {
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open Week 8 waivers' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Week 8 waivers' }));
   const w = await card('Week 8 waivers');
   expect(w.getByText('+ Pat Freiermuth')).toBeInTheDocument();
   expect(w.getAllByText(/− Jordyn Tyson/).length).toBeGreaterThan(0);
@@ -92,18 +95,96 @@ test('waivers open to ranked claims, who to drop, why and the news', async () =>
   expect(w.getByRole('link', { name: 'Ask about this' })).toHaveAttribute('href', `#/s/${encodeURIComponent(key(8, 'waivers'))}`);
 });
 
-test('trades with no deal says so in the short card and when opened', async () => {
+test('a trade finder with no deal is one quiet line that still opens', async () => {
   page();
   const t = await card('Week 8 trade finder');
+  expect(t.getByRole('button', { name: 'Trade finder', expanded: false })).toBeInTheDocument();
   expect(t.getByText('No deals: no partner has a surplus player this team needs.')).toBeInTheDocument();
-  expect(t.getByText('No deal this week')).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Open Week 8 trade finder' }));
-  expect(t.getByRole('button', { name: 'Close Week 8 trade finder' })).toBeInTheDocument();
+  expect(t.queryByRole('list')).toBeNull();
+  await userEvent.click(t.getByRole('button', { name: 'Trade finder' }));
+  expect(t.getByRole('button', { name: 'Week 8 trade finder', expanded: true })).toBeInTheDocument();
+  expect(t.getByRole('link', { name: 'Ask about this' })).toBeInTheDocument();
+});
+
+test('the header is the toggle: it names the card, says whether it is open, and opens the full view', async () => {
+  page();
+  const w = await card('Week 8 waivers');
+  const head = w.getByRole('button', { name: 'Week 8 waivers' });
+  expect(head).toHaveAttribute('aria-expanded', 'false');
+  expect(w.queryByRole('link', { name: 'Ask about this' })).toBeNull();
+  await userEvent.click(head);
+  expect(head).toHaveAttribute('aria-expanded', 'true');
+  expect(w.getByText(/Rolling · priority 8 of 10/)).toBeInTheDocument();
+  expect(w.getByRole('link', { name: 'Ask about this' })).toBeInTheDocument();
+  await userEvent.click(head);
+  expect(head).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('each job closes to its own shape', async () => {
+  page();
+  const w = await card('Week 8 waivers');
+  expect(w.getByText('Priority 8 of 10')).toBeInTheDocument();
+  expect(w.getByText('+ Pat Freiermuth')).toBeInTheDocument();
+  expect(w.getByText('9.2')).toHaveTextContent('9.2proj');
+  expect(w.getByText(/− Jordyn Tyson/)).toHaveTextContent('− Jordyn Tyson WR · IR');
+  expect(w.getByText('Rostered in 42% of leagues')).toBeInTheDocument();
+  expect(w.getByText('52 more players checked')).toBeInTheDocument();
+  const t = await card('Week 8 trends');
+  expect(t.getByText('Lamar Jackson').closest('li')).toHaveTextContent('↓Lamar JacksonQBOut');
+  expect(t.getByText('James Cook III').closest('li')).toHaveTextContent('?James Cook IIIRBQuestionable');
+  expect(t.getByText('Rising on waivers · adds')).toBeInTheDocument();
+  expect(t.getByText('Devin Singletary').closest('li')).toHaveTextContent('Devin Singletary RB563k adds');
+  const r = await card('Week 7 retro');
+  expect(r.getByText('WON')).toBeInTheDocument();
+  expect(r.getByRole('img', { name: 'Scored 140.28 of a best possible 165.08; 24.8 left on the bench' })).toBeInTheDocument();
+  expect(r.getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+    '+23Tampa Bay Buccaneers over New England Patriotswaiver · not knowable',
+    '+17.7Jameson Williams over Justin Jeffersonlineup · not knowable',
+    '+14.8KC Concepcion Jr. over Justin Jeffersonwaiver · not knowable',
+  ]);
+  const h = await card('League history');
+  expect(h.getByText('5 seasons')).toBeInTheDocument();
+  expect(h.getAllByRole('img', { name: /week by week/ })).toHaveLength(5);
+  expect(h.getByRole('img', { name: '2026 week by week: L L L W L W W' })).toBeInTheDocument();
+});
+
+test('a recap closes to its scoreline, other games and the standings with the playoff line', async () => {
+  page();
+  const r = await card('Week 7 recap');
+  expect(r.getByText('7 weeks to the playoffs')).toBeInTheDocument();
+  expect(r.queryByText(/projected/)).toBeNull();
+  expect(r.getByText('Other games')).toBeInTheDocument();
+  const ladder = within(r.getByRole('list', { name: 'Standings' }));
+  const line = ladder.getByRole('separator', { name: 'Playoff line' });
+  expect(line.previousElementSibling).toHaveTextContent('6Achane Magic3-4');
+  expect(line.nextElementSibling).toHaveTextContent(/^7I Think/);
+  expect(ladder.getAllByRole('listitem').find((li) => li.getAttribute('aria-current'))).toHaveTextContent('5Substation Supremacy3-4');
+});
+
+test('a preview labels every number as projected and puts your team first', async () => {
+  SEALED['7:digest'] = { ...digest7, content: JSON.stringify({ ...JSON.parse(digest7.content), past: false }) };
+  try {
+    page();
+    const p = await card('Week 7 preview');
+    expect(p.getAllByText('projected')).toHaveLength(2);
+    expect(p.getByText('Other games · projected')).toBeInTheDocument();
+    expect(p.getAllByText(/^\d+\.\d\d$/)[0]).toHaveTextContent('140.28');
+    expect(p.getAllByText(/^\d+\.\d\d$/)[0]!.previousElementSibling).toHaveTextContent('Substation Supremacy');
+  } finally {
+    SEALED['7:digest'] = digest7;
+  }
+});
+
+test('waiver adds are read from the trend text only when it states them', () => {
+  expect(addsOf('Justice Hill leads with 134,316 adds in 24h')).toBe(134316);
+  expect(addsOf('6130 Devin Singletary leads free-agent adds with 563K in 24h, held by no team')).toBe(563000);
+  expect(addsOf('Adonai Mitchell surges with 434K adds')).toBe(434000);
+  expect(addsOf('Tyler Allgeier is a likely play on 13287 Jeremiyah Love’s ankle')).toBeUndefined();
 });
 
 test('trends group by kind, name the player and carry no player id', async () => {
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open Week 8 trends' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Week 8 trends' }));
   const t = await card('Week 8 trends');
   expect(t.getByText('Injuries')).toBeInTheDocument();
   expect(t.getByText('Rising on waivers')).toBeInTheDocument();
@@ -113,15 +194,9 @@ test('trends group by kind, name the player and carry no player id', async () =>
   expect(t.getByText('Source notes')).toBeInTheDocument();
 });
 
-test('the short recap previews your game first, then the biggest margin', async () => {
-  page();
-  const r = await card('Week 7 recap');
-  expect(r.getByText('I Think I’’m Gonna Puka 99.68 · Substation Supremacy 140.28')).toBeInTheDocument();
-});
-
 test('the recap opens to every game and the standings with the playoff line', async () => {
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open Week 7 recap' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Week 7 recap' }));
   const r = await card('Week 7 recap');
   expect(r.getByText('140.28')).toBeInTheDocument();
   expect(r.getAllByText('Rice Cooker').length).toBeGreaterThan(0);
@@ -131,7 +206,7 @@ test('the recap opens to every game and the standings with the playoff line', as
 
 test('the retro opens to figures, lineup and waiver misses and lessons', async () => {
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open Week 7 retro' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Week 7 retro' }));
   const r = await card('Week 7 retro');
   expect(r.getByText('scored · won')).toBeInTheDocument();
   expect(r.getByText('165.08')).toBeInTheDocument();
@@ -143,7 +218,7 @@ test('the retro opens to figures, lineup and waiver misses and lessons', async (
 
 test('league history opens to every season with its record and draft', async () => {
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open League history' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'League history' }));
   const h = await card('League history');
   expect(h.getByText('In progress')).toBeInTheDocument();
   expect(h.getByText('2025')).toBeInTheDocument();
@@ -170,7 +245,7 @@ test('the week stepper goes back, and a past week shows only results that exist'
   expect(screen.getByRole('button', { name: 'Earlier week' })).toBeDisabled();
 });
 
-test('a past week leads with how it ended, then its own results, each with Open', async () => {
+test('a past week leads with how it ended, then its own results, each a closed toggle', async () => {
   page();
   await userEvent.click(await screen.findByRole('button', { name: 'Earlier week' }));
   await userEvent.click(screen.getByRole('button', { name: 'Earlier week' }));
@@ -179,7 +254,7 @@ test('a past week leads with how it ended, then its own results, each with Open'
   expect(result).toHaveTextContent('140.28 to 99.68');
   expect(result).toHaveTextContent('Left 24.8 on the bench (best lineup 165.08)');
   expect(screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'))).toEqual(['Week 7 recap', 'Week 7 retro']);
-  await userEvent.click(screen.getByRole('button', { name: 'Open Week 7 retro' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Week 7 retro' }));
   expect(await screen.findByText('Lessons')).toBeInTheDocument();
 });
 
@@ -291,7 +366,7 @@ test('a past week rows say what each result is, not just the week again', async 
 
 test('results read from the Sessions API carry no verdict: no tick, no failed-checks line, no minor notes', async () => {
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open Week 8 trends' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Week 8 trends' }));
   await card('Week 8 trends');
   expect(screen.queryAllByRole('img', { name: 'Double-checked' })).toEqual([]);
   expect(screen.queryByText("Didn't pass its checks")).toBeNull();
@@ -319,7 +394,7 @@ test('trend prose keeps years but loses player ids', async () => {
   t.items[0].text = '4881 Lamar Jackson is out; the 2026 draft class has no 5000 yard rushers and Brees is headed to the 2026 Pro Bowl.';
   SEALED['8:trends'] = { ...trends8, content: JSON.stringify(t) };
   page();
-  await userEvent.click(await screen.findByRole('button', { name: 'Open Week 8 trends' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Week 8 trends' }));
   const card = await screen.findByRole('article', { name: 'Week 8 trends' });
   expect(card).toHaveTextContent('the 2026 draft class has no 5000 yard rushers and Brees is headed to the 2026 Pro Bowl');
   expect(card).not.toHaveTextContent('4881');
