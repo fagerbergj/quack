@@ -35,7 +35,13 @@ export function onRunEnded(listener: () => void): () => void {
   return () => void runEndListeners.delete(listener);
 }
 /** Called by the session's lifecycle sender when a run ends. */
-export const runEnded = () => runEndListeners.forEach((l) => l());
+export const runEnded = () => runEndListeners.forEach((l) => {
+  try {
+    l();
+  } catch {
+    // Listeners are best effort: one must not cost the run its run.ended record.
+  }
+});
 
 /** `provider` names the model endpoint a gate may need to hold capacity on; `signal` lets that wait be cancelled. */
 export type GenerationRequest = { systemPrompt?: string; messages: Message[]; provider?: string; signal?: AbortSignal };

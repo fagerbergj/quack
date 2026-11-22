@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
-import { gateGenerations, inProcessFetch, inSessionSlot, observeGeneration, primeSessionEndpoint, whileWaiting } from '@quack/sdk';
+import { gateGenerations, inProcessFetch, inSessionSlot, observeGeneration, onRunEnded, primeSessionEndpoint, runEnded, whileWaiting } from '@quack/sdk';
 import { agentSpec, openSession, startLifecycleSender } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
@@ -221,7 +221,7 @@ test('a parent run waiting on six child runs with capacity 6 does not deadlock',
   assert.equal(heldBy().includes('parent'), false);
 });
 
-test('a waiter does not displace a holder after ten minutes, and gets the slot when the holder\'s run ends', async () => {
+test('a waiter does not displace a holder after eleven minutes, and gets the slot when the holder\'s run ends', async () => {
   fresh(1);
   const g = gate('long');
   await g.begin('swap');
@@ -295,6 +295,91 @@ test('while a judge round rides the session\'s lease, a parallel call that is no
   assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
   assert.equal(child.granted, false);
   assert.deepEqual(table.endpoints()[0].waiting, ['s#1']);
+});
+
+test('a non-judge call ending mid-round leaves the lease the round rides held until its last ride ends', async () => {
+  fresh(2);
+  table.acquire('swap', 'o1');
+  table.acquire('swap', 'o2');
+  const g = gate('s');
+  const child = g.begin('swap');
+  await clock.settle();
+  const round = [g.begin('swap', undefined, true), g.begin('swap', undefined, true)];
+  await clock.settle();
+  assert.deepEqual(table.endpoints()[0].waiting, ['s', 's#1'], 'the child queued first, then the round took its own');
+  table.release('swap', 'o1');
+  await clock.advance(1000);
+  table.release('swap', 'o2');
+  await clock.advance(1000);
+  const [first, second] = await Promise.all(round);
+  g.end(first);
+  g.end(await child);
+  assert.deepEqual(heldBy().sort(), ['s', 's#1'], 'one ride is still running under s#1');
+  g.end(second);
+  await clock.settle();
+  assert.deepEqual(heldBy(), ['s']);
+});
+
+test('a lease a judge round rides is not reused by a non-judge call, which queues for its own', async () => {
+  fresh(1);
+  const g = gate('s');
+  const own = await g.begin('swap');
+  const round = judgeRound(g);
+  await clock.settle();
+  g.end(own);
+  const child = begin(g);
+  await clock.advance(2000);
+  assert.deepEqual([round.every((c) => c.granted), child.granted], [true, false]);
+  assert.deepEqual(table.endpoints()[0].waiting, ['s#1']);
+});
+
+test('a lease released while its holder name is reused reaches the service before the new acquire', async () => {
+  fresh(2);
+  let finishRelease!: () => void;
+  const base = direct(table);
+  const deferred = new Promise<void>((r) => (finishRelease = r));
+  const g = gate('s', { ...base, release: async (e, h) => { await deferred; await base.release(e, h); } });
+  const a = await g.begin('swap');
+  const b = await g.begin('swap');
+  g.end(a);
+  g.end(b);
+  await g.begin('swap');
+  const next = { granted: false };
+  void g.begin('swap').then(() => (next.granted = true));
+  await clock.settle();
+  assert.equal(next.granted, false, 'the acquire of s#1 waits for its release');
+  finishRelease();
+  await clock.settle();
+  assert.equal(next.granted, true);
+  assert.deepEqual(heldBy().sort(), ['s', 's#1']);
+});
+
+test('a call granted after the run ended gives its orphan slot back and leaves no open call', async () => {
+  fresh(1);
+  table.acquire('swap', 'o');
+  const g = gate('s');
+  const queued = g.begin('swap');
+  await clock.advance(10);
+  await g.release();
+  table.release('swap', 'o');
+  await clock.advance(1000);
+  assert.equal((await queued).lease, undefined);
+  assert.deepEqual(heldBy(), []);
+  await g.begin('swap');
+  g.end();
+  await g.idle();
+  assert.deepEqual(heldBy(), [], 'no phantom call keeps idle() from releasing');
+});
+
+test('a throwing run-end listener does not stop the others', () => {
+  let heard = 0;
+  const offs = [onRunEnded(() => { throw new Error('listener'); }), onRunEnded(() => void heard++)];
+  try {
+    assert.doesNotThrow(() => runEnded());
+  } finally {
+    offs.forEach((off) => off());
+  }
+  assert.equal(heard, 1);
 });
 
 test('a completion inside inSessionSlot reaches the gate as shared, and one outside does not', async () => {
