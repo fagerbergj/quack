@@ -43,11 +43,13 @@ function open(artifacts: SealedArtifact[], approvals: object[] = []) {
   return { ws, pane: contract() };
 }
 const bar = () => screen.getByRole('region', { name: 'Approval' });
-const side = (name: 'from' | 'to') => screen.getByRole('button', { name: new RegExp(`^Compare ${name} version: `) });
-// The versions a side's menu offers, read by opening it and closing it again.
-async function offered(name: 'from' | 'to') {
-  await userEvent.click(side(name));
-  const items = within(screen.getByRole('menu', { name: `Compare ${name} version` })).getAllByRole('menuitem').map((i) => i.textContent);
+// The shown version's button, and the "since" chip naming what it is compared with.
+const shown = () => within(contract()).getByRole('button', { name: /^Version: / });
+const chip = () => within(contract()).queryByRole('button', { name: /^Compare with: / });
+// What the version menu offers, by each item's spoken name, read by opening it and closing it again.
+async function offered() {
+  await userEvent.click(shown());
+  const items = within(screen.getByRole('menu', { name: 'Version' })).getAllByRole('menuitem').map((i) => i.getAttribute('aria-label') ?? i.textContent);
   await userEvent.keyboard('{Escape}');
   return items;
 }
@@ -132,8 +134,9 @@ test('until the status answers, nothing is compared and no version carries a sta
   const { pane } = open([spec(1, v1), approvedRec(1, 1), spec(2, v2)]);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`apps/contracts/contracts/${KEY}`));
   expect(within(pane).queryByRole('region', { name: /^Changes/ })).toBeNull();
-  expect(side('from')).toHaveAccessibleName('Compare from version: None: the whole contract');
-  expect(await offered('from')).toEqual(['None: the whole contract', 'Version 2', 'Version 1']);
+  expect(chip()).toBeNull();
+  expect(shown()).toHaveAccessibleName('Version: v2');
+  expect(await offered()).toEqual(['v2', 'v1', 'Compare with…']);
   expect(line()).toHaveTextContent('Reading where v2 stands…');
 });
 
@@ -217,8 +220,8 @@ test.each(BREAK_NAMES.map((c) => [c.case, c] as const))("a checker break counts 
 test('a request for an older seal than the newest says it is out of date and offers no approval', async () => {
   routes[STATUS] = status([1, 'approved'], [2, 'proposed'], [3, 'draft']);
   open([spec(1, v1), approvedRec(1, 1), spec(2, v2), spec(3, v2, null)], [proposal(2, 2)]);
-  expect(await within(bar()).findByText('The approval request for v2 draft 1 is out of date: the agent has since written v2 draft 2.')).toBeInTheDocument();
-  expect(line()).toHaveTextContent('Checking v2 draft 2');
+  expect(await within(bar()).findByText('The approval request for v2 is out of date: the agent has since rewritten v2.')).toBeInTheDocument();
+  expect(line()).toHaveTextContent('Checking v2');
   expect(bar()).toHaveTextContent('Nothing waits on you yet · v1 is approved');
   expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
   expect(within(bar()).queryByRole('button', { name: 'Ask for changes' })).toBeNull();
@@ -227,13 +230,13 @@ test('a request for an older seal than the newest says it is out of date and off
 test('with two requests out of date, the line names the newer and counts them', async () => {
   routes[STATUS] = status([1, 'approved'], [2, 'proposed'], [3, 'proposed'], [4, 'draft']);
   open([spec(1, v1), approvedRec(1, 1), spec(2, v2), spec(3, v2), spec(4, v2, null)], [proposal(2, 2), { ...proposal(3, 2), id: 'p/2' }]);
-  expect(await within(bar()).findByText('2 approval requests are out of date, the newest for v2 draft 2: the agent has since written v2 draft 3.')).toBeInTheDocument();
+  expect(await within(bar()).findByText('2 approval requests are out of date, the newest for v2: the agent has since rewritten v2.')).toBeInTheDocument();
 });
 
 test('each sealed draft replaces the shown one live: approved and idle, then checking, then failed, each with its reason', async () => {
   routes[STATUS] = status([1, 'approved']);
   const { ws } = open([spec(1, v1), approvedRec(1, 1)]);
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 1, approved'));
+  await waitFor(() => expect(shown()).toHaveAccessibleName('Version: v1, approved'));
   expect(line()).toHaveTextContent('v1 is approved');
   expect(bar()).toHaveTextContent('Nothing in progress · nothing waits on you');
   expect(within(contract()).queryByRole('region', { name: /^Changes/ }), 'nothing is compared with an approved newest version').toBeNull();
@@ -241,7 +244,7 @@ test('each sealed draft replaces the shown one live: approved and idle, then che
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, null)] });
   expect(await within(bar()).findByText('Checking v2')).toBeInTheDocument();
   expect(await changesList()).toBeInTheDocument();
-  expect(side('from')).toHaveAccessibleName('Compare from version: Version 1, approved');
+  expect(chip()).toHaveAccessibleName('Compare with: v1, approved');
   expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull();
   expect(contract()).toHaveTextContent('Runs from the start of the week');
   ws.frame({ type: 'artifacts', artifacts: [spec(1, v1), approvedRec(1, 1), spec(2, v2, fail)] });
@@ -277,7 +280,7 @@ const tsSpec = (version: number, document: string, over: object = {}) => ({ kind
 async function proposeTwo(one: object, two: object) {
   routes[STATUS] = status([1, 'approved']);
   const { ws, pane } = open([bare(1, one)]);
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 1, approved'));
+  await waitFor(() => expect(shown()).toHaveAccessibleName('Version: v1, approved'));
   routes[STATUS] = status([1, 'approved'], [2, 'proposed']);
   ws.frame({ type: 'artifacts', artifacts: [bare(1, one), bare(2, two)] });
   ws.frame({ type: 'standing', questions: [], failures: [], approvals: [proposal(2, 2)] });
@@ -383,14 +386,34 @@ test('a JSON Schema contract lists its changes first, marks the fields, and Next
   expect(document.activeElement).toHaveAttribute('data-ptr', '/properties/timezone');
 });
 
-test("each version is labelled by where it stands with the person, and the status line reads the newest one's status", async () => {
+test("each version is a number and a mark, its standing spoken only; a superseded proposal is left out, and the status line reads the newest", async () => {
   routes[STATUS] = status([1, 'approved'], [2, 'changes_requested'], [3, 'proposed'], [4, 'draft']);
   open([bare(1, v1), approvedRec(1, 1), bare(2, v2), bare(3, v2), bare(4, v2)]);
-  await waitFor(() => expect(side('to')).toHaveAccessibleName('Compare to version: Version 2, draft 3, draft'));
-  expect(side('to').textContent).toBe('v2 draft 3');
-  expect(await offered('to')).toEqual(['Version 2, draft 3#4draft, draft', 'Version 2, draft 2#3awaiting, awaiting approval', 'Version 2, draft 1#2changes asked, changes requested', 'Version 1approved, approved']);
-  expect(line()).toHaveTextContent('v2 draft 3 is a draft');
-  expect(side('from')).toHaveAccessibleName('Compare from version: Version 1, approved');
+  await waitFor(() => expect(shown()).toHaveAccessibleName('Version: v2, draft'));
+  expect(shown().textContent).toBe('v2');
+  expect(await offered()).toEqual(['v2, draft', 'v2, changes asked', 'v1, approved', 'Compare with…']);
+  expect(line()).toHaveTextContent('v2 is a draft');
+  expect(chip()).toHaveAccessibleName('Compare with: v1, approved');
+  expect(chip()!.textContent).toBe('since v1');
+});
+
+test('Compare with… compares the shown version with an older one picked from a list capped at three, and ✕ shows it whole', async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'approved'], [3, 'approved'], [4, 'approved'], [5, 'approved']);
+  routes[`GET /sessions/${KEY}/artifacts/contract.spec/1`] = { content: JSON.stringify(v1) };
+  open([spec(1, v1), ...[2, 3, 4, 5].map((n) => spec(n, { ...v2, version: n }))]);
+  await waitFor(() => expect(shown()).toHaveAccessibleName('Version: v5, approved'));
+  expect(chip(), 'an approved newest version is compared with nothing').toBeNull();
+  await userEvent.click(shown());
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Compare with…' }));
+  const menu = screen.getByRole('menu', { name: 'Compare v5 with' });
+  expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['v4', 'v3', 'v2', 'Older…']);
+  await userEvent.click(within(menu).getByRole('menuitem', { name: 'Older…' }));
+  await userEvent.click(within(menu).getByRole('menuitem', { name: 'v1, approved' }));
+  expect(chip()).toHaveAccessibleName('Compare with: v1, approved');
+  expect(await changesList()).toBeInTheDocument();
+  await userEvent.click(within(contract()).getByRole('button', { name: 'Stop comparing' }));
+  expect(chip()).toBeNull();
+  expect(within(contract()).queryByRole('region', { name: /^Changes against v1/ })).toBeNull();
 });
 
 test('on a phone the contract and the chat are tabs, and the contract tab counts the questions it shows', async () => {
@@ -449,7 +472,7 @@ test('an approved idle contract opens without reading any older version', async 
   open(thin([spec(1, v1), approvedRec(2, 2), spec(2, v2)]));
   await waitFor(() => expect(line()).toHaveTextContent('v2 is approved'));
   // Opening the menu lists the older version by its outcome-derived name, still without reading it.
-  expect(await offered('from')).toEqual(['None: the whole contract', 'Version 2approved, approved', 'Version 1changes asked, changes requested']);
+  expect(await offered()).toEqual(['v2, approved', 'v1, changes asked', 'Compare with…']);
   expect(contentReads()).toEqual([]);
 });
 

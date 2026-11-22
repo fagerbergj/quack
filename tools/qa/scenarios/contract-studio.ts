@@ -27,10 +27,17 @@ const scenario: Scenario = {
       await visible(sheet.getByText('REST contract, measured against v1.'));
       await ctx.shot(page, `studio-rest-approve-sheet-${label}`);
       await sheet.getByRole('button', { name: 'Not yet' }).click();
-      await pane.getByRole('button', { name: /^Compare from version: / }).click();
-      const labels = await pane.getByRole('menu', { name: 'Compare from version' }).getByRole('menuitem').allTextContents();
-      if (labels.join('|') !== 'None: the whole contract|Version 2awaiting, awaiting approval|Version 1approved, approved') throw new Error(`version labels: ${labels.join(', ')}`);
+      // A version is its number and a mark; its standing is the spoken name, and the approved one it is compared with is the "since" chip.
+      await visible(pane.getByRole('button', { name: 'Compare with: v1, approved' }).getByText('since v1', { exact: true }));
+      await pane.getByRole('button', { name: 'Version: v2, needs you' }).click();
+      const items = pane.getByRole('menu', { name: 'Version' }).getByRole('menuitem');
+      const labels = await items.evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? e.textContent));
+      if (labels.join('|') !== 'v2, needs you|v1, approved|Compare with…') throw new Error(`version labels: ${labels.join(', ')}`);
+      if ((await items.allTextContents()).join('|') !== 'v2|v1|Compare with…') throw new Error('a menu row shows more than its number');
       await ctx.shot(page, `studio-rest-versions-${label}`);
+      await items.getByText('Compare with…').click();
+      await visible(pane.getByRole('menu', { name: 'Compare v2 with' }).getByRole('menuitem', { name: 'v1, approved' }));
+      await ctx.shot(page, `studio-rest-compare-with-${label}`);
       await page.keyboard.press('Escape');
       // The seeded break names `runs[].at`, so the changed field is marked as breaking a caller.
       const at = pane.locator('li[data-ptr$="/properties/at"]');
@@ -110,7 +117,7 @@ const scenario: Scenario = {
         const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
         await bar.getByRole('button', { name: 'Approve' }).click();
         await page.getByRole('dialog', { name: 'Approve v2?' }).getByRole('button', { name: 'Approve v2' }).click();
-        await visible(page.getByRole('button', { name: 'Compare to version: Version 2, approved' }));
+        await visible(page.getByRole('button', { name: 'Version: v2, approved' }));
         await visible(bar.getByText('v2 is approved'));
         await ctx.shot(page, 'studio-approved-1280');
       } finally {

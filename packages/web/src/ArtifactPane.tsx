@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { SealedArtifact, Verdict } from './api.ts';
+import type { SealedArtifact } from './api.ts';
 import { artifactCard, artifactName } from './Artifacts.tsx';
 import { CheckResult } from './CheckResult.tsx';
 import { delivered, versionOf } from './delivered.ts';
 import { SessionKeyContext } from './extension.ts';
 import { Content } from './JsonView.tsx';
 import { Loaded, useContent } from './useContent.tsx';
-import { FollowNewest, iconButton, VersionMenu, type VersionItem } from './VersionMenu.tsx';
+import { FollowNewest, iconButton, verdictMark, VersionMenu, type VersionItem } from './VersionMenu.tsx';
 
 /** The versions the pane offers and the one it shows: the focused artifact's kind, else the kind sealed last; the focused version, else the newest. */
 export function paneVersions(items: SealedArtifact[], focus?: SealedArtifact): { versions: SealedArtifact[]; a: SealedArtifact } | undefined {
@@ -16,15 +16,7 @@ export function paneVersions(items: SealedArtifact[], focus?: SealedArtifact): {
   return { versions, a: (focus && versions.find((v) => versionOf(v) === versionOf(focus))) ?? versions[0]! };
 }
 
-// Over REST a version has no verdict at all, so it gets no status; null means its checks are still running.
-const mark = (d: string) => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>;
-const statusOf = (v: Verdict | null | undefined): Pick<VersionItem, 'status' | 'badge'> => {
-  if (v === undefined) return {};
-  if (v === null) return { status: 'checking', badge: { text: 'Checking', cls: 'bg-line text-muted', icon: mark('M5 12h.01M12 12h.01M19 12h.01') } };
-  return v.passed ? { status: 'passed', badge: { text: 'Passed', cls: 'bg-success-bg text-success', icon: mark('M5 12.5l4.5 4.5L19 7.5') } } : { status: "didn't pass", badge: { text: 'Failed', cls: 'bg-danger-bg text-danger', icon: mark('M6 6l12 12M18 6L6 18') } };
-};
-const itemsOf = (versions: SealedArtifact[]): VersionItem[] =>
-  versions.map((v) => ({ id: versionOf(v), short: `v${versionOf(v)}`, name: `Version ${versionOf(v)}`, ...statusOf(v.verdict) })).reverse();
+const itemsOf = (versions: SealedArtifact[]): VersionItem[] => versions.map((v) => ({ id: versionOf(v), short: `v${versionOf(v)}`, ...verdictMark(v.verdict) })).reverse();
 
 /** Copies a version's raw content (Markdown for a report); the icon turns to a tick and a status says "Copied" for two seconds. */
 function CopyButton({ text }: { text?: string }) {

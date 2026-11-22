@@ -48,8 +48,8 @@ test('picking an older version in the pane loads it on demand and draws it as a 
   render(<Pane />);
   expect(await screen.findByText('Approved')).toBeInTheDocument();
   expect(reads(), 'the newest version came with the frame').toEqual([]);
-  await userEvent.click(screen.getByRole('button', { name: /^Version: Version 2/ }));
-  await userEvent.click(screen.getByRole('menuitem', { name: /^Version 1/ }));
+  await userEvent.click(screen.getByRole('button', { name: /^Version: v2/ }));
+  await userEvent.click(screen.getByRole('menuitem', { name: /^v1/ }));
   const card = await screen.findByRole('region', { name: 'Review' });
   expect(within(card).getByText('Changes requested')).toBeInTheDocument();
   expect(reads()).toHaveLength(1);
@@ -58,8 +58,8 @@ test('picking an older version in the pane loads it on demand and draws it as a 
 test('an older version that cannot be loaded says so, and Retry reads it again', async () => {
   routes[LIST] = new Fail(500, { title: 'Server Error', detail: 'down' });
   render(<Pane />);
-  await userEvent.click(await screen.findByRole('button', { name: /^Version: Version 2/ }));
-  await userEvent.click(screen.getByRole('menuitem', { name: /^Version 1/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /^Version: v2/ }));
+  await userEvent.click(screen.getByRole('menuitem', { name: /^v1/ }));
   expect(await screen.findByRole('alert')).toHaveTextContent('version 1 could not be loaded: down');
   routes[LIST] = byVersion(rows);
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }));

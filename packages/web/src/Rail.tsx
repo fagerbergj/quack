@@ -1,6 +1,6 @@
 import { Fragment, useState, type ReactNode } from 'react';
-import { checkFailed, listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
-import { artifactName, ledgerId } from './Artifacts.tsx';
+import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { ledgerId } from './Artifacts.tsx';
 import { delivered, versionOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
 import { compact, needId, spendLabel } from './sessions.ts';
@@ -11,6 +11,7 @@ import type { View } from './view.ts';
 import { useMedia, WIDE } from './useDesktop.ts';
 import { RailSections } from './slots.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
+import { verdictMark, VersionMark } from './VersionMenu.tsx';
 
 const head = 'm-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase';
 const jumpBtn = 'flex min-h-11 w-full cursor-pointer items-start border-0 bg-transparent p-0 text-left text-[13px] text-ink lg:min-h-8';
@@ -23,21 +24,15 @@ function jump(id: string) {
 
 const clock = (at: string | number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-// The count of failed checks is detail for the tooltip and aria label; the visible line keeps the words.
-const toFix = (a: SealedArtifact) => (a.verdict && !a.verdict.passed ? a.verdict.checks.filter(checkFailed).length : 0);
-
-function summaryOf(a: SealedArtifact): string {
-  const v = a.verdict;
-  const checked = v ? [v.passed ? 'Double-checked' : "Didn't pass its checks"] : [];
-  const postedTo = EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.postedTo;
-  const posted = a.links?.length ? [postedTo ?? 'Posted'] : [];
-  return [...checked, ...posted].join(' · ');
-}
-
 // Older versions stay one click away so a long revision history does not stretch the rail.
 const RECENT_VERSIONS = 3;
 
-const detail = (a: SealedArtifact) => [`${artifactName(a)} v${versionOf(a)}`, summaryOf(a), toFix(a) ? `${toFix(a)} to fix` : ''].filter(Boolean).join(' · ');
+// The row shows the number and a mark; what it means, where it went and when are its tooltip and spoken label.
+function detail(a: SealedArtifact): string {
+  const postedTo = EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.postedTo;
+  const posted = a.links?.length ? (postedTo ?? 'Posted') : '';
+  return [`v${versionOf(a)}`, verdictMark(a.verdict).status, posted, clock(a.sealedAt)].filter(Boolean).join(', ');
+}
 
 function Versions({ items }: { items: SealedArtifact[] }) {
   const [all, setAll] = useState(false);
@@ -52,20 +47,15 @@ function Versions({ items }: { items: SealedArtifact[] }) {
       <ul id="rail-version-list" className="m-0 flex list-none flex-col gap-1 p-0">
         {rows.map((a) => (
           <li key={ledgerId(a)}>
-            <button type="button" aria-label={detail(a)} title={detail(a)} onClick={() => jump(ledgerId(a))} className={`${jumpBtn} flex-col gap-0.5`}>
-              <span className="flex w-full items-center gap-2">
-                {a.verdict && <span aria-hidden="true" className={a.verdict.passed ? 'text-success' : 'text-danger'}>{a.verdict.passed ? '✓' : '✗'}</span>}
-                <span className="min-w-0 flex-1 truncate font-medium">{`${artifactName(a)} v${versionOf(a)}`}</span>
-                <time dateTime={new Date(a.sealedAt).toISOString()} className="flex-none text-[12px] text-muted">{clock(a.sealedAt)}</time>
-              </span>
-              {summaryOf(a) && <span className="text-[12px] text-muted">{summaryOf(a)}</span>}
+            <button type="button" aria-label={detail(a)} title={detail(a)} onClick={() => jump(ledgerId(a))} className={`${jumpBtn.replace('items-start', 'items-center')} gap-2`}>
+              <span className="font-mono font-semibold">{`v${versionOf(a)}`}</span><VersionMark mark={verdictMark(a.verdict).mark} />
             </button>
           </li>
         ))}
       </ul>
       {older > 0 && (
         <button type="button" aria-expanded={all} aria-controls="rail-version-list" onClick={() => setAll(!all)} className="mt-1 min-h-11 cursor-pointer border-0 bg-transparent px-0 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline lg:min-h-8">
-          {all ? 'Show fewer versions' : `${older} older ${older === 1 ? 'version' : 'versions'}`}
+          {all ? 'Fewer' : 'Older…'}
         </button>
       )}
     </section>

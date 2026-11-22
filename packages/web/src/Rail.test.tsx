@@ -30,45 +30,45 @@ const versionsOf = (n: number) => render(<RailBody sessionKey="ui:u1" title="t" 
 
 test('a long version history shows the latest three, newest first, and the rest on request', async () => {
   versionsOf(8);
-  const list = () => screen.getAllByRole('button', { name: /v\d/ }).map((b) => /v\d+/.exec(b.textContent ?? '')![0]);
+  const list = () => screen.getAllByRole('button', { name: /^v\d/ }).map((b) => b.textContent);
   expect(list()).toEqual(['v8', 'v7', 'v6']);
-  const more = screen.getByRole('button', { name: '5 older versions' });
+  const more = screen.getByRole('button', { name: 'Older…' });
   expect(more).toHaveAttribute('aria-expanded', 'false');
   await userEvent.click(more);
   expect(list()).toHaveLength(8);
-  expect(screen.getByRole('button', { name: 'Show fewer versions' })).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('button', { name: 'Fewer' })).toHaveAttribute('aria-expanded', 'true');
 });
 
-test('a fourth version earns a singular disclosure that collapses again', async () => {
+test('a fourth version earns the disclosure, which collapses again', async () => {
   versionsOf(4);
-  const more = screen.getByRole('button', { name: '1 older version' });
+  const more = screen.getByRole('button', { name: 'Older…' });
   expect(more).toHaveAttribute('aria-controls', 'rail-version-list');
   await userEvent.click(more);
-  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(4);
-  await userEvent.click(screen.getByRole('button', { name: 'Show fewer versions' }));
-  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
-  expect(screen.getByRole('button', { name: '1 older version' })).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.getAllByRole('button', { name: /^v\d/ })).toHaveLength(4);
+  await userEvent.click(screen.getByRole('button', { name: 'Fewer' }));
+  expect(screen.getAllByRole('button', { name: /^v\d/ })).toHaveLength(3);
+  expect(screen.getByRole('button', { name: 'Older…' })).toHaveAttribute('aria-expanded', 'false');
 });
 
 test('a version sealed again counts once, by its newest seal', () => {
   const again = { kind: 'review', version: 2, sealedAt: 2500, content: '', summary: '' } as never;
   render(<RailBody sessionKey="ui:u1" title="t" view={{ items: [] } as never} meta={[]} items={[sealed(1), sealed(2), again, sealed(3), sealed(4)]} approvals={[]} questions={[]} />);
-  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
-  expect(screen.getByRole('button', { name: '1 older version' })).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /^v\d/ })).toHaveLength(3);
+  expect(screen.getByRole('button', { name: 'Older…' })).toBeInTheDocument();
 });
 
-test('a failed version shows no score; its tooltip and label carry the count to fix', () => {
+test('a row shows only its number and mark; what the mark means, the count to fix and the date are its tooltip and label', () => {
   const check = { criterion: 'c', id: 'c', label: 'c', weight: -3, met: 1, notes: [] };
   const failed = { kind: 'review', version: 1, sealedAt: 1000, content: '', summary: '', verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [check, check] } } as never;
   render(<RailBody sessionKey="ui:u1" title="t" view={{ items: [] } as never} meta={[]} items={[failed]} approvals={[]} questions={[]} />);
   const row = screen.getByRole('button', { name: /v1/ });
-  expect(row).toHaveAccessibleName(/Didn't pass its checks · 2 to fix/);
-  expect(row).toHaveAttribute('title', expect.stringContaining('2 to fix'));
-  expect(row).not.toHaveTextContent(/%|to fix/);
+  expect(row).toHaveAccessibleName(/^v1, failed checks, 2 to fix, /);
+  expect(row).toHaveAttribute('title', row.getAttribute('aria-label'));
+  expect(row).toHaveTextContent(/^v1$/);
 });
 
 test('three versions or fewer have no disclosure', () => {
   versionsOf(3);
-  expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
-  expect(screen.queryByRole('button', { name: /older|fewer/ })).toBeNull();
+  expect(screen.getAllByRole('button', { name: /^v\d/ })).toHaveLength(3);
+  expect(screen.queryByRole('button', { name: /older|fewer/i })).toBeNull();
 });
