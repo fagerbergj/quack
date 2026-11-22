@@ -1,8 +1,8 @@
 {
   "name": "sleeper-history",
-  "version": 7,
+  "version": 8,
   "status": "draft",
-  "model": "local/qwen3.8-27b",
+  "model": "local/qwen3.8-flash-next",
   "prompt": "prompt.md",
   "extensions": {
     "judge": {

@@ -1,8 +1,8 @@
 {
   "name": "implementer",
-  "version": 5,
+  "version": 6,
   "status": "promoted",
-  "model": "local/qwen3.8-27b",
+  "model": "local/qwen3.8-flash-next",
   "prompt": "prompt.md",
   "extensions": {
     "coding": {},
