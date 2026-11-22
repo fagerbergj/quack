@@ -1,8 +1,8 @@
-import { createElement, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createElement, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { checkFailed, listAsks, type Approval, type Ask, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import { CheckResult } from '../../CheckResult.tsx';
-import type { StudioProps } from '../../extension.ts';
+import { SessionKeyContext, type StudioProps } from '../../extension.ts';
 import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
@@ -26,6 +26,19 @@ export function Standalone({ spec, verdict }: { spec: ContractSpec; verdict?: Ve
   return <ReviewContext value={useStepper(NO_ITEMS)}>{createElement(VIEWS[spec.kind], { spec, verdict })}</ReviewContext>;
 }
 const NO_ITEMS: Item[] = [];
+
+/** An approval record drawn as the spec it approved: the record names that spec's sealed number and hash, and its content is read from the session. */
+export function ApprovedSpec({ approval }: { approval: { artifact: number; hash: string; version: number } }) {
+  const c = useContent(useContext(SessionKeyContext) ?? '', { kind: 'contract.spec', version: approval.artifact, hash: approval.hash, sealedAt: 0 });
+  const spec = c.content === undefined ? undefined : parseSpec(c.content);
+  if (!spec) return <ContentState what={`version ${approval.version}`} {...c} />;
+  return (
+    <>
+      <p className="m-0"><span className="rounded-md bg-success-bg px-2 py-0.5 text-xs text-success">Approved</span></p>
+      <Standalone spec={spec} />
+    </>
+  );
+}
 
 /** One sealed spec artifact and the number a person knows it by. Its spec is read from its content, which only the newest version carries. */
 export type Version = { a: SealedArtifact; n: number };
