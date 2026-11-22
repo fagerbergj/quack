@@ -69,7 +69,7 @@ export function SearchFilter({ label, text, onText, fields, values, onValues }: 
         </button>
         {/* On a phone the shell's column is a stacking context under the tab bar, so the sheet sits on the bar, not behind it. */}
         {menu.open && (
-          <section id={panel} role="dialog" aria-label="Filters" className="fixed inset-x-0 bottom-[calc(48px+var(--safe-b))] z-50 flex flex-col gap-3 rounded-t-[20px] border-t border-line bg-canvas p-4 shadow-lift lg:absolute lg:inset-x-auto lg:top-full lg:right-0 lg:bottom-auto lg:mt-1 lg:w-72 lg:rounded-xl lg:border lg:border-line-strong lg:bg-surface lg:p-3 lg:shadow-float">
+          <section id={panel} role="dialog" aria-label="Filters" className="fixed inset-x-0 bottom-[calc(48px+var(--safe-b))] z-50 flex flex-col gap-3 rounded-t-[20px] border-t border-line bg-canvas p-4 shadow-lift lg:absolute lg:inset-x-auto lg:top-full lg:right-0 lg:bottom-auto lg:mt-1 lg:w-72 lg:max-w-full lg:rounded-xl lg:border lg:border-line-strong lg:bg-surface lg:p-3 lg:shadow-float">
             <div className="flex items-center justify-between">
               <h2 className="m-0 text-[15px] font-semibold lg:text-[13px]">Filters</h2>
               <button type="button" aria-label="Close filters" title="Close" onClick={() => menu.close()} className={iconBtn}><Cross size={18} /></button>
