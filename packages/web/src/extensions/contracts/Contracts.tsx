@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { Modal, useAction } from '../../Housekeeping.tsx';
 import type { Row } from '../../sessions.ts';
 import { useLoad } from '../../useLoad.ts';
-import { contractRecords, contractRows, startContract, type ContractRecord, type Tone } from './status.ts';
+import { VersionMark } from '../../StatusIcon.tsx';
+import { contractRecords, contractRows, startContract, type Contract, type ContractRecord } from './status.ts';
 
-const TONE: Record<Tone, string> = { warn: 'bg-warning-bg text-warning', plain: 'bg-soft text-ink-2', ok: 'bg-success-bg text-success', bad: 'bg-danger/10 text-danger' };
+// Approved contracts past this many wait behind a button.
+const SHOWN = 10;
 
 const NO_RECORDS: ReadonlyMap<string, ContractRecord> = new Map();
 
@@ -18,6 +20,37 @@ function NewContract({ onClose }: { onClose: () => void }) {
         <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} className="field-grow focus-ring min-h-[3lh] max-h-[12lh] rounded-xl border border-line bg-surface px-3 py-2 text-[15px] text-ink" />
       </label>
     </Modal>
+  );
+}
+
+// The kind tag holds its column even when a contract has no record yet, so titles line up; the spaces only part the accessible name.
+function Item({ c }: { c: Contract }) {
+  return (
+    <li>
+      <a href={`#/s/${encodeURIComponent(c.key)}`} className="flex min-h-13 items-center gap-3 px-3 py-2 text-ink no-underline hover:bg-soft sm:px-4">
+        <span title={c.kind?.name} className="w-10 flex-none rounded-md bg-soft py-0.5 text-center font-mono text-[10px] font-bold text-muted empty:bg-transparent">{c.kind?.tag}</span>{' '}
+        <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold [overflow-wrap:anywhere]">{c.name}</span>{' '}
+        <VersionMark version={c.version} mark={c.mark} label={c.status} />
+      </a>
+    </li>
+  );
+}
+
+// The group's name says the status once, so its rows carry only a version and a mark.
+function Group({ label, items, limit }: { label: string; items: Contract[]; limit?: number }) {
+  const [all, setAll] = useState(false);
+  if (!items.length) return null;
+  const shown = all || !limit ? items : items.slice(0, limit);
+  return (
+    <section aria-label={label} className="mb-5">
+      <h2 className="m-0 mb-1.5 flex items-baseline gap-2 px-1 font-sans text-xs font-semibold tracking-wider text-muted uppercase">{label}<span className="font-normal tabular-nums">{items.length}</span></h2>
+      <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-[22px] border border-line bg-surface p-0 shadow-card">
+        {shown.map((c) => <Item key={c.key} c={c} />)}
+        {shown.length < items.length && (
+          <li><button type="button" onClick={() => setAll(true)} className="flex min-h-11 w-full cursor-pointer items-center justify-center border-0 bg-transparent text-[13px] text-link hover:bg-soft">{`${items.length - shown.length} more ${label.toLowerCase()}`}</button></li>
+        )}
+      </ul>
+    </section>
   );
 }
 
@@ -36,19 +69,8 @@ export function Contracts({ rows }: { rows: Row[] | undefined }) {
         </button>
       </div>
       {rows && !list.length && <p className="text-sm text-muted">A contract is the agreed shape of an interface, such as a REST endpoint, that you approve before anyone builds against it.</p>}
-      <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-[22px] border border-line bg-surface p-0 shadow-card empty:hidden">
-        {list.map((c) => (
-          <li key={c.key}>
-            <a href={`#/s/${encodeURIComponent(c.key)}`} className="flex min-h-16 items-center gap-3 px-3 py-2 text-ink no-underline hover:bg-soft sm:px-4">
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="line-clamp-2 text-[15px] font-semibold [overflow-wrap:anywhere]">{c.name}</span>
-                <span className="truncate text-[13px] text-muted empty:hidden">{[c.kind, c.version && `v${c.version}`, c.note].filter(Boolean).join(' · ')}</span>
-              </span>
-              <span className={`flex-none rounded-full px-2.5 py-0.5 text-xs font-medium ${TONE[c.tone]}`}>{c.status}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
+      <Group label="In progress" items={list.filter((c) => !c.approved)} />
+      <Group label="Approved" items={list.filter((c) => c.approved)} limit={SHOWN} />
       {adding && <NewContract onClose={() => setAdding(false)} />}
     </div>
   );

@@ -61,12 +61,15 @@ const scenario: Scenario = {
       await pane.getByText('Brief').click();
       await ctx.shot(page, `studio-draft-${label}`);
     });
-    await eachView(ctx, 'the Contracts page shows each contract\'s kind, version and approval status', async (page, label) => {
+    await eachView(ctx, 'the Contracts page shows each contract\'s kind, one version and a mark that names its status', async (page, label) => {
       await page.goto(`${ctx.url}/#/contracts`);
-      const row = page.getByRole('listitem').filter({ hasText: 'Sleeper schedule endpoint' });
-      await visible(row.getByText('REST · v2'));
-      await visible(row.getByText('Awaiting your approval'));
-      await visible(page.getByRole('listitem').filter({ hasText: 'TypeScript · v2' }).first());
+      const busy = page.getByRole('region', { name: 'In progress' });
+      const row = busy.getByRole('link', { name: /Sleeper schedule endpoint/ });
+      await visible(row.getByText('REST'));
+      await visible(row.getByText('v2'));
+      await visible(row.getByRole('img', { name: 'Awaiting your approval' }));
+      await visible(busy.getByRole('link', { name: /^TS/ }).first());
+      if (await busy.getByText(/Awaiting|Approved v/).count()) throw new Error('a row prints its status');
       await ctx.shot(page, `contracts-page-${label}`);
     });
     await eachView(ctx, 'TypeScript contract: diagram centres on a type and re-centres on a click', async (page, label) => {
