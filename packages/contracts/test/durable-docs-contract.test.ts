@@ -72,7 +72,7 @@ const nextApproval = (s: Open, seen: string[] = []) => first(s, Approvals, (v) =
 const text = (c: Msgs) => { const m = c.messages.at(-1)!.content; return typeof m === 'string' ? m : (m as Array<{ text?: string }>).map((p) => p.text ?? '').join(''); };
 // The judge's single ("Decision: ...") and batched ("Evidence: ...") questions get yes, except the pitfall ones; other requests take the next scripted step.
 const judged = (script: Step[]): Step[] => {
-  const answer = (q: string) => ({ choice: /never asked for|contradict a guide rule/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
+  const answer = (q: string) => ({ choice: /never asked for|contradict the guide rule/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
   return Array.from({ length: 80 }, () => (c: Msgs) => {
     const p = text(c);
     if (p.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(answer(p)));

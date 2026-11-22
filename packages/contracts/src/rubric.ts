@@ -187,6 +187,17 @@ function nonGoalPairs(inputs: Inputs, o: SplitDecl): Chunk[] {
 registerSplitter('contract.nonGoalPairs', nonGoalPairs);
 registerSelector('contract.held', (_i, c) => ({ value: '', matches: Number(c.meta?.held ?? 0) }));
 
+// One item per choice and guide rule that asks something, grouped by choice: what a rule marks Check, code enforces (document_clean),
+// so only an Ask is a decision a choice can depart from. The choice goes on shared, so its rules pack into one request.
+const ASKS = /(^|\.\s+)Ask\b/;
+function choiceRules(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const [choicesInput, guideInput] = [o.from].flat();
+  const rules = Object.entries(JSON.parse(inputs[guideInput]) as Record<string, string>).filter(([, text]) => ASKS.test(text));
+  const choices = JSON.parse(inputs[choicesInput]) as Array<{ id: string } & Record<string, unknown>>;
+  return choices.flatMap(({ id, ...choice }) => rules.map(([rule, text]) => ({ id: `${id} ~ ${rule}`, key: rule, text: `${rule}: ${text}`, meta: { choice: id, ...choice } })));
+}
+registerSplitter('contract.choiceRules', choiceRules);
+
 // A guarantee's group key: its fact id, or for a grandfathered string its first words and a hash of its text, which an insert does not move.
 const guaranteeKey = (e: Entry) => e.label ?? `${e.text.split(/\s+/).slice(0, 6).join(' ')} #${createHash('sha256').update(e.text).digest('hex').slice(0, 6)}`;
 
@@ -277,7 +288,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
 // adds_unasked is the owner's exception, worded as the claim and holding on "yes"; the replay's clef and esc columns track its cost.
 const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
-// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
+// Every choice is judged against each rule of the guide, cited or not: most cite only answers and code,
 // and a departure nobody cited is what the check is for. Promises read at most four parts plus the root via meets_intent and delivers_purpose.
 export const contractDeclaration: Declaration = {
   scopes: {
@@ -285,7 +296,7 @@ export const contractDeclaration: Declaration = {
     // One item per guarantee, and one per promising sentence of the purpose; the evidence is the parts each may hold in.
     guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
     purpose: { split: { name: 'contract.purposeSentences', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { evidence: { name: 'contract.evidence' } } },
-    choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
+    choiceRule: { split: { name: 'contract.choiceRules', from: ['choices', 'guide'] }, piece: 'rule' },
     // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
     definition: {
       split: { name: 'contract.definitions', from: ['spec', 'kind'] },
@@ -304,7 +315,8 @@ export const contractDeclaration: Declaration = {
     // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
     // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
-    contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
+    // A choice holds when it contradicts none of the rules; the share is of choices, as when one question read the whole guide.
+    contradicts_guide: { scope: 'choiceRule', aggregate: { name: 'grouped', groupBy: 'choice', inner: 'all', outer: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict the guide rule shown with it, without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
   },
@@ -411,7 +423,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 10,
+  version: 11,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [

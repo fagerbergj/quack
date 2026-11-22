@@ -74,29 +74,34 @@ test('typescript: one definition per declaration with its TSDoc, and together wi
   assert.match(money, /^\/\*\*[\s\S]*export type Money = /, 'the TSDoc goes with its declaration');
 });
 
-test('every choice and definition unit of the approved contracts fits the decision model', async () => {
+test('every choice-rule pair and definition unit of the approved contracts fits the decision model', async () => {
   const counts: Record<string, number> = {};
   for (const [name, spec] of [['lifecycle', lifecycle], ['store-port', storePort], ['sdk', wrap('typescript', sdk)], ['env', wrap('json-schema', env)]] as const) {
     const ev: Evidence = await evidenceOf(spec);
-    for (const scope of ['choice', 'definition']) {
+    for (const scope of ['choiceRule', 'definition']) {
       const over = ev[scope].filter((u) => decisionModelTokens(u, checksOf(scope)) >= 8192);
       assert.deepEqual(ids(over), [], `${name} ${scope}`);
       counts[`${name} ${scope}`] = ev[scope].length;
     }
   }
   assert.deepEqual(counts, {
-    'lifecycle choice': 23, 'lifecycle definition': 30, 'store-port choice': 19, 'store-port definition': 28, 'sdk choice': 0, 'sdk definition': 82, 'env choice': 0, 'env definition': 19,
+    'lifecycle choiceRule': 23 * 7, 'lifecycle definition': 30, 'store-port choiceRule': 19 * 5, 'store-port definition': 28, 'sdk choiceRule': 0, 'sdk definition': 82, 'env choiceRule': 0, 'env definition': 19,
   });
 });
 
-test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the kind and the purpose', async () => {
+test('a choice is paired with each guide rule that asks something, the choice shared by its pairs; a definition unit shares the kind and the purpose', async () => {
   const ev = await evidenceOf(lifecycle);
   const rules = guideRules(kinds.rest.skill);
-  const errors = ev.choice.find((u) => u.id === 'choice errors')!;
-  assert.deepEqual(errors.state, { choice: { ...lifecycle.choices.find((c) => c.id === 'errors'), cites: ['errors'] } });
-  assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
-  assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
-  assert.ok(ev.choice.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors.shared)), 'one guide for every choice, so they pack together');
+  const { id: _, ...errors } = { ...lifecycle.choices.find((c) => c.id === 'errors')!, cites: ['errors'] };
+  const pairs = ev.choiceRule.filter((u) => u.id.startsWith('choiceRule errors ~ '));
+  assert.deepEqual(pairs.map((u) => u.id.slice('choiceRule errors ~ '.length)), ['versioning', 'naming', 'paging', 'idempotency', 'long-running', 'validation-errors', 'richardson']);
+  assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/, 'a Check rule is code\'s, so even the rule a choice cites is not paired');
+  assert.deepEqual(pairs[2].state, { rule: `paging: ${rules.get('paging')}` });
+  assert.ok(pairs.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors)), 'the choice is its pairs\' shared, so they pack into one request');
+  assert.equal(ev.choiceRule.length, lifecycle.choices.length * pairs.length);
+  // A Check rule with an Ask sentence is a decision too.
+  const store = (await evidenceOf(storePort)).choiceRule.filter((u) => u.id.startsWith(`choiceRule ${storePort.choices[0].id} ~ `));
+  assert.deepEqual(store.map((u) => u.id.split(' ~ ')[1]), ['surface', 'additions', 'unions', 'types', 'versioning']);
   assert.deepEqual(ev.definition[0].shared, { kind: 'rest', purpose: lifecycle.intent.purpose }, 'every definition shares only the kind and the purpose, so they pack together');
   assert.deepEqual(Object.keys(ev.definition[0].state), ['definition', 'consumersAndGuarantees'], 'no definition carries the whole intent');
   const covered = async (spec: ContractSpec, id: string) => {
@@ -192,13 +197,14 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('with Clef on, Clef answers every choice and every definition code did not settle, and the judge model every guarantee', async (t) => {
+test('with Clef on, Clef answers every choice-rule pair and every definition code did not settle, and the judge model every guarantee', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
   const models = createModels();
   models.setProvider(judge.provider);
-  // Every guarantee holds, every definition is named by an intent entry and nothing departs, so no pitfall is present.
-  const clef = await fakeClef(t, (q) => (q.includes('named or implied') ? 'yes' : 'no'));
+  // Every guarantee holds and every definition is named by an intent entry; one choice departs from two rules, which flags it once.
+  const departs = /\(choiceRule errors ~ (naming|paging)\)/;
+  const clef = await fakeClef(t, (q) => (q.includes('named or implied') || departs.test(q) ? 'yes' : 'no'));
   models.setProvider(clef.provider);
   const adapters = manifest.evalAdapters!;
   const content = JSON.stringify(lifecycle);
@@ -211,14 +217,16 @@ test('with Clef on, Clef answers every choice and every definition code did not 
   const by = Object.fromEntries(rows.map((r) => [r.check, { met: r.met, clef: r.clef, esc: r.esc }]));
   const ev = await evidenceOf(lifecycle);
   const asked = ev.definition.filter((u) => !u.related?.covered).length;
+  const choiceRules = ev.choiceRule.length;
   assert.deepEqual(by, {
     meets_intent: { met: 1, clef: 0, esc: ev.guarantee.length },
-    contradicts_guide: { met: 0, clef: 23, esc: 0 },
+    contradicts_guide: { met: 1 / 23, clef: choiceRules, esc: 0 },
     adds_unasked: { met: 0, clef: asked, esc: 0 },
     implements_non_goal: { met: 0, clef: 0, esc: 0 },
   });
+  assert.deepEqual(rows.find((r) => r.check === 'contradicts_guide')!.notes, ['errors: choiceRule errors ~ naming: flagged by clef (no reason given): "naming: Ask. Property case (snake or camel, one only), enum…"; re-verify it against the cited source before rewording it'], 'one note per flagged choice, naming its first flagged rule');
   const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
   assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit, and none for a guarantee');
-  assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
+  assert.equal(clef.asked.flat().length, choiceRules + asked + pairs, 'one question per unit, and none for a guarantee');
+  assert.equal(clef.asked.length, 23, `a choice's rules pack into one request: ${clef.asked.length} requests`);
 });
