@@ -219,6 +219,26 @@ test('a claim on the last line keeps its last character when pr.md ends without 
   assert.deepEqual(claimedCommands('# t\n\nHow verified: `npm test` broke').map((c) => c.line), ['How verified: `npm test` broke']);
 });
 
+test('deliver reads a moved file as new at its path, passes a name the trees hold and fails one they lack', async () => {
+  const text = PR_MD.replace('Verified: node app.ts.', 'Moved the module to the new `lib/app.ts`. Added `Conventions` notes and `bumpHelper`.');
+  const { session, seen } = await implement(({ repo, seen }) => [
+    checkout(),
+    async () => {
+      await mkdir(join(repo(), 'lib'));
+      sh(repo(), 'mv', 'app.ts', 'lib/app.ts');
+      sh(repo(), 'commit', '-qm', 'refactor(app): move app.ts under lib');
+      await mkdir(join(repo(), '..', 'artifacts'), { recursive: true });
+      await writeFile(join(repo(), '..', 'artifacts', 'pr.md'), text);
+      return call('deliver');
+    },
+    record(seen, () => fauxAssistantMessage('stop')),
+  ]);
+  await session.submit('Fix acme/widgets#7', 'fx-1', true);
+  assert.match(seen.at(-1)!, /names `bumpHelper`, which is in neither the diff nor the repository/);
+  assert.doesNotMatch(seen.at(-1)!, /Conventions|lib\/app\.ts/);
+  await session.close();
+});
+
 test('a backticked commit id outside the commits made since checkout fails deliver', async () => {
   const { session, run, seen } = await claiming('echo ok', ['echo ok'], ' Fixed in `deadbeef1`.');
   await run;

@@ -2,8 +2,8 @@ import type { Context } from '@earendil-works/chord/context';
 import { int, obj, str } from '@earendil-works/pi-schema';
 import { defineTool, type ToolExecutionApi, type ToolRegistration } from '@earendil-works/pi-durable';
 import { attachLink, gated, seal, type ArtifactKind } from '@quack/sdk';
-import { conventions, findRecord, liveHead, git, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
-import { sessionRuns, unbackedClaims } from './claims.ts';
+import { conventions, findRecord, liveHead, git, gitExit, prFacts, PullRequestDoc, remoteFor, syncTree, type PullRequestRecord, type SessionConfig } from './checkout.ts';
+import { diffClaims, namedCode, sessionRuns, unbackedClaims } from './claims.ts';
 import { branchTaken, checkoutIssue, editPull, fetchIssue, IssueDoc, openPull, type IssueWork } from './issue.ts';
 import { renderFeedback } from './feedback.ts';
 
@@ -78,6 +78,18 @@ async function problems(r: Repo, from: string, onBranch: string, what = 'pull re
   return found;
 }
 
+// The PR text's claims about the diff that the commits since `from` contradict.
+async function contradicted(r: Repo, from: string, text: string) {
+  // Without --no-renames a moved file is one R line, so "new `b`" or "removed `a`" would read as false.
+  const changed = new Map((await out(r, 'diff', '--name-status', '--no-renames', `${from}..HEAD`)).split('\n').filter(Boolean).map((l) => { const [s, ...p] = l.split('\t'); return [p.at(-1)!, s] as const; }));
+  const paths = [...new Set([...(await out(r, 'ls-tree', '-r', '--name-only', from)).split('\n'), ...(await out(r, 'ls-tree', '-r', '--name-only', 'HEAD')).split('\n')])];
+  const names = namedCode(text);
+  const grep = names.length ? await gitExit(r.api, ['-C', r.dir, 'grep', '-o', '-h', '-F', '-w', ...names.flatMap((n) => ['-e', n]), 'HEAD', from], r.config, r.remote, r.ctx) : { code: 1, output: '' };
+  // grep exits 1 when nothing matches; any other outcome means the lookup did not happen, so no name is judged.
+  const found = grep.code === 0 || grep.code === 1 ? new Set(grep.output.split('\n').filter(Boolean)) : undefined;
+  return diffClaims(text, { changed, paths }, found);
+}
+
 // Runs once the approver said yes: the push goes out only if the remote head is still the one checked out.
 function pushTool(config: SessionConfig, dir: string): ToolRegistration {
   return gated(defineTool({
@@ -145,7 +157,7 @@ export function deliverTool(config: SessionConfig) {
       const text = await api.env!.readTextFile(PR_BODY, ctx);
       if (!text.ok) found.push(`${PR_BODY} cannot be read; write it first`);
       else if (!text.value.trim()) found.push(`${PR_BODY} is empty`);
-      if (text.ok) found.push(...unbackedClaims(text.value, await sessionRuns(api, ctx), (await out(r, 'log', '--format=%H', `${t.from}..HEAD`)).split('\n')));
+      if (text.ok) found.push(...unbackedClaims(text.value, await sessionRuns(api, ctx), (await out(r, 'log', '--format=%H', `${t.from}..HEAD`)).split('\n')), ...await contradicted(r, t.from, text.value));
       if (!found.length && t.work) found.push(await branchTaken(api, config, dir, t.work, await out(r, 'rev-parse', 'HEAD'), ctx));
       if (found.some(Boolean)) return reply(`Not delivered; fix these and call deliver again:\n- ${found.filter(Boolean).join('\n- ')}`, true);
       const { artifact: sealed } = await seal(api, prBodyKind, ctx);
