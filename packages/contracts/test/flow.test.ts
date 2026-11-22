@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { manifest as judgeManifest } from '@quack/judge';
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
@@ -12,7 +12,7 @@ import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestion
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { readSession } from '@quack/eval';
 import type { Inputs } from '@quack/judge';
-import { contractsSessionExtensions, manifest, specInputs, type ContractSpec } from '../src/index.ts';
+import { contractRecordOf, contractsSessionExtensions, manifest, specInputs, type ContractSpec } from '../src/index.ts';
 import { lastReviewBlock, reviewReason } from '../src/reason.ts';
 import { scheduleSpecV1, scheduleSpecV2, settingsSpec, SLEEPER_PAGE } from './fixtures.ts';
 
@@ -413,5 +413,37 @@ test('reply_comment refuses a 21st reply to one comment with an error the agent 
   await s.submit('Reply a lot', 'r-1', true);
   assert.equal((await kindOf(s, 'contract.reply')).length, 20);
   assert.match(last, /already has 20 replies/);
+  await s.close();
+});
+
+test('reject-and-discard on an unwanted proposal leaves no pending ask, no re-proposal, and restores the approved version', async () => {
+  const said: string[] = [];
+  const v2 = () => ({ ...settingsSpec(), version: 2, baseline: 1, compatibility: { breaking: [], safe: ['minor tweak'] }, changes: [{ choice: 'closed', was: 'strict', now: 'strict with note', why: 'minor tweak' }] });
+  const s = await open([
+    call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}),
+    () => fauxAssistantMessage('Version 1 is approved.'),
+    write(v2), call('submit_contract', {}),
+    (c) => ((said.push(text(c)), call('discard_draft', {})(c))),
+    (c) => ((said.push(text(c)), fauxAssistantMessage('Dropped v2; version 1 stands.'))),
+  ]);
+  const first = s.submit('Define settings', 'r-1', true);
+  const p1 = await approve(s);
+  assert.equal((await first).status, 'done');
+
+  const second = s.submit('Minor tweak', 'r-2', true);
+  const p2 = await nextProposal(s, [p1.id]);
+  await resolveApproval(s.root, p2.id, { decision: 'reject', reason: 'not wanted, version 1 stands, drop this version', by: jf }, ctx);
+  const res = await second;
+  assert.equal(res.status === 'done' && res.answer, 'Dropped v2; version 1 stands.');
+  assert.match(said[0]!, /call discard_draft/);
+  assert.match(said[1]!, /version 1 stands as the current version/);
+  const approvals = (await s.harness.snapshot(Approvals, s.root.id, ctx))!;
+  assert.deepEqual(await pendingApprovals(s.root, ctx), [], 'no pending ask remains');
+  assert.equal(Object.keys(approvals.items).length, 2, 'no re-proposal was created');
+  const onDisk = JSON.parse(await readFile(join(s.workspace, 'artifacts/spec.json'), 'utf8')) as ContractSpec;
+  assert.equal(onDisk.version, 1, 'workspace draft restored to approved version 1');
+  const allArtifacts = Object.values((await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds ?? {}).flatMap((k) => k?.versions ?? []);
+  const rec = contractRecordOf('contracts:test', undefined, allArtifacts, []);
+  assert.deepEqual([rec.draft, rec.approved, rec.pendingApproval], [1, 1, false]);
   await s.close();
 });

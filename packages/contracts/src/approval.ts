@@ -5,10 +5,11 @@ import { defineTool, GenerationTask, hook, LiveDoc, type ConversationId, type To
 import { Approvals, Artifacts, gated, withdrawApprovals, type Approval, type SealedArtifact } from '@quack/sdk';
 import { kinds } from './kinds.ts';
 import { lastReviewBlock, reasonSummary } from './reason.ts';
-import { CONTRACT_KIND, parseSpec, type ContractSpec } from './spec.ts';
+import { CONTRACT_KIND, CONTRACT_PATH, parseSpec, type ContractSpec } from './spec.ts';
 
 export const APPROVED_KIND = 'contract.approved';
 export const CHANGES_KIND = 'contract.changes';
+export const DISCARDED_KIND = 'contract.discarded';
 
 const reply = (text: string, isError = false) => ({ output: [{ type: 'text' as const, text }], isError });
 const METHOD = /^(get|put|post|delete|patch)$/;
@@ -86,7 +87,8 @@ function rejectedText(text: string, version: number, was: ContractSpec | undefin
   // The gate says "Rejected by <who>: <reason>", and a reason with no note opens with its block.
   const review = !!lastReviewBlock(text.replace(/^Rejected by [^:\n]*: /, ''));
   const comments = review ? ' The reason ends in a ```quack-review block of review comments: for each comment, name its id in the addresses of the changes row that changes what it is about, or call reply_comment with its id, before you submit, to say why you left it; the check fails a version that does neither for any of them.' : '';
-  return { text: `${text}${review ? '\n\n' : '. '}Act on what the person said, in this reason or in the message that follows it: for a change, write version ${version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${version} up again.${comments}`, isError: true };
+  const drop = was ? `; if the person wants to drop this version and keep version ${was.version}, call discard_draft` : '';
+  return { text: `${text}${review ? '\n\n' : '. '}Act on what the person said, in this reason or in the message that follows it: for a change, write version ${version + 1} ${against} and call submit_contract; for a question, answer it and call submit_contract to put version ${version} up again${drop}.${comments}`, isError: true };
 }
 
 /** Puts one sealed version before the person and waits: only the newest, only once it passed, never one already approved. The facts the
@@ -126,6 +128,39 @@ export const proposeContractTool: ToolRegistration = defineTool({
   },
 }) as ToolRegistration;
 
+const isDiscarded = (all: Versions, artifact: number) =>
+  (all[DISCARDED_KIND]?.versions ?? []).some((v) => (JSON.parse(v.content) as { artifact?: number }).artifact === artifact);
+
+/** Drops an unwanted unapproved draft, restoring the last approved spec to the workspace and satisfying the yield guard. */
+export const discardDraftTool: ToolRegistration = defineTool({
+  name: 'discard_draft',
+  description: 'Discard an unwanted unapproved draft and restore the last approved contract version as the current one.',
+  parameters: obj({}, { open: true }),
+  replay: 'safe',
+  async execute(_args, api, ctx) {
+    await reconcile(api, ctx);
+    const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
+    const approvals = (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {};
+    const base = approvedSpec(all, approvals);
+    if (!base) return reply('No approved version to return to.', true);
+    const baseSpec = parseSpec(base.content) as ContractSpec;
+    const newest = all[CONTRACT_KIND]?.versions.at(-1);
+    if (!newest || newest.version === base.version || isDiscarded(all, newest.version)) return reply(`Version ${baseSpec.version} is already the current version.`);
+    await api.env?.writeFile(CONTRACT_PATH, base.content, ctx);
+    await supersedeProposals(Infinity, api, ctx);
+    const content = JSON.stringify({ artifact: newest.version, restored: base.version, version: baseSpec.version });
+    await api.commit(async (tx) => {
+      const doc = await tx.doc(Artifacts, api.conversationId);
+      // Clear any tracked edit on the discarded draft so unsubmitted() does not send the run back.
+      if (doc.kinds[CONTRACT_KIND]) delete doc.kinds[CONTRACT_KIND].written;
+      doc.kinds[DISCARDED_KIND] ??= { versions: [] };
+      const entry = doc.kinds[DISCARDED_KIND];
+      entry.versions.push({ kind: DISCARDED_KIND, version: entry.versions.length + 1, hash: createHash('sha256').update(content).digest('hex'), content, sealedAt: api.now(), verdict: null, outcome: `v${baseSpec.version}`, summary: `Restored v${baseSpec.version}` });
+    }, ctx);
+    return reply(`Discarded unapproved draft; version ${baseSpec.version} stands as the current version.`);
+  },
+}) as ToolRegistration;
+
 /** A run may not end on a passed version that is neither approved nor up for approval: the person approves only what is put to them.
  * It asks once per run and proposal, so an agent that answers again without putting the version up ends its run instead of looping. */
 export function awaitingApproval() {
@@ -135,7 +170,7 @@ export function awaitingApproval() {
     async onYield(_answer, api, ctx) {
       const all = ((await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {}) as Versions;
       const newest = all[CONTRACT_KIND]?.versions.at(-1);
-      if (!newest || !passed(newest)) return undefined;
+      if (!newest || !passed(newest) || isDiscarded(all, newest.version)) return undefined;
       const approvals = (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {};
       if (approvedSpec(all, approvals)?.version === newest.version) return undefined;
       const run = (await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs[0];

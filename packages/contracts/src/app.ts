@@ -1,7 +1,7 @@
 // The contracts extension's own read: each Contract Studio session's contract, from its sealed artifacts in the catalog.
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { escapeTerm, sendProblem, serviceHttp, type App, type AppContext } from '@quack/sdk';
-import { APPROVED_KIND, CHANGES_KIND } from './approval.ts';
+import { APPROVED_KIND, CHANGES_KIND, DISCARDED_KIND } from './approval.ts';
 import { commentRoutes, type Facts } from './comments.ts';
 import { parseFilter, QueryError } from './filter.ts';
 import { BadRequest, cursorOf, sizeOf, tokenOf } from './paging.ts';
@@ -36,7 +36,10 @@ const versionOf = (a: Artifact | undefined) => (typeof parse(a?.content).version
 
 /** A contract from its session's sealed artifacts and its propose_contract asks; the core row carries none of it. */
 export function contractOf(key: string, fallbackTitle: string | undefined, artifacts: Artifact[], asks: Ask[]): ContractRecord {
-  const spec = parse(newest(artifacts, CONTRACT_KIND)?.content);
+  const latest = newest(artifacts, CONTRACT_KIND);
+  const dropped = latest && artifacts.filter((a) => a.kind === DISCARDED_KIND).map((a) => parse(a.content)).findLast((d) => d.artifact === latest.version);
+  const current = dropped && typeof dropped.restored === 'number' ? artifacts.find((a) => a.kind === CONTRACT_KIND && a.version === dropped.restored) ?? latest : latest;
+  const spec = parse(current?.content);
   const proposals = asks.filter((a) => a.toolCall?.tool === 'propose_contract');
   const proposed = Math.max(...proposals.map((a) => Number((a.toolCall?.args as { version?: unknown } | null)?.version) || 0));
   return {
