@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { agentGroups } from './Agents.tsx';
 import { App } from './App.tsx';
 import { lineDiff } from './lineDiff.ts';
 
@@ -37,14 +38,25 @@ const open = (hash: string) => {
   render(<App />);
 };
 
-test('the list shows each agent with its status, model, version and description', async () => {
+test('the list shows each agent with its description and one version whose mark names its status', async () => {
   open('#/agents');
   const link = await main().findByRole('link', { name: /reviewer/ });
-  expect(link).toHaveTextContent('Draft');
-  expect(link).toHaveTextContent('local/m · Version 2');
+  expect(link.textContent?.match(/v\d+/g)).toEqual(['v2']);
+  expect(within(link).getByRole('img')).toHaveAccessibleName('Draft');
+  expect(link).not.toHaveTextContent(/Draft|Promoted|Version/);
   expect(link).toHaveTextContent('Reviews PRs.');
   expect(link).toHaveAttribute('href', '#/agents/reviewer');
-  expect(main().getByRole('link', { name: /quack/ })).toHaveTextContent('Promoted');
+  expect(link).toHaveAccessibleName('reviewer Reviews PRs. local/m v2 Draft');
+  expect(within(main().getByRole('link', { name: /quack/ })).getByRole('img')).toHaveAccessibleName('Promoted: runs unattended');
+});
+
+test('promoted agents lead, and a model the agents differ on shows on each row', async () => {
+  open('#/agents');
+  await main().findByRole('link', { name: /reviewer/ });
+  expect(main().getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/agents/quack', '#/agents/reviewer']);
+  expect(main().getByRole('link', { name: /reviewer/ })).toHaveTextContent('local/m');
+  expect(main().getByText('1 promoted')).toBeInTheDocument();
+  expect(main().queryByText(/all on/)).toBeNull();
 });
 
 test('the detail renders the prompt as markdown, the rubric as a list and settings as labelled fields', async () => {
@@ -54,7 +66,7 @@ test('the detail renders the prompt as markdown, the rubric as a list and settin
   expect(main().getByText('Flags a real defect (gate)')).toBeInTheDocument();
   expect(main().getByText('Max revisions')).toBeInTheDocument();
   expect(main().queryByText(/maxRevisions/)).toBeNull();
-  expect(main().getByRole('button', { name: 'Version 1 · promoted' })).toBeInTheDocument();
+  expect(main().getByRole('button', { name: 'v1 Promoted: runs unattended' })).toBeInTheDocument();
 });
 
 test('the diff reads the prompt change against the version picked', async () => {
@@ -88,4 +100,30 @@ test('lineDiff marks changes, trims distant context and reports no change as emp
   const long = Array.from({ length: 12 }, (_, i) => `l${i}`).join('\n');
   const lines = lineDiff(long, long.replace('l6', 'x'));
   expect(lines.map((l) => l.kind)).toEqual(['gap', 'same', 'same', 'del', 'add', 'same', 'same', 'gap']);
+});
+
+test('agents sharing a name prefix group under it, and a model every agent shares is said once', () => {
+  const agent = (name: string, status: 'draft' | 'promoted' = 'draft') => ({ name, version: 1, status, model: 'local/m' });
+  const groups = agentGroups([agent('sleeper-retro'), agent('reviewer', 'promoted'), agent('sleeper-digest'), agent('remarkable-ingest'), agent('contracts')]);
+  expect(groups.map((g) => [g.prefix, g.agents.map((a) => a.name)])).toEqual([
+    ['', ['reviewer', 'contracts', 'remarkable-ingest']],
+    ['sleeper', ['sleeper-digest', 'sleeper-retro']],
+  ]);
+});
+
+test('with one model for all, the lead names it once and no row repeats it', async () => {
+  fetchMock.mockImplementationOnce(async () => Response.json({ agents: [{ name: 'sleeper-retro', version: 6, status: 'draft', model: 'local/m' }, { name: 'sleeper-digest', version: 3, status: 'draft', model: 'local/m' }] }));
+  open('#/agents');
+  const group = await main().findByRole('region', { name: 'sleeper agents' });
+  expect(within(group).getByRole('heading')).toHaveTextContent('sleeper2 agents');
+  expect(main().getByText('local/m')).toBeInTheDocument();
+  expect(within(group).getAllByRole('link').map((l) => l.textContent)).toEqual(['sleeper-digest v3 ›', 'sleeper-retro v6 ›']);
+});
+
+test('agents with no pinned model read as all on the default model, with no chip', async () => {
+  fetchMock.mockImplementationOnce(async () => Response.json({ agents: [{ name: 'contracts', version: 19, status: 'draft' }, { name: 'reviewer', version: 16, status: 'promoted' }] }));
+  open('#/agents');
+  await main().findByRole('link', { name: /contracts/ });
+  expect(main().getByText(/all on the default model/)).toBeInTheDocument();
+  expect(main().queryByText('Default model')).toBeNull();
 });
