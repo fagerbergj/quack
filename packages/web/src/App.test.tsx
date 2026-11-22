@@ -642,6 +642,24 @@ test('lists artifacts with their check status and failing criteria', async () =>
   await userEvent.click(within(pane).getByRole('button', { name: 'Follow the newest version' }));
   expect(within(pane).getByText('final review')).toBeInTheDocument();
 });
+test('the artifact pane copies the raw content, and its status is an icon with a name, not a word', async () => {
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  (live['ui%3Au1'] ??= {}).artifacts = [{ kind: 'github.review', version: 1, hash: 'h1', content: '# Raw **markdown**', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } }];
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const section = await screen.findByRole('log', { name: 'Transcript' });
+  await waitFor(() => expect(ledgerOf(section)).toHaveLength(1));
+  await userEvent.click(within(ledgerOf(section)[0]!).getByRole('button', { name: 'Open Review' }));
+  const pane = screen.getByRole('region', { name: 'Review' });
+  const picker = within(pane).getByRole('button', { name: 'Version: Version 1, passed' });
+  expect(picker).not.toHaveTextContent(/passed/i);
+  expect(within(picker).getByTitle('Passed')).toBeInTheDocument();
+  await userEvent.click(within(pane).getByRole('button', { name: 'Copy' }));
+  expect(writeText).toHaveBeenCalledWith('# Raw **markdown**');
+  expect(await within(pane).findByRole('status')).toHaveTextContent('Copied');
+});
+
 test('api and ws urls resolve under a /v1/ page path', async () => {
   const { socketUrl, listArtifacts, abortRun } = await import('./api.ts');
   history.replaceState(null, '', '/v1/');
@@ -2000,14 +2018,14 @@ describe('the session page as a ledger', () => {
     const log = await screen.findByRole('log', { name: 'Transcript' });
     await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
     const [one, two] = ledgerOf(log);
-    expect(within(one).getByText(/Double-check failed · 1 to fix · 40%/).closest('details')).toHaveAttribute('open');
+    expect(within(one).getByText(/Double-check failed · 1 to fix$/).closest('details')).toHaveAttribute('open');
     expect(within(one).getByText('The revision must fix')).toBeInTheDocument();
     expect(within(one).getByText('Finding 2 has no line number.')).toBeInTheDocument();
     expect(within(two).getByRole('img', { name: 'Double-checked' })).toBeInTheDocument();
     expect(within(two).queryByText(/Double-check passed/)).toBeNull();
   });
 
-  test('a failed latest version opens on what to fix even with an extension card, and a partial check shows its score', async () => {
+  test('a failed latest version opens on what to fix even with an extension card, and a partial check counts items, not a percentage', async () => {
     const half = { ...check('cites', 0.5, ['Half the findings cite lines.']), weight: 2 };
     (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, pass), review(2, 70, { ...fail, checks: [half] })];
     const ws = await openSession();
@@ -2016,7 +2034,7 @@ describe('the session page as a ledger', () => {
     await waitFor(() => expect(ledgerOf(log)).toHaveLength(2));
     const latest = ledgerOf(log)[1]!;
     expect(within(latest).getByText(/Double-check failed/).closest('details')).toHaveAttribute('open');
-    expect(within(latest).getByText('Fail · 50%')).toBeInTheDocument();
+    expect(within(latest).getByText('Fail')).toBeInTheDocument();
   });
 
   test('while the judge runs, only running checks are listed and each one folds into Done as it finishes', async () => {

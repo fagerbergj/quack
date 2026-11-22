@@ -3,12 +3,11 @@ import { CheckRow, Pill } from './CheckList.tsx';
 
 export const chev = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
 
-// A score only when partial: a failed gate can sit beside a weighted 100%, and "100%" on a fail reads as a contradiction.
+// The round's score is a weighted share the verdict gives no threshold for, so the headline counts what to fix instead.
 function headline(v: Verdict, failed: number): string {
-  const pct = v.score > 0 && v.score < 1 ? ` · ${Math.round(v.score * 100)}%` : '';
-  if (v.passed) return `Double-check passed${pct}`;
+  if (v.passed) return 'Double-check passed';
   const fix = `${failed} to fix`;
-  return v.limitReached ? `Double-check failed at the revision limit · ${fix}${pct}` : `Double-check failed · ${fix}${pct}`;
+  return v.limitReached ? `Double-check failed at the revision limit · ${fix}` : `Double-check failed · ${fix}`;
 }
 
 // Checks are named by the problem they look for, so a passed one only needs a pill when it says more than "not found".
