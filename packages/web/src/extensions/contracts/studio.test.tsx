@@ -291,10 +291,10 @@ test('with no verdicts, a REST contract lists its changes first and marks the op
   const pane = await proposeTwo(v1, v2Runs);
   expect(lines(await changesList())).toEqual(['GET /apps/sleeper/schedule: summary changed', 'GET /apps/sleeper/schedule › 200 › runs: description changedBreaks a caller', 'New GET /apps/sleeper/schedule › 200 › runs › status', 'New GET /apps/sleeper/schedule › 200 › runs › resultUrl']);
   const runs = pane.querySelector('[data-ptr$="/schema/properties/runs"]') as HTMLElement;
-  expect(runs).toHaveTextContent('Breaks a caller');
+  expect(within(runs).getByRole('img', { name: 'Breaks a caller' })).toBeInTheDocument();
   expect(runs).toHaveTextContent('Breaks: Sleeper page');
   expect(runs, 'a changed field shows its first changed sentence on each side').toHaveTextContent('v1Upcoming runs, soonest firstv2Runs from the start of the week, oldest first');
-  expect(within(pane).getAllByText('New').length).toBe(2);
+  expect(within(pane).getAllByRole('img', { name: 'New' }).length).toBe(2);
   expect(line()).toHaveTextContent('v2 waits on you');
   expect(within(bar()).getByRole('button', { name: 'Approve' })).toBeEnabled();
 });
@@ -311,11 +311,13 @@ test('a TypeScript contract marks each change on the diagram and in the spec, a 
   expect(within(diagram).getByText('breaks a caller'), 'the legend names both marks').toBeInTheDocument();
   const a = await within(pane).findByRole('article', { name: 'A' });
   const n = a.querySelector('[data-ptr="/A/n"]') as HTMLElement;
-  expect(within(n).getByText('Breaks a caller')).toBeInTheDocument();
+  expect(within(n).getByRole('img', { name: 'Breaks a caller' })).toBeInTheDocument();
   expect(n, 'a short value reads before and after on its own line').toHaveTextContent('v1numberv2string');
   expect(n).toHaveTextContent('Breaks: web/src/a.ts:12');
-  expect(within(a.querySelector('[data-ptr="/A/m"]') as HTMLElement).getByText('New')).toBeInTheDocument();
-  expect(within(await within(pane).findByRole('article', { name: 'B' })).getAllByText('New'), 'the new type and its field').toHaveLength(2);
+  expect(within(a.querySelector('[data-ptr="/A/m"]') as HTMLElement).getByRole('img', { name: 'New' })).toBeInTheDocument();
+  const b = await within(pane).findByRole('article', { name: 'B' });
+  expect(within(b).getAllByText('New'), 'the new type is tagged once').toHaveLength(1);
+  expect(within(b).queryByRole('img', { name: 'New' }), 'its field rides on the type').toBeNull();
 });
 
 test('a first tap on a box selects it and says what it is; Show in spec finds and highlights it, and a second tap centres there', async () => {
@@ -376,8 +378,8 @@ test('a JSON Schema contract lists its changes first, marks the fields, and Next
   const pane = await proposeTwo(settings, two);
   expect(lines(await changesList())).toEqual(['mode: description changed', 'New field timezone']);
   const fields = within(pane).getByRole('region', { name: 'Fields' });
-  expect(within(fields.querySelector('[data-ptr="/properties/mode"]') as HTMLElement).getByText('Changed')).toBeInTheDocument();
-  expect(within(fields.querySelector('[data-ptr="/properties/timezone"]') as HTMLElement).getByText('New')).toBeInTheDocument();
+  expect(within(fields.querySelector('[data-ptr="/properties/mode"]') as HTMLElement).getByRole('img', { name: 'Changed' })).toBeInTheDocument();
+  expect(within(fields.querySelector('[data-ptr="/properties/timezone"]') as HTMLElement).getByRole('img', { name: 'New' })).toBeInTheDocument();
   await userEvent.click(within(pane).getByRole('button', { name: 'First change' }));
   await userEvent.click(within(pane).getByRole('button', { name: 'Next change' }));
   expect(document.activeElement).toHaveAttribute('data-ptr', '/properties/timezone');
