@@ -58,6 +58,13 @@ test('a quoted phrase is a mention, not a claim', () => {
   assert.deepEqual(diffClaims(text, d, new Set()), []);
 });
 
+test('a scope phrase that is reported, backticked or a bare term is a mention, not a claim about this change', () => {
+  const code = facts({ 'src/app.ts': 'M' }, []);
+  const text = 'Fails when pr.md claims the change is docs-only while touching code.\nThe gate reads `docs-only` and the docs-only rule.\nIt says there are no TypeScript changes, but the diff touches src/app.ts.';
+  assert.deepEqual(diffClaims(text, code, new Set()), []);
+  assert.deepEqual(diffClaims('This PR is docs-only.', code, new Set()), ['artifacts/pr.md says the change is docs-only, but the diff touches src/app.ts']);
+});
+
 test('docs-only allows doc assets under docs/', () => {
   assert.deepEqual(diffClaims('Docs-only change.', facts({ 'docs/api.md': 'M', 'docs/diagram.svg': 'A' }, []), new Set()), []);
 });

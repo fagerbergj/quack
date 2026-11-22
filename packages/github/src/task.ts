@@ -86,7 +86,7 @@ async function contradicted(r: Repo, from: string, text: string) {
   const names = namedCode(text);
   const grep = names.length ? await gitExit(r.api, ['-C', r.dir, 'grep', '-o', '-h', '-F', '-w', ...names.flatMap((n) => ['-e', n]), 'HEAD', from], r.config, r.remote, r.ctx) : { code: 1, output: '' };
   // grep exits 1 when nothing matches; any other outcome means the lookup did not happen, so no name is judged.
-  const found = grep.code === 0 || grep.code === 1 ? new Set(grep.output.split('\n')) : undefined;
+  const found = grep.code === 0 || grep.code === 1 ? new Set(grep.output.split('\n').filter(Boolean)) : undefined;
   return diffClaims(text, { changed, paths }, found);
 }
 

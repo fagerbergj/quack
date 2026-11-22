@@ -86,8 +86,8 @@ const SAYS: { re: RegExp; ok: (statuses: string[]) => boolean; claim: string }[]
   { re: /`([^`]+)` (?:is |stays |remains )?(?:unchanged|untouched)\b|\bno changes? to `([^`]+)`/gi, ok: (s) => !s.length, claim: 'is unchanged, but the diff touches it' },
 ];
 
-// A "no", "not" or "never" earlier in the clause, outside backticks, flips what a phrase claims, so the phrase is skipped.
-const negated = (text: string, at: number) => /\b(?:no|not|never)\b|n't\b/i.test(text.slice(0, at).replace(/`[^`\n]*`/g, '').split(/[.;:!?\n]/).at(-1)!);
+// Earlier in the clause, outside backticks, a negation flips what a phrase claims, and a reporting verb or "if"/"whether" makes it someone else's words or a condition: either way the author is not claiming it.
+const negated = (text: string, at: number) => /\b(?:no|not|never|says?|said|claims?|claimed|reports?|reported|if|whether|unless)\b|n't\b/i.test(text.slice(0, at).replace(/`[^`\n]*`/g, '').split(/[.;:!?\n]/).at(-1)!);
 // A phrase after an odd number of double quotes on its line is quoted: the text mentions the phrase rather than claiming it.
 const quoted = (text: string, at: number) => (text.slice(text.lastIndexOf('\n', at - 1) + 1, at).replace(/`[^`]*`/g, '').match(/["“”]/g)?.length ?? 0) % 2 === 1;
 const claims = (text: string, at: number) => !negated(text, at) && !quoted(text, at);
@@ -102,10 +102,15 @@ function pathClaims(text: string, d: DiffFacts) {
 
 const LANGS: Record<string, RegExp> = { go: /\.go$/, typescript: /\.tsx?$/, javascript: /\.[cm]?jsx?$/, python: /\.py$/ };
 
-function scopeClaims(text: string, changed: string[]) {
+// "docs-only" claims something only of the change itself: "a docs-only change", "this PR is docs-only". Bare, it names the term.
+const DOCS_ONLY = /\b(?:docs?|documentation)-only (?:change|pr|pull request|fix|edit|update|patch)\b|\b(?:this|the) (?:change|pr|pull request|patch|diff) is (?:a )?(?:docs?|documentation)-only\b/gi;
+
+function scopeClaims(body: string, changed: string[]) {
   const found: string[] = [];
+  // Backticked text is code or a quoted term, never the author's claim; blanking it keeps every other index in place.
+  const text = body.replace(/`[^`\n]*`/g, (m) => ' '.repeat(m.length));
   const notDocs = changed.find((f) => !/\.(?:mdx?|rst|txt)$/.test(f) && !f.startsWith('docs/'));
-  const docsOnly = [...text.matchAll(/\b(?:docs?|documentation)-only\b/gi)].some((m) => claims(text, m.index));
+  const docsOnly = [...text.matchAll(DOCS_ONLY)].some((m) => claims(text, m.index));
   if (notDocs && docsOnly) found.push(`${PR} says the change is docs-only, but the diff touches ${notDocs}`);
   // Only an unqualified "no Go changes" that ends its clause; "no Go changes outside X" is a narrower claim.
   for (const m of text.matchAll(/\bno (go|typescript|javascript|python)(?: code)? changes?(?=\s*(?:[.,;:)]|$))/gim)) {
