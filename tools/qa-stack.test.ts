@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
+import { seedContracts } from './qa/seed-contracts.ts';
 import { freePort, probe, startDistributor, startStack, teardown, type Parts } from './qa/stack.ts';
 
 test('the stack serves /version and its stub app', async () => {
@@ -98,4 +99,10 @@ test('two draws that land on one port are redrawn without costing a launch attem
   const start = (_p: Parts, _a: string[], env: Record<string, string>) => (launched.push(`${env.PORT},${env.QUACK_SESSION_PORT}`), { exitCode: 1, signalCode: null }) as ChildProcess;
   await assert.rejects(startDistributor({ children: [], servers: [], tmp: '' }, {}, { next: async () => ports.shift()!, start, serving: async () => false }), /3 times/);
   assert.deepEqual(launched, ['1,2', '3,4', '5,7']);
+});
+
+test('the contracts seed settles without a model and leaves a session per contract', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'qa-seed-'));
+  await seedContracts(dir);
+  assert.equal(readdirSync(dir).length, 3);
 });
