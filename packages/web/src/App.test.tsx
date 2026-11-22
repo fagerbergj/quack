@@ -658,6 +658,9 @@ test('the artifact pane copies the raw content, and its status is an icon with a
   await userEvent.click(within(pane).getByRole('button', { name: 'Copy' }));
   expect(writeText).toHaveBeenCalledWith('# Raw **markdown**');
   expect(await within(pane).findByRole('status')).toHaveTextContent('Copied');
+  writeText.mockRejectedValueOnce(new Error('denied'));
+  await userEvent.click(within(pane).getByRole('button', { name: 'Copy' }));
+  await waitFor(() => expect(within(pane).getByRole('status')).toHaveTextContent('Could not copy'));
 });
 
 test('api and ws urls resolve under a /v1/ page path', async () => {

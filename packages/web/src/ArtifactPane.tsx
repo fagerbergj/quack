@@ -6,7 +6,7 @@ import { delivered, versionOf } from './delivered.ts';
 import { SessionKeyContext } from './extension.ts';
 import { Content } from './JsonView.tsx';
 import { Loaded, useContent } from './useContent.tsx';
-import { FollowNewest, VersionMenu, type VersionItem } from './VersionMenu.tsx';
+import { FollowNewest, iconButton, VersionMenu, type VersionItem } from './VersionMenu.tsx';
 
 /** The versions the pane offers and the one it shows: the focused artifact's kind, else the kind sealed last; the focused version, else the newest. */
 export function paneVersions(items: SealedArtifact[], focus?: SealedArtifact): { versions: SealedArtifact[]; a: SealedArtifact } | undefined {
@@ -26,22 +26,21 @@ const statusOf = (v: Verdict | null | undefined): Pick<VersionItem, 'status' | '
 const itemsOf = (versions: SealedArtifact[]): VersionItem[] =>
   versions.map((v) => ({ id: versionOf(v), short: `v${versionOf(v)}`, name: `Version ${versionOf(v)}`, ...statusOf(v.verdict) })).reverse();
 
-const iconButton = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-link disabled:cursor-default disabled:opacity-40';
-
 /** Copies a version's raw content (Markdown for a report); the icon turns to a tick and a status says "Copied" for two seconds. */
 function CopyButton({ text }: { text?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'ok' | 'failed'>();
   useEffect(() => {
     if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 2000);
+    const t = setTimeout(() => setCopied(undefined), 2000);
     return () => clearTimeout(t);
   }, [copied]);
+  const say = copied === 'ok' ? 'Copied' : copied === 'failed' ? 'Could not copy' : 'Copy';
   return (
     <>
-      <button type="button" aria-label="Copy" title={copied ? 'Copied' : 'Copy'} disabled={text === undefined} onClick={() => navigator.clipboard.writeText(text ?? '').then(() => setCopied(true), () => undefined)} className={iconButton}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{copied ? <path d="M5 12.5l4.5 4.5L19 7.5" /> : <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></>}</svg>
+      <button type="button" aria-label="Copy" title={say} disabled={text === undefined} onClick={() => navigator.clipboard.writeText(text ?? '').then(() => setCopied('ok'), () => setCopied('failed'))} className={iconButton}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{copied === 'ok' ? <path d="M5 12.5l4.5 4.5L19 7.5" /> : <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></>}</svg>
       </button>
-      <span role="status" className="sr-only">{copied ? 'Copied' : ''}</span>
+      <span role="status" className="sr-only">{copied ? say : ''}</span>
     </>
   );
 }

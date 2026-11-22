@@ -11,7 +11,7 @@ function headline(v: Verdict, failed: number): string {
 }
 
 // Checks are named by the problem they look for, so a passed one only needs a pill when it says more than "not found".
-const telling = (c: Check) => c.met === null || (c.met > 0 && c.met < 1);
+const telling = (c: Check) => c.met === null || (Number(c.met) > 0 && Number(c.met) < 1);
 
 /** A version's check result: every criterion with pass or fail and the judge's note; a failed version opens on what its revision must fix. */
 export function CheckResult({ verdict, open, summary }: { verdict: Verdict; open: boolean; summary?: string }) {

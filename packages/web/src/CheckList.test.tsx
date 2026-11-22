@@ -20,10 +20,16 @@ test('a row note keeps its unit chip', () => {
   expect(screen.getByText('RB2')).toBeTruthy();
 });
 
-test('a failed check counts the items that fell short instead of a bare percentage', () => {
+test('a failed check says Fail and keeps how many fell short in its tooltip and its spoken name', () => {
   const base = { criterion: 'c', id: 'x', label: 'A finding cites no source', notes: [] };
-  render(<><Pill check={{ ...base, weight: 3, met: 0.75, units: 4 }} /><Pill check={{ ...base, weight: -2, met: 0.5, units: 4 }} /><Pill check={{ ...base, weight: 3, met: 0.6 }} /></>);
-  expect(screen.getByText('Fail · 1 of 4 items')).toBeTruthy();
-  expect(screen.getByText('Fail · 2 of 4 items')).toBeTruthy();
-  expect(screen.getByText('Fail')).toBeTruthy();
+  render(<>
+    <Pill check={{ ...base, weight: 3, met: 0.75, units: 4 }} />
+    <Pill check={{ ...base, weight: -2, met: 0.75, units: 4 }} />
+    <Pill check={{ ...base, weight: 3, met: 0.5, groups: 6, units: 20 }} />
+    <Pill check={{ ...base, weight: 3, met: false, units: 2 }} />
+    <Pill check={{ ...base, weight: 3, met: 0.6 }} />
+  </>);
+  const pills = screen.getAllByText('Fail');
+  expect(pills.map((p) => p.title)).toEqual(['1 of 4 items fell short', '3 of 4 items fell short', '3 of 6 groups fell short', '', '']);
+  expect(pills[0]).toHaveTextContent('Fail, 1 of 4 items fell short');
 });
