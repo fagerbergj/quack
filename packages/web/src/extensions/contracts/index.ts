@@ -4,7 +4,8 @@ import { BLUE, plain, type Extension } from '../../extension.ts';
 import { ChangesAsked } from './Comments.tsx';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec, specVersion } from './spec.ts';
-import { specNumbers } from './status.ts';
+import { VersionMark } from '../../StatusIcon.tsx';
+import { contractOf, contractRecords, specNumbers } from './status.ts';
 import { ApprovedSpec, ContractStudio, Standalone } from './Studio.tsx';
 
 const KIND = 'contract.spec';
@@ -34,6 +35,16 @@ const view = (a: SealedArtifact) => {
 export const contracts: Extension = {
   artifact: (a) => (a.kind === KIND ? { name: 'Spec' } : NAMES[a.kind] ? { name: NAMES[a.kind]! } : undefined),
   card: view,
+  // One row per contract opens its spec; the line waits for the record's kind, since the spec's summary repeats its version.
+  listRow: ([a]) => (a?.session.startsWith('contracts:') ? { open: KIND, line: null } : undefined),
+  // The version and mark mean what they do on the Contracts page.
+  listRows: async (rows) => {
+    const records = await contractRecords();
+    return new Map(rows.filter((r) => r.key.startsWith('contracts:')).map((r) => {
+      const c = contractOf(r, records.get(r.key));
+      return [r.key, { line: c.kind?.name ?? null, end: createElement(VersionMark, { version: c.version, mark: c.mark, label: c.status }) }];
+    }));
+  },
   // The seal stores the spec's own version as the row's outcome ("v3", "v3 typescript"), so no content is read; a row without one reads as its sealed number.
   versionOf: (a) => (a.kind === KIND ? specVersion(a) : a.kind === 'contract.approved' ? Number(/^Approved version (\d+)/.exec(a.summary ?? '')?.[1]) || undefined : undefined),
   // The Sessions API rows carry no outcome, so the contracts app's own artifact-to-version list supplies it.
@@ -45,7 +56,7 @@ export const contracts: Extension = {
   studio: { match: (key) => key.startsWith('contracts:'), label: 'Contract', owns: (a) => a.tool === 'propose_contract', Pane: ContractStudio },
   nav: { route: 'contracts', label: 'Contracts', icon: ICON, page: Contracts },
   session: {
-    label: 'contract', noun: () => 'Contract', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
+    label: 'contract', match: (r) => r.key.startsWith('contracts:'), icon: ICON, tint: BLUE,
     name: (r) => plain(r.title ?? 'New contract'),
     words: () => ({ run: 'Drafting the contract', done: 'Draft ready', none: 'Starting' }),
   },

@@ -36,15 +36,12 @@ export function look(r: Row): Look {
 }
 
 // `scope` is where the session lives (a review's repo) whether or not the list prefixes it as `repo`.
-export type SessionTitle = { repo?: string; number?: string; text: string; full: string; icon: string; kind: string; scope?: string };
+export type SessionTitle = { repo?: string; number?: string; text: string; full: string; icon: string; tint: string; kind: string; scope?: string };
 
 // The one place a session is named: list rows, the session header, Home and Artifacts all read this.
 export function sessionTitle(s: Nameable): SessionTitle {
   const kind = kindOf(s);
   const n = kind.name(s);
   const scope = EXTENSIONS.map((e) => e.scope?.(s.key)).find(Boolean);
-  return { repo: n.repo, number: n.num, text: n.title, full: n.full, icon: kind.icon, kind: kind.label, scope };
+  return { repo: n.repo, number: n.num, text: n.title, full: n.full, icon: kind.icon, tint: kind.tint, kind: kind.label, scope };
 }
-
-/** How the Artifacts page names a session's artifacts: the kind's noun. */
-export const artifactKind = (r: Row | undefined): { noun: string } => ({ noun: (r && kindOf(r).noun?.(r)) || '' });
