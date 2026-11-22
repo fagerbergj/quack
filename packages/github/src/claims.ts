@@ -87,7 +87,7 @@ const SAYS: { re: RegExp; ok: (statuses: string[]) => boolean; claim: string }[]
 ];
 
 // Earlier in the clause, outside backticks, a negation flips what a phrase claims, and a reporting verb or "if"/"whether" makes it someone else's words or a condition: either way the author is not claiming it.
-const negated = (text: string, at: number) => /\b(?:no|not|never|says?|said|claims?|claimed|reports?|reported|if|whether|unless)\b|n't\b/i.test(text.slice(0, at).replace(/`[^`\n]*`/g, '').split(/[.;:!?\n]/).at(-1)!);
+const negated = (text: string, at: number) => /\b(?:no|not|never|says?|said|claims?|claimed|calls?|called|describ\w*|reports?|reported|if|whether|unless)\b|n't\b/i.test(text.slice(0, at).replace(/`[^`\n]*`/g, '').split(/[.;:!?\n]/).at(-1)!);
 // A phrase after an odd number of double quotes on its line is quoted: the text mentions the phrase rather than claiming it.
 const quoted = (text: string, at: number) => (text.slice(text.lastIndexOf('\n', at - 1) + 1, at).replace(/`[^`]*`/g, '').match(/["“”]/g)?.length ?? 0) % 2 === 1;
 const claims = (text: string, at: number) => !negated(text, at) && !quoted(text, at);
