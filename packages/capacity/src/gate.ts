@@ -40,7 +40,7 @@ export type GateOptions = {
   setNote?: (text: string | null) => void;
 };
 
-type Held = { idx: number; endpoint: string; busy: boolean; stopBeat: () => void };
+type Held = { idx: number; endpoint: string; busy: boolean; granted?: true; stopBeat: () => void };
 /** One begun model call; `end` takes it back so the call frees its own lease, whatever order calls finish in. */
 export type GatedCall = { lease?: Held };
 
@@ -49,6 +49,8 @@ export class CapacityGate {
   readonly #o: Required<Omit<GateOptions, 'clock'>> & { clock: Clock };
   #leases: Held[] = [];
   #calls = new Set<GatedCall>();
+  // A shared call's pending lease per endpoint, which the round's other shared calls wait for instead of queueing their own.
+  #taking = new Map<string, Promise<Held | undefined>>();
   #downUntil = 0;
   #warned = false;
 
@@ -59,12 +61,13 @@ export class CapacityGate {
   // The first lease keeps the session's holder name, so a restarted process takes its old place back.
   #holder = (l: Held) => (l.idx ? `${this.#o.holder}#${l.idx}` : this.#o.holder);
 
-  /** Holds a lease on `endpoint` before a model request, one per call in flight; resolves when granted, or at once if the service is down (fail-open). */
-  async begin(endpoint: string, signal?: AbortSignal): Promise<GatedCall> {
+  /** Holds a lease on `endpoint` before a model request, one per call in flight; resolves when granted, or at once if the service is down (fail-open).
+   * A `shared` call (the judge's) runs under the run's own lease, taking one only when the run holds none. */
+  async begin(endpoint: string, signal?: AbortSignal, shared = false): Promise<GatedCall> {
     const call: GatedCall = {};
     this.#calls.add(call);
     try {
-      if (this.#o.clock.now() >= this.#downUntil) call.lease = await this.#lease(endpoint, signal);
+      if (this.#o.clock.now() >= this.#downUntil) call.lease = await (shared ? this.#share(endpoint, signal) : this.#lease(endpoint, signal));
     } catch (err) {
       this.#calls.delete(call);
       this.#o.setNote(null);
@@ -94,6 +97,20 @@ export class CapacityGate {
   async release(): Promise<void> {
     this.#calls.clear();
     await Promise.all([...this.#leases].map((l) => this.#drop(l)));
+  }
+
+  // Only the call that takes the lease holds it busy; the others ride it with no lease of their own to end.
+  async #share(endpoint: string, signal?: AbortSignal): Promise<Held | undefined> {
+    if (this.#leases.some((l) => l.granted && l.endpoint === endpoint)) return undefined;
+    const pending = this.#taking.get(endpoint);
+    if (pending) return void (await pending.catch(() => undefined));
+    const taking = this.#lease(endpoint, signal);
+    this.#taking.set(endpoint, taking);
+    try {
+      return await taking;
+    } finally {
+      this.#taking.delete(endpoint);
+    }
   }
 
   async #lease(endpoint: string, signal?: AbortSignal): Promise<Held | undefined> {
@@ -152,6 +169,7 @@ export class CapacityGate {
         return undefined;
       }
       if (r.state === 'granted') {
+        lease.granted = true;
         this.#o.setNote(null);
         this.#beat(lease, r);
         return lease;

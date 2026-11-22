@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 
 // One process owns one session, so these are module state. They are how session-half extensions
@@ -45,8 +46,12 @@ export function onGeneration(listener: (g: Generation) => void): () => void {
   generationListeners.add(listener);
   return () => void generationListeners.delete(listener);
 }
-/** Capacity held around each direct completion (a resource gate such as capacity implements it); `after` gets back what `before` returned and runs even when the completion throws. */
-export type GenerationGate = { before(provider: string, signal?: AbortSignal): Promise<unknown>; after(held?: unknown): void };
+/** Capacity held around each direct completion (a resource gate such as capacity implements it); `after` gets back what `before` returned and runs even when the completion throws.
+ * `shared` is true for a completion made inside `inSessionSlot`. */
+export type GenerationGate = { before(provider: string, signal?: AbortSignal, shared?: boolean): Promise<unknown>; after(held?: unknown): void };
+const sessionSlot = new AsyncLocalStorage<true>();
+/** Runs `fn` with its completions under the session's own model capacity: none takes an extra slot or queues behind other sessions, except to take the session's first. */
+export const inSessionSlot = <T>(fn: () => Promise<T>): Promise<T> => sessionSlot.run(true, fn);
 const generationGates = new Set<GenerationGate>();
 export function gateGenerations(gate: GenerationGate): () => void {
   generationGates.add(gate);
@@ -62,7 +67,7 @@ export async function observeGeneration(request: GenerationRequest, complete: (r
   try {
     if (request.provider) {
       for (const g of generationGates) {
-        held.push([g, await g.before(request.provider, request.signal)]);
+        held.push([g, await g.before(request.provider, request.signal, sessionSlot.getStore() ?? false)]);
       }
     }
     message = await complete(request);

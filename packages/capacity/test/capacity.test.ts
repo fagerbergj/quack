@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
-import { inProcessFetch, observeGeneration, primeSessionEndpoint, whileWaiting } from '@quack/sdk';
+import { gateGenerations, inProcessFetch, inSessionSlot, observeGeneration, primeSessionEndpoint, whileWaiting } from '@quack/sdk';
 import { agentSpec, openSession, startLifecycleSender } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { capacityLimits, createCapacityService, capacityFromEnv, capacitySessionExtensions, CapacityGate, httpClient, LeaseLedger, type GatedCall, type Lease, type LeaseClient } from '../src/index.ts';
@@ -249,6 +249,62 @@ test('parallel calls in one session take one lease each and queue past the capac
   g.end(tokens[0]);
   await clock.advance(1000);
   assert.equal(calls[2].granted, true, 'the call that ended hands its lease to the queued one of the same run');
+});
+
+// Four shared calls, as one judge round's escalation limit lets through at once.
+function judgeRound(g: CapacityGate) {
+  return [0, 1, 2, 3].map(() => {
+    const state = { granted: false };
+    void g.begin('swap', undefined, true).then(() => (state.granted = true));
+    return state;
+  });
+}
+
+test('with every slot held by other sessions, a judge round runs under the session\'s own lease without waiting', async () => {
+  fresh(8);
+  const g = gate('s');
+  await g.begin('swap');
+  g.end();
+  for (let i = 0; i < 7; i++) table.acquire('swap', `o${i}`);
+  const round = judgeRound(g);
+  await clock.settle();
+  assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
+  assert.deepEqual([heldBy().length, table.endpoints()[0].waiting], [8, []]);
+});
+
+test('a judge round started while the session holds no lease queues for exactly one, and every call rides it', async () => {
+  fresh(1);
+  table.acquire('swap', 'o');
+  const g = gate('s');
+  const round = judgeRound(g);
+  await clock.settle();
+  assert.deepEqual(table.endpoints()[0].waiting, ['s']);
+  table.release('swap', 'o');
+  await clock.advance(1000);
+  assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
+  assert.deepEqual(heldBy(), ['s']);
+});
+
+test('while a judge round rides the session\'s lease, a parallel call that is not the judge\'s still queues for its own', async () => {
+  fresh(1);
+  const g = gate('s');
+  await g.begin('swap');
+  const round = judgeRound(g);
+  const child = begin(g);
+  await clock.advance(2000);
+  assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
+  assert.equal(child.granted, false);
+  assert.deepEqual(table.endpoints()[0].waiting, ['s#1']);
+});
+
+test('a completion inside inSessionSlot reaches the gate as shared, and one outside does not', async () => {
+  const seen: boolean[] = [];
+  const off = gateGenerations({ before: async (_p, _s, shared) => void seen.push(shared === true), after: () => {} });
+  const reply = async () => ({}) as never;
+  await observeGeneration({ provider: 'x', messages: [] }, reply);
+  await inSessionSlot(() => observeGeneration({ provider: 'x', messages: [] }, reply));
+  off();
+  assert.deepEqual(seen.slice(-2), [false, true]);
 });
 
 test('calls finishing out of order free their own lease, not the newest one', async () => {
