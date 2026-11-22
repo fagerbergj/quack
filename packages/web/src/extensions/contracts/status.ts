@@ -1,36 +1,42 @@
 import { listAll, postInvocation } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
+import type { Mark } from '../../StatusIcon.tsx';
 
-export type Tone = 'warn' | 'plain' | 'ok' | 'bad';
-export type Contract = { key: string; name: string; kind?: string; version?: number; status: string; tone: Tone; note?: string; rank: number };
+/** One contract row: `version` and `mark` are all it shows of its state, and `status` is the mark's words. `approved` puts it in the Approved group. */
+export type Contract = { key: string; name: string; kind?: { tag: string; name: string }; version: number | undefined; mark: Mark; status: string; approved: boolean; rank: number; at: number };
 
 /** One contract as the contracts extension serves it (GET apps/contracts/contracts), from the session's own sealed records. */
 export type ContractRecord = { key: string; title: string; kind: string; draft?: number; proposed?: number; approved?: number; changesRequested?: number; pendingApproval: boolean };
 
-const KIND_NAMES: Record<string, string> = { rest: 'REST', 'json-schema': 'JSON Schema', typescript: 'TypeScript' };
+const KINDS: Record<string, { tag: string; name: string }> = { rest: { tag: 'REST', name: 'REST' }, 'json-schema': { tag: 'JSON', name: 'JSON Schema' }, typescript: { tag: 'TS', name: 'TypeScript' } };
 
 // Asked to change the very version last put up, and not approved since.
 const changesAsked = (r: ContractRecord | undefined) => r?.changesRequested !== undefined && r.changesRequested === r.proposed && r.changesRequested !== r.approved;
 
-function settled(base: Omit<Contract, 'status' | 'tone' | 'rank'>, rec: ContractRecord | undefined): Contract {
-  if (changesAsked(rec)) return { ...base, status: 'Changes requested', tone: 'bad', rank: 2 };
-  const stale = rec?.draft !== undefined && rec.approved !== undefined && rec.draft > rec.approved ? `v${rec.draft} is not approved yet` : undefined;
-  if (rec?.approved !== undefined) return { ...base, status: `Approved v${rec.approved}`, tone: 'ok', ...(stale && { note: stale }), rank: 4 };
-  return { ...base, status: rec?.draft !== undefined ? 'Drafting' : 'Idle', tone: 'plain', ...(rec?.draft !== undefined && { note: 'not yet proposed for approval' }), rank: 3 };
+type Base = Omit<Contract, 'mark' | 'status' | 'rank'>;
+
+function settled(base: Base, rec: ContractRecord | undefined): Contract {
+  if (changesAsked(rec)) return { ...base, version: rec!.changesRequested, mark: 'bad', status: 'Changes requested', rank: 2 };
+  if (rec?.approved !== undefined) {
+    const newer = rec.draft !== undefined && rec.draft > rec.approved ? `; v${rec.draft} is not approved yet` : '';
+    return { ...base, version: rec.approved, mark: 'ok', status: `Approved${newer}`, approved: true, rank: 4 };
+  }
+  return { ...base, mark: 'draft', status: rec?.draft !== undefined ? 'Draft, not yet proposed for approval' : 'No draft yet', rank: 3 };
 }
 
 /** What the Contracts page says about one contract session: its catalog row for what runs, the extension's record for its versions. */
 export function contractOf(row: Row, rec?: ContractRecord): Contract {
-  const base = { key: row.key, name: rec?.title ?? row.title ?? 'New contract', ...(rec && { kind: KIND_NAMES[rec.kind] ?? 'REST' }), ...(rec?.draft !== undefined && { version: rec.draft }) };
-  if (rec?.pendingApproval) return { ...base, status: 'Awaiting your approval', tone: 'warn', rank: 0 };
-  if (row.pendingAsks) return { ...base, status: 'Waiting on you', tone: 'warn', rank: 0 };
-  if (row.state === 'running') return { ...base, status: 'Drafting', tone: 'plain', ...(rec?.approved !== undefined && { note: `v${rec.approved} approved` }), rank: 1 };
-  if (row.failures.length) return { ...base, status: 'Run failed', tone: 'bad', rank: 2 };
+  const base: Base = { key: row.key, name: rec?.title ?? row.title ?? 'New contract', ...(rec && { kind: KINDS[rec.kind] ?? KINDS.rest! }), version: rec?.draft, approved: false, at: Date.parse(row.lastActivity) || 0 };
+  if (rec?.pendingApproval) return { ...base, version: rec.proposed ?? rec.draft, mark: 'need', status: 'Awaiting your approval', rank: 0 };
+  if (row.pendingAsks) return { ...base, mark: 'need', status: 'Waiting on you', rank: 0 };
+  if (row.state === 'running') return { ...base, mark: 'draft', status: 'Drafting', rank: 1 };
+  if (row.failures.length) return { ...base, mark: 'bad', status: 'Run failed', rank: 2 };
   return settled(base, rec);
 }
 
+// Most urgent first, and within a rank (the Approved group is one rank) the most recently active.
 export const contractRows = (rows: Row[], records: ReadonlyMap<string, ContractRecord> = new Map()) =>
-  rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map((r) => contractOf(r, records.get(r.key))).sort((a, b) => a.rank - b.rank);
+  rows.filter((r) => r.key.startsWith('contracts:') && r.state !== 'archived').map((r) => contractOf(r, records.get(r.key))).sort((a, b) => a.rank - b.rank || b.at - a.at);
 
 /** The contracts extension's records by session key, every page of them; an app that is not mounted reads as none, and the rows still show. */
 export const contractRecords = async (): Promise<Map<string, ContractRecord>> =>
