@@ -74,7 +74,7 @@ const scenario: Scenario = {
       const diagram = page.getByRole('region', { name: 'Class diagram' });
       await visible(diagram.getByRole('heading', { name: /around ExtensionManifest/ }));
       const pane = paneOf(page, 'Contract');
-      await visible(pane.locator('#decl-App').getByText('New').first());
+      await visible(pane.locator('#decl-App').getByRole('img', { name: 'New' }).first());
       await pane.getByRole('region', { name: 'Changes against v1' }).scrollIntoViewIfNeeded();
       await ctx.shot(page, `studio-ts-changes-${label}`);
       await ctx.shot(page, `studio-ts-${label}`);

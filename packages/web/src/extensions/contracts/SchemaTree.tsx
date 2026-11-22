@@ -22,13 +22,15 @@ export function MarkTag({ m }: { m: Mark | undefined }) {
 const STEP = 20;
 // Change dots share one gutter left of every guide, so they line up whatever the depth.
 const GUTTER = 14;
-const DOT: Record<Mark, string> = { added: 'h-1.5 w-1.5 rounded-full bg-warning', changed: 'h-1.5 w-1.5 rounded-full bg-warning', breaking: 'h-1.5 w-1.5 rotate-45 bg-danger' };
+// Where a row's content starts: the gutter, the guides, then a 14px lead.
+const indent = (depth: number) => GUTTER + depth * STEP + 14;
+const DOT: Record<Mark, string> = { added: 'h-1.5 w-1.5 rounded-full bg-success', changed: 'h-1.5 w-1.5 rounded-full bg-warning', breaking: 'h-1.5 w-1.5 rotate-45 bg-danger' };
 
 // One mark per change; the word is its tooltip and name. It sits in the name's own box so it is level with the name's first line,
 // and its offset undoes the row's indent so every dot lands in the same gutter at the table's left edge.
 function Dot({ m, depth }: { m?: Mark; depth: number }) {
   if (!m) return null;
-  return <span data-gutter style={{ left: `${-(GUTTER + depth * STEP + 14)}px` }} className="absolute top-0 flex h-[1lh] w-3.5 items-center justify-center"><span role="img" aria-label={TAG[m][0]} title={TAG[m][0]} className={DOT[m]} /></span>;
+  return <span data-gutter role="img" aria-label={TAG[m][0]} title={TAG[m][0]} style={{ left: `${-indent(depth)}px` }} className="absolute top-0 flex h-[1lh] w-3.5 items-center justify-center"><span className={DOT[m]} /></span>;
 }
 
 // A name may wrap only at a camel-case boundary, never mid-word.
@@ -39,9 +41,9 @@ function Row({ f, choices, code, target, covered }: { f: Field; choices: Choice[
   const item = useItem(f.ptr);
   const flash = useFlash<HTMLLIElement>(f.ptr);
   return (
-    <li ref={flash.ref} tabIndex={-1} data-ptr={f.ptr} aria-level={f.depth + 1} style={{ paddingLeft: `${GUTTER + f.depth * STEP + 14}px` }} className={`group/c relative flex scroll-mt-16 flex-wrap items-baseline gap-x-2 gap-y-1 border-t py-2 pr-1 text-[13.5px] outline-none first:border-t-0 ${f.depth ? 'border-line/50' : 'border-line'} ${m ? MARKED[m] : ''} ${flash.cls}`}>
+    <li ref={flash.ref} tabIndex={-1} data-ptr={f.ptr} aria-level={f.depth + 1} style={{ paddingLeft: `${indent(f.depth)}px` }} className={`group/c relative flex scroll-mt-16 flex-wrap items-baseline gap-x-2 gap-y-1 border-t py-2 pr-1 text-[13.5px] outline-none first:border-t-0 ${f.depth ? 'border-line/50' : 'border-line'} ${m ? MARKED[m] : ''} ${flash.cls}`}>
       {Array.from({ length: f.depth }, (_, i) => <span key={i} data-guide aria-hidden="true" className="absolute top-0 bottom-0 w-px bg-line-strong" style={{ left: `${GUTTER + i * STEP + 10}px` }} />)}
-      <code className={`relative font-mono [overflow-wrap:break-word] @xl:flex-none ${code ? '@xl:w-40' : '@xl:w-44'}`}><Name name={f.name} /><Dot m={covered ? undefined : m} depth={f.depth} /></code>
+      <code className={`relative font-mono [overflow-wrap:anywhere] @xl:flex-none @xl:[overflow-wrap:break-word] ${code ? '@xl:w-40' : '@xl:w-44'}`}><Name name={f.name} /><Dot m={covered ? undefined : m} depth={f.depth} /></code>
       <span className={`font-mono text-[12.5px] text-success ${code ? 'min-w-0 [overflow-wrap:anywhere]' : '@xl:w-24 @xl:flex-none'}`}>{code ? code(f.type) : f.type}</span>
       {f.required && <span className="text-[11px] tracking-wide text-danger">REQUIRED</span>}
       {f.where && <span className={fact}>{f.where}</span>}

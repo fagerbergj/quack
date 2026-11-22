@@ -19,15 +19,16 @@ const withMarks = (ptrs: string[], rows: Field[]) =>
 test('a new object gets one named marker and its children get none', () => {
   withMarks(['/waiting', '/waiting/since'], [f('note', 0), f('waiting', 0), { ...f('since', 1), ptr: '/waiting/since' }]);
   expect(screen.getAllByRole('img', { name: 'New' })).toHaveLength(1);
-  expect(screen.queryByText('NEW')).toBeNull();
+  expect(screen.queryByText('New')).toBeNull();
 });
 
-test('a changed field in an unchanged parent is marked, in the same gutter as a top-level one', () => {
+test('a changed field in an unchanged parent is marked, in a gutter left of the guides at any depth', () => {
   const { container } = withMarks(['/a', '/b'], [f('wake', 0), f('a', 1), f('b', 0)]);
   expect(screen.getAllByRole('img', { name: 'New' })).toHaveLength(2);
   const gutters = [...container.querySelectorAll<HTMLElement>('[data-gutter]')];
-  expect(new Set(gutters.map((g) => g.className)).size).toBe(1);
-  // Each dot's offset cancels its row's indent, so both land at x = 0.
-  const x = (g: HTMLElement) => parseFloat(g.style.left) + parseFloat(g.closest('li')!.style.paddingLeft);
-  expect(gutters.map(x)).toEqual([0, 0]);
+  const row = (g: HTMLElement) => g.closest('li')!;
+  // A dot's left is relative to the name, which starts at the row's padding.
+  expect(gutters.map((g) => parseFloat(g.style.left) + parseFloat(row(g).style.paddingLeft))).toEqual([0, 0]);
+  const guide = row(gutters[0]).querySelector<HTMLElement>('[data-guide]')!;
+  expect(14, 'the gutter ends before the first guide').toBeLessThan(parseFloat(guide.style.left));
 });
