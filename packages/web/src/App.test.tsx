@@ -2121,7 +2121,9 @@ describe('the session context rail', () => {
     expect(within(pr).getByRole('link', { name: 'Open on GitHub ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
     const versions = within(rail).getByRole('region', { name: 'Versions' });
     expect(await within(versions).findByText('Review v1')).toBeInTheDocument();
-    expect(within(versions).getByText("Didn't pass its checks, 50%")).toBeInTheDocument();
+    expect(within(versions).getByText("Didn't pass its checks")).toBeInTheDocument();
+    expect(within(versions).queryByText(/%/)).toBeNull();
+    expect(within(versions).getByRole('button', { name: /Review v1 · Didn't pass its checks/ })).toBeInTheDocument();
     expect(within(versions).getByText('Double-checked · Posted to GitHub as Approve')).toBeInTheDocument();
     expect(within(rail).queryByRole('region', { name: 'Needs you' })).toBeNull();
     expect(within(rail).queryByRole('region', { name: 'Cost' })).toBeNull();

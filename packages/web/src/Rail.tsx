@@ -1,5 +1,5 @@
 import { Fragment, useState, type ReactNode } from 'react';
-import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { checkFailed, listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { artifactName, ledgerId } from './Artifacts.tsx';
 import { delivered, versionOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
@@ -23,11 +23,12 @@ function jump(id: string) {
 
 const clock = (at: string | number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-// A score only when partial, as in the ledger's check result.
+// The count of failed checks is detail for the tooltip and aria label; the visible line keeps the words.
+const toFix = (a: SealedArtifact) => (a.verdict && !a.verdict.passed ? a.verdict.checks.filter(checkFailed).length : 0);
+
 function summaryOf(a: SealedArtifact): string {
   const v = a.verdict;
-  const pct = v && v.score > 0 && v.score < 1 ? `, ${Math.round(v.score * 100)}%` : '';
-  const checked = v ? [`${v.passed ? 'Double-checked' : "Didn't pass its checks"}${pct}`] : [];
+  const checked = v ? [v.passed ? 'Double-checked' : "Didn't pass its checks"] : [];
   const postedTo = EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.postedTo;
   const posted = a.links?.length ? [postedTo ?? 'Posted'] : [];
   return [...checked, ...posted].join(' · ');
@@ -35,6 +36,8 @@ function summaryOf(a: SealedArtifact): string {
 
 // Older versions stay one click away so a long revision history does not stretch the rail.
 const RECENT_VERSIONS = 3;
+
+const detail = (a: SealedArtifact) => [`${artifactName(a)} v${versionOf(a)}`, summaryOf(a), toFix(a) ? `${toFix(a)} to fix` : ''].filter(Boolean).join(' · ');
 
 function Versions({ items }: { items: SealedArtifact[] }) {
   const [all, setAll] = useState(false);
@@ -49,7 +52,7 @@ function Versions({ items }: { items: SealedArtifact[] }) {
       <ul id="rail-version-list" className="m-0 flex list-none flex-col gap-1 p-0">
         {rows.map((a) => (
           <li key={ledgerId(a)}>
-            <button type="button" onClick={() => jump(ledgerId(a))} className={`${jumpBtn} flex-col gap-0.5`}>
+            <button type="button" aria-label={detail(a)} title={detail(a)} onClick={() => jump(ledgerId(a))} className={`${jumpBtn} flex-col gap-0.5`}>
               <span className="flex w-full items-center gap-2">
                 {a.verdict && <span aria-hidden="true" className={a.verdict.passed ? 'text-success' : 'text-danger'}>{a.verdict.passed ? '✓' : '✗'}</span>}
                 <span className="min-w-0 flex-1 truncate font-medium">{`${artifactName(a)} v${versionOf(a)}`}</span>
