@@ -280,7 +280,7 @@ async function jobHarness() {
 }
 
 test('a task the root owns is a run and shows running through its phases; a background task is none', async () => {
-  const { start, release, row } = await jobHarness();
+  const { h, start, release, row } = await jobHarness();
   await start('bg', true);
   assert.equal((await row())?.state, 'idle', 'a background task is not a run');
   await start('job');
@@ -288,8 +288,11 @@ test('a task the root owns is a run and shows running through its phases; a back
   await release('job:1');
   assert.equal((await row())?.state, 'running', 'still running between phases');
   await release('job:2');
+  assert.equal((await row())?.state, 'idle', 'the run ended');
   await release('bg:1');
   await release('bg:2');
+  const runs = (await h.stream())!.events.filter((e) => e.type === 'run.started' || e.type === 'run.ended').map((e) => e.id);
+  assert.deepEqual(runs, ['run:1:started', 'run:1:ended'], 'the background task ended without a run');
 });
 
 test('a task the root owns ends its run: idle, lastActivity at its end, one run.started and one run.ended', async () => {

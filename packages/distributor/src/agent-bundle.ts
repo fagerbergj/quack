@@ -33,7 +33,7 @@ export async function keepVersion(dataDir: string, srcDir: string, rubricFor?: R
   const dest = versionDir(dataDir, b.name, b.version);
   if (await exists(join(dest, 'agent.json'))) return;
   await mkdir(dest, { recursive: true });
-  if (typeof b.definition.prompt === 'string') await cp(join(srcDir, b.definition.prompt), join(dest, b.definition.prompt)).catch(() => undefined);
+  if (typeof b.definition.prompt === 'string') await cp(join(srcDir, b.definition.prompt), join(dest, b.definition.prompt));
   const rubric = rubricFor?.(Object.keys((b.definition.extensions as object | undefined) ?? {}));
   if (rubric) await writeFile(join(dest, 'rubric.json'), JSON.stringify(rubric));
   await cp(join(srcDir, 'agent.json'), join(dest, 'agent.json'));

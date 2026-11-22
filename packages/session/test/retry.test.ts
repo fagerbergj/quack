@@ -141,6 +141,11 @@ test('an abort whose queued follow-up already started keeps its retry for that r
   const { session, faux } = await open('abort-followup', [abort(), abort(), fauxAssistantMessage('Paris')]);
   await session.submit('first', 'q1');
   await session.submit('second', 'q2', false, 'followUp');
+  // The aborted run's single retry consumes the second abort and fails that run, before the follow-up answers.
+  await waitFailure(session);
+  const rows = await failures(session);
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].error, /abort/);
   await waitAnswer(session);
   assert.equal(faux.state.callCount, 3);
   await session.close();
