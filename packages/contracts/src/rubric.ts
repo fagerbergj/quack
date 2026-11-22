@@ -247,6 +247,28 @@ const purposeSentences = (intent: { purpose: string }): Entry[] =>
   (intent.purpose ?? '').split(/(?<=[.;])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
 registerSplitter('contract.purposeSentences', (inputs, o) => promiseItems(inputs, o, purposeSentences));
 
+const NAMED_OPERATION = /\b(GET|PUT|POST|DELETE|OPTIONS|HEAD|PATCH|TRACE)\s+(\/[^\s,;)\]`"'?#]*)/g;
+const routeOf = (path: string) => path.replace(/[.:]+$/, '').replace(/\{[^}]*\}/g, '{}');
+// A path ending the other counts as defined, so a route written with or without its app's mount prefix is not asked about.
+const definesOp = (ops: string[], method: string, path: string) => ops.some((id) => id.startsWith(`${method} `) && (routeOf(id.slice(method.length + 1)).endsWith(path) || path.endsWith(routeOf(id.slice(method.length + 1)))));
+
+// One item per METHOD /path a REST purpose sentence names that the document does not define. Failing those by code alone flagged 30 of
+// 100 recorded mentions (replaced routes, another surface's, examples), so the judge model asks whether each is a promise.
+function undefinedOperations(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const [specInput, kindInput] = [o.from].flat();
+  if (inputs[kindInput] !== 'rest') return [];
+  const spec = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'intent' | 'document'>;
+  const ops = kinds.rest.definitions(spec.document).map((d) => d.id).filter((id) => /^[A-Z]+ \//.test(id));
+  const seen = new Map<string, number>();
+  return purposeSentences(spec.intent).flatMap(({ text }) => [...text.matchAll(NAMED_OPERATION)].filter(([, m, p]) => !definesOp(ops, m, routeOf(p))).map(([, m, p]) => {
+    const operation = `${m} ${p.replace(/[.:]+$/, '')}`;
+    const n = (seen.get(operation) ?? 0) + 1;
+    seen.set(operation, n);
+    return { id: n > 1 ? `${operation} (${n})` : operation, text: JSON.stringify({ sentence: text, operation, operationsDefined: ops }) };
+  }));
+}
+registerSplitter('contract.undefinedOperations', undefinedOperations);
+
 // The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const spec = parseSpec(sealed.content) as ContractSpec;
@@ -285,6 +307,7 @@ export const contractDeclaration: Declaration = {
     // One item per guarantee, and one per promising sentence of the purpose; the evidence is the parts each may hold in.
     guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
     purpose: { split: { name: 'contract.purposeSentences', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { evidence: { name: 'contract.evidence' } } },
+    operation: { split: { name: 'contract.undefinedOperations', from: ['spec', 'kind'] }, piece: 'mention' },
     choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
     // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
     definition: {
@@ -301,9 +324,10 @@ export const contractDeclaration: Declaration = {
     // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
     // queued behind it made the round slower than the one question they replaced.
     meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
-    // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
-    // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
+    // Known misses: an operation promised without its METHOD /path may pass on prose alone (caught on break), and broad purpose
+    // wording can flake (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    promises_undefined_operation: { scope: 'operation', aggregate: { name: 'all', pass: ['no'] }, decisionModel: false, question: yesNo('The document does not define this operation. Does this sentence of the purpose promise that this contract provides it? A route the sentence says is replaced or belongs to another surface, an example, or one of the defined operations under another prefix is no promise.') },
     contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
@@ -411,7 +435,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 10,
+  version: 11,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -431,6 +455,8 @@ export const contractRubric: Rubric = {
       // The old meets_intent's weight, split: each miss alone still fails a spec; the purpose, one broad statement, counts least.
       { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 3 },
       { id: 'delivers_purpose', label: "The document doesn't deliver the intent's purpose", weight: 1 },
+      // Any flag costs 1 of the 4 the promise checks earn, so a promised operation the document lacks fails the spec alone.
+      { id: 'promises_undefined_operation', label: 'The purpose promises an operation the document does not define', weight: -1 },
       { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },
       // The two halves of "unasked" share the weight it had alone.
       { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -2 },

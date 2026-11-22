@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Unit } from '@quack/judge';
+import { score, type CheckResult, type Unit } from '@quack/judge';
 import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 import { builtOf, judged } from './judging.ts';
@@ -95,4 +95,39 @@ test('with no guarantees, meets_intent has no items and counts toward neither si
   const res = await judged(t, s, ['meets_intent', 'delivers_purpose'], () => 'no', { choice: 'yes', reason: 'Shown in GET.' });
   assert.deepEqual([res.check('meets_intent').met, res.check('meets_intent').units], [null, 0]);
   assert.deepEqual([res.check('delivers_purpose').met, res.check('delivers_purpose').units], [true, 2]);
+});
+
+const operationIds = async (s: ContractSpec) => (await builtOf(s)).evidence.operation?.map((u) => u.id) ?? [];
+
+test('each METHOD /path a purpose sentence names that the document lacks is one item; defined ones, with or without a mount prefix, are not', async () => {
+  const s = spec();
+  s.intent.purpose = 'Serves GET /apps/sleeper/schedule?week=3 and GET /v1/apps/sleeper/schedule. GET /schedule is its relative route. It also takes POST /apps/sleeper/schedule. It replaces GET /old/{id}. GET /old/{id} is gone. A post to /x is prose.';
+  assert.deepEqual(await operationIds(s), ['operation POST /apps/sleeper/schedule', 'operation GET /old/{id}', 'operation GET /old/{id} (2)']);
+  assert.deepEqual((await builtOf(s)).evidence.operation[0].state.mention, { sentence: 'It also takes POST /apps/sleeper/schedule.', operation: 'POST /apps/sleeper/schedule', operationsDefined: [OP] });
+});
+
+test('only a REST purpose is read for operations, and provenance sentences are not', async () => {
+  const s = spec();
+  s.intent.purpose = 'Show the Sleeper page the live week. Provenance: v1 served POST /gone.';
+  assert.deepEqual(await operationIds(s), []);
+  s.intent.purpose = 'Show the page what POST /gone returns.';
+  assert.deepEqual(await operationIds({ ...s, kind: 'json-schema' }), []);
+});
+
+test('a promised operation the document lacks is flagged with its reason by the judge model, and that alone fails the spec', async (t) => {
+  const s = spec();
+  s.intent.purpose = 'Show the Sleeper page the live week. Clients post runs with POST /apps/sleeper/runs.';
+  const flagged = (await judged(t, s, ['promises_undefined_operation'], () => 'no', { choice: 'yes', reason: 'The sentence promises the route and paths has no such operation.' })).check('promises_undefined_operation');
+  assert.deepEqual([flagged.met, flagged.units, flagged.resolvers], [true, 1, { j: 1 }]);
+  assert.deepEqual(flagged.notes, ['operation POST /apps/sleeper/runs: The sentence promises the route and paths has no such operation.']);
+  const held = (await judged(t, s, ['promises_undefined_operation'], () => 'yes', { choice: 'no', reason: 'Another surface.' })).check('promises_undefined_operation');
+  assert.equal(held.met, false);
+  const all = contractRubric.criteria.flatMap((c) => c.checks.map((k): CheckResult => ({ criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: k.weight === 'gate' || k.weight > 0, units: 1, resolvers: {}, notes: [] })));
+  const passes = (flag: boolean) => score(contractRubric, all.map((r) => (r.id === 'promises_undefined_operation' ? { ...r, met: flag } : r))).passed;
+  assert.deepEqual([passes(false), passes(true)], [true, false]);
+});
+
+test('a purpose naming only defined operations asks nothing, so the check counts toward neither side', async (t) => {
+  const res = (await judged(t, spec(), ['promises_undefined_operation'], () => 'yes')).check('promises_undefined_operation');
+  assert.deepEqual([res.met, res.units], [null, 0]);
 });
