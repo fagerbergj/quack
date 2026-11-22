@@ -449,3 +449,38 @@ test('the reuse key is computed as before; only the prompt version moved', () =>
   assert.equal(PROMPT_VERSION, 2);
   assert.notEqual(reuseKey(ask, unit, policy), reuseKey(ask, unit, policy, 1));
 });
+
+test('at escalations: 1, a deciding answer is counted before the next waiter takes the slot', async () => {
+  const units = ['u0', 'u1', 'u2'].map((id) => ({ id, state: { item: id } }));
+  let escalated = 0;
+  const memos = new Map<string, unknown>();
+  const api = {
+    now: () => 0,
+    agent: async () => ({ model: { provider: 'local', modelId: 'j' } }),
+    async memo(name: string, ...rest: unknown[]) {
+      if (rest.length === 2 && !memos.has(name)) memos.set(name, rest[0]);
+      return memos.get(name);
+    },
+    models: {
+      getAllModels: () => [],
+      getModel: () => ({ id: 'j', provider: 'local', contextWindow: 8192 }),
+      completeSimple: async () => {
+        escalated++;
+        await Promise.resolve();
+        return { stopReason: 'stop', content: [{ type: 'text', text: '{"choice":"yes","confidence":1,"reason":"holds"}' }] };
+      },
+    },
+  };
+  let decided = false;
+  const settings = { judgeModel: { provider: 'local', modelId: 'j' }, memo: 'm', clef: limiter(1), escalations: limiter(1) };
+  const answered = await answerItems(
+    api as never,
+    settings,
+    units.map((u) => ({ unit: u, checks })),
+    BACKGROUND_CONTEXT,
+    async (a) => { if (a.answer?.met) decided = true; },
+    () => !decided,
+  );
+  assert.equal(escalated, 1, 'no extra item escalates once the first deciding pass is counted');
+  assert.deepEqual(answered.map((a) => a.answer?.met), [true, undefined, undefined]);
+});
