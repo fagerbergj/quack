@@ -3,7 +3,7 @@ import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from 
 import { appEndpoint, gateGenerations, onWaiting, statusNote } from '@quack/sdk';
 import { CapacityGate, httpClient, type GateOptions, type GatedCall } from './gate.ts';
 
-export type CapacityConfig = Partial<Pick<GateOptions, 'graceMs' | 'capMs' | 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
+export type CapacityConfig = Partial<Pick<GateOptions, 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
 
 /** The deployment's gate: installed for every session the runtime primed with a distributor to reach, otherwise nothing. */
 export function capacityFromEnv(env: Record<string, string | undefined> = process.env) {
@@ -20,7 +20,7 @@ function reachable() {
   }
 }
 
-/** The session half: a lease on the model endpoint per run, taken before a request and kept between the run's turns. Without a service it installs nothing. */
+/** The session half: a lease on the model endpoint per run, taken before a request and kept until the run ends or waits on a person or a child run. Without a service it installs nothing. */
 export function capacitySessionExtensions(config: CapacityConfig, gate?: CapacityGate): Extension[] {
   const holder = config.holder ?? randomUUID();
   if (!gate && !(config.serviceUrl && config.serviceToken)) return [];

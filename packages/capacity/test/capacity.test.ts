@@ -11,8 +11,7 @@ import { capacityLimits, createCapacityService, capacityFromEnv, capacitySession
 import { FakeClock } from './fake-clock.ts';
 
 const TTL = 30_000;
-const GRACE = 60_000;
-const CAP = 600_000;
+const MINUTE = 60_000;
 
 const clock = new FakeClock();
 let table: LeaseLedger;
@@ -28,8 +27,8 @@ const direct = (t: LeaseLedger): LeaseClient => ({
 });
 
 const notes: Record<string, string | null> = {};
-function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void; capMs?: number; graceMs?: number } = {}) {
-  return new CapacityGate({ client, holder, clock, graceMs: GRACE, capMs: CAP, setNote: (n) => void (notes[holder] = n), ...extra });
+function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void } = {}) {
+  return new CapacityGate({ client, holder, clock, setNote: (n) => void (notes[holder] = n), ...extra });
 }
 function begin(g: CapacityGate) {
   const state = { granted: false };
@@ -68,19 +67,16 @@ test('waiters are served first in, first out', async () => {
   assert.deepEqual([sb.granted, sc.granted], [true, false]);
 });
 
-test('a run keeps its lease across tool calls shorter than the grace and loses it past the grace', async () => {
-  fresh();
+test('a run keeps its lease through a long tool phase while another session waits', async () => {
+  fresh(1);
   const g = gate('s');
   await g.begin('swap');
   g.end();
-  await clock.advance(GRACE - 1000);
-  assert.deepEqual(heldBy(), ['s']);
+  const waiter = begin(gate('w'));
+  await clock.advance(5 * MINUTE);
+  assert.deepEqual([heldBy(), waiter.granted], [['s'], false]);
   await g.begin('swap');
-  g.end();
-  await clock.advance(GRACE - 1000);
-  assert.deepEqual(heldBy(), ['s']);
-  await clock.advance(2000);
-  assert.deepEqual(heldBy(), []);
+  assert.deepEqual(heldBy(), ['s'], 'the next generation reuses the held lease without queueing');
 });
 
 test('a heartbeat keeps a long generation alive past the lease TTL', async () => {
@@ -128,7 +124,7 @@ test('waiting on a person gives the lease back at once, and the next turn asks a
   await wait;
 });
 
-test('a direct completion waits for a lease while all are held, and gives it back to the grace timer after', async () => {
+test('a direct completion waits for a lease while all are held, and the run keeps it after', async () => {
   fresh(1);
   const holder = gate('o');
   await holder.begin('swap');
@@ -142,9 +138,20 @@ test('a direct completion waits for a lease while all are held, and gives it bac
   await clock.advance(1000);
   await done;
   assert.deepEqual(ran, ['complete']);
-  assert.deepEqual(heldBy(), ['s'], 'held through the idle grace, as after a generation');
-  await clock.advance(GRACE + 1);
+  await clock.advance(5 * MINUTE);
+  assert.deepEqual(heldBy(), ['s'], 'held between calls, as after a generation');
+  await g.idle();
   assert.deepEqual(heldBy(), []);
+});
+
+test('a call on another endpoint leaves the run\'s idle lease in place', async () => {
+  fresh();
+  const g = gate('s');
+  await g.begin('swap');
+  g.end();
+  await g.begin('unlisted');
+  g.end();
+  assert.deepEqual(heldBy(), ['s']);
 });
 
 test('fail-open: with the service down generations run ungated and one warning is logged', async () => {
@@ -171,7 +178,7 @@ test('an abort while queued settles begin and leaves no lease taken', async () =
   await clock.advance(2000);
   c.abort(new Error('aborted'));
   await assert.rejects(p, /aborted/);
-  await clock.advance(CAP);
+  await clock.advance(10 * MINUTE);
   assert.deepEqual(table.endpoints()[0].waiting, []);
   assert.equal(notes.me, null);
   await assert.rejects(g.begin('swap', c.signal), /aborted/);
@@ -206,22 +213,27 @@ test('a parent run waiting on six child runs with capacity 6 does not deadlock',
   const children = Array.from({ length: 6 }, (_, i) => begin(gate(`child${i}`)));
   await clock.settle();
   assert.equal(children.filter((c) => c.granted).length, 5);
-  await clock.advance(GRACE + 1000);
+  // The subagent tool waits on its children through whileWaiting, which idles the parent's gate.
+  await parent.idle();
+  await clock.advance(1000);
   assert.equal(children.every((c) => c.granted), true);
   assert.equal(heldBy().includes('parent'), false);
 });
 
-test('a run held past the cap requeues behind waiters at its next generation', async () => {
+test('a waiter does not displace a holder after ten minutes, and gets the slot when the holder\'s run ends', async () => {
   fresh(1);
-  const g = gate('long', direct(table), { capMs: 100_000, graceMs: 1_000_000 });
+  const g = gate('long');
   await g.begin('swap');
   g.end();
   const waiter = begin(gate('w'));
-  await clock.advance(101_000);
-  assert.equal(waiter.granted, false);
+  await clock.advance(11 * MINUTE);
   const again = begin(g);
   await clock.advance(1000);
-  assert.deepEqual([waiter.granted, again.granted], [true, false]);
+  assert.deepEqual([waiter.granted, again.granted], [false, true]);
+  g.end();
+  await g.idle();
+  await clock.advance(1000);
+  assert.deepEqual([waiter.granted, heldBy()], [true, ['w']]);
 });
 
 test('parallel calls in one session take one lease each and queue past the capacity', async () => {
@@ -235,7 +247,7 @@ test('parallel calls in one session take one lease each and queue past the capac
   assert.equal(notes.s, 'Waiting for model capacity (0 ahead)');
   g.end(tokens[0]);
   await clock.advance(1000);
-  assert.equal(calls[2].granted, true, 'the call that ended hands its lease to the queued one without waiting for the idle grace');
+  assert.equal(calls[2].granted, true, 'the call that ended hands its lease to the queued one of the same run');
 });
 
 test('calls finishing out of order free their own lease, not the newest one', async () => {
@@ -256,17 +268,19 @@ test('calls finishing out of order free their own lease, not the newest one', as
   g.end(x2);
 });
 
-test('a call reuses the idle lease of the one before it, and all leases go back after the grace', async () => {
+test('a call reuses the idle lease of the one before it; a parallel call\'s extra lease goes back with it and the run keeps one', async () => {
   fresh(2);
   const g = gate('s');
-  await g.begin('swap');
+  const first = await g.begin('swap');
   await g.begin('swap');
   g.end();
   await g.begin('swap');
   assert.deepEqual(heldBy().sort(), ['s', 's#1']);
   g.end();
-  g.end();
-  await clock.advance(GRACE + 1);
+  g.end(first);
+  await clock.settle();
+  assert.deepEqual(heldBy(), ['s'], 'the lowest-numbered lease stays, whichever call ended last');
+  await g.idle();
   assert.deepEqual(heldBy(), []);
 });
 

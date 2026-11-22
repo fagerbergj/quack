@@ -33,10 +33,6 @@ export type GateOptions = {
   /** One session process is one holder, so a restarted process takes its old place back instead of double-holding. Parallel calls add `#n` to it. */
   holder: string;
   clock?: Clock;
-  /** How long a run keeps its leases with no generation in flight (the idle grace). */
-  graceMs?: number;
-  /** The longest a lease is held before the next generation requeues behind waiters. */
-  capMs?: number;
   pollMs?: number;
   /** After the service fails, generations skip it this long. */
   downMs?: number;
@@ -44,21 +40,20 @@ export type GateOptions = {
   setNote?: (text: string | null) => void;
 };
 
-type Held = { idx: number; endpoint: string; since: number; busy: boolean; stopBeat: () => void };
+type Held = { idx: number; endpoint: string; busy: boolean; stopBeat: () => void };
 /** One begun model call; `end` takes it back so the call frees its own lease, whatever order calls finish in. */
 export type GatedCall = { lease?: Held };
 
-/** A run's leases on model endpoints: one per model call in flight, and idle ones kept between generations. */
+/** A run's leases on model endpoints: one per model call in flight, and one per endpoint kept between generations until the run ends or waits. */
 export class CapacityGate {
   readonly #o: Required<Omit<GateOptions, 'clock'>> & { clock: Clock };
   #leases: Held[] = [];
   #calls = new Set<GatedCall>();
-  #cancelTimer = () => {};
   #downUntil = 0;
   #warned = false;
 
   constructor(options: GateOptions) {
-    this.#o = { graceMs: 60_000, capMs: 600_000, pollMs: 1000, downMs: 30_000, log: console.error, setNote: () => {}, ...options, clock: options.clock ?? realClock };
+    this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setNote: () => {}, ...options, clock: options.clock ?? realClock };
   }
 
   // The first lease keeps the session's holder name, so a restarted process takes its old place back.
@@ -68,7 +63,6 @@ export class CapacityGate {
   async begin(endpoint: string, signal?: AbortSignal): Promise<GatedCall> {
     const call: GatedCall = {};
     this.#calls.add(call);
-    this.#cancelTimer();
     try {
       if (this.#o.clock.now() >= this.#downUntil) call.lease = await this.#lease(endpoint, signal);
     } catch (err) {
@@ -76,16 +70,17 @@ export class CapacityGate {
       this.#o.setNote(null);
       throw err;
     }
-    this.#arm(this.#o.capMs);
     return call;
   }
 
-  /** A model response ended; with none in flight the idle grace starts. Without `call`, the newest open one ends. */
+  /** A model response ended. Without `call`, the newest open one ends. */
   end(call?: GatedCall): void {
     const done = call ?? [...this.#calls].at(-1);
-    if (!done || !this.#calls.delete(done)) return;
-    if (done.lease) done.lease.busy = false;
-    if (this.#calls.size === 0 && this.#leases.length) this.#arm(this.#o.graceMs);
+    if (!done || !this.#calls.delete(done) || !done.lease) return;
+    const { endpoint } = Object.assign(done.lease, { busy: false });
+    // The run keeps its lowest-numbered lease per endpoint; a parallel call's extra one goes back with the call.
+    const spare = this.#leases.filter((l) => !l.busy && l.endpoint === endpoint).sort((a, b) => a.idx - b.idx).slice(1);
+    for (const l of spare) void this.#drop(l);
   }
 
   /** The run waits on something other than its own next model call (a person, a child run), or ended: it gives its leases back. */
@@ -94,18 +89,15 @@ export class CapacityGate {
   }
 
   async release(): Promise<void> {
-    this.#cancelTimer();
     await Promise.all([...this.#leases].map((l) => this.#drop(l)));
   }
 
   async #lease(endpoint: string, signal?: AbortSignal): Promise<Held | undefined> {
-    const now = this.#o.clock.now();
-    for (const l of [...this.#leases]) if (!l.busy && (l.endpoint !== endpoint || now - l.since > this.#o.capMs)) await this.#drop(l);
     const idle = this.#leases.find((l) => !l.busy && l.endpoint === endpoint);
     if (idle) return Object.assign(idle, { busy: true });
     // Pushed before the first await, so a concurrent call takes the next index.
     const idx = Array.from({ length: this.#leases.length + 1 }, (_, i) => i).find((i) => !this.#leases.some((l) => l.idx === i))!;
-    const lease: Held = { idx, endpoint, since: now, busy: true, stopBeat: () => {} };
+    const lease: Held = { idx, endpoint, busy: true, stopBeat: () => {} };
     this.#leases.push(lease);
     try {
       const got = await this.#acquire(lease, signal);
@@ -127,11 +119,6 @@ export class CapacityGate {
   async #drop(lease: Held): Promise<void> {
     this.#remove(lease);
     await this.#o.client.release(lease.endpoint, this.#holder(lease)).catch(() => {});
-  }
-
-  #arm(ms: number) {
-    this.#cancelTimer();
-    this.#cancelTimer = this.#o.clock.setTimer(() => { this.#calls.clear(); void this.release(); }, ms);
   }
 
   // The cadence follows the expireTime the service granted; an ungated lease has none and never lapses.
@@ -161,7 +148,6 @@ export class CapacityGate {
         return undefined;
       }
       if (r.state === 'granted') {
-        lease.since = this.#o.clock.now();
         this.#o.setNote(null);
         this.#beat(lease, r);
         return lease;
