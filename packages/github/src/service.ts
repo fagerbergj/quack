@@ -148,9 +148,30 @@ async function dropReason(app: GithubApp, q: Queued): Promise<string | undefined
   return stale.why;
 }
 
+/** What a reviewer mid-run is told of a push; it also reads as a whole request if the run ends before the steer lands. */
+export const steerInput = (q: { owner: string; repo: string; number: number; pushedHead?: string }) =>
+  `New commits were pushed to pull request ${q.owner}/${q.repo}#${q.number}: its head is now ${q.pushedHead}. Call checkout_pr again and review ${q.pushedHead}; a review of an older head will not be posted.`;
+
+// A push to a PR whose session is mid-run as the reviewer: another agent's session answers 409, a missing one 404.
+async function steering(config: ServiceConfig, q: Queued): Promise<boolean> {
+  if (q.role !== 'reviewer' || !q.pushedHead) return false;
+  const res = await (config.fetch ?? fetch)(`${config.distributorUrl}/sessions/${encodeURIComponent(q.sessionKey)}/ping?agent=${encodeURIComponent(q.agent)}`).catch(() => undefined);
+  const ping = res?.ok ? ((await res.json().catch(() => ({}))) as { status?: string; waitingOnHuman?: boolean }) : {};
+  return ping.status === 'HealthyBusy' || ping.waitingOnHuman === true;
+}
+
+// Its own request id: a resend each sweep is the same steer, and the run that may follow it is not deduped against it.
+async function steer(config: ServiceConfig, q: Queued) {
+  const { url, body } = invocationRequest(config.distributorUrl, { key: q.sessionKey, agent: q.agent, input: steerInput(q), requestId: `${q.requestId}/steer` });
+  const res = await (config.fetch ?? fetch)(url, { method: 'POST', body: JSON.stringify({ ...JSON.parse(body), whenBusy: 'steer' }) }).catch(unreachable);
+  if (!res.ok) console.warn(`github: steer for ${q.sessionKey} refused (${res.status}): ${await problemOf(res)}`);
+}
+
 // One retry of queued work: done once it started or can never start. A session still busy, or a distributor outage, waits for the next try.
+// A push waits out a steered run too: once it ends, the head starts a run unless a review already covers it.
 async function startQueued(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued): Promise<boolean> {
   if (await dropReason(app, q)) return true;
+  if (await steering(config, q)) return (await steer(config, q), false);
   const before = postedCount(state, q);
   const upstream = await submit(config, q);
   if (upstream.ok && q.role === 'reviewer') watchRun(app, config, state, q, before);
@@ -187,6 +208,8 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   const dropped = await dropReason(app, queued);
   if (dropped) return send(res, 200, { session: trigger.sessionKey, dropped });
   queued.meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
+  // The queue's sweep sends the steer, so pushes inside one poll interval coalesce into one for the newest head.
+  if (await steering(config, queued)) return (await queue.add(queueKey(queued), queued), send(res, 202, { session: trigger.sessionKey, queued: true }));
   const before = postedCount(state, queued);
   const upstream = await submit(config, queued);
   // The unreviewed-run note is about reviews; a fix run ends in its own approval.

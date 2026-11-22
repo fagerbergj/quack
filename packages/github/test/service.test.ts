@@ -9,6 +9,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixQueued, fixRefused, noticeFor, reviewQueued, reviewRefused } from '../src/notice.ts';
+import { steerInput } from '../src/service.ts';
 import { sqliteWaiting } from '../src/waiting-store.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -142,10 +143,13 @@ let busy = false;
 let busyStatus = 409;
 let busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
 const outcomes: Record<string, unknown> = {};
+// Whether PR 7's session is mid-run as the reviewer, as its /ping through the distributor says.
+let reviewerRunning = false;
 const distributor = await listen(
   createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
+    if (req.method === 'GET' && req.url === '/sessions/github%3Aacme%2Fwidgets%237/ping?agent=reviewer') return res.writeHead(200).end(JSON.stringify({ status: reviewerRunning ? 'HealthyBusy' : 'Healthy' }));
     if (req.url === '/agents') return res.writeHead(200).end(JSON.stringify({ agents: [{ name: 'reviewer', version: 1, status: 'promoted' }, { name: 'researcher', version: 1, status: 'draft' }] }));
     const body = JSON.parse(raw);
     if (body.wait) {
@@ -334,6 +338,64 @@ test('a review that finds another agent in the session is queued, a newer push r
   } finally {
     busy = false;
     busyDetail = MID_RUN;
+    svc.stop();
+  }
+});
+
+test('a push while the reviewer runs is sent as a steer; once that run ends without reviewing the head, a run starts for it', async () => {
+  invocations.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    reviewerRunning = true;
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st1', to: url }), 202);
+    assert.equal(invocations.length, 0, 'no follow-up queued in the session');
+    await svc.sweep();
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-st1/steer', 'steer'], ['github-delivery:d-st1/steer', 'steer']], 'a resend is the same steer');
+    assert.equal(invocations[0].body.input, steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: 'def456' }));
+    reviewerRunning = false;
+    await svc.sweep();
+    await svc.sweep();
+    assert.equal(invocations.length, 3);
+    assert.deepEqual([invocations[2].body.requestId, invocations[2].body.whenBusy], ['github-delivery:d-st1', undefined]);
+    assert.match(invocations[2].body.input, /Review pull request acme\/widgets#7 .*\nTitle: Fix the cache\nHead: def456 on fix/);
+  } finally {
+    reviewerRunning = false;
+    svc.stop();
+  }
+});
+
+test('a push while the reviewer is idle starts a run at once, never a steer', async () => {
+  invocations.length = 0;
+  const { svc, url } = await queuedService();
+  try {
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st2', to: url }), 202);
+    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-st2', undefined]]);
+    assert.match(invocations[0].body.input, /Head: def456 on fix/);
+  } finally {
+    svc.stop();
+  }
+});
+
+test('two quick pushes while the reviewer runs make one steer for the newest head; once a review covers it, nothing more starts', async () => {
+  invocations.length = 0;
+  const { svc, url } = await queuedService();
+  let undo = () => {};
+  try {
+    reviewerRunning = true;
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st3', to: url }), 202);
+    assert.equal(await deliver('pull_request', pushed('0ff1ce'), { id: 'd-st4', to: url }), 202);
+    await svc.sweep();
+    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-st4/steer']);
+    assert.match(invocations[0].body.input, /head is now 0ff1ce/);
+    assert.doesNotMatch(invocations[0].body.input, /def456/);
+    undo = reviewedAt('0ff1ce');
+    reviewerRunning = false;
+    await svc.sweep();
+    assert.equal(invocations.length, 1, 'the steered run reviewed the head');
+  } finally {
+    undo();
+    reviewerRunning = false;
     svc.stop();
   }
 });
