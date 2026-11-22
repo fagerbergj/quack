@@ -1,4 +1,4 @@
-import { checkFailed, type Check } from './api.ts';
+import { checkFailed, shortOf, type Check } from './api.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { Blurb } from './Markdown.tsx';
 
@@ -20,9 +20,9 @@ export function Note({ text, scope }: { text: string; scope?: string }) {
 
 export function Pill({ check }: { check: Check }) {
   const [text, tone] = check.met === null ? ["Didn't apply", 'bg-soft text-muted'] : !checkFailed(check) ? ['Pass', 'bg-success-bg text-success'] : ['Fail', 'bg-danger-bg text-danger'];
-  // Only a partial result says how much: 0% on a pass (a pitfall that didn't show up) or 100% on a pass reads as noise.
-  const score = check.met !== null && check.met > 0 && check.met < 1 ? ` · ${Math.round(check.met * 100)}%` : '';
-  return <span className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{text + score}</span>;
+  const s = checkFailed(check) ? shortOf(check) : undefined;
+  const how = s ? `${s.n} of ${s.of} ${check.groups ? 'groups' : 'items'} fell short` : undefined;
+  return <span title={how} className={`flex-none rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>{text}{how && <span className="sr-only">{`, ${how}`}</span>}</span>;
 }
 
 /** One check: its label (and result), expanding to the judge's notes. A failed check starts open; one with no note has nothing to expand. */

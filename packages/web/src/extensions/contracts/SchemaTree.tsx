@@ -18,13 +18,17 @@ export function MarkTag({ m }: { m: Mark | undefined }) {
   return m ? <span className={`flex flex-none items-center gap-1 self-center rounded px-1.5 text-[10.5px] font-semibold tracking-wide uppercase ${TAG[m][1]}`}>{m === 'breaking' && <Glyph m={m} />}{TAG[m][0]}</span> : null;
 }
 
+// Each level steps in 20px with a guide line per ancestor, so a parent's children read as one block even at phone width.
+const STEP = 20;
+
 function Row({ f, choices, code, target }: { f: Field; choices: Choice[]; code?: Code; target?: Target }) {
   const m = useMark(f.ptr);
   const item = useItem(f.ptr);
   const flash = useFlash<HTMLLIElement>(f.ptr);
   return (
-    <li ref={flash.ref} tabIndex={-1} data-ptr={f.ptr} style={{ paddingLeft: `${f.depth * 16 + 14}px` }} className={`group/c relative flex scroll-mt-16 flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-line py-2 pr-1 text-[13.5px] outline-none first:border-t-0 ${m ? MARKED[m] : ''} ${flash.cls}`}>
-      {m && <span className="absolute top-3.5" style={{ left: `${f.depth * 16 + 2}px` }}><Glyph m={m} /></span>}
+    <li ref={flash.ref} tabIndex={-1} data-ptr={f.ptr} aria-level={f.depth + 1} style={{ paddingLeft: `${f.depth * STEP + 14}px` }} className={`group/c relative flex scroll-mt-16 flex-wrap items-baseline gap-x-2 gap-y-1 border-t py-2 pr-1 text-[13.5px] outline-none first:border-t-0 ${f.depth ? 'border-line/50' : 'border-line'} ${m ? MARKED[m] : ''} ${flash.cls}`}>
+      {Array.from({ length: f.depth }, (_, i) => <span key={i} data-guide aria-hidden="true" className="absolute top-0 bottom-0 w-px bg-line-strong" style={{ left: `${i * STEP + 10}px` }} />)}
+      {m && <span className="absolute top-3.5" style={{ left: `${f.depth * STEP + 2}px` }}><Glyph m={m} /></span>}
       <code className={`font-mono [overflow-wrap:anywhere] @xl:flex-none ${code ? '@xl:w-40' : '@xl:w-28'}`}>{f.name}</code>
       <MarkTag m={m} />
       <span className={`font-mono text-[12.5px] text-success ${code ? 'min-w-0 [overflow-wrap:anywhere]' : '@xl:w-24 @xl:flex-none'}`}>{code ? code(f.type) : f.type}</span>
@@ -44,7 +48,7 @@ function Row({ f, choices, code, target }: { f: Field; choices: Choice[]; code?:
 /** Shared by every contract kind: one row per field with its type, required, default, example and an info button where choices govern it;
  * `target` names what a comment on a row is about, and a row it gives none takes no comment. */
 export function SchemaTree({ rows, whyAt, code, target = fieldTarget }: { rows: Field[]; whyAt: (ptr: string) => Choice[]; code?: Code; target?: (f: Field) => Target | undefined }) {
-  return <ul className="m-0 list-none p-0">{rows.map((f) => <Row key={f.ptr} f={f} choices={whyAt(f.ptr)} code={code} target={target(f)} />)}</ul>;
+  return <ul role="list" className="m-0 list-none p-0">{rows.map((f) => <Row key={f.ptr} f={f} choices={whyAt(f.ptr)} code={code} target={target(f)} />)}</ul>;
 }
 
 // A field with no description is named by its type, so the comment sheet says what it is about.
