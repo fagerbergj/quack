@@ -33,10 +33,16 @@ function summaryOf(a: SealedArtifact): string {
   return [...checked, ...posted].join(' · ');
 }
 
+// Older versions stay one click away so a long revision history does not stretch the rail.
+const RECENT_VERSIONS = 3;
+
 function Versions({ items }: { items: SealedArtifact[] }) {
+  const [all, setAll] = useState(false);
   const kind = items.reduce<SealedArtifact | undefined>((n, a) => (!n || a.sealedAt >= n.sealedAt ? a : n), undefined)?.kind;
-  const rows = ledger(items).filter(({ a }) => a.kind === kind);
-  if (!rows.length) return null;
+  const every = ledger(items).filter(({ a }) => a.kind === kind).reverse();
+  if (!every.length) return null;
+  const older = every.length - RECENT_VERSIONS;
+  const rows = all ? every : every.slice(0, RECENT_VERSIONS);
   return (
     <section aria-labelledby="rail-versions">
       <h2 id="rail-versions" className={head}>Versions</h2>
@@ -54,6 +60,11 @@ function Versions({ items }: { items: SealedArtifact[] }) {
           </li>
         ))}
       </ul>
+      {older > 0 && (
+        <button type="button" aria-expanded={all} onClick={() => setAll(!all)} className="mt-1 min-h-11 cursor-pointer border-0 bg-transparent px-0 text-left text-[13px] text-muted underline-offset-2 hover:text-ink hover:underline lg:min-h-8">
+          {all ? 'Show fewer versions' : `${older} older ${older === 1 ? 'version' : 'versions'}`}
+        </button>
+      )}
     </section>
   );
 }
