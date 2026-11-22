@@ -1,0 +1,12 @@
+name: setup
+description: Node from .node-version and the locked npm install, with the npm cache shared across jobs.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .node-version
+        cache: npm
+        cache-dependency-path: package-lock.json
+    - run: npm ci
+      shell: bash
