@@ -5,7 +5,7 @@ import { CheckResult } from '../../CheckResult.tsx';
 import { SessionKeyContext, type StudioProps } from '../../extension.ts';
 import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
-import { FollowNewest, iconButton, VersionMenu, type Mark, type VersionItem } from '../../VersionMenu.tsx';
+import { FollowNewest, iconButton, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
 import { ApproveSheet, AskSheet, prim, sec, useDecide, type Break, type Pending } from './Approval.tsx';
 import { CommentsProvider, DraftsLine, StrandedLine, useComments } from './Comments.tsx';
 import { reasonText } from './comments.ts';
@@ -16,7 +16,7 @@ import { RestView } from './RestView.tsx';
 import { ReviewContext, Sheet, Stepper, useStepper } from './Review.tsx';
 import { changeItems, markBreaks, type Item } from './review.ts';
 import { parseSpec, specVersion, type ContractSpec } from './spec.ts';
-import { contractVersions, type VersionStatus } from './status.ts';
+import { contractVersions, STANDING, type VersionStatus } from './status.ts';
 import { TypeScriptView, useModel } from './TypeScriptView.tsx';
 
 export const VIEWS = { rest: RestView, 'json-schema': JsonSchemaView, typescript: TypeScriptView };
@@ -148,11 +148,7 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
   );
 }
 
-const MARK: Record<VersionStatus, [Mark, string]> = { draft: ['draft', 'draft'], proposed: ['you', 'needs you'], approved: ['ok', 'approved'], changes_requested: ['bad', 'changes asked'] };
-const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => {
-  const s = status && MARK[status(v)];
-  return { id: v.a.version, short: short(v), ...(s && { mark: s[0], status: s[1] }) };
-});
+const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => ({ id: v.a.version, short: short(v), ...(status && STANDING[status(v)]) }));
 // The person sees the versions they decided on and the newest; a save the checker sent back before it reached them is left out.
 const listed = (versions: Version[], newest: Version, status?: StatusOf) => (status ? versions.filter((v) => v === newest || ['approved', 'changes_requested'].includes(status(v))) : versions);
 

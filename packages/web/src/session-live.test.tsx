@@ -29,8 +29,8 @@ test('sealed versions arrive over the socket; tool starts and ends fetch nothing
   for (let i = 0; i < 20; i++) ws.frame(view({ run: true, tools: [{ callId: `t${i}`, name: 'bash', status: i % 2 ? 'done' : 'running' }] }));
   expect(composerRenders).toBe(beforeStream);
   ws.frame({ type: 'artifacts', artifacts: [report(1)] });
-  expect(await screen.findByRole('button', { name: 'Open Report' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Open Report v1/ })).toBeInTheDocument();
   ws.frame({ type: 'artifacts', artifacts: [report(1), report(2)] });
-  expect(screen.getByRole('button', { name: 'Open Report version 2' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^Open Report v2/ })).toBeInTheDocument();
   expect(fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('sessions/ui%3Au1/') && !u.endsWith('/meta'))).toEqual([]);
 });

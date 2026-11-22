@@ -456,11 +456,23 @@ test('before the first version the Contract tab opens on the waiting question, s
   expect(posts()).toEqual([[`sessions/${KEY}/asks/q1`, { resolution: { choice: 'Token' } }]]);
 });
 
-test('the chat names each seal by the contract version a person knows, and its draft when several seals share one', async () => {
+const ledgerLines = () => waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(3); return l; });
+const tips = (lines: HTMLElement[]) => lines.map((l) => l.querySelector('[title^="v"]')?.getAttribute('title'));
+
+test('the chat names each seal by the contract version a person knows, with which save it is in the tooltip only', async () => {
   open([spec(21, { ...v2, version: 15 }), spec(22, { ...v2, version: 15 }, null), spec(23, { ...v2, version: 16 })]);
-  const lines = await waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(3); return l; });
-  expect(lines.map((l) => l.textContent?.match(/Version \d+( · draft \d)?/)?.[0])).toEqual(['Version 15 · draft 1', 'Version 15 · draft 2', 'Version 16']);
-  expect(within(lines[1]!).getByRole('button', { name: 'Open Spec version 15, draft 2' })).toBeInTheDocument();
+  const lines = await ledgerLines();
+  expect(lines.map((l) => l.querySelector('[title^="v"]')?.textContent?.match(/^v\d+/)?.[0])).toEqual(['v15', 'v15', 'v16']);
+  expect(tips(lines)).toEqual(['v15, passed checks, save 1', 'v15, save 2', 'v16, passed checks']);
+  expect(within(lines[1]!).getByRole('button', { name: 'Open Spec v15, save 2' })).toBeInTheDocument();
+});
+
+test("the chat marks a contract's versions by the person's decision, as the version menu does, not by the checks", async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'changes_requested'], [3, 'proposed']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, { ...v2, version: 2 }), spec(3, { ...v2, version: 3 })], [proposal(3, 3)]);
+  const lines = await waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(4); return l; });
+  await waitFor(() => expect(tips(lines)).toEqual(['v1, approved', 'v2, changes asked', 'v3, needs you', 'v1']));
+  expect(lines.map((l) => l.querySelector('[data-mark]')?.getAttribute('data-mark')), 'the approval record has no verdict to mark').toEqual(['ok', 'bad', 'you', undefined]);
 });
 
 // What the session sends now: only the newest version of a kind carries its content.

@@ -23,6 +23,7 @@ import { MoreIcon } from './MoreIcon.tsx';
 import { SessionChips, studioFor } from './slots.tsx';
 import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
+import { useMarks } from './delivered.ts';
 import { useLoad } from './useLoad.ts';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 import { composerKeyDown } from './composer.ts';
@@ -455,7 +456,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const bottom = useStickToBottom();
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
-  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
+  const markOf = useMarks(sessionKey, items, approvals.length);
+  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about, markOf };
   const chat = chatClass(live);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -471,7 +473,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
           <div ref={bottom.content} className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <SessionKeyContext value={sessionKey}>
-              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} />
+              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} markOf={markOf} />
             </SessionKeyContext>
             <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.asks.cards} decide={pending.decide} />
             {/* A studio pane answers its session's questions above the contract, so the chat does not repeat them. */}

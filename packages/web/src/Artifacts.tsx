@@ -3,8 +3,8 @@ import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import type { SealedArtifact } from './api.ts';
 import { CheckResult } from './CheckResult.tsx';
-import { versionOf } from './delivered.ts';
-import { StatusIcon } from './StatusIcon.tsx';
+import { versionOf, type MarkOf } from './delivered.ts';
+import { verdictMark, VersionMark } from './VersionMenu.tsx';
 
 // An extension may draw its artifact as a card; undefined leaves the plain line. A card that throws falls back to the saved text.
 export function artifactCard(a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) {
@@ -42,19 +42,26 @@ export const ledgerId = (a: SealedArtifact) => `v-${a.kind}-${a.version}-${a.sea
 
 const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
 
-// One version in the transcript: its line and, when it failed, its check result; the session's pane draws the version itself.
-export function LedgerItem({ a, round, draft, running, onOpen }: { a: SealedArtifact; round: number; draft?: number; running: boolean; onOpen: (a: SealedArtifact) => void }) {
+const byVerdict: MarkOf = (a) => verdictMark(a.verdict);
+// Which save of a version this is, or how many failed versions came just before it: detail for the tooltip, never the line.
+const retry = (draft: number | undefined, round: number) => (draft ? `save ${draft}` : round > 0 ? `after ${round} failed ${round === 1 ? 'try' : 'tries'}` : '');
+
+// One version in the transcript: its line, its number and mark (standing, save and retries in the tooltip) and, when it failed, its check result.
+export function LedgerItem({ a, round, draft, running, onOpen, markOf = byVerdict }: { a: SealedArtifact; round: number; draft?: number; running: boolean; onOpen: (a: SealedArtifact) => void; markOf?: MarkOf }) {
   const named = namedBy(a, running);
   const hasCard = Boolean(artifactCard(a));
   const n = versionOf(a);
-  const label = [n > 1 || draft ? `Version ${n}` : '', draft ? `draft ${draft}` : round > 0 ? `revision ${round}` : ''].filter(Boolean).join(' · ');
+  // An unjudged record (an approval) also carries a null verdict, so the line leaves "checking" to the pane, as it always has.
+  const m = a.verdict === null && markOf(a).mark === 'checking' ? {} : markOf(a);
+  const detail = [`v${n}`, m.status, retry(draft, round)].filter(Boolean).join(', ');
   return (
     <div data-ledger id={ledgerId(a)} className="flex flex-col gap-1 text-[13px] text-muted">
       <div className="flex items-center gap-2">
-        {!named?.previous && <StatusIcon verdict={a.verdict} />}
         <span className="min-w-0 truncate">{lineOf(a, named)}</span>
-        {label && <span className="flex-none text-[12px]">{label}</span>}
-        <button type="button" aria-label={`Open ${artifactName(a)}${n > 1 || draft ? ` version ${n}${draft ? `, draft ${draft}` : ''}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
+        <span title={detail} className="flex flex-none items-center gap-1.5 text-[12px]">
+          <span aria-hidden="true" className="font-mono font-semibold text-ink-2">{`v${n}`}</span>{!named?.previous && <VersionMark mark={m.mark} />}<span className="sr-only">{detail}</span>
+        </span>
+        <button type="button" aria-label={`Open ${artifactName(a)} ${detail}`} onClick={() => onOpen(a)} className={link}>Open</button>
         {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
       </div>
       {a.verdict && !a.verdict.passed && <CheckResult verdict={a.verdict} open />}

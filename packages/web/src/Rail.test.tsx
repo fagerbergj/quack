@@ -72,3 +72,10 @@ test('three versions or fewer have no disclosure', () => {
   expect(screen.getAllByRole('button', { name: /^v\d/ })).toHaveLength(3);
   expect(screen.queryByRole('button', { name: /older|fewer/i })).toBeNull();
 });
+
+test("a version whose extension gives a standing (a contract's decision) is marked by it, not by its verdict", () => {
+  const passed = { kind: 'contract.spec', version: 1, sealedAt: 1000, content: '', summary: '', verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } } as never;
+  render(<RailBody sessionKey="contracts:c1" title="t" view={{ items: [] } as never} meta={[]} items={[passed]} approvals={[]} questions={[]} markOf={() => ({ mark: 'bad', status: 'changes asked' })} />);
+  const row = screen.getByRole('button', { name: /^v1, changes asked, / });
+  expect(row.querySelector('[data-mark]')).toHaveAttribute('data-mark', 'bad');
+});

@@ -1,4 +1,5 @@
 import { listAll, postInvocation } from '../../api.ts';
+import type { Standing } from '../../extension.ts';
 import type { Row } from '../../sessions.ts';
 import type { Mark } from '../../StatusIcon.tsx';
 
@@ -44,6 +45,9 @@ export const contractRecords = async (): Promise<Map<string, ContractRecord>> =>
 
 /** Where one sealed spec stands with the person, as the contracts extension reads it from the session's approval records and proposals. */
 export type VersionStatus = 'draft' | 'proposed' | 'approved' | 'changes_requested';
+
+/** A version's standing as every version list draws it: one mark, its words spoken and in the tooltip. */
+export const STANDING: Record<VersionStatus, Required<Standing>> = { draft: { mark: 'draft', status: 'draft' }, proposed: { mark: 'you', status: 'needs you' }, approved: { mark: 'ok', status: 'approved' }, changes_requested: { mark: 'bad', status: 'changes asked' } };
 
 /** Each spec artifact's status by artifact number (GET apps/contracts/contracts/{key}); undefined when the app answers not found or an error,
  * or the request fails, which Studio shows as no answer yet. */

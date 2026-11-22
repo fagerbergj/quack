@@ -1,6 +1,10 @@
 import { createContext, type ComponentType, type ReactNode } from 'react';
 import type { Approval, Artifact, Question, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
+import type { VersionItem } from './VersionMenu.tsx';
+
+/** A version's mark and its words. */
+export type Standing = Pick<VersionItem, 'mark' | 'status'>;
 
 /** The session an artifact is shown from, for links that open it on its own page. */
 export const SessionKeyContext = createContext<string | undefined>(undefined);
@@ -50,6 +54,9 @@ export type Extension = {
   listRow?: (latest: Artifact[]) => ListRow | undefined;
   /** Artifacts rows that need the extension's own records (a contract's version and mark), read once per list by session key; they override `listRow`. */
   listRows?: (rows: Row[]) => Promise<ReadonlyMap<string, ListRow>>;
+  /** Where each sealed version of `kind` stands with the person, by sealed number, drawn in place of its verdict wherever versions are listed;
+   * undefined for a kind it does not own. */
+  standing?: (sessionKey: string, kind: string) => Promise<Map<number, Standing>> | undefined;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** Extra UI beneath a tool call row in the transcript (a subagent's child conversation). */

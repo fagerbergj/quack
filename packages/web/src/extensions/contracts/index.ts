@@ -5,7 +5,7 @@ import { ChangesAsked } from './Comments.tsx';
 import { Contracts } from './Contracts.tsx';
 import { parseSpec, specVersion } from './spec.ts';
 import { VersionMark } from '../../StatusIcon.tsx';
-import { contractOf, contractRecords, specNumbers } from './status.ts';
+import { contractOf, contractRecords, contractVersions, specNumbers, STANDING } from './status.ts';
 import { ApprovedSpec, ContractStudio, Standalone } from './Studio.tsx';
 
 const KIND = 'contract.spec';
@@ -47,6 +47,8 @@ export const contracts: Extension = {
   },
   // The seal stores the spec's own version as the row's outcome ("v3", "v3 typescript"), so no content is read; a row without one reads as its sealed number.
   versionOf: (a) => (a.kind === KIND ? specVersion(a) : a.kind === 'contract.approved' ? Number(/^Approved version (\d+)/.exec(a.summary ?? '')?.[1]) || undefined : undefined),
+  // A spec's standing is the person's decision, read from the contracts app as the studio reads it; no answer leaves the verdict.
+  standing: (key, kind) => (kind === KIND ? contractVersions(key).then((m) => new Map([...(m ?? [])].map(([n, s]) => [n, STANDING[s]]))) : undefined),
   // The Sessions API rows carry no outcome, so the contracts app's own artifact-to-version list supplies it.
   label: async (key, kind, rows) => {
     const numbers = kind === KIND ? await specNumbers(key) : undefined;
