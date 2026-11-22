@@ -64,15 +64,18 @@ export function spendLabel(s: Spend | undefined): { text: string; title: string 
   const used = input + output;
   if (s.cost <= 0 && used === 0) return undefined;
   const text = s.cost <= 0 ? `${compact(used)} tokens` : s.cost < 0.01 ? '<$0.01' : `$${s.cost.toFixed(2)}`;
-  return { text, title: [`${input.toLocaleString()} in`, `${output.toLocaleString()} out`, `${cacheRead.toLocaleString()} cached`, ...(cacheWrite ? [`${cacheWrite.toLocaleString()} cache write`] : [])].join(' · ') };
+  return { text, title: [`${COUNT.format(input)} in`, `${COUNT.format(output)} out`, `${COUNT.format(cacheRead)} cached`, ...(cacheWrite ? [`${COUNT.format(cacheWrite)} cache write`] : [])].join(' · ') };
 }
+
+const DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+const COUNT = new Intl.NumberFormat();
 
 export function age(iso: string, now: number): string {
   const min = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));
   if (min < 1) return 'now';
   if (min < 60) return `${min}m`;
   if (min < 1440) return `${Math.floor(min / 60)}h`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return DAY.format(new Date(iso));
 }
 
 // A composer's first message waits here for the new session's socket to open.
