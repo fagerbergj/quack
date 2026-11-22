@@ -23,7 +23,7 @@ test('each contract reads from its catalog row: waiting on you first, then draft
     rowOf(sess('sleeper:x:1:lineup') as Session, false),
   ];
   render(<Contracts rows={rows} />);
-  expect(names('In progress')).toEqual(['Draft b!', 'Draft a', 'Draft c✗', 'Draft idle']);
+  expect(names('In progress')).toEqual([ ' Draft b !', ' Draft a ', ' Draft c ✗', ' Draft idle ']);
   expect(screen.queryByRole('region', { name: 'Approved' })).toBeNull();
   const links = within(screen.getByRole('region', { name: 'In progress' })).getAllByRole('link');
   expect(links.map((l) => mark(l).getAttribute('aria-label'))).toEqual(['Waiting on you', 'Drafting', 'Run failed', 'No draft yet']);
@@ -48,8 +48,8 @@ test("each row is its kind tag, its name, and one version with a mark that names
   const at = (day: number) => ({ lastActivity: `2026-11-${day}T01:00:00.000Z` });
   render(<Contracts rows={[row('a'), row('b'), row('c', at(10)), row('d', at(12)), row('new')]} />);
   await waitFor(() => expect(names('Approved')).toHaveLength(2));
-  expect(names('In progress')).toEqual(['RESTSleeper schedule endpointv2!', 'TSExtension SDKv3✗', 'Draft new']);
-  expect(names('Approved')).toEqual(['RESTOlder APIv7✓', 'JSONPayments APIv3✓']);
+  expect(names('In progress')).toEqual(['REST Sleeper schedule endpoint v2 !', 'TS Extension SDK v3 ✗', ' Draft new ']);
+  expect(names('Approved')).toEqual(['REST Older API v7 ✓', 'JSON Payments API v3 ✓']);
   const status = (name: string) => mark(screen.getByRole('link', { name: new RegExp(name) })).getAttribute('aria-label');
   expect(status('Sleeper schedule')).toBe('Awaiting your approval');
   expect(status('Extension SDK')).toBe('Changes requested');
@@ -66,6 +66,7 @@ test('a row says its version once and never prints its status: the group heading
   expect(link.textContent?.match(/v\d+/g)).toEqual(['v3']);
   expect(link).not.toHaveTextContent(/Approved|Draft|Changes/);
   expect(mark(link)).toHaveAttribute('title', 'Approved; v4 is not approved yet');
+  expect(link).toHaveAccessibleName('JSON Payments API v3 Approved; v4 is not approved yet');
 });
 
 test('the Approved group shows ten, newest first, and a button opens the rest', async () => {
@@ -73,7 +74,7 @@ test('the Approved group shows ten, newest first, and a button opens the rest', 
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ contracts: many })));
   render(<Contracts rows={many.map((_, i) => row(`m${i}`, { lastActivity: `2026-11-${String(i + 1).padStart(2, '0')}T01:00:00.000Z` }))} />);
   await waitFor(() => expect(names('Approved')).toHaveLength(10));
-  expect(names('Approved')[0]).toBe('RESTAPI 11v1✓');
+  expect(names('Approved')[0]).toBe('REST API 11 v1 ✓');
   await userEvent.click(screen.getByRole('button', { name: '2 more approved' }));
   expect(names('Approved')).toHaveLength(12);
 });

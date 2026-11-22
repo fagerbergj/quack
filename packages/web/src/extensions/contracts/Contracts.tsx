@@ -23,13 +23,13 @@ function NewContract({ onClose }: { onClose: () => void }) {
   );
 }
 
-// The kind tag holds its column even when a contract has no record yet, so titles line up.
+// The kind tag holds its column even when a contract has no record yet, so titles line up; the spaces only part the accessible name.
 function Item({ c }: { c: Contract }) {
   return (
     <li>
       <a href={`#/s/${encodeURIComponent(c.key)}`} className="flex min-h-13 items-center gap-3 px-3 py-2 text-ink no-underline hover:bg-soft sm:px-4">
-        <span title={c.kind?.name} className="w-10 flex-none rounded-md bg-soft py-0.5 text-center font-mono text-[10px] font-bold text-muted empty:bg-transparent">{c.kind?.tag}</span>
-        <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold [overflow-wrap:anywhere]">{c.name}</span>
+        <span title={c.kind?.name} className="w-10 flex-none rounded-md bg-soft py-0.5 text-center font-mono text-[10px] font-bold text-muted empty:bg-transparent">{c.kind?.tag}</span>{' '}
+        <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold [overflow-wrap:anywhere]">{c.name}</span>{' '}
         <VersionMark version={c.version} mark={c.mark} label={c.status} />
       </a>
     </li>

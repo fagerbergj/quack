@@ -21,7 +21,8 @@ export function StatusMark({ mark, label }: { mark: Mark; label: string }) {
 export function VersionMark({ version, mark, label }: { version: number | undefined; mark: Mark; label: string }) {
   return (
     <span className="inline-flex flex-none items-center gap-1.5 text-[13px] text-ink-2 tabular-nums">
-      {version !== undefined && `v${version}`}
+      {/* The trailing space collapses on screen but keeps "v3 Approved" apart in the accessible name. */}
+      {version !== undefined && `v${version} `}
       <StatusMark mark={mark} label={label} />
     </span>
   );
