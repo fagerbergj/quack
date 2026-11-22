@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { App } from './App.tsx';
 import { RECENT_CAP } from './SessionList.tsx';
 import { routes, sess, stubViewport, useHarness } from './test-harness.ts';
@@ -42,7 +42,14 @@ test('search finds a session past the cap', async () => {
   routes['GET /sessions'] = (url: string) => ({ sessions: new URL(url, 'http://x').searchParams.get('q')?.includes('Needle') ? [rows[100]] : rows });
   const recent = await open();
   expect(within(recent).queryByRole('link', { name: /Needle/ })).toBeNull();
-  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'Needle');
-  expect(await screen.findByRole('link', { name: /Needle/ })).toBeInTheDocument();
+  // The search debounces on a timer; a fake clock steps past it instead of waiting on the real one.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), { target: { value: 'Needle' } });
+    act(() => void vi.advanceTimersByTime(250));
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(await screen.findByRole('link', { name: /Needle/ }, { timeout: 5000 })).toBeInTheDocument();
   expect(within(await screen.findByRole('region', { name: 'Recent' })).getAllByRole('link')).toHaveLength(1);
 });
