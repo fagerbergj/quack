@@ -101,7 +101,7 @@ An unknown key, a bad value or a prompt path leaves the bundle unoffered by the 
 
 Pinned copies in the data dir are history: they are never checked against this and load through the loader's compatibility shims.
 
-A session runs on the copy it was pinned to, except its judge settings (`extensions.judge`), which it takes from its agent's current bundle each time its process starts, so a woken session judges its next version with the current decision model; a session whose agent no longer has a bundle does not start.
+A session runs on the copy it was pinned to, except its `model` and its judge settings (`extensions.judge`), which it takes from its agent's current bundle each time its process starts, so a woken session runs on the current model and judges its next version with the current decision model, while its prompt stays pinned; a session whose agent no longer has a bundle does not start.
 
 The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
 

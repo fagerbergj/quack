@@ -97,10 +97,11 @@ test('a pinned definition is judged with its agent\'s current judge settings and
     await writeFile(path, JSON.stringify({ name: 'contracts', version: 6, model: 'local/qwen3.8-27b', prompt: 'prompt.md', extensions: { judge: { maxRevisions: 2 }, contracts: {} } }));
     await writeFile(join(dir, 'prompt.md'), 'Contracts v6.');
     const current = { name: 'contracts', version: 13, model: 'local/other', extensions: { judge: { maxRevisions: 2, decisionModel: clef }, contracts: {}, coding: {} } };
-    const spec = await loadAgent(path, parseDeployment(deployment), withJudge, [], current);
-    assert.deepEqual(spec.extensions!.map((e) => e.name), [`judge:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`], 'only the judge follows v13: no coding, same model and prompt');
+    const moved = { ...deployment, providers: { local: { ...deployment.providers.local, models: { ...deployment.providers.local.models, other: { contextWindow: 1000, maxTokens: 100 } } } } };
+    const spec = await loadAgent(path, parseDeployment(moved), withJudge, [], current);
+    assert.deepEqual(spec.extensions!.map((e) => e.name), [`judge:${JSON.stringify({ maxRevisions: 2, decisionModel: clef })}`], 'only the judge follows v13: no coding');
     assert.equal(spec.instructions, 'Contracts v6.');
-    assert.equal(spec.model.modelId, 'qwen3.8-27b');
+    assert.equal(spec.model.modelId, 'other', 'the model follows the current bundle');
     const legacy = { name: 'reviewer', version: 4, model: 'local/qwen3.8-27b', extensions: { github: { maxRevisions: 2 } } };
     assert.equal(parseDefinition(legacy, parseDeployment(deployment), withJudge, { extensions: { github: {} } }).extensions.judge, undefined, 'a current bundle without the judge drops even settings lifted from an old pin');
     assert.equal(referencedProviders(withCurrentExtensions(JSON.parse(await readFile(path, 'utf8')), current, withJudge), { ...deployment, providers: { ...deployment.providers, clef: { baseUrl: 'http://x' } } }).includes('clef'), true, 'the decision model\'s provider is resolved for the session');
@@ -120,6 +121,17 @@ test('withCurrentExtensions replaces any extension with configSource current and
   const current = { name: 'a', version: 2, extensions: { pinnedDefault: { v: 2 }, pinnedExplicit: { v: 2 }, policy: { v: 2 }, extraPinned: { v: 2 } } };
   const merged = withCurrentExtensions(pinned, current, mixed);
   assert.deepEqual(merged.extensions, { pinnedDefault: { v: 1 }, pinnedExplicit: { v: 1 }, policy: { v: 2 } });
+});
+
+test('withCurrentExtensions takes the model from the current bundle, defaults it when absent, and tolerates a pinned model the deployment lost', () => {
+  const pinned = { name: 'a', version: 1, model: 'local/gone', prompt: 'p.md', extensions: {} };
+  assert.deepEqual(withCurrentExtensions(pinned, { name: 'a', version: 2, model: 'hosted/new', extensions: {} }, {}), { ...pinned, model: 'hosted/new' });
+  const merged = withCurrentExtensions(pinned, { name: 'a', version: 2, extensions: {} }, {});
+  assert.equal('model' in merged, false);
+  assert.equal(parseDefinition(merged, parseDeployment(deployment), {}).model, 'local/qwen3.8-27b', 'the deployment default fills in');
+  assert.equal(withCurrentExtensions(pinned, undefined, {}), pinned, 'no current bundle keeps the pin');
+  const hosted = { ...deployment, providers: { ...deployment.providers, hosted: { baseUrl: 'http://x', models: { new: { contextWindow: 1000, maxTokens: 100 } } } } };
+  assert.equal(referencedProviders(withCurrentExtensions({ ...pinned, model: 'local/qwen3.8-27b' }, { model: 'hosted/new', extensions: {} }, {}), hosted).includes('hosted'), true);
 });
 
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {

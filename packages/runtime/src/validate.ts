@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { bundleProblems, declaredEnv, deploymentEnv, loadAgent, parseDeployment, resolveDeployment, type DeploymentConfig } from '@quack/session';
 import { primeSessionEndpoint, type ExtensionManifest } from '@quack/sdk';
 import { catalog, deploymentExtensions, manifests } from './catalog.ts';
@@ -38,7 +38,9 @@ export async function validate(opts: { config: string; agentsDir: string; dataDi
       if (bad.length) throw new Error(`breaks the agent bundle contract:\n- ${bad.join('\n- ')}`);
       const extensions = def.extensions ?? {};
       for (const name of declaredEnv(extensions, catalog)) process.env[name] ??= 'placeholder';
-      await loadAgent(path, deployment, catalog, deploymentExtensions);
+      // A session runs on its agent's current bundle for model and judge, so that is what is checked.
+      const bundle = repo.includes(path) ? undefined : repo.find((r) => basename(dirname(r)) === def.name);
+      await loadAgent(path, deployment, catalog, deploymentExtensions, bundle && JSON.parse(readFileSync(bundle, 'utf8')));
       result.loaded++;
     } catch (err) {
       result.failures.push(`${path}: ${err instanceof Error ? err.message : String(err)}`);

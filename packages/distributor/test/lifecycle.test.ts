@@ -126,24 +126,26 @@ test('a version edited in place after the host stored it is refused before any s
 });
 
 
-test('a woken session keeps its pinned bundle but judges with its agent\'s current one, and fails clearly once that bundle is removed', async () => {
+test('a woken session keeps its pinned prompt but runs the current model and judge, and fails clearly once that bundle is removed', async () => {
   const { driver, launches, agentsDir } = await host();
-  const bundle = async (version: number, judge: object) => {
+  const bundle = async (version: number, judge: object, model: string) => {
     await mkdir(join(agentsDir, 'contracts'), { recursive: true });
-    await writeFile(join(agentsDir, 'contracts', 'agent.json'), JSON.stringify({ name: 'contracts', version, prompt: 'prompt.md', extensions: { judge, contracts: { v: version } } }));
+    await writeFile(join(agentsDir, 'contracts', 'agent.json'), JSON.stringify({ name: 'contracts', version, model, prompt: 'prompt.md', extensions: { judge, contracts: { v: version } } }));
     await writeFile(join(agentsDir, 'contracts', 'prompt.md'), `prompt v${version}`);
   };
   const clef = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
-  await bundle(6, { maxRevisions: 2 });
+  await bundle(6, { maxRevisions: 2 }, 'local/old');
   await driver.ensure('contracts:a', 'contracts');
   await driver.stop('contracts:a');
-  await bundle(13, { maxRevisions: 2, decisionModel: clef });
+  await bundle(13, { maxRevisions: 2, decisionModel: clef }, 'local/new');
   await driver.ensure('contracts:a');
   const dir = launches[1].dir;
   const pinned = JSON.parse(await readFile(join(dir, 'agent-def', 'agent.json'), 'utf8'));
   const liveCatalog: Catalog = { contracts: () => [], judge: Object.assign(() => [], { configSource: 'current' as const }) };
   const runs = withCurrentExtensions(pinned, JSON.parse(await readFile(join(dir, CURRENT_AGENT_FILE), 'utf8')), liveCatalog);
   assert.deepEqual(runs.extensions, { contracts: { v: 6 }, judge: { maxRevisions: 2, decisionModel: clef } }, 'the judge follows v13, everything else stays on v6');
+  assert.equal(pinned.model, 'local/old');
+  assert.equal((runs as { model: string }).model, 'local/new', 'the model follows v13');
   assert.equal(await readFile(join(dir, 'agent-def', 'prompt.md'), 'utf8'), 'prompt v6');
 
   await driver.stop('contracts:a');
