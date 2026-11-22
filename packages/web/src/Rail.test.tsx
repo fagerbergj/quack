@@ -57,6 +57,16 @@ test('a version sealed again counts once, by its newest seal', () => {
   expect(screen.getByRole('button', { name: '1 older version' })).toBeInTheDocument();
 });
 
+test('a failed version shows no score; its tooltip and label carry the count to fix', () => {
+  const check = { criterion: 'c', id: 'c', label: 'c', weight: -3, met: 1, notes: [] };
+  const failed = { kind: 'review', version: 1, sealedAt: 1000, content: '', summary: '', verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [check, check] } } as never;
+  render(<RailBody sessionKey="ui:u1" title="t" view={{ items: [] } as never} meta={[]} items={[failed]} approvals={[]} questions={[]} />);
+  const row = screen.getByRole('button', { name: /v1/ });
+  expect(row).toHaveAccessibleName(/Didn't pass its checks · 2 to fix/);
+  expect(row).toHaveAttribute('title', expect.stringContaining('2 to fix'));
+  expect(row).not.toHaveTextContent(/%|to fix/);
+});
+
 test('three versions or fewer have no disclosure', () => {
   versionsOf(3);
   expect(screen.getAllByRole('button', { name: /v\d/ })).toHaveLength(3);
