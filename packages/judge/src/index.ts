@@ -101,13 +101,14 @@ const whyOf = (p: Plan, u: Unit) => {
 };
 const noteOf = (p: Plan, u: Unit) => (u.whole ? whyOf(p, u) : `${u.id}: ${whyOf(p, u)}`);
 
-// One note per failing group, naming its first failing item and why; the failing groups' keys are the marks.
+// One note per failing group: the fold's own `none`, else its first failing item and why; the failing groups' keys are the marks.
 function groupedFinal(p: Plan, r: CheckResult): CheckResult {
   const keys = p.units.map((u) => p.groupOf![u.id]);
   const tris = trisOf(p);
   const groups = groupsOf(p);
   const failing = [...groups].filter(([, t]) => t === false).map(([k]) => k);
   r.notes = failing.map((k) => {
+    if (p.aggregate.none) return `${k}: ${p.aggregate.none}`;
     const u = p.units[keys.findIndex((g, i) => g === k && tris[i] === false)];
     return `${k}: ${u.id}: ${whyOf(p, u)}`;
   });

@@ -64,55 +64,62 @@ const termsOf = (s: string) => new Set([...(s.toLowerCase().match(termRe) ?? [])
 // A guarantee's group key: its fact id, or for a grandfathered string its first words and a hash of its text, which an insert does not move.
 const guaranteeKey = (e: Entry) => e.label ?? `${e.text.split(/\s+/).slice(0, 6).join(' ')} #${createHash('sha256').update(e.text).digest('hex').slice(0, 6)}`;
 
-/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. */
+/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. `text` is what it is ranked by. */
 type Part = { id: string; name?: string; text: string; evidence: unknown; root?: true };
 
-// The parts a guarantee is checked against, best first: one it names, then by shared terms; with none above the bar, the best few anyway,
-// so every guarantee is asked. The root holds spec-wide rules (additionalProperties, security, the stated scope), so it is always asked.
+// "loader" meets "load" and "checked" meets "check".
+const stemsOf = (s: string) => new Set([...termsOf(s)].map((t) => t.replace(/(?<=[a-z0-9]{4})(?:ing|ers?|ed)$/, '')));
+const VERB_BEFORE = /\b(GET|PUT|POST|DELETE|OPTIONS|HEAD|PATCH|TRACE)\s+$/;
+// A path, pointer, camelCase or dashed name cannot be an English word by chance; a plain word names a part only in backticks.
+const codeLike = (name: string) => /[^A-Za-z]|.[A-Z]/.test(name);
+// Path characters end a mention, so /sessions does not name /sessions/{key}.
+const exactly = (name: string) => new RegExp(`(?<![\\w$/.{}-])${escRe(name)}(?![\\w$/{}-])`, 'g');
+
+// A part the text names: an operation by its path, with no verb before it or its own; any other by its pointer, a choice's id or its
+// name written as code, or a name that is no path as a whole word.
+function namedIn(text: string, p: Part): boolean {
+  const op = /^([A-Z]+) (\/\S*)$/.exec(p.id);
+  if (op) return [...text.matchAll(exactly(op[2]))].some((m) => [undefined, op[1]].includes(VERB_BEFORE.exec(text.slice(0, m.index))?.[1]));
+  const names = [p.id.replace(/^choice /, ''), p.name ?? ''].filter(Boolean);
+  if (names.some((n) => text.includes(`\`${n}\``) || (codeLike(n) && exactly(n).test(text)))) return true;
+  return !!p.name && !p.name.startsWith('/') && mentions(p.name).test(text);
+}
+
+// The parts a guarantee is paired with: every one it names, the `top` others sharing the most terms (the best few when it names none
+// and none clear the bar), and the root, whose spec-wide rules (additionalProperties, security, scope) any may hold in.
 function partsFor(text: string, parts: Part[], top: number, minShared: number): Part[] {
-  const terms = termsOf(text);
-  const scored = parts.map((p, i) => {
-    const shared = [...termsOf(p.text)].filter((t) => terms.has(t)).length;
-    return { p, i, shared, s: (p.name && mentions(p.name).test(text) ? 1000 : 0) + shared };
-  });
-  const ranked = [...scored].sort((a, b) => b.s - a.s || a.i - b.i);
-  const kept = ranked.filter((x) => x.s >= minShared);
-  const best = (kept.length ? kept : ranked).slice(0, top);
-  const root = scored.find((x) => x.p.root);
-  // Order evidence by shared terms so the most relevant part comes first: a name the guarantee only
-  // happens to use as a word ("session's") keeps a part in, not first.
-  return (root && !best.includes(root) ? [...best, root] : best).sort((a, b) => b.shared - a.shared).map((x) => x.p);
+  const terms = stemsOf(text);
+  const scored = parts.map((p, i) => ({ p, i, named: namedIn(text, p), s: [...stemsOf(p.text)].filter((t) => terms.has(t)).length }));
+  const named = scored.filter((x) => x.named || x.p.root);
+  const rest = scored.filter((x) => !named.includes(x)).sort((a, b) => b.s - a.s || a.i - b.i);
+  const kept = rest.filter((x) => x.s >= minShared);
+  const chosen = new Set([...named, ...(kept.length || named.some((x) => x.named) ? kept : rest).slice(0, top)]);
+  return scored.filter((x) => chosen.has(x)).map((x) => x.p);
 }
 
 // The definitions, the rest of the document and the decided choices: a guarantee the code cannot show, such as layering or a
 // budget the judge measures, is carried by the choice that decides it.
 function partsOf(spec: Pick<ContractSpec, 'document' | 'choices'>, kind: ContractSpec['kind']): Part[] {
   const defs = kinds[kind].definitions(spec.document).filter((d) => /[\p{L}\p{N}]/u.test(textOf(d)));
-  const choices = (spec.choices ?? []).map((c): Part => {
-    const evidence = { decision: c.decision, why: c.why.map((w) => w.text) };
-    return { id: `choice ${c.id}`, text: JSON.stringify(evidence), evidence };
-  });
-  // The root goes with every promise, so its examples, which make nothing hold, stay out of the evidence.
+  // A choice ranks by its decision alone: its whys quote the guide, and a quote many choices share would outrank the definitions.
+  const choices = (spec.choices ?? []).map((c): Part => ({ id: `choice ${c.id}`, text: c.decision, evidence: { decision: c.decision, why: c.why.map((w) => w.text) } }));
+  // The root is paired with every guarantee, so its examples, which make nothing hold, stay out of it.
   const shown = (d: Definition) => (d.rest && typeof d.definition === 'object' && d.definition !== null ? { ...d.definition, examples: undefined } : d.definition);
   return [...defs.map((d): Part => ({ id: d.id, name: d.name, text: textOf(d), evidence: shown(d), ...(d.rest && { root: true as const }) })), ...choices];
 }
 
-// One item per promise; its evidence is the parts that may make it hold (named or sharing the most terms, the decided choices, the root),
-// most relevant first, so one judge-model question per promise reads them together.
-function promiseItems(inputs: Inputs, o: SplitDecl, promisesOf: (intent: Partial<Intent> & { purpose: string }) => Entry[]): Chunk[] {
+// One item per (guarantee, part) pair, grouped by the guarantee, which is the pairs' shared context: the decision model reads one part
+// at a time, and a guarantee's pairs pack into few requests. A grandfathered guarantee over the fact limit is judged sentence by sentence.
+function guaranteePairs(inputs: Inputs, o: SplitDecl): Chunk[] {
   const [specInput, kindInput] = [o.from].flat();
   const spec = JSON.parse(inputs[specInput]) as Pick<ContractSpec, 'intent' | 'document' | 'choices'>;
   const parts = partsOf(spec, inputs[kindInput] as ContractSpec['kind']);
-  return promisesOf(spec.intent).map((g) => {
-    const evidence = partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ part: p.id, text: p.evidence }));
-    return { id: guaranteeKey(g), text: g.text, meta: { evidence } };
+  return entriesOf(spec.intent, ['guarantees']).flatMap((g) => {
+    const key = guaranteeKey(g);
+    return partsFor(g.text, parts, o.top ?? 4, o.minShared ?? 2).map((p) => ({ id: `${key} ~ ${p.id}`, text: JSON.stringify(p.evidence), meta: { key, guarantee: g.text } }));
   });
 }
-registerSelector('contract.evidence', (_i, c) => JSON.stringify((c.meta as { evidence: unknown[] }).evidence));
-
-// A grandfathered guarantee over the fact limit holds several facts, and no one part may give them all: each sentence is a guarantee.
-// With none, the check has no items and counts toward neither side.
-registerSplitter('contract.guarantees', (inputs, o) => promiseItems(inputs, o, (intent) => entriesOf(intent, ['guarantees'])));
+registerSplitter('contract.guaranteePairs', guaranteePairs);
 
 // The named texts the judge reads: the facts code found, the spec and its kind.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
@@ -138,13 +145,16 @@ const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, 
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
-    // One item per guarantee; the evidence is the parts it may hold in, at most four plus the root.
-    guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
+    guarantee: { split: { name: 'contract.guaranteePairs', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'part' },
   },
   checks: {
-    // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
-    // queued behind it made the round slower than the one question they replaced.
-    meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // A guarantee holds when any part defines it, and the spec when every guarantee does. Once one part holds, the guarantee's other
+    // pairs are not escalated; a guarantee no part holds fails with a note code writes, so no judge-model reason is needed.
+    meets_intent: {
+      scope: 'guarantee',
+      aggregate: { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'no part of the spec defines a mechanism for it' },
+      question: yesNo('Does this part of the spec define a mechanism for the guarantee: a field, type, operation, header, status code or schema rule that makes it hold, or a behaviour its own text states?'),
+    },
   },
 };
 
@@ -203,7 +213,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 14,
+  version: 15,
   // meets_intent is the one scored check and folds to a boolean, so the score is 0 or 1: any threshold above 0 means it must hold.
   threshold: 1,
   criteria: [

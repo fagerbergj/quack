@@ -1,0 +1,1912 @@
+{
+  "kind": "json-schema",
+  "title": "Quack deployment (target shape)",
+  "version": 17,
+  "intent": {
+    "purpose": "The contract for deployment.json after the breaking redesign: a bundled, one-section-per-concern file that names the deployment's providers and its own model choices — defaultModel, decisionModel, escalationModel and visionModel — (with defaultAgent, timeZone and the exec policy for sessions), its stores and its services, its extensions and the core catalog, its notifications, its keyed services and its session driver configuration — without hand-listing models, which are discovered from each provider's /models endpoint when it exists; the hand-written model entries may carry cost fields (price, USD per million tokens) beside their limits.",
+    "nonGoals": [
+      {
+        "id": "no-per-agent-choices",
+        "text": "Per-agent model choices, which are set in the UI and stored with the agent's config in the data dir"
+      },
+      {
+        "id": "no-secrets",
+        "text": "Secrets, which stay in the environment and are only named by *Env keys"
+      },
+      {
+        "id": "no-service-roster",
+        "text": "The service roster and settings keys the owner has not fixed stay owned by the services' own contracts; github's and remarkable's are the fixed exception"
+      },
+      {
+        "id": "no-external-api-keys",
+        "text": "External APIs' keys (exa, langfuse), which remain environment variables"
+      },
+      {
+        "id": "no-apps-routing",
+        "text": "Routing and auth of the /apps gateway, which is redrafted in the distributor.apps contract (session d87192eb) and deliberately not specified here"
+      }
+    ],
+    "audience": "The operator who writes the deployment file, and the migration of prod's existing file.",
+    "consumers": [
+      "The rewritten parseDeployment and buildModels in @quack/session",
+      "The validate tool (runtime/src/validate.ts)",
+      "The distributor that rewrites the file per session",
+      "Each extension that now reads its configuration from the file, in-process",
+      "The distributor's parseHostConfig, which now reads the session section instead of the QUACK_SESSION_* environment"
+    ],
+    "guarantees": [
+      {
+        "id": "boots-from-data-dir",
+        "text": "A deployment with no hand-written models can boot from nothing but QUACK_DATA_DIR and this file"
+      },
+      {
+        "id": "default-model-checked",
+        "text": "A bad defaultModel fails before deploy"
+      },
+      {
+        "id": "no-secrets-in-file",
+        "text": "Secrets never appear in the file"
+      },
+      {
+        "id": "store-ref-checked",
+        "text": "A typo'd store reference fails at load"
+      },
+      {
+        "id": "index-entry-refused",
+        "text": "A v6 file that still names extensions.index is refused with a message pointing at the root's catalog.store"
+      },
+      {
+        "id": "github-settings-closed",
+        "text": "github.settings' closed keys are exactly the ones the service reads; any other key is rejected and named"
+      },
+      {
+        "id": "github-settings-v6-safe",
+        "text": "A v6 implementerAgent and label value in github.settings survive the migration unchanged"
+      },
+      {
+        "id": "price-keys-closed",
+        "text": "A model limit's price carries only input, output, cacheRead and cacheWrite, each a non-negative number of USD per million tokens"
+      },
+      {
+        "id": "bundles-name-no-model",
+        "text": "Planned (slice S4): a shipped agent bundle names no model"
+      },
+      {
+        "id": "bundle-models-from-the-file",
+        "text": "Planned: a bundle's models come from defaultModel, decisionModel, escalationModel and visionModel here, the agent's saved choice, and a turn's pick"
+      }
+    ]
+  },
+  "document": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "quack/deployment",
+    "title": "Quack deployment (target shape)",
+    "description": "The file QUACK_CONFIG points at: who a deployment may call (providers, with defaultModel, decisionModel, escalationModel and visionModel as the deployment's own model choices), where its data lives (stores), what services it runs (extensions), where its session catalog lives (catalog) and who web push is attributed to (notifications), which keyed outbound APIs the proxy fronts (services), and how sessions run (session); a new session starts with defaultAgent, and how its sessions behave (timeZone, exec). Models are not hand-listed here: they are discovered from each provider's GET {baseUrl}/models when that endpoint exists, and an agent's own model choice is set in the UI and stored with the agent's config in the data dir; a shipped agent bundle names none of them. The environment keeps only secrets, named here by *Env keys, and the process paths QUACK_DATA_DIR, QUACK_CONFIG and QUACK_AGENTS_DIR. One section per concern, in the spirit of v0's config/quack.yaml. The root is closed: an unknown top-level key — the removed imageModel and a typo alike — is rejected and named.",
+    "type": "object",
+    "required": [
+      "providers",
+      "defaultModel"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "providers": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": {
+          "$ref": "#/$defs/provider"
+        },
+        "description": "The named providers sessions may call. A provider's hand-written models are optional: any model not listed there is discovered from GET {baseUrl}/models when that endpoint exists."
+      },
+      "defaultModel": {
+        "type": "string",
+        "pattern": "^[^/]+/.+$",
+        "examples": [
+          "local/qwen3.8-27b"
+        ],
+        "description": "A \"provider/model\" reference: the model a new session runs on, the model for agents that have no saved choice, and the model a session returns to when the model a turn picked has left this file. A turn may pick any selectable model (session process API, Invocation.model) — planned in slice S5: the Invocation body carries input, requestId, wait, whenBusy, title and meta, and no model field yet. Each agent's saved choice is set in the UI (the Agents page) and stored with the agent's config in the data dir, so it is not in this file. defaultModel must resolve to a selectable model under the merge rule (one with a contextWindow); validate checks that before deploy, and selecting an unselectable model is an error when it happens."
+      },
+      "timeZone": {
+        "type": "string",
+        "examples": [
+          "America/New_York"
+        ],
+        "description": "The IANA time zone session clocks run in; the default is America/New_York. It must be a zone the runtime's Intl accepts."
+      },
+      "exec": {
+        "$ref": "#/$defs/execPolicy",
+        "description": "How agent shells are confined; see execPolicy."
+      },
+      "stores": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/store"
+        },
+        "description": "Named stores; each consumer references one by name. A sqlite store keeps its file in the data dir, so a fresh install needs nothing provisioned; omit the section and every consumer falls back to its own default (a sqlite file in the data dir). Session logs stay files under the data dir, never a store."
+      },
+      "extensions": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/extension"
+        },
+        "description": "The named extensions that mount in-process under /apps/<name>/* in the runtime/distributor — github, sleeper, remarkable, schedules and capacity are no longer separate services. Replaces the service database variables and the single-use setting variables; each extension's secrets are still read from the environment by name, declared in the extension's own manifest. An entry named slots is rejected as renamed — the extension and its app now mount at /apps/capacity, under the key extensions.capacity. An entry named index is refused — the catalog is core; name its store at the root's catalog.store instead. github and remarkable carry closed settings objects naming the keys the owner fixed; every other extension keeps the generic entry.",
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "index"
+              ]
+            },
+            {
+              "required": [
+                "slots"
+              ]
+            }
+          ],
+          "description": "Refuses two entry names: index (the catalog is core; name its store at catalog.store) and slots (renamed to capacity), so the loader can name the right key in each case."
+        },
+        "properties": {
+          "github": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "The GitHub extension: a closed settings object keeping every key the service reads — agent, label, appId, implementerAgent and issueBase — so /fix and branch basing do not break.",
+            "properties": {
+              "store": {
+                "type": "string",
+                "examples": [
+                  "default"
+                ],
+                "description": "The name of a stores entry to hold this service's database; the loader checks the reference, and an absent store takes the service's default (a sqlite file in the data dir)."
+              },
+              "settings": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "appId"
+                ],
+                "description": "The GitHub app's configuration, closed to the keys the service reads; any other key is rejected and named.",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "description": "The agent that backs unattended triggers, by name in the catalog; absent takes reviewer."
+                  },
+                  "label": {
+                    "type": "string",
+                    "examples": [
+                      "quack:review"
+                    ],
+                    "description": "The review label the app applies; absent takes quack:review."
+                  },
+                  "appId": {
+                    "type": "integer",
+                    "description": "The GitHub App's numeric id; the App's key file and the webhook secret remain environment secrets."
+                  },
+                  "implementerAgent": {
+                    "type": "string",
+                    "description": "The agent a trusted /fix comment runs; absent, /fix does nothing, so a deployment opts in by naming it. It must be promoted (DEP-6), checked by the loader like agent."
+                  },
+                  "issueBase": {
+                    "type": "string",
+                    "pattern": "^[^/\\s]+/[^/\\s]+$",
+                    "examples": [
+                      "fagerbergj/quack"
+                    ],
+                    "description": "The owner/repo to base a branch on."
+                  }
+                }
+              }
+            }
+          },
+          "remarkable": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "The remarkable extension: a closed settings object keeping every key the service reads — agent, url and email — the rmfakecloud endpoint it used to read from RMFAKECLOUD_URL and RMFAKECLOUD_EMAIL; the password stays an environment secret.",
+            "properties": {
+              "store": {
+                "type": "string",
+                "examples": [
+                  "default"
+                ],
+                "description": "The name of a stores entry to hold this service's database; the loader checks the reference, and an absent store takes the service's default (a sqlite file in the data dir)."
+              },
+              "settings": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "url",
+                  "email"
+                ],
+                "description": "The remarkable workflow's configuration, closed to the keys the service reads; the rmfakecloud password stays an environment secret.",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "description": "The agent the remarkable workflow runs, by name in the catalog; absent takes remarkable-ingest."
+                  },
+                  "url": {
+                    "type": "string",
+                    "pattern": "^https?://",
+                    "description": "The rmfakecloud endpoint's base URL; replaces RMFAKECLOUD_URL."
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "The rmfakecloud account's email; replaces RMFAKECLOUD_EMAIL."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "catalog": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The core's session catalog: the name of a stores entry that holds it, checked against the stores map by the loader; an absent catalog (or an absent store) takes the default, a sqlite file in the data dir. The catalog is core, not an extension — it used to be read as the index service's database variable, so an extensions entry named index is refused with a message pointing here.",
+        "properties": {
+          "store": {
+            "type": "string",
+            "description": "The name of a stores entry to hold the core's session catalog; the loader checks the reference, and an absent store takes the default (a sqlite file in the data dir)."
+          }
+        }
+      },
+      "notifications": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The core's web-push contact, replacing the push configuration the deleted index service exposed as index.push; an absent section (or an absent subject) defaults to the quack repo URL. The VAPID keys are secrets and stay in the environment.",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "pattern": "^(mailto:[^\\s]+|https://[^\\s]+)$",
+            "examples": [
+              "https://github.com/fagerbergj/quack",
+              "mailto:ops@example.com"
+            ],
+            "description": "The contact a web-push notification attributes (the VAPID link header); RFC 8292 requires a mailto: or https: URI, and anything else is rejected here with a clear error. Absent takes the quack repo URL, https://github.com/fagerbergj/quack."
+          }
+        }
+      },
+      "services": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/$defs/keyedService"
+        },
+        "description": "The named keyed outbound APIs the key proxy registers, one per entry, under /proxy/<name>; extensions name the service they use instead of reading a per-service URL variable. Exa is one entry (exa: baseUrl https://api.exa.ai), not a special case; this replaces QUACK_EXA_URL, whose value moves to the exa entry's baseUrl. Langfuse is the other entry: its base URL replaces LANGFUSE_BASE_URL, and its basic-auth keys stay in the environment."
+      },
+      "defaultAgent": {
+        "type": "string",
+        "examples": [
+          "reviewer"
+        ],
+        "description": "The agent a new session starts with, by name in the core's session catalog; optional, absent taking the shipped home agent quack. When set, the loader checks it resolves to an installed agent, and a value that does not resolves fails to load."
+      },
+      "session": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "driver"
+        ],
+        "description": "The session driver configuration the distributor's parseHostConfig today reads from the QUACK_SESSION_* environment; a closed object, so a typo in a driver setting fails here with a named key. Absent takes the defaults — driver process, runsc, the quack-sessions network.",
+        "properties": {
+          "driver": {
+            "enum": [
+              "process",
+              "docker"
+            ],
+            "description": "How sessions run: process (the default, shells in the host's own process tree) or docker (one container per session, in which case the rest of this section applies)."
+          },
+          "image": {
+            "type": "string",
+            "description": "The session container image (docker driver only)."
+          },
+          "runtime": {
+            "type": "string",
+            "examples": [
+              "runsc",
+              "runc"
+            ],
+            "description": "The container runtime (docker driver only); runsc by default. runc shares the host kernel with the session's shell, which defeats the driver, and is refused unless allowRunc is true — dev and tests only. Recorded as the JSON Schema default; the distributor applies the same default.",
+            "default": "runsc"
+          },
+          "network": {
+            "type": "string",
+            "examples": [
+              "quack-sessions"
+            ],
+            "description": "The Docker network the session containers attach to (docker driver only); quack-sessions by default. Recorded as the JSON Schema default; the distributor applies the same default.",
+            "default": "quack-sessions"
+          },
+          "allowRunc": {
+            "type": "boolean",
+            "description": "Lifts the refusal of runtime runc; true for dev and tests only, never in production."
+          },
+          "distributorUrl": {
+            "type": "string",
+            "pattern": "^https?://",
+            "description": "An http(s) URL the session containers can reach to call the distributor (docker driver only)."
+          },
+          "dataVolume": {
+            "type": "string",
+            "description": "The Docker name of the named data volume the sessions mount; exactly one of dataVolume and hostDataDir — a named volume needs no migration but Docker Engine 26 or newer. The rule, enforced here: with driver docker exactly one of dataVolume and hostDataDir is set — both or neither fail with an error naming the rule; with driver process neither may be set."
+          },
+          "hostDataDir": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "An absolute path on the Docker host holding session data; exactly one of dataVolume and hostDataDir."
+          }
+        },
+        "if": {
+          "additionalProperties": true,
+          "properties": {
+            "driver": {
+              "const": "process",
+              "description": "Match only the process driver, for which no data mount may be set."
+            }
+          }
+        },
+        "then": {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "dataVolume"
+                ]
+              },
+              {
+                "required": [
+                  "hostDataDir"
+                ]
+              }
+            ]
+          }
+        },
+        "else": {
+          "required": [
+            "image",
+            "distributorUrl"
+          ],
+          "oneOf": [
+            {
+              "required": [
+                "dataVolume"
+              ]
+            },
+            {
+              "required": [
+                "hostDataDir"
+              ]
+            }
+          ],
+          "description": "The docker driver: image and distributorUrl are required and exactly one of dataVolume and hostDataDir is set — both or neither fail the oneOf with an error naming the rule; runtime and network are optional, taking their defaults."
+        }
+      },
+      "decisionModel": {
+        "type": "string",
+        "pattern": "^[^/]+/.+$",
+        "examples": [
+          "clef/clef"
+        ],
+        "description": "The decision model the judge and workflow steps ask before any generation model, for agents whose extension config names none: a model of a systemone provider, whose contextWindow is its input cap. Absent: no default decision model; a check escalates unless the agent's config names one. validate and the loader refuse a reference that does not resolve, that names a provider which is not api systemone, or whose entry has no contextWindow to serve as the cap, and the message names this key, as for defaultModel. Planned: the loader fills this ref into the bundles that omit it."
+      },
+      "escalationModel": {
+        "type": "string",
+        "pattern": "^[^/]+/.+$",
+        "examples": [
+          "local/qwen3.8-flash-next"
+        ],
+        "description": "The generation model the judge escalates an item to when no decision model settles it. It must resolve to a selectable generation model. Absent: defaultModel. It never follows a turn's model pick, so a verdict does not depend on the model a person chose for the session. Precedence: an agent's judge.judgeModel while that setting exists, then escalationModel, then defaultModel. validate and the loader refuse a reference that does not resolve to a selectable generation model, naming this key. Planned: the judge reading this key (slice S4 deletes judge.judgeModel)."
+      },
+      "visionModel": {
+        "type": "string",
+        "pattern": "^[^/]+/.+$",
+        "description": "The model workflow steps read images with when the agent's config names none; it must declare images: true. Absent: the session's current model, which must then accept images — and a model that declares none is not sent them: pi-ai replaces the image blocks with a text placeholder before the request, so the step answers from the text alone. validate and the loader refuse a reference here that does not resolve, or resolves to a model without images: true, naming this key, as the workflows extension's own validator does for workflows.visionModel. Planned: the loader filling this ref for the agent's config."
+      }
+    },
+    "$defs": {
+      "provider": {
+        "type": "object",
+        "required": [
+          "baseUrl"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "pattern": "^https?://",
+            "examples": [
+              "http://127.0.0.1:11434/v1"
+            ],
+            "description": "The base URL of an OpenAI-compatible API; models are discovered from GET {baseUrl}/models when that endpoint exists. The distributor rewrites it to a per-session broker route, since a session container cannot reach the LAN."
+          },
+          "api": {
+            "enum": [
+              "openai-completions",
+              "systemone"
+            ],
+            "description": "The wire protocol. openai-completions is the default; systemone marks decision providers such as Clef — classifiers with an input cap and no generation."
+          },
+          "apiKeyEnv": {
+            "type": "string",
+            "examples": [
+              "QUACK_LOCAL_API_KEY"
+            ],
+            "description": "The name of the environment variable holding this provider's API key. When absent, the key is read from QUACK_<ID>_API_KEY, the provider id with non-alphanumerics upper-cased to underscores."
+          },
+          "models": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/modelLimits"
+            },
+            "description": "Hand-written model entries, keyed by model id. Merge rule: the provider's models are the ids discovered from GET {baseUrl}/models (when the endpoint exists) plus the hand-written ids here; a hand-written field wins over a discovered one, and a hand-written id the endpoint does not list is added. A model that ends up with no contextWindow is listed but cannot be selected; it is an error only when defaultModel or an agent selects it, so discovery never fails boot just because an endpoint is thin. For a provider with no /models endpoint this map is the whole model list. Measured on prod: llama.cpp upstreams add meta.n_ctx and architecture.input_modalities, while llm-swap (provider local) returns ids only — including peer models such as jaison/qwen3.8-27b — so contextWindow and images can still be written by hand even when discovery runs."
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 1,
+            "examples": [
+              6
+            ],
+            "description": "How many sessions this provider may serve at once through the capacity gate — a positive integer, one session is one holder, and one provider is one model endpoint. A provider without it is not gated. Renamed from slots: a file that still carries providers.<id>.slots is rejected at validation with a message naming the new key, as 'providers.local.slots was renamed to providers.local.capacity'; there is no silent alias, and after one release the special message may go and the old key falls to the ordinary unknown-key rejection."
+          }
+        },
+        "not": {
+          "required": [
+            "slots"
+          ],
+          "description": "The provider field slots is renamed to capacity; the schema rejects the old key so the loader can name the new one."
+        }
+      },
+      "modelLimits": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Hand-written limits for one model id; every field is optional here because what a provider needs written depends on what its GET {baseUrl}/models states, and a model with no contextWindow is listed but not selectable.",
+        "properties": {
+          "contextWindow": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The context window in tokens; a model without one is listed but not selectable."
+          },
+          "maxTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The longest one completion may be, in tokens."
+          },
+          "reasoning": {
+            "type": "boolean",
+            "description": "Whether this model takes reasoning effort parameters."
+          },
+          "images": {
+            "type": "boolean",
+            "description": "Whether this model takes image input; without it pi-ai replaces image blocks with a text placeholder before the request."
+          },
+          "price": {
+            "$ref": "#/$defs/price",
+            "description": "A notional price per million tokens; omitted parts are free."
+          }
+        }
+      },
+      "price": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`.",
+        "properties": {
+          "input": {
+            "type": "number",
+            "minimum": 0,
+            "description": "USD per million input tokens."
+          },
+          "output": {
+            "type": "number",
+            "minimum": 0,
+            "description": "USD per million output tokens."
+          },
+          "cacheRead": {
+            "type": "number",
+            "minimum": 0,
+            "description": "USD per million cached-read tokens."
+          },
+          "cacheWrite": {
+            "type": "number",
+            "minimum": 0,
+            "description": "USD per million cache-write tokens."
+          }
+        }
+      },
+      "store": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false,
+        "description": "A named store. kind selects the adapter — the portability seam — so the set is closed: a new kind is a code change. The shape mirrors the SDK's AppStore: { kind: sqlite, path } or { kind: postgres, url via urlEnv }.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "sqlite",
+              "postgres"
+            ],
+            "description": "Which adapter serves this store: sqlite keeps its file in the data dir (no other fields), postgres connects over the URL named by urlEnv."
+          },
+          "urlEnv": {
+            "type": "string",
+            "examples": [
+              "QUACK_DATABASE_URL"
+            ],
+            "description": "The name of the environment variable holding the postgres connection URL; only for kind postgres, required when kind is postgres."
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "An absolute path to the sqlite file; kind sqlite only, an error otherwise; absent keeps the file in the data dir. Mirrors the SDK's AppStore, where a sqlite store is { kind: sqlite, path }."
+          }
+        },
+        "if": {
+          "additionalProperties": true,
+          "properties": {
+            "kind": {
+              "const": "postgres",
+              "description": "Match only stores of kind postgres."
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "urlEnv"
+          ]
+        },
+        "else": {
+          "additionalProperties": true,
+          "not": {
+            "required": [
+              "path"
+            ]
+          }
+        }
+      },
+      "execPolicy": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "How agent shells are confined; an agent may shorten the operator's timeout but never lengthen it.",
+        "properties": {
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The longest one shell command may run, in seconds; the default is the session's default exec timeout."
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Variable names the shell starts with, on top of the session's own environment."
+          },
+          "limits": {
+            "$ref": "#/$defs/execLimits",
+            "description": "Kernel limits applied to shells via the limit prefix; an absent field keeps its default."
+          }
+        }
+      },
+      "execLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Kernel limits the session applies to shells via the limit prefix; an absent field keeps its default.",
+        "properties": {
+          "addressSpaceMb": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The address-space ceiling in megabytes."
+          },
+          "maxProcs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The maximum number of processes."
+          },
+          "maxFileSizeMb": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The largest one file may grow to, in megabytes; the default is 1024."
+          }
+        }
+      },
+      "extension": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "One extension's configuration: an optional store for its database and an optional settings object. The extension mounts in-process under /apps/<name>/* in the runtime/distributor, so nothing calls another process and the entry carries no url or tokenEnv; routing and auth are the /apps gateway's concern, redrafted in the distributor.apps contract, and not specified here.",
+        "properties": {
+          "store": {
+            "type": "string",
+            "examples": [
+              "default"
+            ],
+            "description": "The name of a stores entry to hold this service's database; the loader checks the reference, and an absent store takes the service's default (a sqlite file in the data dir)."
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Service-owned settings, replacing that service's single-use environment variables (for example QUACK_RETENTION_SWEEP, QUACK_GH_IMPLEMENTER_AGENT, QUACK_SLEEPER_OWNER and QUACK_SLEEPER_LEAGUE). The shape is owned by the extension and defined in the extension's own contract — v1 core is the harness plus generic hooks, so the generic entry hard-codes no keys; the only exceptions are github and remarkable, whose owner-fixed closed settings live on sibling properties of the extensions object. It is checked twice: once by validate before deploy, using the extension's published validator (as agent extensions already work through CatalogEntry.validate), and again by the extension when the process boots. Secrets an extension needs — the GitHub App key file and webhook secret, the rmfakecloud password — are still read from the environment by name, declared in the extension's manifest, and never written here."
+          }
+        }
+      },
+      "keyedService": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "baseUrl"
+        ],
+        "description": "One keyed outbound API the key proxy fronts: it registers under /proxy/<name> and extensions name the service they use, so no service is a special case in core. Today core hard-codes Exa here; this map is that registration, generalized. Exa and langfuse are its entries; today core hard-codes both registrations here.",
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "pattern": "^https?://",
+            "examples": [
+              "https://api.exa.ai"
+            ],
+            "description": "The base URL the proxy dials for this service; required, since unlike providers the proxy cannot discover it."
+          },
+          "apiKeyEnv": {
+            "type": "string",
+            "examples": [
+              "QUACK_EXA_API_KEY"
+            ],
+            "description": "The name of the environment variable holding this service's API key. When absent, the key is read from QUACK_<NAME>_API_KEY, the service name upper-cased; the key itself never appears in the file."
+          }
+        }
+      }
+    },
+    "examples": [
+      {
+        "providers": {
+          "local": {
+            "baseUrl": "http://127.0.0.1:11434/v1",
+            "apiKeyEnv": "QUACK_LOCAL_API_KEY"
+          }
+        },
+        "defaultModel": "local/qwen3.8-27b"
+      },
+      {
+        "providers": {
+          "local": {
+            "baseUrl": "http://127.0.0.1:11434/v1",
+            "apiKeyEnv": "QUACK_LOCAL_API_KEY",
+            "models": {
+              "qwen3.8-27b": {
+                "contextWindow": 262144,
+                "maxTokens": 32768
+              },
+              "qwen3-omni-30b": {
+                "contextWindow": 32768,
+                "maxTokens": 4096,
+                "images": true
+              },
+              "peer/qwen3.8-27b": {
+                "contextWindow": 262144
+              },
+              "qwen3.8-flash-next": {
+                "contextWindow": 262144,
+                "maxTokens": 32768
+              }
+            },
+            "capacity": 6
+          },
+          "clef": {
+            "baseUrl": "http://127.0.0.1:11436/upstream/clef/v1",
+            "api": "systemone",
+            "models": {
+              "clef": {
+                "contextWindow": 8192
+              }
+            }
+          }
+        },
+        "defaultModel": "local/qwen3.8-27b",
+        "timeZone": "America/New_York",
+        "exec": {
+          "timeoutSeconds": 300,
+          "env": [
+            "PATH"
+          ],
+          "limits": {
+            "addressSpaceMb": 8192,
+            "maxProcs": 64,
+            "maxFileSizeMb": 1024
+          }
+        },
+        "stores": {
+          "default": {
+            "kind": "sqlite",
+            "path": "/var/lib/quack/index.sqlite"
+          },
+          "pg": {
+            "kind": "postgres",
+            "urlEnv": "QUACK_DATABASE_URL"
+          }
+        },
+        "extensions": {
+          "schedules": {
+            "store": "default",
+            "settings": {
+              "retentionSweep": true
+            }
+          },
+          "sleeper": {
+            "store": "default",
+            "settings": {
+              "owner": "fagerbergj",
+              "league": "quack"
+            }
+          },
+          "remarkable": {
+            "settings": {
+              "agent": "remarkable",
+              "url": "https://remarkable.example.com",
+              "email": "remarkable@example.com"
+            }
+          },
+          "github": {
+            "settings": {
+              "agent": "reviewer",
+              "label": "quack:review",
+              "appId": 2897009,
+              "implementerAgent": "implementer",
+              "issueBase": "fagerbergj/quack"
+            }
+          },
+          "capacity": {
+            "store": "default"
+          }
+        },
+        "catalog": {
+          "store": "pg"
+        },
+        "notifications": {
+          "subject": "https://github.com/fagerbergj/quack"
+        },
+        "services": {
+          "exa": {
+            "baseUrl": "https://api.exa.ai"
+          },
+          "langfuse": {
+            "baseUrl": "https://cloud.langfuse.com"
+          }
+        },
+        "defaultAgent": "quack",
+        "session": {
+          "driver": "docker",
+          "image": "quack/session:v1",
+          "runtime": "runsc",
+          "network": "quack-sessions",
+          "allowRunc": false,
+          "distributorUrl": "https://quack.example.com",
+          "dataVolume": "quack-data"
+        },
+        "decisionModel": "clef/clef",
+        "escalationModel": "local/qwen3.8-flash-next",
+        "visionModel": "local/qwen3-omni-30b"
+      }
+    ]
+  },
+  "choices": [
+    {
+      "id": "document-surface",
+      "pointer": "",
+      "decision": "deployment.json is an object with required providers and defaultModel and optional timeZone, exec, stores and services — one section per concern: who it calls, its fallback model, where its data lives, what it runs, and how sessions behave; the hand-written model registry, imageModel and the single-use top-level keys go away, replaced by /models discovery and the stores/services sections. Note: this revision is the one the approved environment contract (contracts:0c200fa8 v4) names deployment.json v9, because the rejected drafts consumed that number, so a reader following the env contract finds it there. The v0 reference config/quack.yaml is no longer on main, so its cited lines no longer resolve.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "New direction from the owner: this contract is a breaking redesign, not a description of today's loader — design the target shape, with one migration of prod's file, and do not keep legacy keys valid. Models come from each provider's /models endpoint, map to agents via a default model or per-agent UI config, and stores and services get bundled sections; v0's config/quack.yaml is the reference for what good bundling felt like."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected on one defect: the docker branch requires runtime and network, but both are documented with defaults (runsc; quack-sessions) and the distributor applies them (host-config.ts:26 and :38), so a docker config relying on them would fail to load. Require only image and distributorUrl plus exactly one data mount; keep runtime and network optional with their defaults, and record the defaults as JSON Schema default values. Also add one sentence to the choices: this revision is the one the approved environment contract (contracts:0c200fa8 v4) names deployment.json v9, because rejected drafts consumed that number."
+        }
+      ]
+    },
+    {
+      "id": "top-level-open",
+      "pointer": "",
+      "decision": "The top level is closed (additionalProperties false): validate rejects any unknown top-level key — the removed imageModel and a typo alike — and names it, so a legacy key cannot validate silently.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Close the root instead (additionalProperties: false) and drop the not clause, so validate rejects any unknown top-level key, the removed imageModel and typos alike, and names it. Service settings stay free-form inside services, per answer 356."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/docker-driver.ts:113",
+          "text": "await writeFile(join(dir, 'deployment.json'), JSON.stringify(proxied.config));"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:19",
+          "text": "export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#compatibility",
+          "text": "Breaking changes are removing properties, making them required, narrowing constraints, or closing additionalProperties; a breaking change names its callers."
+        }
+      ]
+    },
+    {
+      "id": "providers-required",
+      "pointer": "/properties/providers",
+      "decision": "providers remains required and non-empty: a deployment that names no provider cannot select a model, and defaultModel must name one of its entries.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:16",
+          "text": "type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many sessions the capacity gate lets this provider serve at once. */ capacity?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/runtime/src/main.ts:24",
+          "text": "const config = parseDeployment(readJson(env('QUACK_CONFIG')));"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#required",
+          "text": "required names only properties that exist in properties; require only what a reader cannot work without."
+        }
+      ]
+    },
+    {
+      "id": "provider-ids-freeform",
+      "pointer": "/properties/providers",
+      "decision": "Provider ids are free-form strings used verbatim: a model reference must match one, and the distributor derives each provider's broker route and QUACK_<ID>_API_KEY from the id, so the set is open by design.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/keyed-services.ts:37",
+          "text": "/** The deployment config with every provider pointed at a broker route, since a session container cannot reach the LAN; the key variable carries the launch token, and the real key (if any) is added server-side. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:332",
+          "text": "return Object.entries(deployment.providers).map(([id, p]) => p.apiKeyEnv ?? `QUACK_${id.toUpperCase().replace(/\\W/g, '_')}_API_KEY`);"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#naming",
+          "text": "One case only; lowerCamelCase property names, and an existing document keeps its case."
+        }
+      ]
+    },
+    {
+      "id": "api-closed-enum",
+      "pointer": "/$defs/provider/properties/api",
+      "decision": "api is a closed enum of openai-completions and systemone, with openai-completions the default: the loader switches over it and a new protocol is a pi-ai plus loader change.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Provider `api` accepts only \"openai-completions\" or \"systemone\" today — should the schema promise that with a closed enum, or stay an open string?",
+          "text": "Closed enum: \"openai-completions\", \"systemone\""
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:37",
+          "text": "if (p.api !== undefined && p.api !== 'openai-completions' && p.api !== 'systemone') problems.push(`providers.${id}.api must be openai-completions or systemone`);"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:347",
+          "text": "if (p.api === 'systemone') {"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#enums",
+          "text": "A closed enum promises no value is ever added; use it only for a set that is truly fixed."
+        }
+      ]
+    },
+    {
+      "id": "api-key-env",
+      "pointer": "/$defs/provider/properties/apiKeyEnv",
+      "decision": "apiKeyEnv is an optional environment-variable name; when absent the key is read from QUACK_<ID>_API_KEY. Secrets stay in the environment, never in the file. The v0 reference config/quack.yaml is no longer on main, so its cited line no longer resolves.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:332",
+          "text": "return Object.entries(deployment.providers).map(([id, p]) => p.apiKeyEnv ?? `QUACK_${id.toUpperCase().replace(/\\W/g, '_')}_API_KEY`);"
+        }
+      ]
+    },
+    {
+      "id": "base-url-pattern",
+      "pointer": "/$defs/provider/properties/baseUrl",
+      "decision": "baseUrl is a required string that must start with http:// or https://; it is the base whose /models endpoint supplies discovery.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:35",
+          "text": "if (typeof p.baseUrl !== 'string' || !/^https?:\\/\\//.test(p.baseUrl)) problems.push(`providers.${id}.baseUrl must be an http(s) URL`);"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Models are discovered from GET {baseUrl}/models when the endpoint exists."
+        }
+      ]
+    },
+    {
+      "id": "models-merge",
+      "pointer": "/$defs/provider/properties/models",
+      "decision": "A provider's models is an optional map of model id to hand-written limits, doubling as the full model list for providers without a /models endpoint and as the hand-written layer over discovery for the rest; the merge rule is stated in the description because the schema cannot express it. The v0 reference config/quack.yaml is no longer on main, so its cited line no longer resolves.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "For a provider's hand-written model entries — one key that doubles as the model list (no /models endpoint) and as overrides (with one), or separate models and overrides keys?",
+          "text": "One models key; entries may carry any limit field. Note: Measured on prod: llm-swap (provider local) /models returns ids only. That includes peer models such as jaison/qwen3.8-27b, with status loaded/unloaded. llama.cpp upstreams add meta.n_ctx and architecture.input_modalities. So a discovered model can still need contextWindow and images by hand. Merge rule: the provider's models = discovered ids plus hand-written ids. A hand-written field wins over a discovered one, and a hand-written id the endpoint does not list is added. A model that ends up with no contextWindow is listed but cannot be selected; it is an error only when defaultModel or an agent selects it. That way discovery never fails boot just because an endpoint is thin. Say the merge rule in the schema description, since the schema alone cannot express it."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:12",
+          "text": "export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#descriptions",
+          "text": "Every property has a description that says what it means and its unit, not its type."
+        }
+      ]
+    },
+    {
+      "id": "provider-capacity",
+      "pointer": "/$defs/provider/properties/capacity",
+      "decision": "A provider may name capacity, a positive integer: how many sessions the capacity gate lets it serve at once; a provider without it is not gated. It replaces the field slots, renamed with the extension whose app now mounts at /apps/capacity, and it keeps the place the old QUACK_SLOTS_LIMITS endpoint map had, because the limit belongs with the provider it limits. For one release, a file that still carries providers.<id>.slots is rejected at validation with a message naming the new key — for example 'providers.local.slots was renamed to providers.local.capacity'; there is no silent alias, and after one release the special message may go and the old key falls to the ordinary unknown-key rejection. The rename has landed in the code, which now spells the key capacity in capacityLimits, in the provider validation and in the SDK's DeploymentFile type, and the extension itself is packages/capacity.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Slot limits belong with the model they limit."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/capacity/src/limits.ts:2",
+          "text": "export const capacityLimits = (deployment: { providers: Record<string, { capacity?: number }> }): Record<string, number> =>"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:38",
+          "text": "if (p.capacity !== undefined && !positive(p.capacity)) problems.push(`providers.${id}.capacity must be a positive integer`);"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/capacity/src/session.ts:38",
+          "text": "// The lease is keyed by the agent's provider: one provider is one model endpoint."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/capacity/src/service.ts:9",
+          "text": "capacity: Record<string, number>;"
+        }
+      ]
+    },
+    {
+      "id": "model-limits-open",
+      "pointer": "/$defs/modelLimits",
+      "decision": "Model limit objects are open, and every field is optional at the schema level: what a provider needs to write depends on what its /models endpoint states, which no schema can see; selectability — having a contextWindow — is enforced by the merge rule at load, not per entry.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "For a provider's hand-written model entries — one key that doubles as the model list (no /models endpoint) and as overrides (with one), or separate models and overrides keys?",
+          "text": "One models key; entries may carry any limit field."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:12",
+          "text": "export type ModelLimits = { contextWindow?: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        }
+      ]
+    },
+    {
+      "id": "price-closed",
+      "pointer": "/$defs/price",
+      "decision": "price is a closed object: every key it carries must be one of input, output, cacheRead or cacheWrite, each a non-negative number of USD per million tokens.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:14",
+          "text": "const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:53",
+          "text": "const ok = isObject(p) && Object.entries(p).every(([k, v]) => PRICE_KEYS.includes(k) && typeof v === 'number' && Number.isFinite(v) && v >= 0);"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        }
+      ]
+    },
+    {
+      "id": "default-model",
+      "pointer": "/properties/defaultModel",
+      "decision": "defaultModel is required: a \"provider/model\" string that is the model a new session runs on, the model for agents with no saved choice, and the model a session returns to when the model a turn picked has left the file; validate checks it resolves to a selectable model (one with a contextWindow under the merge rule) before deploy, and a turn may pick any selectable model through the session process API's Invocation.model.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Is defaultModel required in every deployment, or optional — required only when an agent might start without a UI-chosen model?",
+          "text": "Required. Note: A fresh install has no UI choices yet, and v1 must boot from QUACK_DATA_DIR plus this file with nothing else provisioned. Every agent therefore needs a model it can fall back on, and requiring it costs one line in a file that must already name its providers. validate then checks that defaultModel resolves to a selectable model (one with a contextWindow, under the merge rule from 338), so a bad default fails before deploy rather than at the first run. That needs no warning machinery for unconfigured agents."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/runtime/src/validate.ts:23",
+          "text": "const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8'))), opts.fetch);"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/capacity/src/session.ts:40",
+          "text": "const endpoint = (await api.snapshot(AgentDoc, api.conversationId, ctx))?.model?.provider;"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#required",
+          "text": "required names only properties that exist in properties; require only what a reader cannot work without."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Issue #2462 slice S4, deployment v15 to v16: deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Three additive optional root properties (decisionModel, escalationModel, visionModel) with the owner's exact descriptions, defaultModel's description reworded, the guarantee 'A shipped agent bundle names no model: its models come from defaultModel, decisionModel, escalationModel and visionModel here, from the agent's saved choice, and from a turn's pick', and the compatibility note that all three keys are optional and new so a v15 file is a valid v16 file and runs as before, except that the judge escalates to defaultModel instead of the session's own model. Implementation follows approval: the loader fills refs bundles omit, the judge escalates to escalationModel else defaultModel. On prod this is behaviour-neutral: every agent already runs on defaultModel and decisionModel will be clef/clef with contextWindow 8192."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:173",
+          "text": "const problem = wanted(splitRef(resolved.defaultModel)[0]) ? modelProblems(resolved.defaultModel, resolved) : [];"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/server.ts:35",
+          "text": "type Invocation = { input: string; requestId?: string; wait?: boolean; whenBusy?: 'followUp' | 'steer'; title?: string; meta?: Record<string, unknown> };"
+        }
+      ]
+    },
+    {
+      "id": "stores",
+      "pointer": "/properties/stores",
+      "decision": "stores is an optional object of named stores that consumers reference by name; a fresh install omits it and every consumer falls back to a sqlite file in the data dir, and session logs stay files under the data dir. The v0 reference config/quack.yaml is no longer on main, so its cited line no longer resolves.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "stores: named stores, e.g. {default: {kind: sqlite}} (files under the data dir, so a fresh install needs nothing) and {kind: postgres, urlEnv}. Each consumer references one by name. Today's consumers: the index, slots, schedules, sleeper and remarkable. Session logs stay files under the data dir."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/catalog/src/open.ts:17",
+          "text": "/** The deployment's catalog: Postgres when its store is, else `catalog.sqlite` in the data dir, so a fresh install needs nothing."
+        }
+      ]
+    },
+    {
+      "id": "store-kinds",
+      "pointer": "/$defs/store",
+      "decision": "A store is a closed object with required kind — the closed enum sqlite or postgres, kind selecting the adapter, the portability seam — and urlEnv, required exactly when kind is postgres, naming the environment variable that holds the connection URL. The v0 reference config/quack.yaml is no longer on main, so its cited line no longer resolves.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/sdk/src/extensions.ts:4",
+          "text": "export type StoreEntry = { kind: 'sqlite' } | { kind: 'postgres'; urlEnv: string };"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#enums",
+          "text": "A closed enum promises no value is ever added; use it only for a set that is truly fixed."
+        }
+      ]
+    },
+    {
+      "id": "services",
+      "pointer": "/properties/extensions",
+      "decision": "services is a map of keyed outbound APIs in the providers' shape — { <name>: { baseUrl, apiKeyEnv } } — whose entries the key proxy registers under /proxy/<name> so extensions name the service they use instead of core hard-coding a per-service URL; exa and langfuse are its entries, replacing QUACK_EXA_URL and LANGFUSE_BASE_URL. The roster's slots extension is renamed to capacity: the file key follows (extensions.capacity; the app mounts at /apps/capacity), and an entry still named slots is rejected as renamed. The QUACK_APPS apps-proxy code it cited no longer exists on main — the distributor now mounts the listed extensions in-process; the code has not caught up with the services map yet.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "services: one block replacing QUACK_APPS, the per-service QUACK_*_URL/QUACK_*_TOKEN pairs, the service DB vars and the single-use settings."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "User decision (2026-11-04): the extension processes collapse into the one runtime/distributor process (github, sleeper, remarkable, schedules, slots stop being separate services; their routes mount in-process under /apps/{app}/*). services.*.url and tokenEnv go away; per-extension settings and stores stay; extension secrets are still read from env by name; routing and auth are the distributor.apps contract, not this file."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/capacity/src/manifest.ts:6",
+          "text": "export const manifest: ExtensionManifest = {"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Revise approved v6 to v7: (1) core's session catalog selects its store — a root-level catalog { store: \"<name>\" } defaulting to sqlite in the data dir; the index is deleted and extensions.index is refused with a message pointing at the new key; (2) QUACK_EXA_URL leaves the environment and goes on the Exa entry of the outbound key proxy's configuration (contracts:5be69037), defaulting to https://api.exa.ai; (3) QUACK_VAPID_SUBJECT leaves the environment and goes on a notifications section that replaces the index's push configuration, defaulting to the repo URL. The env contract (contracts:0c200fa8) removes those two variables. Keep the closed root and every v6 rule."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:230",
+          "text": "const gone = Object.keys(raw.extensions).filter((name) => name in REMOVED_EXTENSIONS);"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected so it can become the one target revision the environment contract (contracts:0c200fa8 v4) names as deployment.json v9. Add: defaultAgent next to defaultModel; a generic services map of keyed outbound services (baseUrl, apiKeyEnv; exa and langfuse are entries); a notifications section with the web-push subject (replacing index.push); a session section holding the whole driver configuration (driver, image, runtime, network, allowRunc, distributorUrl, exactly one of dataVolume and hostDataDir); and extensions.github.settings (agent, label, appId) and extensions.remarkable.settings (agent, url, email). Stores stay the resolved choice the SDK's AppStore mirrors ({ kind: sqlite, path } | { kind: postgres, url via urlEnv })."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/keyed-services.ts:14",
+          "text": "export const defaultServices = assertServiceNames(manifests.flatMap((m) => m.proxiedServices ?? []));"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Change request for v12: extensions.slots becomes extensions.capacity (the extension and its app are renamed; the app now mounts at /apps/capacity per the capacity service contract, contracts:cb8e5e1b)."
+        }
+      ]
+    },
+    {
+      "id": "service-entry",
+      "pointer": "/$defs/extension",
+      "decision": "An extension entry is a closed object of at most store — a name referring to a stores entry the loader checks — and settings; url and tokenEnv are gone, because the extension is in-process and nothing calls another process. The sleeper service-token environment read it cited no longer exists on main; the code has not caught up.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Each service gets {url, tokenEnv, store?, settings?}."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/apps.ts:17",
+          "text": "return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "User decision (2026-11-04): the extension processes collapse into the one runtime/distributor process (github, sleeper, remarkable, schedules, slots stop being separate services; their routes mount in-process under /apps/{app}/*). services.*.url and tokenEnv go away; per-extension settings and stores stay; extension secrets are still read from env by name; routing and auth are the distributor.apps contract, not this file."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/apps.ts:17",
+          "text": "return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {"
+        }
+      ]
+    },
+    {
+      "id": "service-settings",
+      "pointer": "/$defs/extension/properties/settings",
+      "decision": "settings is, by default, an open object whose shape is owned by the extension and defined in the extension's own contract — the schema hard-codes neither the roster nor the keys — checked by validate before deploy using the extension's published validator and again by the extension when the process boots; the owner fixed the shape for exactly two: github (agent, label, appId) and remarkable (agent, url, email) are closed to those keys; secrets an extension needs are still read from the environment by name, declared in the extension's manifest, and never written in settings.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Should each service's settings be typed in this schema (schedules: retentionSweep, gh: agent/implementerAgent/label, sleeper: owner/league, the rest none), or left a free-form object the service itself validates?",
+          "text": "Free-form settings, each service validates its own keys at boot. Note: Plus one rule: v1 core is harness plus generic hooks, and features live in extensions. So this schema must not hard-code the service roster or any service's keys. settings is an object whose shape is owned by that service and defined in the service's own contract (sleeper.service, github.service, and so on). It is checked twice: once by validate before deploy, using the service's published validator (agent extensions already work this way, through CatalogEntry.validate in packages/session/src/definition.ts), and again by the service at boot. A typo then fails before deploy, without a core schema bump for each new service. State that boundary in the settings description."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:25",
+          "text": "export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); validate?: (config: unknown, deployment: DeploymentConfig) => string[]; requires?: readonly string[]; optional?: readonly string[]; configSource?: 'pinned' | 'current' };"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:277",
+          "text": "? (catalog[name].validate?.(config, deployment) ?? [])"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/schedules/src/settings.ts:1",
+          "text": "/** `extensions.schedules.settings`: retentionSweep turns on the daily sweep that deletes sessions idle past their agent's retention. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/github/src/settings.ts:2",
+          "text": "export type GithubSettings = { implementerAgent?: string; issueBase?: Record<string, string> };"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/sleeper/src/settings.ts:2",
+          "text": "export type SleeperSettings = { league: string; owner?: string };"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "User decision (2026-11-04): the extension processes collapse into the one runtime/distributor process (github, sleeper, remarkable, schedules, slots stop being separate services; their routes mount in-process under /apps/{app}/*). services.*.url and tokenEnv go away; per-extension settings and stores stay; extension secrets are still read from env by name; routing and auth are the distributor.apps contract, not this file."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/github/src/mount.ts:41",
+          "text": "await assertPromoted(distributorUrl, agent, undefined, fetch);"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/remarkable/src/manifest.ts:23",
+          "text": "client: createRmClient({ url: required(env, 'RMFAKECLOUD_URL'), email: required(env, 'RMFAKECLOUD_EMAIL'), password: required(env, 'RMFAKECLOUD_PASSWORD') }),"
+        }
+      ]
+    },
+    {
+      "id": "env-hygiene",
+      "pointer": "",
+      "decision": "The environment keeps only secrets — the providers' and stores' keys named by *Env keys, the keyed services' keys named by services.*.apiKeyEnv, the VAPID keys, the GitHub App's key file and webhook secret, the rmfakecloud password, plus the secrets an extension reads by name from its own manifest — and the process paths QUACK_DATA_DIR, QUACK_CONFIG and QUACK_AGENTS_DIR; the QUACK_SESSION_* driver variables leave for the session section, QUACK_EXA_URL and LANGFUSE_BASE_URL leave for services, RMFAKECLOUD_URL and RMFAKECLOUD_EMAIL leave for extensions.remarkable.settings, QUACK_VAPID_SUBJECT leaves for notifications.subject, and the env contract (contracts:0c200fa8 v4) removes them all.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Env keeps only secrets (named by *Env keys) and process paths (QUACK_DATA_DIR, QUACK_CONFIG, QUACK_AGENTS_DIR)."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/runtime/src/validate.ts:54",
+          "text": "const { loaded, failures } = await validate({ config: env('QUACK_CONFIG'), agentsDir: env('QUACK_AGENTS_DIR'), dataDir: env('QUACK_DATA_DIR') });"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "User decision (2026-11-04): the extension processes collapse into the one runtime/distributor process (github, sleeper, remarkable, schedules, slots stop being separate services; their routes mount in-process under /apps/{app}/*). services.*.url and tokenEnv go away; per-extension settings and stores stay; extension secrets are still read from env by name; routing and auth are the distributor.apps contract, not this file."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/github/src/mount.ts:26",
+          "text": "webhookSecret: required(env, 'QUACK_GH_WEBHOOK_SECRET'),"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/remarkable/src/manifest.ts:23",
+          "text": "client: createRmClient({ url: required(env, 'RMFAKECLOUD_URL'), email: required(env, 'RMFAKECLOUD_EMAIL'), password: required(env, 'RMFAKECLOUD_PASSWORD') }),"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Revise approved v6 to v7: (1) core's session catalog selects its store — a root-level catalog { store: \"<name>\" } defaulting to sqlite in the data dir; the index is deleted and extensions.index is refused with a message pointing at the new key; (2) QUACK_EXA_URL leaves the environment and goes on the Exa entry of the outbound key proxy's configuration (contracts:5be69037), defaulting to https://api.exa.ai; (3) QUACK_VAPID_SUBJECT leaves the environment and goes on a notifications section that replaces the index's push configuration, defaulting to the repo URL. The env contract (contracts:0c200fa8) removes those two variables. Keep the closed root and every v6 rule."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/keyed-services.ts:20",
+          "text": "const url = inherited[s.urlEnv] ?? s.defaultUrl;"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/notifications.ts:28",
+          "text": "if (env.QUACK_VAPID_PUBLIC_KEY && env.QUACK_VAPID_PRIVATE_KEY) return { publicKey: env.QUACK_VAPID_PUBLIC_KEY, privateKey: env.QUACK_VAPID_PRIVATE_KEY };"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected v7, three fixes: (1) add a generic root services map of keyed outbound APIs in the providers' shape, { <name>: { baseUrl, apiKeyEnv } }; the key proxy registers every entry under /proxy/<name>, extensions name the service they use, and Exa becomes one entry (exa: { baseUrl: \"https://api.exa.ai\", apiKeyEnv: \"QUACK_EXA_API_KEY\" }), not the special case core hard-codes in keyed-services.ts; give the migration from QUACK_EXA_URL; (2) list the break: v6 accepted extensions.index and v7 refuses it — migration: move the store reference to catalog.store, the loader's refusal message names catalog.store, and prod's file does not use extensions.index; (3) validate notifications.subject: a VAPID subject must be a mailto: or https: URI (RFC 8292), constrain it with a pattern and a clear error. Keep everything else."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected so it can become the one target revision the environment contract (contracts:0c200fa8 v4) names as deployment.json v9. Add: defaultAgent next to defaultModel; a generic services map of keyed outbound services (baseUrl, apiKeyEnv; exa and langfuse are entries); a notifications section with the web-push subject (replacing index.push); a session section holding the whole driver configuration (driver, image, runtime, network, allowRunc, distributorUrl, exactly one of dataVolume and hostDataDir); and extensions.github.settings (agent, label, appId) and extensions.remarkable.settings (agent, url, email). Stores stay the resolved choice the SDK's AppStore mirrors ({ kind: sqlite, path } | { kind: postgres, url via urlEnv })."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/traces/src/manifest.ts:8",
+          "text": "proxiedServices: [{ name: 'LANGFUSE', urlEnv: 'LANGFUSE_BASE_URL', secretEnv: 'LANGFUSE_SECRET_KEY', userEnv: 'LANGFUSE_PUBLIC_KEY', userPlaceholder: 'session', auth: 'basic' }],"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:46",
+          "text": "export function parseHostConfig(env: NodeJS.ProcessEnv): HostConfig {"
+        }
+      ]
+    },
+    {
+      "id": "timezone-string",
+      "pointer": "/properties/timeZone",
+      "decision": "timeZone is an optional IANA zone string with default America/New_York; validity is exactly what the runtime's Intl accepts.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/runtime.ts:59",
+          "text": "registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:76",
+          "text": "function validZone(z: unknown): boolean {"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#descriptions",
+          "text": "Every property has a description that says what it means and its unit, not its type."
+        }
+      ]
+    },
+    {
+      "id": "exec-policy-open",
+      "pointer": "/$defs/execPolicy",
+      "decision": "execPolicy is open at the top level, with a closed limits object inside: the loader validates the fields it knows — timeoutSeconds, env, limits — and lets the rest through (definition.ts:57), in contrast to limits, which is held to an explicit known list (definition.ts:67), so closing execPolicy would fail files with fields the loader already tolerates, while future limits become new fields on this same object.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:57",
+          "text": "function execProblems(at: string, e: unknown, deployment: boolean): string[] {"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/exec.ts:61",
+          "text": "/** The policy for one session. A bundle is repo content, so it can only shorten the operator's timeout, never lengthen it. */"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:34",
+          "text": "const problems: string[] = [];"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:67",
+          "text": "const known = ['addressSpaceMb', 'maxProcs', 'maxFileSizeMb'];"
+        }
+      ]
+    },
+    {
+      "id": "exec-limits-closed",
+      "pointer": "/$defs/execLimits",
+      "decision": "exec.limits is a closed object of addressSpaceMb, maxProcs and maxFileSizeMb, each a non-negative integer, applied through the limit prefix with an absent field keeping its default.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:67",
+          "text": "const known = ['addressSpaceMb', 'maxProcs', 'maxFileSizeMb'];"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/exec.ts:29",
+          "text": "export function limitPrefix(limits: NonNullable<ExecPolicy['limits']>): string {"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        }
+      ]
+    },
+    {
+      "id": "no-nulls",
+      "pointer": "",
+      "decision": "No property may be null anywhere: a key is either absent or of its stated type, and a present-null must fail as loudly as a wrong type.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:29",
+          "text": "const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#nullable",
+          "text": "Optional (absent) and null (present, empty) are different; use optional only and let a present-null fail."
+        }
+      ]
+    },
+    {
+      "id": "naming",
+      "pointer": "",
+      "decision": "The file's existing lowerCamelCase property names are kept, and the new keys follow them: defaultModel, apiKeyEnv, urlEnv, tokenEnv; enum values stay the existing lower-kebab protocol names.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Keep the existing lowerCamelCase naming from the earlier versions of this contract."
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#naming",
+          "text": "One case only; lowerCamelCase property names, and an existing document keeps its case."
+        }
+      ]
+    },
+    {
+      "id": "examples",
+      "pointer": "",
+      "decision": "The root carries one minimal example — one provider, defaultModel and defaultAgent, nothing else, since that is all a fresh install needs — and one full example with every optional field, including the three model refs (decisionModel clef/clef against the example's systemone provider, escalationModel, visionModel on the model that declares images), catalog, notifications, services (exa and langfuse), session (docker, dataVolume), a peer model hand-listed for a thin endpoint, github and remarkable with their closed settings, and the remaining extensions as in-process entries (no index).",
+      "why": [
+        {
+          "source": "guide",
+          "ref": "json-schema#examples",
+          "text": "One minimal valid example and one with every optional field; an example that does not validate is a defect."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Issue #2462 slice S4, deployment v15 to v16: deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Three additive optional root properties (decisionModel, escalationModel, visionModel) with the owner's exact descriptions, defaultModel's description reworded, the guarantee 'A shipped agent bundle names no model: its models come from defaultModel, decisionModel, escalationModel and visionModel here, from the agent's saved choice, and from a turn's pick', and the compatibility note that all three keys are optional and new so a v15 file is a valid v16 file and runs as before, except that the judge escalates to defaultModel instead of the session's own model. Implementation follows approval: the loader fills refs bundles omit, the judge escalates to escalationModel else defaultModel. On prod this is behaviour-neutral: every agent already runs on defaultModel and decisionModel will be clef/clef with contextWindow 8192."
+        }
+      ]
+    },
+    {
+      "id": "core-catalog",
+      "pointer": "/properties/catalog",
+      "decision": "The root gains a catalog object with one optional store — a name checked against the stores map — because the session catalog is core's and the distributor itself opens it; it defaults to a sqlite file in the data dir, and the former index entry is deleted and refused at extensions.index.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Revise approved v6 to v7: (1) core's session catalog selects its store — a root-level catalog { store: \"<name>\" } defaulting to sqlite in the data dir; the index is deleted and extensions.index is refused with a message pointing at the new key; (2) QUACK_EXA_URL leaves the environment and goes on the Exa entry of the outbound key proxy's configuration (contracts:5be69037), defaulting to https://api.exa.ai; (3) QUACK_VAPID_SUBJECT leaves the environment and goes on a notifications section that replaces the index's push configuration, defaulting to the repo URL. The env contract (contracts:0c200fa8) removes those two variables. Keep the closed root and every v6 rule."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/main.ts:32",
+          "text": "const catalog = openCatalog({ dataDir, store: catalogStore(deployment) });"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#extensibility",
+          "text": "Every object says additionalProperties explicitly; open for documents other versions write, closed for config where a typo should fail loudly."
+        }
+      ]
+    },
+    {
+      "id": "web-push-contact",
+      "pointer": "/properties/notifications",
+      "decision": "The root gains a notifications object with one optional subject — the web-push contact the deleted index service took from QUACK_VAPID_SUBJECT — constrained by a pattern to a mailto: or https: URI, as RFC 8292 requires, defaulting to the quack repo URL; the VAPID keys remain environment secrets, so only the contact moves into the file.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Revise approved v6 to v7: (1) core's session catalog selects its store — a root-level catalog { store: \"<name>\" } defaulting to sqlite in the data dir; the index is deleted and extensions.index is refused with a message pointing at the new key; (2) QUACK_EXA_URL leaves the environment and goes on the Exa entry of the outbound key proxy's configuration (contracts:5be69037), defaulting to https://api.exa.ai; (3) QUACK_VAPID_SUBJECT leaves the environment and goes on a notifications section that replaces the index's push configuration, defaulting to the repo URL. The env contract (contracts:0c200fa8) removes those two variables. Keep the closed root and every v6 rule."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/notifications.ts:13",
+          "text": "env?: { QUACK_VAPID_PUBLIC_KEY?: string; QUACK_VAPID_PRIVATE_KEY?: string; QUACK_VAPID_SUBJECT?: string };"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/notifications.ts:28",
+          "text": "if (env.QUACK_VAPID_PUBLIC_KEY && env.QUACK_VAPID_PRIVATE_KEY) return { publicKey: env.QUACK_VAPID_PUBLIC_KEY, privateKey: env.QUACK_VAPID_PRIVATE_KEY };"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/notifications.ts:59",
+          "text": "const vapidDetails = { subject: opts.env?.QUACK_VAPID_SUBJECT ?? 'https://github.com/fagerbergj/quack', ...keys };"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected v7, three fixes: (1) add a generic root services map of keyed outbound APIs in the providers' shape, { <name>: { baseUrl, apiKeyEnv } }; the key proxy registers every entry under /proxy/<name>, extensions name the service they use, and Exa becomes one entry (exa: { baseUrl: \"https://api.exa.ai\", apiKeyEnv: \"QUACK_EXA_API_KEY\" }), not the special case core hard-codes in keyed-services.ts; give the migration from QUACK_EXA_URL; (2) list the break: v6 accepted extensions.index and v7 refuses it — migration: move the store reference to catalog.store, the loader's refusal message names catalog.store, and prod's file does not use extensions.index; (3) validate notifications.subject: a VAPID subject must be a mailto: or https: URI (RFC 8292), constrain it with a pattern and a clear error. Keep everything else."
+        }
+      ]
+    },
+    {
+      "id": "keyed-services",
+      "pointer": "/properties/services",
+      "decision": "The root gains a services map of keyed outbound APIs in the providers' shape — { <name>: { baseUrl, apiKeyEnv } }, closed entries with required baseUrl — because today core hard-codes Exa in the key proxy, which is extension-specific code in core; the proxy registers every entry under /proxy/<name>, extensions name the service they use, and Exa is just one entry, so QUACK_EXA_URL's value moves to services.exa.baseUrl.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected v7, three fixes: (1) add a generic root services map of keyed outbound APIs in the providers' shape, { <name>: { baseUrl, apiKeyEnv } }; the key proxy registers every entry under /proxy/<name>, extensions name the service they use, and Exa becomes one entry (exa: { baseUrl: \"https://api.exa.ai\", apiKeyEnv: \"QUACK_EXA_API_KEY\" }), not the special case core hard-codes in keyed-services.ts; give the migration from QUACK_EXA_URL; (2) list the break: v6 accepted extensions.index and v7 refuses it — migration: move the store reference to catalog.store, the loader's refusal message names catalog.store, and prod's file does not use extensions.index; (3) validate notifications.subject: a VAPID subject must be a mailto: or https: URI (RFC 8292), constrain it with a pattern and a clear error. Keep everything else."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/keyed-services.ts:20",
+          "text": "const url = inherited[s.urlEnv] ?? s.defaultUrl;"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/keyed-services.ts:30",
+          "text": "p.broker.register(s.name, url, { [s.header]: secret });"
+        }
+      ]
+    },
+    {
+      "id": "default-agent",
+      "pointer": "/properties/defaultAgent",
+      "decision": "defaultAgent is an optional string next to defaultModel — the agent a new session starts with — absent taking the shipped home agent quack, so a fresh install that runs from its data dir alone needs no choice; when set, the loader checks it resolves to an installed agent.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected so it can become the one target revision the environment contract (contracts:0c200fa8 v4) names as deployment.json v9. Add: defaultAgent next to defaultModel; a generic services map of keyed outbound services (baseUrl, apiKeyEnv; exa and langfuse are entries); a notifications section with the web-push subject (replacing index.push); a session section holding the whole driver configuration (driver, image, runtime, network, allowRunc, distributorUrl, exactly one of dataVolume and hostDataDir); and extensions.github.settings (agent, label, appId) and extensions.remarkable.settings (agent, url, email). Stores stay the resolved choice the SDK's AppStore mirrors ({ kind: sqlite, path } | { kind: postgres, url via urlEnv })."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected on three points: (1) the closed github settings must also keep implementerAgent (the agent a trusted /fix comment runs; absent, /fix does nothing) and issueBase (owner/repo to base branch) — keep every key the code reads, and check remarkable the same way; (2) the exactly-one data mount rule — exactly one of dataVolume and hostDataDir with driver docker, neither with driver process — must be expressed in this schema with if/then or oneOf so a validator rejects it, and the error stated; (3) defaultAgent is optional, defaulting to the shipped home agent quack, with the loader check kept for a set value, and the matching break dropped."
+        },
+        {
+          "source": "code",
+          "ref": "repo/agents/quack/agent.json:2",
+          "text": "\"name\": \"quack\","
+        }
+      ]
+    },
+    {
+      "id": "session-driver-config",
+      "pointer": "/properties/session",
+      "decision": "The root gains a closed session section holding the whole driver configuration — driver (process or docker), image, runtime, network, allowRunc, distributorUrl, dataVolume and hostDataDir — replacing the QUACK_SESSION_* variables the distributor's parseHostConfig reads today; the mount rule is enforced in the schema itself: with driver process neither mount may be set (if/then with not), with driver docker its fields are required and exactly one of dataVolume and hostDataDir is set (else with oneOf), and a validator rejects both or either violation with an error naming the rule, as the approved environment contract (0c200fa8 v4) requires.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected so it can become the one target revision the environment contract (contracts:0c200fa8 v4) names as deployment.json v9. Add: defaultAgent next to defaultModel; a generic services map of keyed outbound services (baseUrl, apiKeyEnv; exa and langfuse are entries); a notifications section with the web-push subject (replacing index.push); a session section holding the whole driver configuration (driver, image, runtime, network, allowRunc, distributorUrl, exactly one of dataVolume and hostDataDir); and extensions.github.settings (agent, label, appId) and extensions.remarkable.settings (agent, url, email). Stores stay the resolved choice the SDK's AppStore mirrors ({ kind: sqlite, path } | { kind: postgres, url via urlEnv })."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:3",
+          "text": "export type HostConfig ="
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:24",
+          "text": "function dataMount(env: NodeJS.ProcessEnv): { volume: string } | { hostDir: string } {"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:38",
+          "text": "if (env.QUACK_ALLOW_RUNC !== '1') throw new Error('QUACK_SESSION_RUNTIME=runc gives sessions the host kernel; set QUACK_ALLOW_RUNC=1 for dev and tests only');"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:52",
+          "text": "distributorUrl: byAddress(env, 'QUACK_SESSION_DISTRIBUTOR_URL'),"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected on three points: (1) the closed github settings must also keep implementerAgent (the agent a trusted /fix comment runs; absent, /fix does nothing) and issueBase (owner/repo to base branch) — keep every key the code reads, and check remarkable the same way; (2) the exactly-one data mount rule — exactly one of dataVolume and hostDataDir with driver docker, neither with driver process — must be expressed in this schema with if/then or oneOf so a validator rejects it, and the error stated; (3) defaultAgent is optional, defaulting to the shipped home agent quack, with the loader check kept for a set value, and the matching break dropped."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:35",
+          "text": "const runtime = env.QUACK_SESSION_RUNTIME ?? 'runsc';"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/host-config.ts:42",
+          "text": "return { runtime, data, image: need(env, 'QUACK_SESSION_IMAGE'), network: env.QUACK_SESSION_NETWORK ?? 'quack-sessions' };"
+        }
+      ]
+    },
+    {
+      "id": "named-extension-settings",
+      "pointer": "/properties/extensions/properties/github",
+      "decision": "github and remarkable get closed settings objects keeping every key the service reads — github: agent (default reviewer), label (default quack:review), appId (required), implementerAgent (the agent a trusted /fix comment runs; absent, /fix does nothing) and issueBase (owner/repo to base branch); remarkable: agent (default remarkable-ingest), url and email (both required) — while every other extension keeps the generic entry's free-form settings; any other key under either is rejected and named.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "The v9 list gives extensions.github.settings as (agent, label, appId). v6's example also had implementerAgent (today's QUACK_GH_IMPLEMENTER_AGENT). Is the closed github settings object exactly agent, label and appId — dropping implementerAgent — or does implementerAgent stay a fourth key?",
+          "text": "Exactly agent, label, appId"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected so it can become the one target revision the environment contract (contracts:0c200fa8 v4) names as deployment.json v9. Add: defaultAgent next to defaultModel; a generic services map of keyed outbound services (baseUrl, apiKeyEnv; exa and langfuse are entries); a notifications section with the web-push subject (replacing index.push); a session section holding the whole driver configuration (driver, image, runtime, network, allowRunc, distributorUrl, exactly one of dataVolume and hostDataDir); and extensions.github.settings (agent, label, appId) and extensions.remarkable.settings (agent, url, email). Stores stay the resolved choice the SDK's AppStore mirrors ({ kind: sqlite, path } | { kind: postgres, url via urlEnv })."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/remarkable/src/manifest.ts:23",
+          "text": "client: createRmClient({ url: required(env, 'RMFAKECLOUD_URL'), email: required(env, 'RMFAKECLOUD_EMAIL'), password: required(env, 'RMFAKECLOUD_PASSWORD') }),"
+        },
+        {
+          "source": "answer",
+          "ref": "The v9 list gives extensions.github.settings as (agent, label, appId). v6's example also had implementerAgent (today's QUACK_GH_IMPLEMENTER_AGENT). Is the closed github settings object exactly agent, label and appId — dropping implementerAgent — or does implementerAgent stay a fourth key?",
+          "text": "Exactly agent, label, appId"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected on three points: (1) the closed github settings must also keep implementerAgent (the agent a trusted /fix comment runs; absent, /fix does nothing) and issueBase (owner/repo to base branch) — keep every key the code reads, and check remarkable the same way; (2) the exactly-one data mount rule — exactly one of dataVolume and hostDataDir with driver docker, neither with driver process — must be expressed in this schema with if/then or oneOf so a validator rejects it, and the error stated; (3) defaultAgent is optional, defaulting to the shipped home agent quack, with the loader check kept for a set value, and the matching break dropped."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/github/src/service.ts:22",
+          "text": "implementerAgent?: string;"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/github/src/service.ts:182",
+          "text": "const agent = trigger?.role === 'implementer' ? config.implementerAgent : config.agent;"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/remarkable/src/manifest.ts:22",
+          "text": "agent: 'remarkable-ingest',"
+        }
+      ]
+    },
+    {
+      "id": "store-path",
+      "pointer": "/$defs/store/properties/path",
+      "decision": "A sqlite store may name its file with an absolute path, refused for kind postgres, absent taking a file in the data dir — the store shape mirrors the SDK's AppStore: { kind: sqlite, path } or { kind: postgres, url via urlEnv }.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Rejected so it can become the one target revision the environment contract (contracts:0c200fa8 v4) names as deployment.json v9. Add: defaultAgent next to defaultModel; a generic services map of keyed outbound services (baseUrl, apiKeyEnv; exa and langfuse are entries); a notifications section with the web-push subject (replacing index.push); a session section holding the whole driver configuration (driver, image, runtime, network, allowRunc, distributorUrl, exactly one of dataVolume and hostDataDir); and extensions.github.settings (agent, label, appId) and extensions.remarkable.settings (agent, url, email). Stores stay the resolved choice the SDK's AppStore mirrors ({ kind: sqlite, path } | { kind: postgres, url via urlEnv })."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/distributor/src/main.ts:32",
+          "text": "const catalog = openCatalog({ dataDir, store: catalogStore(deployment) });"
+        }
+      ]
+    },
+    {
+      "id": "decision-model",
+      "pointer": "/properties/decisionModel",
+      "decision": "The root gains an optional decisionModel — a \"provider/model\" string naming the decision model the judge and workflow steps ask before any generation model, for agents whose extension config names none — so the shipped bundles stop carrying the owner's Clef ref in their judge config; it must name a model of a systemone provider whose contextWindow is the input cap the judge packs to. Absent: no default decision model, and a check escalates unless the agent's config names one; an agent whose config names one keeps it. validate and the loader refuse an unresolvable or wrong-kind reference naming this key, as they do for defaultModel. Planned: the loader filling the ref a bundle omits — ROOT_KEYS does not list the three new keys, and DeploymentConfig stops at the v15 keys, while eleven shipped bundles still name the owner's decision model.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Issue #2462 slice S4, deployment v15 to v16: deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Three additive optional root properties (decisionModel, escalationModel, visionModel) with the owner's exact descriptions, defaultModel's description reworded, the guarantee 'A shipped agent bundle names no model: its models come from defaultModel, decisionModel, escalationModel and visionModel here, from the agent's saved choice, and from a turn's pick', and the compatibility note that all three keys are optional and new so a v15 file is a valid v16 file and runs as before, except that the judge escalates to defaultModel instead of the session's own model. Implementation follows approval: the loader fills refs bundles omit, the judge escalates to escalationModel else defaultModel. On prod this is behaviour-neutral: every agent already runs on defaultModel and decisionModel will be clef/clef with contextWindow 8192."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:15",
+          "text": "/** `systemone` providers are decision models such as Clef: an input cap and no generation. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/judge/src/resolve.ts:10",
+          "text": "/** A decision model such as Clef, reached through pi-ai's models.classify. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/judge/src/extension.ts:118",
+          "text": "...(ref(config.decisionModel, true) ? [] : ['judge.decisionModel must be { provider, modelId, maxInputTokens }']),"
+        },
+        {
+          "source": "code",
+          "ref": "repo/agents/reviewer/agent.json:11",
+          "text": "\"modelId\": \"clef\","
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:106",
+          "text": "const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions', 'catalog'];"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#required",
+          "text": "required names only properties that exist in properties; require only what a real deployment must carry."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/judge/src/resolve.ts:11",
+          "text": "export type DecisionModelRef = { provider: string; modelId: string; maxInputTokens: number; act?: number };"
+        },
+        {
+          "source": "code",
+          "ref": "repo/agents/reviewer/agent.json:11",
+          "text": "\"modelId\": \"clef\","
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Implementation follows approval: the loader fills refs bundles omit. decisionModel will be clef/clef with contextWindow 8192 on prod."
+        }
+      ]
+    },
+    {
+      "id": "escalation-model",
+      "pointer": "/properties/escalationModel",
+      "decision": "The root gains an optional escalationModel — the generation model the judge escalates an item to when no decision model settles it, which must resolve to a selectable generation model; absent it is defaultModel. Precedence: an agent's judge.judgeModel while that setting exists, then escalationModel, then defaultModel, consistent with RFC 0002, whose slice S4 deletes judgeModel. It never follows a turn's model pick, so a verdict does not depend on the model a person chose for the session — which is what happens today: with judgeModel unset the escalated item is asked of the agent's own model, through the fallback that reads the session's model. Planned: the loader and the judge reading this key.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Issue #2462 slice S4, deployment v15 to v16: deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Three additive optional root properties (decisionModel, escalationModel, visionModel) with the owner's exact descriptions, defaultModel's description reworded, the guarantee 'A shipped agent bundle names no model: its models come from defaultModel, decisionModel, escalationModel and visionModel here, from the agent's saved choice, and from a turn's pick', and the compatibility note that all three keys are optional and new so a v15 file is a valid v16 file and runs as before, except that the judge escalates to defaultModel instead of the session's own model. Implementation follows approval: the loader fills refs bundles omit, the judge escalates to escalationModel else defaultModel. On prod this is behaviour-neutral: every agent already runs on defaultModel and decisionModel will be clef/clef with contextWindow 8192."
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#descriptions",
+          "text": "Every property has a description that says what it means and its unit, not its type."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/judge/src/index.ts:31",
+          "text": "/** Where uncertain items escalate; the agent's own model when unset. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/judge/src/resolve.ts:189",
+          "text": "const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId, s.retry), id: 'judge-model' } : agentModel;"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/judge/src/resolve.ts:218",
+          "text": "const ref = s.judgeModel ?? (await api.agent(ctx)).model;"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "escalation-model choice: today's verdict follows the session's model through the fallback when judgeModel is unset (judge/src/resolve.ts:189), not 'what today's judgeModel does'. State precedence: judge.judgeModel (while it exists), then escalationModel, then defaultModel, consistent with RFC 0002 (S4 deletes judgeModel). Mark Planned the loader and judge behaviour."
+        }
+      ]
+    },
+    {
+      "id": "vision-model",
+      "pointer": "/properties/visionModel",
+      "decision": "The root gains an optional visionModel — the model workflow steps read images with when the agent's config names none — which must declare images: true; absent it is the session's current model, which must then accept images, and a model that declares none is not sent them: pi-ai replaces the image blocks with a text placeholder, so the step answers from the text alone. It is the deployment-level default under the per-agent workflows.visionModel, whose validator already refuses a reference the deployment does not declare with images: true; validate and the loader apply the same check to this key and name it. Planned: the loader filling it.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Issue #2462 slice S4, deployment v15 to v16: deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Three additive optional root properties (decisionModel, escalationModel, visionModel) with the owner's exact descriptions, defaultModel's description reworded, the guarantee 'A shipped agent bundle names no model: its models come from defaultModel, decisionModel, escalationModel and visionModel here, from the agent's saved choice, and from a turn's pick', and the compatibility note that all three keys are optional and new so a v15 file is a valid v16 file and runs as before, except that the judge escalates to defaultModel instead of the session's own model. Implementation follows approval: the loader fills refs bundles omit, the judge escalates to escalationModel else defaultModel. On prod this is behaviour-neutral: every agent already runs on defaultModel and decisionModel will be clef/clef with contextWindow 8192."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/workflows/src/manifest.ts:8",
+          "text": "/** A configured vision model must be declared in the deployment with images: true. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/workflows/src/manifest.ts:14",
+          "text": "return limits?.images ? [] : [`workflows.visionModel ${String(provider)}/${String(modelId)} must be configured in this deployment with images: true`];"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:11",
+          "text": "/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. A model with no `contextWindow` is listed but not selectable. */"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:11",
+          "text": "/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. A model with no `contextWindow` is listed but not selectable. */"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Edges: validate and the loader refuse an unresolvable or wrong-kind ref and name the key, as for defaultModel; a visionModel or fallback without images: say what the step does. Mark Planned the loader behaviour."
+        }
+      ]
+    },
+    {
+      "id": "model-refs-shape",
+      "pointer": "/properties/decisionModel",
+      "decision": "All three new refs share defaultModel's shape — a \"provider/model\" string with pattern ^[^/]+/.+$, the pattern and split the loader already uses for defaultModel — rather than the { provider, modelId } objects the extension configs use, so one way of naming a model holds across the file; which provider kind each accepts (a systemone model with a contextWindow for decisionModel, a selectable generation model for escalationModel, images: true for visionModel) is checked by validate and at load, which refuse an unresolvable or wrong-kind reference and name the key, as for defaultModel, since a schema cannot see the discovered model list.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Issue #2462 slice S4, deployment v15 to v16: deployment-level decision, escalation and vision models, so shipped agent bundles stop naming the owner's models. Three additive optional root properties (decisionModel, escalationModel, visionModel) with the owner's exact descriptions, defaultModel's description reworded, the guarantee 'A shipped agent bundle names no model: its models come from defaultModel, decisionModel, escalationModel and visionModel here, from the agent's saved choice, and from a turn's pick', and the compatibility note that all three keys are optional and new so a v15 file is a valid v16 file and runs as before, except that the judge escalates to defaultModel instead of the session's own model. Implementation follows approval: the loader fills refs bundles omit, the judge escalates to escalationModel else defaultModel. On prod this is behaviour-neutral: every agent already runs on defaultModel and decisionModel will be clef/clef with contextWindow 8192."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:136",
+          "text": "const splitRef = (ref: string) => [ref.slice(0, ref.indexOf('/')), ref.slice(ref.indexOf('/') + 1)] as const;"
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#naming",
+          "text": "One case only; lowerCamelCase property names, and an existing document keeps its existing names."
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:122",
+          "text": "if (typeof raw.defaultModel !== 'string' || !/^[^/]+\\/.+$/.test(raw.defaultModel)) problems.push('defaultModel must be \"provider/model\"');"
+        },
+        {
+          "source": "code",
+          "ref": "repo/packages/session/src/definition.ts:200",
+          "text": "return limits.contextWindow ? [] : [`model ${model} has no contextWindow, so it cannot be selected; write one in providers.${splitRef(model)[0]}.models`];"
+        }
+      ]
+    },
+    {
+      "id": "intent-facts",
+      "pointer": "",
+      "decision": "The guarantee and non-goal lists carry one checkable fact per entry, as the guide requires: v15's github-settings guarantee becomes two (the closed keys are exactly the ones the service reads, any other key rejected and named; a v6 implementerAgent and label value survive the migration unchanged), and v15's service-roster non-goal is reworded to fit one entry with its owner-fixed exception named inside it. No meaning and no shape changed.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Two independent reviews fail v16: drop the unasked changes — fold non-goal settings-shape-owner-fixed back into no-service-roster, and drop the named-extension-settings, price-closed and stores changes rows. The fact list still carries one claim per entry, so the split guarantee ids are named here instead of in rows that claim document changes."
+        },
+        {
+          "source": "guide",
+          "ref": "json-schema#one-fact-per-entry",
+          "text": "To split a long entry, remove it, add the short entries, and name every id the split removes or adds in a changes row's facts."
+        }
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "choice": "default-model",
+      "was": "defaultModel was 'the model for agents that do not choose one of their own'.",
+      "now": "The same required property, reworded: the model a new session runs on, the model for agents with no saved choice, and the model a session returns to when the model a turn picked has left the file, with a turn free to pick any selectable model through the session process API's Invocation.model — marked planned, slice S5, since the Invocation body has no model field yet.",
+      "why": "Slice S4 states defaultModel's whole role; the turn's pick is S5's code, so it is marked planned rather than presented as today's behaviour."
+    },
+    {
+      "choice": "decision-model",
+      "was": "v15 had no deployment-level decision model; each bundle carried its own judge.decisionModel, so a shipped bundle named the owner's Clef ref.",
+      "now": "An optional decisionModel — a 'provider/model' string naming a systemone model whose contextWindow is its input cap; absent, no default decision model and a check escalates unless the agent's config names one; validate and the loader refuse a reference that does not resolve or names the wrong kind of model, and name the key.",
+      "why": "So shipped agent bundles stop naming the owner's models; the loader fills the ref a bundle omits, which is planned, not yet code."
+    },
+    {
+      "choice": "escalation-model",
+      "was": "v15 had no deployment-level escalation model; with judge.judgeModel unset the judge escalated an uncertain item to the agent's own model, following the session's pick.",
+      "now": "An optional escalationModel, a selectable generation model; absent, defaultModel. Precedence: judge.judgeModel while it exists, then escalationModel, then defaultModel. It never follows a turn's model pick.",
+      "why": "A verdict must not depend on the model a person chose for the session; RFC 0002 deletes judgeModel in slice S4."
+    },
+    {
+      "choice": "vision-model",
+      "was": "v15 had no deployment-level vision model; workflow steps read images with the session's current model, or the agent's own workflows.visionModel.",
+      "now": "An optional visionModel that must declare images: true; absent, the session's current model, which must then accept images — one that declares none is not sent them, so the step answers from the text alone.",
+      "why": "The image-reading model is a deployment choice, not a bundle choice; the no-images behaviour is stated instead of left implicit."
+    },
+    {
+      "choice": "model-refs-shape",
+      "was": "Only defaultModel named a model as 'provider/model'.",
+      "now": "The three new refs use defaultModel's pattern and the loader's split; the kind each must resolve to is checked by validate and at load, which name the offending key.",
+      "why": "One way of naming a model across the file, and the edge cases are refused rather than surfacing later as a generation failure."
+    },
+    {
+      "choice": "examples",
+      "was": "The full example carried every v15 optional field, and its clef provider declared no models.",
+      "now": "It also carries decisionModel clef/clef, escalationModel local/qwen3.8-flash-next and visionModel local/qwen3-omni-30b, and declares the models those refs name — clef with contextWindow 8192, and local/qwen3.8-flash-next with contextWindow 262144 and maxTokens 32768 — so the example's refs resolve.",
+      "why": "An example must resolve as the change claims; an unresolvable ref in it would contradict the new edge rule."
+    },
+    {
+      "choice": "intent-facts",
+      "facts": [
+        "github-settings-closed",
+        "github-settings-v6-safe",
+        "price-keys-closed",
+        "no-service-roster",
+        "settings-shape-owner-fixed",
+        "bundles-name-no-model",
+        "bundle-models-from-the-file"
+      ],
+      "was": "v15's lists carried one over-160-character github-settings guarantee and one over-long service-roster non-goal, and said nothing about what a shipped bundle names.",
+      "now": "Two github-settings guarantees, the service-roster non-goal reworded into a single entry with the owner-fixed exception named inside it, the settings-shape-owner-fixed entry removed, and two planned facts about where a bundle's models come from.",
+      "why": "One checkable fact per entry; slice S4 adds the bundle-model facts. No document meaning changed."
+    },
+    {
+      "choice": "provider-capacity",
+      "was": "The choice said the code's readers still spelled the key slots and had not caught up with the rename.",
+      "now": "The rename has landed: capacityLimits reads providers.<id>.capacity, the provider validation checks capacity, and the extension is packages/capacity; the choice's citations point there.",
+      "why": "Citations re-anchored to current main (23e38d2); the decision is unchanged."
+    }
+  ],
+  "compatibility": {
+    "breaking": [
+      {
+        "what": "An escalation verdict changes for any agent whose model differs from defaultModel: today, with judge.judgeModel unset, an uncertain item is asked of the agent's own model; from this version it is asked of escalationModel, or of defaultModel when that key is absent. Prod is unaffected today: neither key is set there and every agent runs on defaultModel, so the escalation target is the model it already uses.",
+        "callers": [
+          "repo/packages/judge/src/resolve.ts:189",
+          "repo/packages/judge/src/resolve.ts:218",
+          "the deployment files on prod and QA"
+        ],
+        "migration": "Set escalationModel to the model verdicts should settle on, or keep judge.judgeModel per agent until slice S4 deletes it."
+      },
+      {
+        "what": "Rollout: the root is closed, so a deployment file carrying decisionModel, escalationModel or visionModel is refused by v15 code as an unknown top-level key.",
+        "callers": [
+          "the deployment files on prod and QA",
+          "repo/packages/session/src/definition.ts:119",
+          "repo/packages/session/src/definition.ts:106"
+        ],
+        "migration": "Ship the loader that reads the three keys before the prod and QA files gain them, and remove the keys from those files before rolling the code back."
+      }
+    ],
+    "safe": [
+      "All three keys are optional and new; a v15 file is a valid file of this version and, for a deployment where every agent already runs on defaultModel, runs as before.",
+      "defaultModel's constraint is unchanged — required, a 'provider/model' string that must resolve to a selectable model before deploy; only its description is reworded.",
+      "No key was removed, renamed, made required, or narrowed: the root's required list is still providers and defaultModel, and the root stays closed.",
+      "The per-agent extension configs keep working: a bundle or agent config that names judge.decisionModel, judge.judgeModel or workflows.visionModel still wins over the deployment default, so an existing bundle behaves as it does today until the ref is dropped from it.",
+      "The two not clauses are refusals, not requirements: not.required names the old 'slots' key (a provider's, and an extensions entry named slots) and extensions.index, so a file carrying them is rejected with a message naming the new key; nothing in this schema requires slots."
+    ]
+  },
+  "baseline": 15
+}

@@ -68,22 +68,17 @@ test("a choice's whys are the writer's account: an unanswered question, a missin
   assert.deepEqual(await unresolved(s), ['versioning: pointer `/info/nowhere` is not in the document']);
 });
 
-test('the lifecycle spec asks the judge model each guarantee and the decision model nothing', async (t) => {
-  const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
-  judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
+test('the decision model settles every guarantee pair of the lifecycle spec it is sure of, and the judge model is asked nothing', async (t) => {
   const models = createModels();
-  models.setProvider(judge.provider);
-  const clef = await fakeClef(t, () => 'no');
+  models.setProvider(fauxProvider({ provider: 'judge', models: [{ id: 'j' }] }).provider);
+  const clef = await fakeClef(t, () => 'yes');
   models.setProvider(clef.provider);
-  const content = JSON.stringify(lifecycle);
-  const inputs = await inputsOf(lifecycle);
   const { rows } = await replayJudge({
-    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent'], content, inputs }],
+    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent'], content: JSON.stringify(lifecycle), inputs: await inputsOf(lifecycle) }],
     arms: [{ label: 'clef', adapters: manifest.evalAdapters!, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });
   const ev = await evidenceOf(lifecycle);
-  assert.deepEqual(rows.map((r) => [r.check, r.met, r.clef, r.esc]), [['meets_intent', 1, 0, ev.guarantee.length]]);
+  assert.deepEqual(rows.map((r) => [r.check, r.met, r.clef, r.esc]), [['meets_intent', 1, ev.guarantee.length, 0]]);
   assert.deepEqual(Object.keys(ev), ['facts', 'guarantee'], 'no definition, purpose or non-goal scope is split');
-  assert.equal(clef.asked.flat().length, 0);
 });

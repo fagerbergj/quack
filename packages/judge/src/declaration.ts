@@ -73,6 +73,8 @@ export type AggregateDecl = {
   inner?: 'any' | 'all';
   /** `grouped` only, required: the fold over the groups' three-valued results. */
   outer?: 'share' | 'all' | 'any';
+  /** `grouped` with `inner: 'any'` only: a failing group's note, written by code, since every item in it failed. */
+  none?: string;
   pass?: string[];
 };
 
@@ -171,9 +173,9 @@ export function checkDeclaration(decl: Declaration, modelChecks: string[]): void
   const extra = Object.keys(decl.checks).filter((id) => !modelChecks.includes(id));
   const unscoped = Object.entries(decl.checks).filter(([, c]) => !decl.scopes[c.scope]).map(([id, c]) => `${id} (${c.scope})`);
   const routed = Object.entries(decl.checks).filter(([, c]) => c.decisionModel !== undefined && c.decisionModel !== false && c.decisionModel !== PASS_ONLY).map(([id]) => id);
-  const misgrouped = Object.entries(decl.checks).filter(([, c]) => (c.aggregate.name === 'grouped' ? !GROUPING.every((f) => c.aggregate[f] !== undefined) : GROUPING.some((f) => c.aggregate[f] !== undefined))).map(([id]) => id);
+  const misgrouped = Object.entries(decl.checks).filter(([, c]) => (c.aggregate.name === 'grouped' ? !GROUPING.every((f) => c.aggregate[f] !== undefined) : GROUPING.some((f) => c.aggregate[f] !== undefined)) || (c.aggregate.none !== undefined && c.aggregate.inner !== 'any')).map(([id]) => id);
   // A scope's units carry one group key, so its grouped checks must agree on where it is.
   const torn = Object.entries(decl.checks).filter(([, c]) => c.aggregate.name === 'grouped' && c.aggregate.groupBy !== groupByOf(decl, c.scope)).map(([id]) => id);
-  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false or ${PASS_ONLY}: ${routed.join(', ')}`, misgrouped.length && `a grouped fold needs groupBy, inner and outer, and only a grouped fold takes them: ${misgrouped.join(', ')}`, torn.length && `grouped checks on one scope group by different fields: ${torn.join(', ')}`].filter(Boolean);
+  const problems = [missing.length && `no declaration for ${missing.join(', ')}`, extra.length && `declared checks the rubric lacks: ${extra.join(', ')}`, unscoped.length && `checks on undeclared scopes: ${unscoped.join(', ')}`, routed.length && `decisionModel may only be false or ${PASS_ONLY}: ${routed.join(', ')}`, misgrouped.length && `a grouped fold needs groupBy, inner and outer, only a grouped fold takes them, and only an inner any takes none: ${misgrouped.join(', ')}`, torn.length && `grouped checks on one scope group by different fields: ${torn.join(', ')}`].filter(Boolean);
   if (problems.length) throw new Error(`the judge declaration does not match its rubric: ${problems.join('; ')}`);
 }

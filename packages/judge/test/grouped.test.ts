@@ -31,7 +31,8 @@ const abc: Array<[string, string]> = [['a1t', 'A'], ['a2f', 'A'], ['b1t', 'B'], 
 test('a grouped declaration without groupBy, inner or outer, or a flat one with them, is rejected at registration naming the check', () => {
   const how = (aggregate: AggregateDecl) => ({ rubric: rubricOf(), declaration: declOf(aggregate), inputs: async () => ({}) });
   assert.throws(() => judged('k', how({ name: 'grouped', groupBy: 'g', inner: 'any' })), /a grouped fold needs groupBy, inner and outer.*: kept/);
-  assert.throws(() => judged('k', how({ name: 'share', inner: 'any' })), /only a grouped fold takes them: kept/);
+  assert.throws(() => judged('k', how({ name: 'share', inner: 'any' })), /only a grouped fold takes them.*: kept/);
+  assert.throws(() => judged('k', how(grouped('all', 'all', { none: 'none held' }))), /only an inner any takes none: kept/);
   const torn = declOf(grouped('any', 'all'));
   torn.checks.other = { ...torn.checks.kept, aggregate: grouped('any', 'all', { groupBy: 'h' }) };
   assert.throws(() => judged('k', { ...how(grouped('any', 'all')), declaration: torn, rubric: { ...rubricOf(), criteria: [{ id: 'c', checks: [{ id: 'kept', label: 'kept', weight: 2 }, { id: 'other', label: 'other', weight: 1 }] }] } }), /group by different fields: other/);
@@ -57,6 +58,11 @@ test("a failing group's note names the group once, with the reason of its first 
   const opts = optsOf(declOf(grouped('any', 'all')), abc);
   assert.deepEqual((await round(api, opts, 1)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it']);
   assert.deepEqual((await round(api, opts, 2)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)']);
+});
+
+test("an inner any fold with `none` notes a failing group in code's words, with no item's reason", async () => {
+  const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all', { none: 'no row delivers it' })), abc));
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes, v.checks[0].marks], [false, ['C: no row delivers it'], ['C']]);
 });
 
 test('a group of one item takes that item\'s answer, and a group whose every item dropped is no group at all', async () => {
