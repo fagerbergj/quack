@@ -176,7 +176,7 @@ test('a steer leaves a subagent child\'s approval waiting, and reaches the paren
   const parked = new Promise<void>((resolve) => { const off = onWaiting((w) => w >= 2 && (off(), resolve())); });
   await session.submit('parent', 'r1', false);
   await parked;
-  const steer = await session.submit('why?', undefined, false, 'steer', [], 'person');
+  const steer = await session.submit('why?', undefined, false, 'steer', [], { kind: 'tailnet' });
   const child = await session.root.commit(async (tx) => (await tx.scanConversations({ ownerConversationId: session.root.id }, 1)).items[0]!.id, BACKGROUND_CONTEXT);
   const [[id, row]] = Object.entries((await session.harness.snapshot(Approvals, child, BACKGROUND_CONTEXT))!.items);
   assert.equal(row!.withdrawn, undefined, 'the child\'s approval still waits');

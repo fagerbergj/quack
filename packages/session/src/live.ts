@@ -111,8 +111,7 @@ async function stream(session: Session, ws: WebSocket, caller: Caller) {
       if (input.type === 'earlier') return void (await render(await transcript.loadEarlier(BACKGROUND_CONTEXT)));
       if (input.type === 'gap') return void (await render(await transcript.fillGap(input.gap, BACKGROUND_CONTEXT)));
       if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer', caller));
-      // The page socket is a person's: the distributor names who opened it, and only a named principal's input is a person's.
-      const result = await session.submit(input.input, input.requestId, false, input.whenBusy, input.images, caller === 'service' ? undefined : 'person');
+      const result = await session.submit(input.input, input.requestId, false, input.whenBusy, input.images, typeof caller === 'object' ? caller : undefined);
       ws.send(JSON.stringify({ type: 'accepted', ...result, requestId }));
     } catch (err) {
       ws.send(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err), requestId }));

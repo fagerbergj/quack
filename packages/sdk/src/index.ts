@@ -1,4 +1,4 @@
-export { actionable, Approvals, gated, pendingApprovals, resolveApproval, withdrawApprovals, withdrawForPeople, withdrawnText, type Approval, type Origin, type Verdict, type Withdrawal } from './gate.ts';
+export { actionable, Approvals, gated, pendingApprovals, resolveApproval, withdrawApprovals, withdrawForMessages, withdrawnText, type Approval, type Verdict, type Withdrawal } from './gate.ts';
 export { answerQuestion, closeQuestions, pendingQuestions, person, Questions, type AnswerInput, type AnswerResult, type OpenQuestion, type Question } from './questions.ts';
 export { principalName, type Principal } from './principal.ts';
 export { failedRows, Failures, type FailureRow } from './failures.ts';

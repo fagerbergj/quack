@@ -365,7 +365,7 @@ test('a push while the reviewer runs is sent as a steer; once that run ends with
     assert.equal(invocations.length, 0, 'no follow-up queued in the session');
     await svc.sweep();
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy, i.body.origin]), [['github-delivery:d-st1/steer/reviewer', 'steer', undefined], ['github-delivery:d-st1/steer/reviewer', 'steer', undefined]], 'a resend is the same steer, the app\'s own');
+    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-st1/steer/reviewer', 'steer'], ['github-delivery:d-st1/steer/reviewer', 'steer']], 'a resend is the same steer');
     assert.equal(invocations[0].body.input, steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: 'def456' }));
     runningAgent = undefined;
     await svc.sweep();
@@ -450,10 +450,10 @@ test('a /fix while the implementer runs is sent as a steer, each instruction its
     assert.equal(invocations.length, 0, 'no follow-up queued in the session');
     await svc.sweep();
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy, i.body.origin]).sort(), [
-      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs1/steer/implementer', 'steer', 'person'],
-      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs2/steer/implementer', 'steer', 'person'],
-    ], 'one steer each, not resent, each a person\'s');
+    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]).sort(), [
+      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs1/steer/implementer', 'steer'],
+      ['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-fs2/steer/implementer', 'steer'],
+    ], 'one steer each, not resent');
     assert.match(invocations.find((i) => i.body.requestId === 'github-delivery:d-fs1/steer/implementer')!.body.input, /^someone sent \/fix on pull request acme\/widgets#7\. Instruction: the cache test\nIf you are already changing it/);
     assert.deepEqual(commented, [fixSteered, fixSteered], 'each /fix is answered once, a redelivery not again');
   } finally {
@@ -474,7 +474,7 @@ test("a person's pushes to the branch while the implementer runs make one steer 
     assert.equal(await deliver('pull_request', branchPush('b0b000', 'Quack-App[bot]'), { id: 'd-bm3', to: url }), 200, 'its own push');
     await svc.sweep();
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy, i.body.origin]), [['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-bm2/steer/implementer', 'steer', 'person']]);
+    assert.deepEqual(invocations.map((i) => [i.path, i.body.requestId, i.body.whenBusy]), [['/sessions/github:acme/widgets#7/invocations?agent=implementer', 'github-delivery:d-bm2/steer/implementer', 'steer']]);
     assert.match(invocations[0].body.input, /^dev pushed to the branch of pull request acme\/widgets#7: it is now at 0ff1ce\. .*call checkout_task again/);
     runningAgent = undefined;
     assert.equal(await deliver('pull_request', branchPush('c0ffee', 'dev'), { id: 'd-bm4', to: url }), 200);

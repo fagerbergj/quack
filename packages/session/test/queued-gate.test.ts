@@ -59,7 +59,7 @@ for (const [label, c] of CASES) {
     await session.submit('write the contract');
     await waiting;
     const [{ id }] = await pendingApprovals(session.root, ctx);
-    const queued = await session.submit(TEXT, undefined, false, 'followUp', [], 'person');
+    const queued = await session.submit(TEXT, undefined, false, 'followUp', [], { kind: 'tailnet' });
     assert.deepEqual(await pendingApprovals(session.root, ctx), [], 'withdrawn in the commit that queued the follow-up');
     const settled = await (await session.harness.submission(queued.submissionId as never, ctx))!.wait(ctx);
     assert.equal(settled.status, 'done', `the follow-up was answered, not dropped: ${JSON.stringify(settled)}`);
@@ -72,8 +72,8 @@ for (const [label, c] of CASES) {
   });
 }
 
-// Fail closed: input with no stated origin, a service's or one queued before origins existed, never withdraws, even by a rerun's gate.
-test('a follow-up with no origin queues behind a gated tool, and its row stays pending across a restart until the person decides', async () => {
+// A follow-up no principal sent (a service's, or one queued before this rule) never withdraws, even when a rerun's gate opens the row.
+test('a service\'s follow-up queues behind a gated tool, and its row stays pending across a restart until the person decides', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-queued-gate-'));
   dirs.push(dir);
   const calls: string[][] = [];

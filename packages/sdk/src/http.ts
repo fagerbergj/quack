@@ -134,8 +134,6 @@ export type SessionSubmission = {
   meta?: object;
   whenBusy?: 'followUp';
   wait?: boolean;
-  /** Unset is a service's input, which never withdraws an approval. */
-  origin?: 'person';
 };
 
 /** The distributor's invocation request for a session: the encoded-key URL and the JSON body. */
