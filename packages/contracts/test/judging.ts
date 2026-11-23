@@ -15,12 +15,15 @@ export const inputsOf = (spec: ContractSpec) => {
 export const builtOf = async (spec: ContractSpec) => buildEvidence(contractDeclaration, await inputsOf(spec));
 export const evidenceOf = async (spec: ContractSpec) => (await builtOf(spec)).evidence;
 
-/** Judges `checks` with Clef answering by `pick`; the judge model answers every question it gets with `judge`, or, without one, gives
- * no reply, so a question that reached it would stay undecided. */
-export async function judged(t: TestContext, spec: ContractSpec, checks: string[], pick: (q: string) => string, judge?: { choice: string; reason: string }) {
+type Reply = { choice: string; reason: string };
+
+/** Judges `checks` with Clef answering by `pick`; the judge model answers every question it gets with `judge` (or what it returns for
+ * the prompt), or, without one, gives no reply, so a question that reached it would stay undecided. */
+export async function judged(t: TestContext, spec: ContractSpec, checks: string[], pick: (q: string) => string, judge?: Reply | ((prompt: string) => Reply)) {
   const models = createModels();
   const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
-  if (judge) faux.setResponses(Array.from({ length: 50 }, () => () => fauxAssistantMessage(JSON.stringify({ ...judge, confidence: 0.9 }))));
+  const reply = typeof judge === 'function' ? judge : () => judge;
+  if (judge) faux.setResponses(Array.from({ length: 50 }, () => (ctx) => fauxAssistantMessage(JSON.stringify({ ...reply(JSON.stringify(ctx.messages)), confidence: 0.9 }))));
   models.setProvider(faux.provider);
   const clef = await fakeClef(t, pick);
   models.setProvider(clef.provider);

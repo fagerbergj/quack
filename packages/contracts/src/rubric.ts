@@ -299,8 +299,8 @@ export const contractDeclaration: Declaration = {
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
     // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
-    // queued behind it made the round slower than the one question they replaced.
-    meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // queued behind it made the round slower than the one question they replaced. A share, so one noisy "no" costs a little.
+    meets_intent: { scope: 'guarantee', aggregate: { name: 'share', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
     // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
@@ -411,7 +411,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 10,
+  version: 12,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -428,7 +428,8 @@ export const contractRubric: Rubric = {
       { id: 'breaking_named', label: 'A breaking change names no caller', weight: 'gate', code: breakingNamed },
     ] },
     { id: 'matches_intent', checks: [
-      // The old meets_intent's weight, split: each miss alone still fails a spec; the purpose, one broad statement, counts least.
+      // The old meets_intent's weight, split; the purpose, one broad statement, counts least. A guarantee miss alone fails a spec
+      // only with three or fewer guarantees (one of four scores 0.8125); a purpose miss alone always does.
       { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 3 },
       { id: 'delivers_purpose', label: "The document doesn't deliver the intent's purpose", weight: 1 },
       { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Unit } from '@quack/judge';
+import { score, type Unit } from '@quack/judge';
 import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 import { builtOf, judged } from './judging.ts';
@@ -53,11 +53,11 @@ test('the judge model answers every promise and nothing reaches the decision mod
   const s = spec();
   const failed = await judged(t, s, ['meets_intent'], () => 'yes', { choice: 'no', reason: 'Nothing here marks the schedule read-only.' });
   const check = failed.check('meets_intent');
-  assert.equal(check.met, false);
+  assert.equal(check.met, 0);
   assert.match(check.notes[0], /^guarantee (read-only|errors\.problem-json): Nothing here marks the schedule read-only\.$/);
   assert.deepEqual([failed.requests.length, check.resolvers.clef], [0, undefined]);
   const held = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'yes', reason: 'GET is the only method.' })).check('meets_intent');
-  assert.deepEqual([held.met, held.units, held.resolvers], [true, 2, { j: 2 }]);
+  assert.deepEqual([held.met, held.units, held.resolvers], [1, 2, { j: 2 }]);
   assert.match(contractDeclaration.checks.meets_intent.question.instructions, /field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states\?$/);
 });
 
@@ -95,4 +95,17 @@ test('with no guarantees, meets_intent has no items and counts toward neither si
   const res = await judged(t, s, ['meets_intent', 'delivers_purpose'], () => 'no', { choice: 'yes', reason: 'Shown in GET.' });
   assert.deepEqual([res.check('meets_intent').met, res.check('meets_intent').units], [null, 0]);
   assert.deepEqual([res.check('delivers_purpose').met, res.check('delivers_purpose').units], [true, 2]);
+});
+
+test('meets_intent earns the share of guarantees met: one pedantic miss of five scores 0.85 and passes, one of three still fails', async (t) => {
+  const s = spec();
+  s.intent.guarantees.push({ id: 'etag', text: 'Every response carries an ETag header' }, { id: 'week', text: 'The live NFL week is given' }, { id: 'soonest', text: 'Jobs come back soonest first' });
+  const res = await judged(t, s, ['meets_intent', 'delivers_purpose'], () => 'no', (p) => (p.includes('ETag header') ? { choice: 'no', reason: 'No ETag is defined.' } : { choice: 'yes', reason: 'Defined in GET.' }));
+  const check = res.check('meets_intent');
+  assert.deepEqual([contractDeclaration.checks.meets_intent.aggregate, check.units, check.met], [{ name: 'share', pass: ['yes'] }, 5, 0.8]);
+  assert.deepEqual(check.notes, ['guarantee etag: No ETag is defined.']);
+  const got = score(contractRubric, [check, res.check('delivers_purpose')]);
+  assert.deepEqual([got.score, got.passed], [(3 * 0.8 + 1) / 4, true], 'under `all` the miss scored 0.25');
+  const ofThree = score(contractRubric, [{ ...check, met: 2 / 3, units: 3 }, res.check('delivers_purpose')]);
+  assert.deepEqual([ofThree.score, ofThree.passed], [0.75, false]);
 });
