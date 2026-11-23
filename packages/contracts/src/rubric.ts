@@ -54,26 +54,23 @@ async function locate(read: Reader, roots: string[], path: string): Promise<stri
 
 const CLONE = 'git clone --depth 1 -b <branch> <url> repo';
 // The exact ref to write, taken from where the file is, else from the session's own clone directory.
-async function missingFile(read: Reader, roots: string[], path: string, line: string): Promise<string> {
+async function missingFile(read: Reader, roots: string[], path: string): Promise<string> {
   const clone = roots[0];
-  if (isAbsolute(path)) return `is an absolute path; refs are paths from the workspace root, as "${clone ?? 'repo'}/<path in the clone>:${line}"`;
+  if (isAbsolute(path)) return `is an absolute path; refs are paths from the workspace root, as "${clone ?? 'repo'}/<path in the clone>"`;
   const at = await locate(read, roots, path);
   // app/ was the session image's own tree, which refs carried from older versions still cite; only the workspace resolves now.
-  if (path.startsWith('app/')) return `cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "${at ?? `${clone ?? 'repo'}/${path.slice(4)}`}:${line}"${clone ? '' : `, once the repository is cloned into repo/ (${CLONE})`}`;
-  if (at) return `names no file in the workspace; the file is at ${at}, so cite it as "${at}:${line}"`;
-  if (!clone) return `names no file in the workspace, which holds no clone: clone the repository into repo/ (${CLONE}) and cite a file at ${path} in it as "repo/${path}:${line}"`;
+  if (path.startsWith('app/')) return `cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "${at ?? `${clone ?? 'repo'}/${path.slice(4)}`}"${clone ? '' : `, once the repository is cloned into repo/ (${CLONE})`}`;
+  if (at) return `names no file in the workspace; the file is at ${at}, so cite it as "${at}"`;
+  if (!clone) return `names no file in the workspace, which holds no clone: clone the repository into repo/ (${CLONE}) and cite a file at ${path} in it as "repo/${path}"`;
   const rel = path.startsWith(`${clone}/`) ? path.slice(clone.length + 1) : path;
-  return `names no file in the workspace. Refs are paths from the workspace root and your clone is ${clone}/, so a file at ${rel} in the clone is cited as "${clone}/${rel}:${line}"; read the clone to find where the file is`;
+  return `names no file in the workspace. Refs are paths from the workspace root and your clone is ${clone}/, so a file at ${rel} in the clone is cited as "${clone}/${rel}"; read the clone to find where the file is`;
 }
 
-// Why a code ref fails, or undefined when it resolves.
+// Why a code ref fails, or undefined when its file exists; a :N or :N-M older specs carry is read past, not range-checked.
 async function codeRefProblem(read: Reader | undefined, roots: string[], ref: string): Promise<string | undefined> {
-  const m = /^(.+?):(\d+)$/.exec(ref);
-  if (!m || !read) return 'is not path:line';
-  const text = await read(m[1]);
-  if (text === undefined) return missingFile(read, roots, m[1], m[2]);
-  const lines = text.split('\n').length;
-  return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
+  const path = /^(.+?)(?::\d+(?:-\d+)?)?$/.exec(ref.trim())?.[1];
+  if (!path || !read) return 'is not a file path';
+  return (await read(path)) === undefined ? missingFile(read, roots, path) : undefined;
 }
 
 // A guide ref names any ## or ### heading, matched without case and with a dash read as a space, as agents write anchors.
@@ -398,7 +395,7 @@ function commentsAnswered(_a: string, ev: Evidence): CodeResult {
 
 function linksResolve(_a: string, ev: Evidence): CodeResult {
   const { unresolved } = state(ev);
-  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
+  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing file path.` : undefined };
 }
 
 // Break by break: an entry must name each place the kind's diff found, and a safe note that names an unnamed one is reported with it.

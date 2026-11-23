@@ -160,7 +160,7 @@ test('a spec citing a question nobody answered, or code that is not there, is se
   const notes = verdict.checks.flatMap((k) => k.notes).join(' ');
   assert.match(notes, /answer ref "nope:1" does not resolve/);
   // A missing file says refs are read from the workspace root; packages/ here is a copy, not a git clone, so the hint is to clone into repo/.
-  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace, which holds no clone: clone the repository into repo\/ \(git clone --depth 1 -b <branch> <url> repo\) and cite a file at packages\/sleeper\/src\/missing.ts in it as "repo\/packages\/sleeper\/src\/missing.ts:3"/);
+  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace, which holds no clone: clone the repository into repo\/ \(git clone --depth 1 -b <branch> <url> repo\) and cite a file at packages\/sleeper\/src\/missing.ts in it as "repo\/packages\/sleeper\/src\/missing.ts"/);
   assert.match(seen, /cannot be put to the person for approval/);
   assert.deepEqual(await pendingApprovals(s.root, ctx), []);
   assert.equal(await sessionTitle(s), undefined, 'a failed version names nothing');

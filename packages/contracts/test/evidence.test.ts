@@ -132,13 +132,24 @@ test('a guide ref names any guide heading, whatever its case or dashes, and a mi
   assert.match(miss, /^versioning: guide ref "rest#intent-first\/one-fact-per-entry" does not resolve; the guide's headings are "Intent first", "One fact per entry", "document", /);
 });
 
+test('a code ref resolves when its file exists: a bare path, and an older :line or :range past the end, which is not checked', async () => {
+  const codeNotes = async (ref: string) => {
+    const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
+    spec.choices[1].why[1].ref = ref;
+    const { facts } = await inputsOf(spec, { readFile: async (p: string) => (p === 'repo/x.ts' ? 'one line\n' : undefined) });
+    return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.startsWith('time-format: code ref'));
+  };
+  for (const ref of ['repo/x.ts', 'repo/x.ts:999', 'repo/x.ts:3-9']) assert.deepEqual(await codeNotes(ref), [], ref);
+  assert.deepEqual(await codeNotes('repo/y.ts'), ['time-format: code ref "repo/y.ts" names no file in the workspace. Refs are paths from the workspace root and your clone is repo/, so a file at y.ts in the clone is cited as "repo/y.ts"; read the clone to find where the file is']);
+});
+
 test('a recorded code ref under a directory too many names the file where the recording has it', async () => {
   const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
   spec.choices[1].why[1].ref = 'repo/v1/packages/sleeper/src/service.ts:85';
   const readFile = async (p: string) => (p === 'repo/packages/sleeper/src/service.ts' ? 'x\n'.repeat(90) : undefined);
   const { facts } = await inputsOf(spec, { readFile });
   const [note] = (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.includes('repo/v1/packages/sleeper'));
-  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:85"');
+  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts"');
 });
 
 // The refs of prod session contracts:1811f4ba, judged live against a workspace laid out as a git clone, as that session's copy of packages/, or empty.
@@ -160,25 +171,25 @@ async function liveNotes(t: TestContext, layout: Record<string, string>, refs: s
 
 test('a live code ref resolves only to a file in the workspace, and a wrong one is told the exact ref', async (t) => {
   const notes = await liveNotes(t, { ...GIT, [`repo/${SERVICE}`]: SERVICE }, [`repo/${SERVICE}:64`, 'repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `${join(repoRoot, SERVICE)}:64`]);
-  const exact = 'names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:64"';
+  const exact = 'names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts"';
   assert.deepEqual(notes, [
     `time-format: code ref "repo/sleeper/src/service.ts:64" ${exact}`,
     `time-format: code ref "${SERVICE}:64" ${exact}`,
-    `time-format: code ref "${join(repoRoot, SERVICE)}:64" is an absolute path; refs are paths from the workspace root, as "repo/<path in the clone>:64"`,
+    `time-format: code ref "${join(repoRoot, SERVICE)}:64" is an absolute path; refs are paths from the workspace root, as "repo/<path in the clone>"`,
   ], 'an absolute path to the file outside the workspace does not resolve');
 });
 
 test('a ref resolves in the layout the session made: its packages/ copied to repo/ puts sleeper at repo/sleeper', async (t) => {
   const notes = await liveNotes(t, { ...GIT, 'repo/sleeper/src/service.ts': SERVICE }, ['repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `repo/${SERVICE}:64`]);
-  const exact = 'names no file in the workspace; the file is at repo/sleeper/src/service.ts, so cite it as "repo/sleeper/src/service.ts:64"';
+  const exact = 'names no file in the workspace; the file is at repo/sleeper/src/service.ts, so cite it as "repo/sleeper/src/service.ts"';
   assert.deepEqual(notes, [`time-format: code ref "${SERVICE}:64" ${exact}`, `time-format: code ref "repo/${SERVICE}:64" ${exact}`]);
 });
 
 test('a ref to no file gives the exact form from the clone directory, or says to clone when there is none', async (t) => {
   const [inClone] = await liveNotes(t, { ...GIT, [`repo/${SERVICE}`]: SERVICE }, ['repo/packages/sleeper/src/missing.ts:3']);
-  assert.equal(inClone, 'time-format: code ref "repo/packages/sleeper/src/missing.ts:3" names no file in the workspace. Refs are paths from the workspace root and your clone is repo/, so a file at packages/sleeper/src/missing.ts in the clone is cited as "repo/packages/sleeper/src/missing.ts:3"; read the clone to find where the file is');
+  assert.equal(inClone, 'time-format: code ref "repo/packages/sleeper/src/missing.ts:3" names no file in the workspace. Refs are paths from the workspace root and your clone is repo/, so a file at packages/sleeper/src/missing.ts in the clone is cited as "repo/packages/sleeper/src/missing.ts"; read the clone to find where the file is');
   const [empty] = await liveNotes(t, {}, [`${SERVICE}:64`]);
-  assert.equal(empty, `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`);
+  assert.equal(empty, `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}"`);
 });
 
 // #2380: the session's python left a __pycache__/ in a workspace with no clone, and 38 refs carried from an older version cited app/.
@@ -186,13 +197,13 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   const APP = 'app/packages/sleeper/src/service.ts:64';
   const stray = await liveNotes(t, { __pycache__: '', 'node_modules/x/index.js': SERVICE }, [`${SERVICE}:64`, APP]);
   assert.deepEqual(stray, [
-    `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`,
-    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}:64", once the repository is cloned into repo/ (git clone --depth 1 -b <branch> <url> repo)`,
+    `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}"`,
+    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}", once the repository is cloned into repo/ (git clone --depth 1 -b <branch> <url> repo)`,
   ]);
   const cloned = await liveNotes(t, { __pycache__: '', ...GIT, [`repo/${SERVICE}`]: SERVICE }, [APP, 'app/packages/sleeper/src/gone.ts:3']);
   assert.deepEqual(cloned, [
-    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}:64"`,
-    'time-format: code ref "app/packages/sleeper/src/gone.ts:3" cites app/, the old session image\'s tree, which no longer resolves: re-anchor it to the clone, as "repo/packages/sleeper/src/gone.ts:3"',
+    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}"`,
+    'time-format: code ref "app/packages/sleeper/src/gone.ts:3" cites app/, the old session image\'s tree, which no longer resolves: re-anchor it to the clone, as "repo/packages/sleeper/src/gone.ts"',
   ]);
 });
 
