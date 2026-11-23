@@ -183,7 +183,7 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('with Clef on, Clef answers every definition code did not settle, and the judge model every guarantee', async (t) => {
+test('code settles every definition of the lifecycle spec, so Clef is asked nothing and the judge model answers the guarantees', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
   const models = createModels();

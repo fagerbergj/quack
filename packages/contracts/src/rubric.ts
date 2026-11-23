@@ -308,7 +308,7 @@ export const contractDeclaration: Declaration = {
 const answeredIn = (items: Record<string, Question>, by = Infinity) =>
   new Set(Object.entries(items).filter(([, q]) => q.answer && q.answer.at <= by).flatMap(([key, q]) => [q.question, key.slice(key.indexOf(':') + 1)]));
 
-/** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec with its guide. */
+/** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec. */
 export function specInputs() {
   return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
     return inputsIn(sealed, {

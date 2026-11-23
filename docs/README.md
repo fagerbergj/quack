@@ -32,6 +32,8 @@ Each arm prints a line per item with its scores, each kind's sealed versions (pa
 
 ### Evidence for a judge or rubric change
 
+A pure removal of checks may instead be shown by a model-free recount over recorded rounds, because a removed check feeds no other check's answer (the judge only packs units whose `shared` context is identical, `packages/judge/src/resolve.ts:70`); timing claims stay estimates until a replay.
+
 Replay the same recorded cases under the baseline and the candidate, three times each, on local models, the same day:
 
 ```
