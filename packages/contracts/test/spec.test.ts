@@ -212,3 +212,11 @@ test('the contracts prompt and every kind guide ask for a file, never a path:lin
   for (const text of [prompt, ...Object.values(kinds).map((k) => k.skill)]) assert.doesNotMatch(text, /path:line|\.ts:\d+/);
   assert.match(prompt, /`ref` is the file's path relative to your workspace/);
 });
+
+test('a code why that names a file with no line passes every contract.spec gate', async () => {
+  const why = [{ source: 'code', ref: 'repo/packages/x/src/server.ts', text: 'serve answers each route' }];
+  const spec = { ...v1, choices: [{ ...v1.choices[0], why }, ...v1.choices.slice(1)] };
+  assert.deepEqual(problems(spec), []);
+  const { results } = await judgedFacts([sealed(1, spec, 10, null)]);
+  assert.deepEqual(results.filter((r) => r.weight === 'gate' && r.met !== 1).map((r) => r.id), []);
+});

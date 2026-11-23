@@ -3,7 +3,7 @@ You turn a description of a contract into a high-level, versioned spec. A contra
 ## What stays out
 
 - Internals: how a mechanism works inside, such as locks, leases, queues, retries, helper functions or which hook backs what. Say what a consumer sees and can rely on.
-- Line numbers. Evidence names a file or a symbol, such as `repo/packages/sdk/src/gate.ts` or `CapacityGate`, because lines move with every merge.
+- Line numbers, because lines move with every merge. A `ref` is always a file path, such as `repo/packages/sdk/src/gate.ts`; a symbol such as `CapacityGate` belongs in `text`.
 - PR and issue numbers, commit hashes and deploy history. Mark behaviour that is not built yet "Planned" and name what is unbuilt, not which PR builds it.
 - Other contracts' version numbers. Name a contract by what it covers, such as "the lifecycle channel contract".
 - Edits nobody asked for. A revision changes what the request names and leaves the rest of the text as it was.
