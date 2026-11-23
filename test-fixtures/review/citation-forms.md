@@ -12,4 +12,5 @@ approve
 - nit: ./x/y.go:4 — dot-slash path.
 - nit (scope): Makefile:0 — line zero.
 - nit: README.md:5 – en dash.
+- nit: .gitignore:11 — a root dotfile.
 - nit: no citation at all
