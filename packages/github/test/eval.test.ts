@@ -30,7 +30,9 @@ test('a replay is served the pinned pull request, and its reviews are captured, 
     const repeat = await post({ body: 'changed', event: 'COMMENT' });
     assert.deepEqual([repeat.status, await repeat.json()], [200, { id: 1, url: '(eval: not delivered)' }], 'a repeated requestId answers the first post');
     assert.equal((await post({}, 8)).status, 404, 'a review of another PR is not a delivery');
-    assert.equal((await post({ commitId: 'def', requestId: 'c/v2' })).status, 404, 'nor is a review of another head');
+    const stale = await post({ commitId: 'def', requestId: 'c/v2' });
+    assert.deepEqual([stale.status, (await stale.json()).liveHead], [409, 'abc'], 'nor is a review of another head, which names the pinned one');
+    assert.equal((await post({ commitId: 'def' })).status, 200, 'the repeat lookup runs before the head check');
     const noKey = await post({ requestId: undefined });
     assert.deepEqual([noKey.status, noKey.headers.get('content-type')], [400, 'application/problem+json']);
     assert.equal((await fetch(`${url}/reviews`, { method: 'POST', headers: auth, body: '{}' })).status, 404, 'the old path is gone');

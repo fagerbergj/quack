@@ -26,7 +26,7 @@ async function listen(server: Server) {
 // A fake GitHub API that verifies the app JWT the way GitHub does: RS256 over header.body, issuer = app id.
 const calls: Array<{ method: string; path: string; auth: string; version?: string; body: any }> = [];
 const commented: string[] = [];
-const review = (id: number, login: string, state: string, body = '', commit_id = 'abc123', node_id?: string) => ({ id, user: { login }, state, body, commit_id, ...(node_id ? { node_id } : {}), submitted_at: new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString() });
+const review = (id: number, login: string, state: string, body = '', commit_id = 'abc1230000000000000000000000000000000000', node_id?: string) => ({ id, user: { login }, state, body, commit_id, ...(node_id ? { node_id } : {}), submitted_at: new Date(Date.UTC(2026, 0, 1, 0, 0, id)).toISOString() });
 // Out of order on purpose: pat's approval is listed before the request it supersedes. 100 older filler reviews push the rest onto page 2.
 const reviews = [
   ...Array.from({ length: 100 }, (_, i) => review(i - 200, `filler${i}`, 'COMMENTED')),
@@ -48,7 +48,7 @@ const threads = [thread(false, 'app.ts', 'Off by one.'), thread(true, 'old.ts', 
 const commentWaiters: Array<() => void> = [];
 // Newest first, as the service asks: page 1 is full of others' comments and the reply, page 2 holds the app's comment it answers.
 const reviewComments = [
-  { id: 900, in_reply_to_id: 800, user: { login: 'dev' }, path: 'app.ts', line: 4, original_commit_id: 'abc123', created_at: '2026-11-09T23:01:00Z', body: 'Checked on prod.' },
+  { id: 900, in_reply_to_id: 800, user: { login: 'dev' }, path: 'app.ts', line: 4, original_commit_id: 'abc1230000000000000000000000000000000000', created_at: '2026-11-09T23:01:00Z', body: 'Checked on prod.' },
   ...Array.from({ length: 99 }, (_, i) => ({ id: 500 + i, user: { login: 'maria' }, path: 'app.ts', line: 1, created_at: '2026-11-09T23:00:00Z', body: 'noise' })),
   { id: 800, user: { login: 'quack-app[bot]' }, path: 'app.ts', line: 4, original_commit_id: 'old999', created_at: '2026-11-09T22:58:00Z', body: 'question: exposed?' },
 ];
@@ -77,7 +77,7 @@ const github = await listen(
     }
     if (url === '/repos/acme/widgets/pulls/7' && req.method === 'PATCH') return reply(200, { number: 7, html_url: 'https://github.com/acme/widgets/pull/7' });
     if (url === '/repos/acme/widgets/pulls/404' && req.method === 'PATCH') return reply(404, { message: 'Not Found' });
-    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { state: pr7State, merged: pr7Merged,number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { state: pr7State, merged: pr7Merged,number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc1230000000000000000000000000000000000', ref: 'fix' }, base: { ref: 'main' } });
     const mirrored = { html_url: `https://github.com/acme/widgets/pull/${url.split('/').at(-1)}`, title: 'Fix the cache', base: { repo: { full_name: 'acme/widgets' } } };
     if (url === '/repos/acme/widgets/pulls/9') return reply(200, { ...mirrored, number: 9, state: 'closed', merged: true, merged_at: '2026-11-01T00:00:00Z', closed_at: '2026-11-01T00:00:00Z' });
     if (url === '/repos/acme/widgets/pulls/10') return reply(200, { ...mirrored, number: 10, state: 'closed', merged: false, merged_at: null, closed_at: '2026-11-02T00:00:00Z' });
@@ -105,21 +105,21 @@ const github = await listen(
     }
     if (url === '/repos/acme/widgets/pulls/7/files?per_page=100') return reply(200, [{ filename: 'src/a.ts', additions: 5, deletions: 2 }]);
     if (url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
-    const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(url);
+    const page = /^\/repos\/acme\/widgets\/commits\/abc1230000000000000000000000000000000000\/check-runs\?per_page=100&page=(\d+)$/.exec(url);
     // 150 check runs: the only failing one is on the second page.
     if (page) return reply(200, { check_runs: Array.from({ length: page[1] === '1' ? 100 : 50 }, (_, i) => ({ name: `c${page[1]}-${i}`, status: 'completed', conclusion: page[1] === '2' && i === 49 ? 'failure' : 'success' })) });
     // GitHub refuses a whole review when one inline line is off the diff.
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
     if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
-    if (url === '/repos/acme/widgets/pulls/14') return reply(200, { number: 14, user: { login: 'Quack-App[bot]' } });
+    if (url === '/repos/acme/widgets/pulls/14') return reply(200, { number: 14, user: { login: 'Quack-App[bot]' }, head: { sha: 'abc1230000000000000000000000000000000000' } });
     if (url === '/repos/acme/widgets/pulls/14/reviews') return calls.at(-1)!.body.event === 'COMMENT' ? reply(200, { id: 10, html_url: 'https://github.com/acme/widgets/pull/14#review-10' }) : reply(422, { message: 'Can not approve your own pull request' });
     const reviewPage = /^\/repos\/acme\/widgets\/pulls\/7\/reviews\?per_page=100&page=(\d+)$/.exec(url);
     if (reviewPage) return reply(200, reviews.slice((Number(reviewPage[1]) - 1) * 100, Number(reviewPage[1]) * 100));
     const commentPage = /^\/repos\/acme\/widgets\/pulls\/7\/comments\?sort=created&direction=desc&per_page=100&page=(\d+)$/.exec(url);
     if (commentPage && reviewCommentsDown) return reply(503, { message: 'unavailable' });
     if (commentPage && auth === 'token ghs_test') return reply(200, reviewComments.slice((Number(commentPage[1]) - 1) * 100, Number(commentPage[1]) * 100));
-    if (url === '/repos/acme/widgets/pulls/15' && req.method === 'GET') return reply(200, { number: 15, user: { login: 'dev' } });
+    if (url === '/repos/acme/widgets/pulls/15' && req.method === 'GET') return reply(200, { number: 15, user: { login: 'dev' }, head: { sha: 'abc1230000000000000000000000000000000000' } });
     if (url === '/repos/acme/widgets/pulls/15/reviews' && req.method === 'POST') {
       const id = 100 + posted15.length;
       posted15.push({ id, user: { login: 'quack-app[bot]' }, state: 'COMMENTED', body: calls.at(-1)!.body.body, commit_id: calls.at(-1)!.body.commit_id, html_url: `https://github.com/acme/widgets/pull/15#review-${id}` });
@@ -127,8 +127,10 @@ const github = await listen(
     }
     const page15 = /^\/repos\/acme\/widgets\/pulls\/15\/reviews\?per_page=100&page=(\d+)$/.exec(url);
     if (page15) return reply(200, [...reviews.slice(0, 100), ...posted15].slice((Number(page15[1]) - 1) * 100, Number(page15[1]) * 100));
-    if (url === '/repos/acme/widgets/pulls/16' && auth === 'token ghs_test') return reply(200, { number: 16, title: 't', body: 'Fixes #17, closes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (url === '/repos/acme/widgets/pulls/16' && auth === 'token ghs_test') return reply(200, { number: 16, title: 't', body: 'Fixes #17, closes #3', user: { login: 'dev' }, head: { sha: 'abc1230000000000000000000000000000000000', ref: 'fix' }, base: { ref: 'main' } });
     if (url === '/repos/acme/widgets/pulls/18/reviews') return reply(422, { message: 'Unprocessable' });
+    if (url === '/repos/acme/widgets/pulls/28') return reply(200, { number: 28, user: { login: 'dev' }, head: { sha: 'abc1230000000000000000000000000000000000' } });
+    if (url === '/repos/acme/widgets/pulls/28/reviews') return reply(409, { message: 'Conflict' });
     if (url === '/repos/acme/widgets/issues/17') return reply(410, { message: 'This issue was deleted' });
     if (url === '/graphql' && graphqlErrors) return reply(200, { errors: [{ message: 'Resource not accessible by integration' }] });
     if (url === '/graphql') return reply(200, { data: { repository: { pullRequest: { reviewThreads: { nodes: threads } } } } });
@@ -180,7 +182,7 @@ function deliver(event: string, payload: unknown, opts: { secret?: string; id?: 
 }
 
 const repository = { name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } };
-const pr = { number: 7, title: 'Fix the cache', body: 'Closes #3', head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } };
+const pr = { number: 7, title: 'Fix the cache', body: 'Closes #3', head: { sha: 'abc1230000000000000000000000000000000000', ref: 'fix' }, base: { ref: 'main' } };
 
 test('verified webhooks start a review in the PR session, keyed by the delivery id', async () => {
   invocations.length = 0;
@@ -191,12 +193,12 @@ test('verified webhooks start a review in the PR session, keyed by the delivery 
   assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=reviewer');
   assert.equal(invocations[0].body.requestId, 'github-delivery:d-7');
   assert.match(invocations[0].body.input, /Review pull request acme\/widgets#7 \(label quack:review\)/);
-  assert.match(invocations[0].body.input, /Head: abc123 on fix; base: main/);
+  assert.match(invocations[0].body.input, /Head: abc1230000000000000000000000000000000000 on fix; base: main/);
   assert.equal(invocations[0].body.title, 'Fix the cache');
   // The opening card's data rides in meta, keyed by head sha; the model's input text carries none of it.
   assert.deepEqual(invocations[0].body.meta.files, [{ path: 'src/a.ts', additions: 5, deletions: 2 }]);
   assert.deepEqual(invocations[0].body.meta.linked, [{ number: 3, title: 'bug' }]);
-  assert.equal(invocations[0].body.meta.id, 'abc123');
+  assert.equal(invocations[0].body.meta.id, 'abc1230000000000000000000000000000000000');
   assert.doesNotMatch(invocations[0].body.input, /src\/a.ts/);
 });
 
@@ -274,7 +276,7 @@ test('a /fix that finds the session mid-run is queued behind it, answered once, 
     assert.equal(invocations[0].body.requestId, 'github-delivery:d-q1');
     assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=implementer');
     assert.match(invocations[0].body.input, /Instruction: the cache test/);
-    assert.equal(invocations[0].body.meta.id, 'abc123');
+    assert.equal(invocations[0].body.meta.id, 'abc1230000000000000000000000000000000000');
   } finally {
     busy = false;
     runningAgent = undefined;
@@ -570,10 +572,10 @@ test('a push queued mid-review starts no second run once a review is posted on t
 test('a label re-trigger starts a run on a reviewed head, since a person asked; a push for that head does not, a new head does', async () => {
   invocations.length = 0;
   const { svc, url } = await queuedService();
-  const undo = reviewedAt('abc123');
+  const undo = reviewedAt('abc1230000000000000000000000000000000000');
   try {
     assert.equal(await deliver('pull_request', labeled, { id: 'd-dup2', to: url }), 202);
-    assert.equal(await deliver('pull_request', pushed('abc123'), { id: 'd-dup5', to: url }), 200);
+    assert.equal(await deliver('pull_request', pushed('abc1230000000000000000000000000000000000'), { id: 'd-dup5', to: url }), 200);
     assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-dup2']);
     assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-dup3', to: url }), 202);
     assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-dup2', 'github-delivery:d-dup3']);
@@ -786,12 +788,12 @@ test('a git credential refusal is a problem document', async () => {
 
 test('a sealed review is posted with the installation token, never handed to the session', async () => {
   assert.equal((await postTo({ event: 'MERGE', body: 'x' })).status, 400);
-  const posted = await postTo({ commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes' });
+  const posted = await postTo({ commitId: 'abc1230000000000000000000000000000000000', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes' });
   assert.equal(posted.status, 201);
   assert.equal(posted.body.url, 'https://github.com/acme/widgets/pull/7#review-9');
   const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
   assert.match(sent.body.body, /^## Verdict\nrequest_changes\n\n<!-- quack-delivery: rq-\d+ -->$/);
-  assert.deepEqual({ ...sent.body, body: undefined }, { event: 'REQUEST_CHANGES', body: undefined, commit_id: 'abc123' });
+  assert.deepEqual({ ...sent.body, body: undefined }, { event: 'REQUEST_CHANGES', body: undefined, commit_id: 'abc1230000000000000000000000000000000000' });
 });
 
 test('posting a review minimizes the app\u2019s earlier ones with a node id; a person\u2019s and the new review are left alone', async () => {
@@ -800,7 +802,7 @@ test('posting a review minimizes the app\u2019s earlier ones with a node id; a p
   reviews.push(mine, theirs);
   calls.length = 0;
   try {
-    assert.equal((await postTo({ commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' })).status, 201);
+    assert.equal((await postTo({ commitId: 'abc1230000000000000000000000000000000000', event: 'APPROVE', body: '## Verdict\napprove' })).status, 201);
     const minimized = calls.filter((c) => c.path === '/graphql');
     assert.equal(minimized.length, 1, 'the bot\u2019s other review has no node id; maria\u2019s is not the app\u2019s');
     assert.match(minimized[0].body.query, /minimizeComment[\s\S]*OUTDATED/);
@@ -818,7 +820,7 @@ test('a GraphQL failure minimizing old reviews is warned, never fails the post',
   reviews.push(mine);
   graphqlErrors = true;
   try {
-    const posted = await postTo({ commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' });
+    const posted = await postTo({ commitId: 'abc1230000000000000000000000000000000000', event: 'APPROVE', body: '## Verdict\napprove' });
     assert.equal(posted.status, 201);
     assert.deepEqual(posted.body, { id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' });
   } finally {
@@ -828,7 +830,7 @@ test('a GraphQL failure minimizing old reviews is warned, never fails the post',
 });
 
 test("an approve on the app's own pull request posts as a comment that leads with the verdict", async () => {
-  const res = await postTo({ target: 'acme/widgets/14', commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' });
+  const res = await postTo({ target: 'acme/widgets/14', commitId: 'abc1230000000000000000000000000000000000', event: 'APPROVE', body: '## Verdict\napprove' });
   assert.equal(res.status, 201);
   const sent = calls.findLast((c) => c.path.endsWith('/reviews'))!;
   assert.equal(sent.body.event, 'COMMENT');
@@ -880,7 +882,7 @@ test("a failed read of the app's own comments leaves the record readable, with t
     const res = await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } });
     assert.equal(res.status, 200);
     const pr = await res.json();
-    assert.equal(pr.headSha, 'abc123');
+    assert.equal(pr.headSha, 'abc1230000000000000000000000000000000000');
     assert.equal(pr.feedback.ownThreads, undefined);
     assert.match(pr.feedback.ownThreadsError, /comments\?sort=created.*: 503/);
   } finally {
@@ -947,7 +949,7 @@ async function deliveredRunIsSilent(webhookOwner: string, id: string) {
   const labeled = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository: { ...repository, owner: { login: webhookOwner } } };
   assert.equal(await deliver('pull_request', labeled, { id }), 202);
   await started;
-  assert.equal((await postTo({ commitId: 'abc123', event: 'APPROVE', body: '## Verdict\napprove' })).status, 201);
+  assert.equal((await postTo({ commitId: 'abc1230000000000000000000000000000000000', event: 'APPROVE', body: '## Verdict\napprove' })).status, 201);
   release();
   outcomes[`github-delivery:${id}-sentinel`] = { status: 'unanswered', reason: 'run_failed' };
   const noted = new Promise<void>((r) => commentWaiters.push(r));
@@ -961,9 +963,9 @@ test('a run that delivered a review gets no notice', () => deliveredRunIsSilent(
 test('a review counts for the run however the webhook cases the owner', () => deliveredRunIsSilent('ACME', 'd-delivered-case'));
 
 test('a review posts its inline comments on the right side, mentions stripped; a 422 refusal posts the review as written, an outage is not retried', async () => {
-  const post = (comments: unknown[]) => postTo({ commitId: 'abc123', event: 'COMMENT', body: 'cc @quack-app', comments }).then((r) => r.status);
+  const post = (comments: unknown[]) => postTo({ commitId: 'abc1230000000000000000000000000000000000', event: 'COMMENT', body: 'cc @quack-app', comments }).then((r) => r.status);
   assert.equal(await post([{ path: 'src/a.ts', line: 3, body: '**nit**: ping @quack-app' }]), 201);
-  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: `cc quack-app${mark()}`, commit_id: 'abc123', comments: [{ path: 'src/a.ts', line: 3, side: 'RIGHT', body: '**nit**: ping quack-app' }] });
+  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: `cc quack-app${mark()}`, commit_id: 'abc1230000000000000000000000000000000000', comments: [{ path: 'src/a.ts', line: 3, side: 'RIGHT', body: '**nit**: ping quack-app' }] });
   const refused = [{ path: 'gone.ts', line: 3, body: '**nit**: lost?' }];
   const posts = () => calls.filter((c) => c.path.endsWith('/reviews')).length;
   const before = posts();
@@ -978,7 +980,7 @@ test('a review posts its inline comments on the right side, mentions stripped; a
 });
 
 test('a review delivery whose answer was lost is found on retry, not posted twice', async () => {
-  const review = { target: 'acme/widgets/15', commitId: 'abc123', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', requestId: 'conv-1/v1' };
+  const review = { target: 'acme/widgets/15', commitId: 'abc1230000000000000000000000000000000000', event: 'REQUEST_CHANGES', body: '## Verdict\nrequest_changes', requestId: 'conv-1/v1' };
   const first = await postTo(review);
   assert.equal(first.status, 201);
   assert.match(posted15[0].body, /\n\n<!-- quack-delivery: conv-1%2Fv1 -->$/);
@@ -999,7 +1001,7 @@ test('the head route reads the pull request once, without its checks, reviews or
   await fetch(`${service}/pulls/acme/widgets/7/head`, { headers: { authorization: 'Bearer svc-secret' } });
   const before = calls.length;
   const res = await fetch(`${service}/pulls/acme/widgets/7/head`, { headers: { authorization: 'Bearer svc-secret' } });
-  assert.deepEqual(await res.json(), { headSha: 'abc123', body: 'Fixes #3' });
+  assert.deepEqual(await res.json(), { headSha: 'abc1230000000000000000000000000000000000', body: 'Fixes #3' });
   assert.deepEqual(calls.slice(before).map((c) => c.path), ['/repos/acme/widgets/pulls/7']);
   assert.equal((await fetch(`${service}/pulls/acme/widgets/404/head`)).status, 404);
 });
@@ -1096,12 +1098,59 @@ test('a review needs a requestId, and bodies are closed: an undeclared field is 
 });
 
 test('a repeat of a requestId returns the first post even when the event, body or commit differ, and posts nothing', async () => {
-  const first = await postTo({ target: 'acme/widgets/15', commitId: 'abc123', event: 'REQUEST_CHANGES', body: 'first', requestId: 'conv-2/v1' });
+  const first = await postTo({ target: 'acme/widgets/15', commitId: 'abc1230000000000000000000000000000000000', event: 'REQUEST_CHANGES', body: 'first', requestId: 'conv-2/v1' });
   assert.equal(first.status, 201);
   const before = posted15.length;
   const again = await postTo({ target: 'acme/widgets/15', commitId: 'def456', event: 'APPROVE', body: 'second', requestId: 'conv-2/v1' });
   assert.deepEqual([again.status, again.body], [200, { id: first.body.id, url: first.body.url }]);
   assert.equal(posted15.length, before, 'the upstream got no second review');
+});
+
+const STALE = 'def456' + '0'.repeat(34);
+const reviewPosts = () => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/reviews')).length;
+
+test('a full commitId that is not the live head is a 409 naming the live head, and nothing posts', async () => {
+  const before = reviewPosts();
+  const stale = await postTo({ commitId: STALE, event: 'APPROVE', body: '## Verdict\napprove' });
+  assert.equal(stale.status, 409);
+  problemShape(stale.body, 409);
+  assert.equal(stale.body.liveHead, 'abc1230000000000000000000000000000000000');
+  assert.match(stale.body.detail, /the live head is abc1230000000000000000000000000000000000$/);
+  assert.equal(reviewPosts(), before, 'GitHub got no review');
+});
+
+test('a commitId that is not a full lowercase sha is a 400, and nothing posts', async () => {
+  const before = reviewPosts();
+  for (const commitId of ['abc123', 'ABC1230000000000000000000000000000000000', 'abc12300000000000000000000000000000000000', '']) {
+    const r = await postTo({ commitId, event: 'COMMENT', body: 'x' });
+    assert.equal(r.status, 400, commitId);
+    problemShape(r.body, 400);
+  }
+  assert.equal(reviewPosts(), before);
+});
+
+test('a repeat of a posted requestId answers 200 even when its commitId is stale or short', async () => {
+  const first = await postTo({ target: 'acme/widgets/15', commitId: 'abc1230000000000000000000000000000000000', event: 'COMMENT', body: 'first', requestId: 'conv-3/v1' });
+  assert.equal(first.status, 201);
+  for (const commitId of [STALE, 'def456']) {
+    const again = await postTo({ target: 'acme/widgets/15', commitId, event: 'COMMENT', body: 'first', requestId: 'conv-3/v1' });
+    assert.deepEqual([again.status, again.body], [200, first.body], commitId);
+  }
+});
+
+test('a commitId naming a pull request that cannot be read is a 404 problem, and nothing posts', async () => {
+  const before = reviewPosts();
+  const gone = await postTo({ target: 'acme/widgets/29', commitId: STALE, event: 'APPROVE', body: '## Verdict\napprove' });
+  problemShape(gone.body, 404);
+  assert.equal(gone.body.detail, 'no such pull request');
+  assert.equal(reviewPosts(), before, 'GitHub got no review');
+});
+
+test("GitHub's own 409 on the post passes through as a plain problem with no liveHead", async () => {
+  const refused = await postTo({ target: 'acme/widgets/28', commitId: 'abc1230000000000000000000000000000000000', event: 'COMMENT', body: 'x' });
+  assert.equal(refused.status, 409, 'the commitId is the live head, so the guard lets it through to GitHub');
+  problemShape(refused.body, 409);
+  assert.equal('liveHead' in refused.body, false);
 });
 
 test('a pull request is opened and edited under closed bodies, errors as problems', async () => {
