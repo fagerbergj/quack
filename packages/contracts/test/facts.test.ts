@@ -7,15 +7,18 @@ const spec = ({ guarantees = [], nonGoals = [] }: Lists, facts?: string[][]) => 
   intent: { guarantees, nonGoals },
   changes: (facts ?? []).map((f): Change => ({ choice: 'c', was: 'w', now: 'n', why: 'y', facts: f })),
 });
-// The template contract.spec v7 records in factEntry's $comment, written out apart from the code's.
+// The template contract.spec v13 records in factEntry's $comment, written out apart from the code's.
 const REASON = [
-  'over 160 — the text is \\d+ characters, so split it into one fact per entry', 'no id — give it one',
+  'over 160 — the text is \\d+ characters, so split it into one fact per entry', 'no id — write it as an object with an "id" key and a "text" key, e\\.g\\. \\{"id": "gate\\.names-only", "text": "\\.\\.\\."\\} — a Label: text string has no id',
+  'no id — add an "id" key, lowercase dotted or dashed, e\\.g\\. "gate\\.names-only"',
   "bad id — '[^']*' is not lowercase dotted or dashed, so rename it", "duplicate id — '[^']*' is used more than once, so give each entry its own id",
   "renamed id — the text matches the baseline's id '[^']*', so keep that id",
   "id named in no changes row's facts — '[^']*' was added with new text, changed or removed, so name it in the row that touches the list",
   "facts id the revision did not touch — '[^']*' was named but was neither added, changed nor removed, and is not an id given to unchanged text, so remove it from facts",
 ];
 const TEMPLATE = new RegExp(`^facts are not decomposed: (?:(?:guarantees|nonGoals)\\[\\d+\\]|\\(id '[^']*'\\)|changes\\[\\d+\\]\\.facts): (?:${REASON.join('|')})$`);
+const STR_ID = 'no id — write it as an object with an "id" key and a "text" key, e.g. {"id": "gate.names-only", "text": "..."} — a Label: text string has no id';
+const OBJ_ID = 'no id — add an "id" key, lowercase dotted or dashed, e.g. "gate.names-only"';
 const gate = (now: ReturnType<typeof spec>, base?: Lists) => {
   const out = factProblems(now, base && { intent: base });
   for (const m of out) assert.match(m, TEMPLATE);
@@ -39,7 +42,7 @@ test('an unchanged revision passes, as do its lists reordered', () => {
 });
 
 test('a one-character edit to a stored string fails until it is an id\'d fact within the limit, named in a changes row', () => {
-  assert.deepEqual(gate(spec({ guarantees: ['Read-only!'] }), { guarantees: ['Read-only'] }), [msg('guarantees[0]', 'no id — give it one')]);
+  assert.deepEqual(gate(spec({ guarantees: ['Read-only!'] }), { guarantees: ['Read-only'] }), [msg('guarantees[0]', STR_ID)]);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'read-only', text: `${'x'.repeat(185)}!` }] }, [['read-only']]), { guarantees: ['x'.repeat(185)] }), [msg('guarantees[0]', 'over 160 — the text is 186 characters, so split it into one fact per entry')]);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'read-only', text: 'Read-only!' }] }), { guarantees: ['Read-only'] }), [unnamed('guarantees[0]', 'read-only')]);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'read-only', text: 'Read-only!' }] }, [['read-only']]), { guarantees: ['Read-only'] }), []);
@@ -81,13 +84,18 @@ test('duplicate baseline texts match each baseline entry once, by id first', () 
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'b', text: T }, { id: 'a', text: T }] }), base), []);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'a', text: T }, { id: 'c', text: T }] }), base), [msg('guarantees[1]', "renamed id — the text matches the baseline's id 'b', so keep that id")]);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'a', text: T }] }), base), [unnamed("(id 'b')", 'b')]);
-  assert.deepEqual(gate(spec({ guarantees: [T, T, T] }), { guarantees: [T, T] }), [msg('guarantees[2]', 'no id — give it one')]);
+  assert.deepEqual(gate(spec({ guarantees: [T, T, T] }), { guarantees: [T, T] }), [msg('guarantees[2]', STR_ID)]);
 });
 
 test('with no approved spec every entry is an id\'d fact, ids unique across both lists, counted in code points', () => {
-  assert.deepEqual(gate(spec({ guarantees: ['Read-only'], nonGoals: [{ id: 'a', text: T }] })), [msg('guarantees[0]', 'no id — give it one')]);
+  assert.deepEqual(gate(spec({ guarantees: ['Read-only'], nonGoals: [{ id: 'a', text: T }] })), [msg('guarantees[0]', STR_ID)]);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'a', text: T }], nonGoals: [{ id: 'a', text: U }] })), [msg('nonGoals[0]', "duplicate id — 'a' is used more than once, so give each entry its own id")]);
-  assert.deepEqual(gate(spec({ guarantees: [{ id: 'Reuse.Key', text: T }, { text: U } as never] })), [msg('guarantees[0]', "bad id — 'Reuse.Key' is not lowercase dotted or dashed, so rename it"), msg('guarantees[1]', 'no id — give it one')]);
+  assert.deepEqual(gate(spec({ guarantees: [{ id: 'Reuse.Key', text: T }, { text: U } as never] })), [msg('guarantees[0]', "bad id — 'Reuse.Key' is not lowercase dotted or dashed, so rename it"), msg('guarantees[1]', OBJ_ID)]);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'emoji', text: '😀'.repeat(160) }] })), []);
   assert.deepEqual(gate(spec({ guarantees: [{ id: 'emoji', text: '😀'.repeat(161) }] })), [msg('guarantees[0]', 'over 160 — the text is 161 characters, so split it into one fact per entry')]);
+});
+
+test('a Label: text string gets the string reason and an {text} object the object reason', () => {
+  assert.deepEqual(gate(spec({ guarantees: ['Label: text'] })), [msg('guarantees[0]', STR_ID)]);
+  assert.deepEqual(gate(spec({ guarantees: [{ text: 'x' } as never] })), [msg('guarantees[0]', OBJ_ID)]);
 });

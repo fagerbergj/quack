@@ -10,6 +10,7 @@ import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
 
 // The contract's own sealed spec: its document is the shape of every contract.spec, and the spec is one itself.
 const CONTRACT = { key: 'contracts:d45ad598-d0a3-4302-9d5c-faf634c3911d', version: 7 };
+const STR_ID = 'no id — write it as an object with an "id" key and a "text" key, e.g. {"id": "gate.names-only", "text": "..."} — a Label: text string has no id';
 const sealedContract = JSON.parse(readFileSync(new URL('fixtures-specs/contract-spec-v7.json', import.meta.url), 'utf8')) as ContractSpec;
 const accepts = new Ajv2020({ strict: false, validateFormats: false }).compile(sealedContract.document as object);
 
@@ -94,7 +95,7 @@ const CODE_REFUSED: Array<[string, unknown]> = [
 ];
 
 test('the seal requires an id on every entry with no baseline or "shipped", and unique ids across both lists', () => {
-  const noId = 'facts are not decomposed: guarantees[0]: no id — give it one';
+  const noId = `facts are not decomposed: guarantees[0]: ${STR_ID}`;
   assert.deepEqual(problems(withFacts(v1, ['Read-only'])), [noId]);
   assert.deepEqual(problems(withFacts(shippedV1, ['Read-only'])), [noId]);
   assert.deepEqual(problems(withFacts(revision, ['Read-only'])), [], 'beside an approved baseline the judge decides whether a string is unchanged');
@@ -150,7 +151,7 @@ test('facts_decomposed compares a revision\'s facts with the approved spec\'s an
   assert.deepEqual([(await decomposed(edited)).met, (await decomposed(edited)).notes], [0, ["facts are not decomposed: guarantees[0]: id named in no changes row's facts — 'read-only' was added with new text, changed or removed, so name it in the row that touches the list."]]);
   assert.equal((await decomposed({ ...edited, changes: [{ ...revision.changes![0], facts: ['read-only'] }] })).met, 1);
   const stringsOnly = withFacts(revision, ['Read-only']);
-  assert.match((await decomposed(stringsOnly, [])).notes[0], /^facts are not decomposed: guarantees\[0\]: no id — give it one\.$/, 'with nothing approved every entry needs an id');
+  assert.match((await decomposed(stringsOnly, [])).notes[0], /^facts are not decomposed: guarantees\[0\]: no id — write it as an object with an "id" key and a "text" key, e\.g\. \{"id": "gate\.names-only", "text": "\.\.\."\} — a Label: text string has no id\.$/, 'with nothing approved every entry needs an id');
   assert.equal(contractRubric.criteria.find((c) => c.id === 'sound')!.checks.find((c) => c.id === 'facts_decomposed')!.weight, 'gate');
 });
 
