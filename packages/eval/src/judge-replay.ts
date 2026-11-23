@@ -63,9 +63,8 @@ export type Row = { arm: string; rep: number; pos: number; case: string; check: 
 /** A case an arm could not judge, with what its recording lacks. */
 export type Declined = { arm: string; case: string; reason: string };
 export type Replayed = { rows: Row[]; declined: Declined[]; seed?: number };
-/** `escalations` bounds each job's concurrent judge-model calls (the judge's default when unset), so the judge model sees at most concurrency × escalations;
- * `seed` orders the arms within each case and repeat (random when unset); `onRows` gets each job's rows as it finishes. */
-export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number; seed?: number; onRows?: (rows: Row[]) => void };
+/** `seed` orders the arms within each case and repeat (random when unset); `onRows` gets each job's rows as it finishes. */
+export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; seed?: number; onRows?: (rows: Row[]) => void };
 
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
 const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
@@ -136,7 +135,7 @@ function counted(api: ToolExecutionApi): { api: ToolExecutionApi; requests: Reco
 
 async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
   const sealed = { kind: j.c.kind, version: j.c.version ?? 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-  const opts: JudgeOptions = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, escalations: o.escalations, ...(j.reuse && { reuse: true }), declaration: j.judged.declaration, inputs: async () => j.judged.inputs };
+  const opts: JudgeOptions = { kind: j.c.kind, rubric: j.rubric, maxRevisions: 0, decisionModel: j.decisionModel, judgeModel: o.judgeModel, ...(j.reuse && { reuse: true }), declaration: j.judged.declaration, inputs: async () => j.judged.inputs };
   const { api: on, requests } = counted(api);
   const t = Date.now();
   const v = await j.rejudge(on, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
