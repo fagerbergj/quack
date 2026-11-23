@@ -30,12 +30,12 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
     if (req.method === 'GET' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}/head`) return send(200, { headSha: pr.headSha, body: pr.body });
     if (req.method === 'POST' && path === `/pulls/${pr.owner}/${pr.repo}/${pr.number}/reviews`) {
       const r = JSON.parse(raw);
-      // Only a review at the pinned head counts as captured; anything else would score a delivery that could not happen.
-      if (r.commitId !== pr.headSha) return problem(404, 'not the pinned pull request');
       if (typeof r.requestId !== 'string' || !r.requestId) return problem(400, 'need a requestId');
-      // A repeat of a requestId answers the first post and captures nothing more, as the service does.
+      // A repeat of a requestId answers the first post and captures nothing more, before the head check, as the service does.
       const first = posted.get(r.requestId);
       if (first) return send(200, first);
+      // Only a review at the pinned head counts as captured; anything else would score a delivery that could not happen.
+      if (r.commitId !== pr.headSha) return sendProblem(res, 409, `commitId ${r.commitId} is not the live head of ${pr.owner}/${pr.repo}#${pr.number}; the live head is ${pr.headSha}`, { liveHead: pr.headSha });
       const reply = { id: posted.size + 1, url: '(eval: not delivered)' };
       posted.set(r.requestId, reply);
       captured.push(r);

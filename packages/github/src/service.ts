@@ -288,6 +288,21 @@ async function minimizeOutdated(app: GithubApp, t: Target, slug: string, earlier
     .catch((err) => console.warn(`could not minimize review ${v.id}:`, err))));
 }
 
+const FULL_SHA = /^[0-9a-f]{40}$/;
+type Review = NonNullable<ReturnType<typeof reviewRequest>>;
+
+// The PR as GitHub has it right before the post, read only when the post needs its head or author; undefined once a refusal is sent.
+async function livePull(res: ServerResponse, app: GithubApp, t: Target, r: Review): Promise<{ pr: any } | undefined> {
+  if (r.commitId !== undefined && !FULL_SHA.test(r.commitId)) return void sendProblem(res, 400, 'commitId must be a full 40-character lowercase sha');
+  if (r.commitId === undefined && r.event === 'COMMENT') return { pr: undefined };
+  const pr = (await app.asInstallation(t.owner, t.repo, 'GET', `/repos/${t.owner}/${t.repo}/pulls/${t.number}`)).json;
+  if (r.commitId === undefined) return { pr };
+  if (!pr) return void sendProblem(res, 404, 'no such pull request');
+  const liveHead = pr.head.sha;
+  if (liveHead !== r.commitId) return void sendProblem(res, 409, `commitId ${r.commitId} is not the live head of ${t.owner}/${t.repo}#${t.number}; the live head is ${liveHead}`, { liveHead });
+  return { pr };
+}
+
 // Posts a review the session sealed and checked; the session never holds an API token. A repeat of a `requestId` returns the first post, whatever else it carries.
 async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState, t: Target) {
   const r = reviewRequest(await readJson(req));
@@ -299,8 +314,10 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   const count = () => state.posted.set(key, (state.posted.get(key) ?? 0) + 1);
   const { repeat, earlier } = await postedBefore(app, t, slug, mark);
   if (repeat) return (count(), send(res, 200, { id: repeat.id, url: repeat.html_url }));
+  const live = await livePull(res, app, t, r);
+  if (!live) return;
   // GitHub refuses an approve or request-changes from a pull request's author, and the implementer opens pull requests as this app.
-  const own = r.event !== 'COMMENT' && isBot((await app.asInstallation(t.owner, t.repo, 'GET', `/repos/${t.owner}/${t.repo}/pulls/${t.number}`)).json, slug);
+  const own = r.event !== 'COMMENT' && isBot(live.pr, slug);
   const lead = own ? `**Verdict: ${r.event === 'APPROVE' ? 'approve' : 'request changes'}.** GitHub does not take this verdict from a pull request's own author, so it is posted as a comment.\n\n` : '';
   const post = (body: string, inline: Comment[]) => app.asInstallation(t.owner, t.repo, 'POST', path, {
     event: own ? 'COMMENT' : r.event, body: stripMentions(lead + body, slug) + mark, ...(r.commitId ? { commit_id: r.commitId } : {}),
