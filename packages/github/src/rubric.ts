@@ -81,7 +81,8 @@ function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
 registerSplitter('github.descriptionParts', descriptionParts);
 
 // One item per path:line a finding cites, grouped by finding: the finding goes once on the group's shared context.
-const citationItems = (inputs: Inputs): Chunk[] => (JSON.parse(inputs.citations) as Citation[]).map((c, n, all) => ({ id: `${c.group}.${all.slice(0, n + 1).filter((o) => o.group === c.group).length}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
+// Cases built before the input existed carry none.
+const citationItems = (inputs: Inputs): Chunk[] => (inputs.citations ? (JSON.parse(inputs.citations) as Citation[]) : []).map((c, n, all) => ({ id: `${c.group}.${all.slice(0, n + 1).filter((o) => o.group === c.group).length}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
 registerSplitter('github.citations', citationItems);
 
 // A backticked command line: env assignments, a lowercase executable, then arguments, flags or quoted strings.
