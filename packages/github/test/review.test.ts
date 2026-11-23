@@ -112,6 +112,20 @@ test('each finding is an item with its cited code, sorted by label, all sharing 
   assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
 });
 
+test('matches_cited_code asks about every path:line a finding cites, each excerpt with the finding once per group', async () => {
+  // #2445 v2 finding 3 cites rubric.ts:8 and names index.ts:102 in its text; prod showed only the first, so the judge flagged it.
+  const files: Record<string, string> = { 'src/rubric.ts': 'a\nb\nwhole?: true\n', 'src/index.ts': 'x\ny\nnoteOf\n' };
+  const api = { conversationId: 'c', snapshot: async () => undefined, env: { exec: async () => ({ ok: true, value: { exitCode: 0 } }), readTextFile: async (p: string) => (files[p.slice('repo/'.length)] ? { ok: true, value: files[p.slice('repo/'.length)] } : { ok: false }) } };
+  const content = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- suggestion: src/rubric.ts:3 — `whole` is unreachable since src/index.ts:3 never sets it (see github.com:443 and src/rubric.ts:3)\n- nit: gone.ts:9 — z\n';
+  const built = await buildEvidence(reviewDeclaration, await reviewInputs()(api as never, { content } as never, {} as never));
+  assert.deepEqual(built.evidence.citation.map((u) => [u.id, (u.state.excerpt as { cite: string }).cite]), [['citation 1.1', 'src/rubric.ts:3'], ['citation 1.2', 'src/index.ts:3'], ['citation 2.3', 'gone.ts:9']], 'a mention that resolves to no file is dropped');
+  assert.match((built.evidence.citation[1].state.excerpt as { code: string }).code, /3: noteOf/);
+  assert.equal((built.evidence.citation[2].state.excerpt as { code: string }).code, '(the cited lines do not exist)', "a finding's own citation stays, so a missing line still fails");
+  assert.deepEqual(built.groups?.citation, { 'citation 1.1': '1', 'citation 1.2': '1', 'citation 2.3': '2' });
+  assert.match(String(built.evidence.citation[0].shared?.finding), /^suggestion: src\/rubric\.ts:3 `whole` is unreachable/);
+  assert.equal(reviewDeclaration.checks.contradicted, undefined, 'a contradiction is the plainest excerpt that does not show the claim');
+});
+
 test('every model check is declared; a pitfall is asked as the defect and costs the share of items it flags', () => {
   const checks = reviewerRubric.criteria.flatMap((c) => c.checks);
   assert.deepEqual(checks.filter((k) => !k.code).map((k) => k.id).sort(), Object.keys(reviewDeclaration.checks).sort());

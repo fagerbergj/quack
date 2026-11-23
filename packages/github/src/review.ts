@@ -106,24 +106,43 @@ export async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: 
   return (await gitRead(api, repoDir, ['ls-files'], ctx)).split('\n').filter(Boolean);
 }
 
-async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context, tracked: Tracked = {}) {
-  const none = { exists: false, excerpt: '', file: '', path: f.path };
-  if (!f.path || !f.line) return none;
-  let path = f.path;
+async function excerpt(api: ToolExecutionApi, repoDir: string, cited: Pick<Finding, 'path' | 'line'>, ctx: Context, tracked: Tracked = {}) {
+  const none = { exists: false, excerpt: '', file: '', path: cited.path };
+  if (!cited.path || !cited.line) return none;
+  let path = cited.path;
   let read = await api.env!.readTextFile(`${repoDir}/${path}`, ctx);
   if (!read.ok) {
     tracked.files ??= await trackedFiles(api, repoDir, ctx);
-    const found = resolveCitedPath(tracked.files, repoDir.split('/').pop()!, f.path);
+    const found = resolveCitedPath(tracked.files, repoDir.split('/').pop()!, cited.path);
     if (!found) return none;
     path = found;
     read = await api.env!.readTextFile(`${repoDir}/${path}`, ctx);
     if (!read.ok) return none;
   }
   const lines = read.value.split('\n');
-  if (f.line < 1 || f.line > lines.length) return { ...none, file: read.value, path };
-  const from = Math.max(1, f.line - EXCERPT_LINES);
-  const text = lines.slice(from - 1, f.line + EXCERPT_LINES).map((l, i) => `${from + i}: ${l}`).join('\n');
+  if (cited.line < 1 || cited.line > lines.length) return { ...none, file: read.value, path };
+  const from = Math.max(1, cited.line - EXCERPT_LINES);
+  const text = lines.slice(from - 1, cited.line + EXCERPT_LINES).map((l, i) => `${from + i}: ${l}`).join('\n');
   return { exists: true, excerpt: text, file: read.value, path };
+}
+
+// A path:line named in a finding's text: a path with a directory, a file with an extension, or a root dotfile.
+const MENTION = /(?<![\w./@+-])((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]*\w|[\w@+-]+\.[A-Za-z][\w.@+-]*\w|\.[\w@+-][\w.@+-]*\w):(\d+)/g;
+const NO_LINES = '(the cited lines do not exist)';
+export type Citation = { group: string; finding: string; cite: string; code: string };
+
+// One excerpt per path:line the finding names, its own citation first; a mention that does not resolve is left out, since
+// cites_existing_lines already holds the finding to its own citation.
+async function citationsOf(api: ToolExecutionApi, repoDir: string, f: Finding, own: Awaited<ReturnType<typeof excerpt>>, text: string, ctx: Context, tracked: Tracked): Promise<Citation[]> {
+  const out = [{ group: String(f.index), finding: text, cite: `${own.path ?? '?'}:${f.line ?? '?'}`, code: own.excerpt || NO_LINES }];
+  const seen = new Set([`${f.path}:${f.line}`]);
+  for (const [, path, line] of f.text.matchAll(MENTION)) {
+    if (seen.has(`${path}:${line}`)) continue;
+    seen.add(`${path}:${line}`);
+    const e = await excerpt(api, repoDir, { path, line: Number(line) }, ctx, tracked);
+    if (e.exists) out.push({ ...out[0], cite: `${e.path}:${line}`, code: e.excerpt });
+  }
+  return out;
 }
 
 export const diffOf = (api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context) => gitRead(api, repoDir, ['diff', `origin/${baseRef}...HEAD`], ctx);
@@ -139,11 +158,14 @@ export function reviewInputs(repoDir = 'repo') {
     const tracked: Tracked = {};
     const facts: ReviewFacts = { ci: pr ? pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', ') : '(unknown)', findings: [] };
     const findings = [];
+    const citations: Citation[] = [];
     for (const f of r.findings) {
       const e = await excerpt(api, repoDir, f, ctx, tracked);
       const id = String(f.index);
       facts.findings.push({ id, cited: e.exists });
-      findings.push({ id, blocking: f.label === 'blocking', text: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' });
+      const text = `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`;
+      findings.push({ id, blocking: f.label === 'blocking', text, citedCode: e.excerpt || NO_LINES });
+      citations.push(...(await citationsOf(api, repoDir, f, e, text, ctx, tracked)));
     }
     return {
       review: sealed.content,
@@ -151,6 +173,7 @@ export function reviewInputs(repoDir = 'repo') {
       issues: pr ? pr.linkedIssues.map((i) => `## Linked issue #${i.number}: ${i.title}\n${i.body}`).join('\n\n') : '',
       diff,
       findings: JSON.stringify(findings),
+      citations: JSON.stringify(citations),
       facts: JSON.stringify(facts),
     };
   };
