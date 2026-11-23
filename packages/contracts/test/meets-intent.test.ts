@@ -49,13 +49,16 @@ test('a decided choice is evidence, the root always is (without its examples), a
   assert.equal(shown('live-week')[0].part, OP);
 });
 
-test('the judge model answers every promise and nothing reaches the decision model; a failing one carries its reason', async (t) => {
+test('the decision model passes a guarantee alone; its "no" goes to the judge model, whose answer and reason stand', async (t) => {
   const s = spec();
-  const failed = await judged(t, s, ['meets_intent'], () => 'yes', { choice: 'no', reason: 'Nothing here marks the schedule read-only.' });
+  // No judge-model reply: a guarantee that reached it would stay undecided.
+  const passed = (await judged(t, s, ['meets_intent'], () => 'yes')).check('meets_intent');
+  assert.deepEqual([passed.met, passed.units, passed.resolvers], [true, 2, { clef: 2 }]);
+  const failed = await judged(t, s, ['meets_intent'], () => 'no', { choice: 'no', reason: 'Nothing here marks the schedule read-only.' });
   const check = failed.check('meets_intent');
   assert.equal(check.met, false);
   assert.match(check.notes[0], /^guarantee (read-only|errors\.problem-json): Nothing here marks the schedule read-only\.$/);
-  assert.deepEqual([failed.requests.length, check.resolvers.clef], [0, undefined]);
+  assert.deepEqual([failed.requests.length, check.resolvers.clef], [2, undefined], 'one decision-model request per guarantee, and its "no" fails none');
   const held = (await judged(t, s, ['meets_intent'], () => 'no', { choice: 'yes', reason: 'GET is the only method.' })).check('meets_intent');
   assert.deepEqual([held.met, held.units, held.resolvers], [true, 2, { j: 2 }]);
   assert.match(contractDeclaration.checks.meets_intent.question.instructions, /field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states\?$/);

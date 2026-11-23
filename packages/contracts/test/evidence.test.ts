@@ -205,7 +205,7 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('with Clef on, Clef answers every choice and every definition code did not settle, and the judge model every guarantee', async (t) => {
+test('with Clef on, Clef answers every choice and every definition code did not settle, and the judge model every guarantee Clef does not pass', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
   const models = createModels();
@@ -232,6 +232,6 @@ test('with Clef on, Clef answers every choice and every definition code did not 
   });
   const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
   assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit, and none for a guarantee');
-  assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
+  assert.equal(clef.asked.flat().length, 23 + asked + pairs + ev.guarantee.length, 'one question per unit');
+  assert.ok(clef.asked.length <= 6 + ev.guarantee.length, `units sharing a guide or the kind are packed, a guarantee goes alone: ${clef.asked.length} requests`);
 });

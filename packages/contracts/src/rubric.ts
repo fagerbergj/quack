@@ -3,7 +3,7 @@ import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { isAbsolute, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
+import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
@@ -309,9 +309,9 @@ export const contractDeclaration: Declaration = {
   // A pitfall costs its weight times the share of items flagged, so one flag among many costs little and fails nothing.
   // A definition is unasked when no consumer or guarantee names or implies it, or when it implements a non-goal; the two halves are two checks.
   checks: {
-    // The judge model answers every promise, with a reason; the decision model serves one request at a time, and many pair questions
-    // queued behind it made the round slower than the one question they replaced.
-    meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
+    // One decision-model request per guarantee (median 4k tokens, under the cap), not per pair; only the judge model fails one,
+    // so a failing guarantee keeps its reason.
+    meets_intent: { scope: 'guarantee', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: PASS_ONLY, question: yesNo('Does the evidence shown make this guarantee hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
     // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
     // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
@@ -422,7 +422,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 10,
+  version: 13,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
