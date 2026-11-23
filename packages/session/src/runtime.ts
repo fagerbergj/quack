@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { actionable, Approvals, Failures, MODEL_RETRY, pendingApprovals, Questions, statusNote, withdrawApprovals, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
+import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -183,7 +183,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     async standing() {
       const { active, at: wakeAt } = harness.wake();
       const waitingOnHuman = active && (await onlyAwaitingHumans());
-      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt, note: statusNote.get() };
+      const waiting = modelWait.get();
+      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt, waiting, note: waiting ? `Waiting for model capacity (${waiting.ahead} ahead)` : null };
     },
     // The caller's name for the session; the first one sticks, and the distributor lists it ahead of the first message.
     async recordTitle(title: string) {

@@ -128,6 +128,19 @@ test('an answer is cited by the question as asked or by its ask_question id, onc
   assert.deepEqual(await unresolved('7', 5), ['versioning: answer ref "7" does not resolve'], 'the task part of the key is not an id');
 });
 
+// The refs prod sessions 14053ed0, 608df011 and b66206df cited in rounds the gate failed.
+test('a guide ref names any guide heading, whatever its case or dashes, and a miss is told the headings', async () => {
+  const unresolved = async (ref: string) => {
+    const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
+    spec.choices[0].why[1].ref = ref;
+    const { facts } = await inputsOf(spec);
+    return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => / guide ref /.test(u));
+  };
+  for (const ref of ['rest#one-fact-per-entry', 'rest#One fact per entry', 'rest#intent-first', 'rest#Intent first', 'status-codes']) assert.deepEqual(await unresolved(ref), [], ref);
+  const [miss] = await unresolved('rest#intent-first/one-fact-per-entry');
+  assert.match(miss, /^versioning: guide ref "rest#intent-first\/one-fact-per-entry" does not resolve; the guide's headings are "Intent first", "One fact per entry", "document", /);
+});
+
 test('a recorded code ref under a directory too many names the file where the recording has it', async () => {
   const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
   spec.choices[1].why[1].ref = 'repo/v1/packages/sleeper/src/service.ts:85';
