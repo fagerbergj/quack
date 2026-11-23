@@ -63,7 +63,7 @@ export type Extension = {
   /** A line above the session list when the extension has something to say about it (its lookups failed). */
   notice?: ComponentType;
   /** A live pane beside the transcript of the sessions it matches (a phone tabs between them, named `label`). The approvals it `owns` are decided
-   * there, not as transcript cards, and a message sent while one waits is steered into the run and declines it, so the agent reads it at once. */
+   * there, not as transcript cards, and a message sent while one waits is steered into the run, which withdraws it, so the agent reads it at once. */
   studio?: { match: (key: string) => boolean; label: string; owns: (a: Approval) => boolean; Pane: ComponentType<StudioProps> };
   /** A section at the top of a session's context rail; it draws nothing for a session that is not its own. */
   rail?: ComponentType<{ sessionKey: string; title: string; opening?: string; meta: readonly Record<string, unknown>[] }>;

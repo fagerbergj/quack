@@ -72,12 +72,12 @@ async function answer(session: Session, req: IncomingMessage, match: RegExpExecA
 
 const ctx = BACKGROUND_CONTEXT;
 
-async function invoke(session: Session, req: IncomingMessage): Promise<[number, unknown]> {
+async function invoke(session: Session, req: IncomingMessage, _match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {
   const inv = parseInvocation(await readJson(req));
   if (typeof inv === 'string') return [400, { error: inv }];
   if (inv.title) await session.recordTitle(inv.title);
   if (inv.meta) await session.recordMeta(inv.meta);
-  return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait, inv.whenBusy)];
+  return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait, inv.whenBusy, [], who)];
 }
 
 async function decide(session: Session, req: IncomingMessage, match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {

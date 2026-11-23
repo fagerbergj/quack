@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { num, obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, LiveDoc } from '@earendil-works/pi-durable';
-import { gated, onWaiting, pendingApprovals, resolveApproval } from '@quack/sdk';
+import { onWaiting, whileWaiting } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
 
 const dirs: string[] = [];
@@ -22,7 +22,7 @@ const tempDir = async () => {
 type Context = { messages: Array<{ role: string; content: unknown }> };
 const usersOf = (c: Context) => c.messages.filter((m) => m.role === 'user').map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)));
 
-// The first model call parks on a gated tool, as the prod run did on an approval; every later call answers.
+// The first model call parks on a wait for a person that no message withdraws, as the prod run once did on an approval; every later call answers.
 // With `hold`, the third call (the run after the first answers) runs a tool that waits on it.
 function parkedAgent(calls: string[][], hold?: { until: Promise<void>; started: () => void }) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -35,11 +35,15 @@ function parkedAgent(calls: string[][], hold?: { until: Promise<void>; started: 
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const tool = gated(defineTool({ name: 'submit_contract', description: 'put a version up', parameters: obj({}, { open: true }), execute: async () => ({ output: [{ type: 'text', text: 'ok' }] }) }));
+  const tool = defineTool({ name: 'submit_contract', description: 'put a version up', parameters: obj({}, { open: true }), execute: (_a, _api, ctx) => whileWaiting(() => new Promise((resolve, reject) => {
+    unpark = () => resolve({ output: [{ type: 'text', text: 'ok' }] });
+    ctx.abortSignal?.addEventListener('abort', () => reject(ctx.abortSignal!.reason), { once: true });
+  })) });
   const held = defineTool({ name: 'hold', description: 'waits', parameters: obj({}, { open: true }), execute: async () => { hold!.started(); await hold!.until; return { output: [{ type: 'text', text: 'held' }] }; } });
   return { models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'gate', tools: [tool, held] })] } };
 }
 
+let unpark = () => {};
 const parked = () => new Promise<void>((resolve) => { const off = onWaiting((n) => n > 0 && (off(), resolve())); });
 
 // Parks a run, then queues each text as a follow-up behind it.
@@ -128,12 +132,11 @@ test('a run that answers as the abort lands is not reported aborted; the run its
   const lines: string[] = [];
   const { session, ids } = await parkAndQueue(await tempDir(), calls, ['also cover pagination', 'and rate limits'], lines, { until, started });
   const first = (await session.harness.snapshot(LiveDoc, session.root.id, ctx))!.run!.inputs.map(String);
-  // The approval lands between the abort's look at the tasks and its marks: the run answers and its end starts the queue.
+  // The park ends between the abort's look at the tasks and its marks: the run answers and its end starts the queue.
   const inspect = session.harness.inspect.bind(session.harness);
   session.harness.inspect = async (c) => {
     const view = await inspect(c);
-    const [approval] = await pendingApprovals(session.root, ctx);
-    await resolveApproval(session.root, approval.id, { decision: 'approve', by: { kind: 'tailnet' } }, ctx);
+    unpark();
     await holding;
     return view;
   };
