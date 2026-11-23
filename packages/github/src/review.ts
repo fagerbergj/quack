@@ -11,8 +11,8 @@ export type Finding = { index: number; label: string; anchor?: string; path?: st
 export type ParsedReview = { sections: Record<string, string>; verdict?: string; findings: Finding[]; unparsed: string[] };
 
 export const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
-// A path with a directory or an extension, or a capitalized root file (Dockerfile, Makefile), so `node:18` is not one.
-const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
+// A path with a directory or an extension, a root dotfile (.gitignore), or a capitalized root file (Dockerfile), so `node:18` is not one.
+const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|\.[\w@+-][\w.@+-]*|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
 
 export const FENCE = /^(```|~~~)/;
 // A '- ' line that is no finding, or a '* ' / '+ ' / '1. ' item: a list the gates would never see.

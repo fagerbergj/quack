@@ -33,7 +33,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // model check is asked. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 13,
+  version: 14,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [

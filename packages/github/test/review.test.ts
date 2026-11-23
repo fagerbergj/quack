@@ -132,6 +132,9 @@ test('an anchor without its space still parses, a cited root file counts, and an
   assert.deepEqual(r.findings.map((f) => [f.label, f.anchor, f.path, f.line]), [['blocking', 'defect', 'src/a.ts', 1], ['nit', undefined, 'Dockerfile', 12]]);
   const prose = parseReview('## Findings\n- question: node:18 is end of life; why not 20?\n- nit: go.mod:3 — bump\n- nit: ./x/y.go:4 — z\n');
   assert.deepEqual(prose.findings.map((f) => [f.path, f.line]), [[undefined, undefined], ['go.mod', 3], ['./x/y.go', 4]]);
+  // #2452 v2 cited .gitignore:11, which exists, yet its evidence read "(the cited lines do not exist)".
+  const dotfiles = parseReview('## Findings\n- blocking (delivery): .gitignore:11 — marks .quack/ local-only\n- nit: .env.example:3 — z\n');
+  assert.deepEqual(dotfiles.findings.map((f) => [f.path, f.line, f.text]), [['.gitignore', 11, 'marks .quack/ local-only'], ['.env.example', 3, 'z']]);
   const problems = validateReview('## Takeaway\nx\n## Verdict\napprove\n## Findings\n- blocker src/b.ts:2 nope\n');
   assert.deepEqual(problems, ['not a finding line ("- label (anchor): path:line — text"): - blocker src/b.ts:2 nope']);
 });
