@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { factProblems, type Change, type Fact } from '../src/index.ts';
 
@@ -7,15 +8,11 @@ const spec = ({ guarantees = [], nonGoals = [] }: Lists, facts?: string[][]) => 
   intent: { guarantees, nonGoals },
   changes: (facts ?? []).map((f): Change => ({ choice: 'c', was: 'w', now: 'n', why: 'y', facts: f })),
 });
-// The template contract.spec v13 records in factEntry's $comment, written out apart from the code's.
-const REASON = [
-  'over 160 — the text is \\d+ characters, so split it into one fact per entry', 'no id — write it as an object with an "id" key and a "text" key, e\\.g\\. \\{"id": "gate\\.names-only", "text": "\\.\\.\\."\\} — a Label: text string has no id',
-  'no id — add an "id" key, lowercase dotted or dashed, e\\.g\\. "gate\\.names-only"',
-  "bad id — '[^']*' is not lowercase dotted or dashed, so rename it", "duplicate id — '[^']*' is used more than once, so give each entry its own id",
-  "renamed id — the text matches the baseline's id '[^']*', so keep that id",
-  "id named in no changes row's facts — '[^']*' was added with new text, changed or removed, so name it in the row that touches the list",
-  "facts id the revision did not touch — '[^']*' was named but was neither added, changed nor removed, and is not an id given to unchanged text, so remove it from facts",
-];
+// The reasons the approved contract.spec v13 records in factEntry's $comment, as patterns; a drifted message fails the gate().
+const approved = readFileSync(new URL('fixtures-specs/contract-spec-v13-facts-comment.txt', import.meta.url), 'utf8');
+const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const REASON = approved.split('{reason} is one of: ')[1].replace(/\.$/, '').split('; ')
+  .map((r) => r.split(/(\{id\}|\{n\})/).map((t) => (t === '{id}' ? '[^\']*' : t === '{n}' ? '\\d+' : esc(t))).join(''));
 const TEMPLATE = new RegExp(`^facts are not decomposed: (?:(?:guarantees|nonGoals)\\[\\d+\\]|\\(id '[^']*'\\)|changes\\[\\d+\\]\\.facts): (?:${REASON.join('|')})$`);
 const STR_ID = 'no id — write it as an object with an "id" key and a "text" key, e.g. {"id": "gate.names-only", "text": "..."} — a Label: text string has no id';
 const OBJ_ID = 'no id — add an "id" key, lowercase dotted or dashed, e.g. "gate.names-only"';

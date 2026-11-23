@@ -151,7 +151,7 @@ test('facts_decomposed compares a revision\'s facts with the approved spec\'s an
   assert.deepEqual([(await decomposed(edited)).met, (await decomposed(edited)).notes], [0, ["facts are not decomposed: guarantees[0]: id named in no changes row's facts — 'read-only' was added with new text, changed or removed, so name it in the row that touches the list."]]);
   assert.equal((await decomposed({ ...edited, changes: [{ ...revision.changes![0], facts: ['read-only'] }] })).met, 1);
   const stringsOnly = withFacts(revision, ['Read-only']);
-  assert.match((await decomposed(stringsOnly, [])).notes[0], /^facts are not decomposed: guarantees\[0\]: no id — write it as an object with an "id" key and a "text" key, e\.g\. \{"id": "gate\.names-only", "text": "\.\.\."\} — a Label: text string has no id\.$/, 'with nothing approved every entry needs an id');
+  assert.equal((await decomposed(stringsOnly, [])).notes[0], `facts are not decomposed: guarantees[0]: ${STR_ID}.`, 'with nothing approved every entry needs an id');
   assert.equal(contractRubric.criteria.find((c) => c.id === 'sound')!.checks.find((c) => c.id === 'facts_decomposed')!.weight, 'gate');
 });
 
@@ -201,9 +201,11 @@ test('specs sealed before the baseline rule still read through the judge and the
   assert.deepEqual(versionsOf(artifacts, []), [{ artifact: 1, version: 2, status: 'draft' }]);
 });
 
-test('every kind guide and the contracts prompt carry the one-fact rule word for word as the contract records it', () => {
+test('every kind guide and the contracts prompt carry the one-fact rule word for word as the contract records it, then the object-form sentence', () => {
   const decision = sealedContract.choices.find((c) => c.id === 'authoring-rule')!.decision;
   const rule = /carries it too: '(.+)'$/.exec(decision)![1]!;
-  for (const kind of Object.values(kinds)) assert.equal(guideRules(kind.skill).get('one fact per entry'), rule);
-  assert.ok(readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8').includes(`\n${rule}\n`));
+  const object = 'Write each touched guarantee and non-goal as an `{"id", "text"}` object, e.g. `{"id": "gate.names-only", "text": "..."}`, never as a `Label: text` string.';
+  for (const kind of Object.values(kinds)) assert.equal(guideRules(kind.skill).get('one fact per entry'), `${rule} ${object}`);
+  const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
+  assert.ok(prompt.includes(`\n${rule}\n`) && prompt.includes(`\n${object}\n`));
 });

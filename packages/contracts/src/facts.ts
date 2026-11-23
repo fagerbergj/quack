@@ -81,7 +81,7 @@ function touched(now: Entry[], was: Entry[]): Touched {
   return t;
 }
 
-/** The facts_decomposed gate against the approved spec; with none, every entry must be an id'd fact. Messages follow the v7 template. */
+/** The facts_decomposed gate against the approved spec; with none, every entry must be an id'd fact. Messages follow the v13 template. */
 export function factProblems(spec: { intent?: Partial<Intent>; changes?: Change[] }, approved?: { intent?: Partial<Intent> }): string[] {
   const shape = factShapeProblems(spec.intent, !approved);
   if (!approved) return shape;
