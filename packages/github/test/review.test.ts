@@ -228,3 +228,10 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual(reviewDeclaration.checks.verified_names_evidence.aggregate, { name: 'share', by: 'either' }, 'a named source settles the item; the rest go to Clef');
 });
 
+
+test('a nit flags as a serious bug only when it goes wrong once merged as it stands, not when latent or cosmetic', () => {
+  const d = reviewDeclaration.checks.wrong_output_below_blocking;
+  assert.deepEqual([d.scope, d.aggregate, d.question.type === 'bool' && d.question.pass], ['nonblocking', { name: 'share' }, ['no']]);
+  assert.match(d.question.instructions, /wrong output, a crash or data loss that happens once this change is merged as it stands\?/);
+  assert.match(d.question.instructions, /A latent bug that needs a possible future change, or cosmetic or accessibility wording, does not count\.$/);
+});

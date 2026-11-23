@@ -38,7 +38,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks; reviewDeclaration says how each model check is asked.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 10,
+  version: 12,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -164,7 +164,8 @@ export const reviewDeclaration: Declaration = {
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
     preference_only: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding rest only on preference, so the author could decline it at no objective cost?') },
     blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?') },
-    wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Does this finding, though not labelled blocking, describe wrong output, a crash or data loss?') },
+    // The same bar blocks_without_consequence holds a blocker to, so a latent or cosmetic nit is not pushed up to blocking.
+    wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Does this finding, though not labelled blocking, describe wrong output, a crash or data loss that happens once this change is merged as it stands? A latent bug that needs a possible future change, or cosmetic or accessibility wording, does not count.') },
     takeaway_actionable: { scope: 'review', aggregate: ALL, question: yes('Is the takeaway one sentence a reader could act on in fifteen seconds, and does it agree with the findings?') },
   },
 };
