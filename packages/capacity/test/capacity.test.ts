@@ -28,7 +28,7 @@ const direct = (t: LeaseLedger): LeaseClient => ({
 });
 
 const notes: Record<string, ModelWait | null> = {};
-function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void } = {}) {
+function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void; waiting?: () => boolean } = {}) {
   return new CapacityGate({ client, holder, clock, setWait: (w) => void (notes[holder] = w), ...extra });
 }
 function begin(g: CapacityGate) {
@@ -328,6 +328,28 @@ test('a shared call that takes a lease during a wait gives it back when it ends;
     await clock.settle();
     assert.deepEqual(heldBy(), waiting ? [] : ['s'], waiting ? 'the lease goes back' : 'the run keeps its lowest lease');
   }
+});
+
+test('during a parent\'s wait, a child\'s call keeps its lease between turns, and the child\'s judge ride does not drop it', async () => {
+  fresh(2);
+  const g = gate('s', direct(table), { waiting: () => true });
+  g.end(await g.begin('swap'));
+  assert.deepEqual(heldBy(), ['s'], 'a non-shared call keeps the run\'s lowest lease');
+  g.end(await g.begin('swap', undefined, true));
+  await clock.settle();
+  assert.deepEqual(heldBy(), ['s'], 'a ride on a held lease does not give it back');
+});
+
+test('during a wait, a parallel call\'s spare lease still goes back when it ends while another call runs', async () => {
+  fresh(3);
+  const g = gate('s', direct(table), { waiting: () => true });
+  const first = await g.begin('swap');
+  const second = await g.begin('swap');
+  await g.begin('swap');
+  g.end(first);
+  g.end(second);
+  await clock.settle();
+  assert.deepEqual(heldBy().sort(), ['s', 's#2'], 'one free lease kept, the spare dropped, the running call\'s held');
 });
 
 test('a non-judge call ending mid-round leaves the lease the round rides held until its last ride ends', async () => {
