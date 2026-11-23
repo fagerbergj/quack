@@ -102,7 +102,7 @@ test('the fold: an unnamed definition and one implementing a non-goal are each a
   assert.deepEqual([unasked.weight, nonGoal.weight], [-2, -1], 'the two halves share the weight adds_unasked had alone');
 });
 
-// The spec's score with meets_intent met and every gate and contradicts_guide clean, so only the two unasked checks cost anything.
+// The spec's score with meets_intent met and every gate clean, so only the two unasked checks cost anything.
 const scoreWith = (...checks: CheckResult[]) => score(contractRubric, [{ criterion: 'matches_intent', id: 'meets_intent', label: '', weight: 4, met: true, units: 1, resolvers: {}, notes: [] }, ...checks]).score;
 const yes = () => 'yes';
 

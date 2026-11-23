@@ -13,7 +13,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, decisionModelTokens, registerSelector, type Declaration, type Evidence, type Unit } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
-import { contractDeclaration, guideRules, kinds, manifest, recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
+import { contractDeclaration, kinds, manifest, recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
 import { fakeClef } from './clef.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 
@@ -74,29 +74,20 @@ test('typescript: one definition per declaration with its TSDoc, and together wi
   assert.match(money, /^\/\*\*[\s\S]*export type Money = /, 'the TSDoc goes with its declaration');
 });
 
-test('every choice and definition unit of the approved contracts fits the decision model', async () => {
+test('every definition unit of the approved contracts fits the decision model', async () => {
   const counts: Record<string, number> = {};
   for (const [name, spec] of [['lifecycle', lifecycle], ['store-port', storePort], ['sdk', wrap('typescript', sdk)], ['env', wrap('json-schema', env)]] as const) {
     const ev: Evidence = await evidenceOf(spec);
-    for (const scope of ['choice', 'definition']) {
-      const over = ev[scope].filter((u) => decisionModelTokens(u, checksOf(scope)) >= 8192);
-      assert.deepEqual(ids(over), [], `${name} ${scope}`);
-      counts[`${name} ${scope}`] = ev[scope].length;
-    }
+    const over = ev.definition.filter((u) => decisionModelTokens(u, checksOf('definition')) >= 8192);
+    assert.deepEqual(ids(over), [], name);
+    counts[name] = ev.definition.length;
   }
-  assert.deepEqual(counts, {
-    'lifecycle choice': 23, 'lifecycle definition': 30, 'store-port choice': 19, 'store-port definition': 28, 'sdk choice': 0, 'sdk definition': 82, 'env choice': 0, 'env definition': 19,
-  });
+  assert.deepEqual(counts, { lifecycle: 30, 'store-port': 28, sdk: 82, env: 19 });
 });
 
-test('a choice unit holds its decision and the rules it cites, with the whole guide as shared context; a definition unit shares the kind and the purpose', async () => {
+test('a definition unit shares the kind and the purpose, and no choice is judged against the guide', async () => {
   const ev = await evidenceOf(lifecycle);
-  const rules = guideRules(kinds.rest.skill);
-  const errors = ev.choice.find((u) => u.id === 'choice errors')!;
-  assert.deepEqual(errors.state, { choice: { ...lifecycle.choices.find((c) => c.id === 'errors'), cites: ['errors'] } });
-  assert.match(rules.get('errors')!, /^Check\. Errors are `application\/problem\+json`/);
-  assert.deepEqual(errors.shared, { guide: Object.fromEntries(rules) });
-  assert.ok(ev.choice.every((u) => JSON.stringify(u.shared) === JSON.stringify(errors.shared)), 'one guide for every choice, so they pack together');
+  assert.equal(ev.choice, undefined, 'contradicts_guide is gone, so no scope splits the choices');
   assert.deepEqual(ev.definition[0].shared, { kind: 'rest', purpose: lifecycle.intent.purpose }, 'every definition shares only the kind and the purpose, so they pack together');
   assert.deepEqual(Object.keys(ev.definition[0].state), ['definition', 'consumersAndGuarantees'], 'no definition carries the whole intent');
   const covered = async (spec: ContractSpec, id: string) => {
@@ -205,7 +196,7 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('with Clef on, Clef answers every choice and every definition code did not settle, and the judge model every guarantee', async (t) => {
+test('code settles every definition of the lifecycle spec, so Clef is asked nothing and the judge model answers the guarantees', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
   const models = createModels();
@@ -217,7 +208,7 @@ test('with Clef on, Clef answers every choice and every definition code did not 
   const content = JSON.stringify(lifecycle);
   const inputs = await inputsOf(lifecycle);
   const { rows } = await replayJudge({
-    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'contradicts_guide', 'adds_unasked', 'implements_non_goal'], content, inputs }],
+    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'adds_unasked', 'implements_non_goal'], content, inputs }],
     arms: [{ label: 'clef', adapters, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });
@@ -226,12 +217,10 @@ test('with Clef on, Clef answers every choice and every definition code did not 
   const asked = ev.definition.filter((u) => !u.related?.covered).length;
   assert.deepEqual(by, {
     meets_intent: { met: 1, clef: 0, esc: ev.guarantee.length },
-    contradicts_guide: { met: 0, clef: 23, esc: 0 },
     adds_unasked: { met: 0, clef: asked, esc: 0 },
     implements_non_goal: { met: 0, clef: 0, esc: 0 },
   });
   const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
   assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, 23 + asked + pairs, 'one question per unit, and none for a guarantee');
-  assert.ok(clef.asked.length <= 6, `units sharing a guide or the kind are packed: ${clef.asked.length} requests`);
+  assert.equal(clef.asked.flat().length, asked + pairs, 'one question per unit, and none for a guarantee');
 });

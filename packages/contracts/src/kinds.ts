@@ -12,7 +12,7 @@ import { lintTypeScript } from './typescript-rules.ts';
 /** A contract kind: how to read a contract in from code, check it, hint a renderer, and the guide its checks are judged against. */
 export type ContractKind = {
   name: ContractSpec['kind'];
-  /** The authoring guide; also the rubric source for the judged check. */
+  /** The authoring guide; its headings are the refs a choice must resolve to, and its checked rules the document gate enforces. */
   skill: string;
   /** The kind's standard document from an existing contract file. */
   extract(source: string): unknown;

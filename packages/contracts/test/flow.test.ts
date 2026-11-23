@@ -30,7 +30,7 @@ const jf = { kind: 'person', name: 'jf' } as const;
 
 // A stub model: judge questions ("Decision: ..." or batched "Evidence: ...") get "yes", except the pitfall questions; everything else follows the script in order.
 const judgeReply = (p: string) => {
-  const answer = (q: string) => ({ choice: /implement the non-goal|contradict a guide rule/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
+  const answer = (q: string) => ({ choice: /implement the non-goal/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
   if (p.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(answer(p)));
   if (p.startsWith('Evidence:')) return fauxAssistantMessage(JSON.stringify(Object.fromEntries([...p.matchAll(/^- (q\d+): ([\s\S]*?)\n  Options:/gm)].map(([, id, q]) => [id, answer(q)]))));
   return undefined;
