@@ -1,5 +1,5 @@
 import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
-import { parseReview, type ReviewFacts } from './review.ts';
+import { parseReview, type Citation, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
 const factsOf = (ev: Evidence) => ev.facts[0].state.facts as unknown as ReviewFacts;
@@ -30,10 +30,10 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 }
 
 // v0's five code-reviewer criteria, kept to checks that caught a real fault in a prod review; reviewDeclaration says how each
-// model check is asked. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
+// model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 13,
+  version: 14,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -41,9 +41,8 @@ export const reviewerRubric: Rubric = {
     ] },
     { id: 'claims_grounded', checks: [
       { id: 'cites_existing_lines', label: "Cites a line that doesn't exist", weight: 'gate', code: citesExistingLines },
-      { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3 },
+      { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3, miss: 4 },
       { id: 'verified_names_evidence', label: 'Says verified without saying what was run', weight: 2 },
-      { id: 'contradicted', label: 'Cited code contradicts the finding', weight: -4 },
     ] },
     { id: 'constructive_actionable', checks: [
       { id: 'shows_proposed_change', label: 'Proposes a change without showing the code', weight: 2 },
@@ -81,12 +80,17 @@ function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
 }
 registerSplitter('github.descriptionParts', descriptionParts);
 
+// One item per path:line a finding cites, grouped by finding: the finding goes once on the group's shared context.
+const citationItems = (inputs: Inputs): Chunk[] => (JSON.parse(inputs.citations) as Citation[]).map((c, n, all) => ({ id: `${c.group}.${all.slice(0, n + 1).filter((o) => o.group === c.group).length}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
+registerSplitter('github.citations', citationItems);
+
 // A backticked command line: env assignments, a lowercase executable, then arguments, flags or quoted strings.
 const ARG = String.raw`(?:'[^'\`]*'|"[^"\`]*"|-{1,2}[\w-]*(?:=[^\s\`]+)?|[\w./:@*=+-]+)`;
 const COMMAND = new RegExp(String.raw`\`(?:[A-Z_]+=[^\s\`]+\s+)*[a-z][a-z0-9._-]*(?:\s+${ARG})+\``, 'g');
-// The sources a Verified item can name, found in code so Clef is asked only about items naming none: a backticked
-// command or code it read, a file:line, a commit, a URL, CI (the word, or the PR's own checks), or a search it ran.
-const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/, /https?:\/\/\S+/, /\bCI\b/, /`[A-Za-z_$][\w$.]*(?:\(\))?`/];
+// The sources a Verified item can name, found in code so Clef is asked only about items naming none: a command or code it
+// read, a file with or without a line, a commit, a URL, CI or the PR's checks, a search.
+const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/, /https?:\/\/\S+/, /\bCI\b/, /`[A-Za-z_$][\w$.]*(?:\(\))?`/,
+  /\b[\w-]+(?:\/[\w.-]+)*\.(?:[cm]?[jt]sx?|json|md|go|py|rs|kt|java|ya?ml|toml|sql|sh|css|html)\b/];
 // A claim that something is absent (a negation, then a reference, import, use or caller) is backed only by a named search.
 const ABSENCE = /\b(?:no|not|nothing|none|nowhere|zero)\b\W+(?:\w+\W+){0,3}?(?:referenc\w*|import\w*|us(?:e|es|ed|age)|call(?:s|ed|ers?)?|remain\w*|left)\b|\b(?:referenc\w*|import\w*|used|called)\s+nowhere\b/i;
 const SEARCH_TOOL = /\b(?:grep|rg|ag|ack|find|search)\b/;
@@ -114,6 +118,7 @@ export const reviewDeclaration: Declaration = {
     finding: findings(),
     blocking: findings('truthy'),
     nonblocking: findings('falsy'),
+    citation: { split: { name: 'github.citations', from: 'citations' }, piece: 'excerpt' },
     // Each part sees the whole diff (cut at 120k characters; retrieved hunks missed delivering helpers). With it a part rarely
     // fits Clef, so promises skip Clef and go to the judge model, all of one review's parts in one request.
     promise: {
@@ -129,11 +134,10 @@ export const reviewDeclaration: Declaration = {
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
     promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: false, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, reported in the review as a blocking finding, or intentionally not delivered with the review explaining why the promise was walked back? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
-    matches_cited_code: { scope: 'finding', aggregate: SHARE, question: yes('Does the cited code show what this finding says about it?') },
-    // Clef reads a loosely named source (a file without a line, a described search) as none, so the judge model answers.
-    verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, decisionModel: false, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
-    // Clef answers this without tracing the cited code, so it goes to the judge model.
-    contradicted: { scope: 'finding', aggregate: SHARE, decisionModel: false, question: defect('Does the cited code contradict this finding?') },
+    // A finding holds when every line it cites shows what it says there; a contradiction is the plainest way it does not.
+    matches_cited_code: { scope: 'citation', aggregate: { name: 'grouped', groupBy: 'group', inner: 'all', outer: 'share' }, question: yes('Does this excerpt show what the finding says about the code at its `cite`, without contradicting the finding?') },
+    // An item that names a source holds in code, so Clef is asked only of items that name none.
+    verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
     shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show the whole change in a fenced block with a language tag, or in inline backticks when it fits on one line (or does it propose no specific change)?') },
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
     blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?') },

@@ -42,9 +42,9 @@ export type GateOptions = {
   setWait?: (wait: ModelWait | null) => void;
 };
 
-/** `rides` counts the shared calls running under the lease; a lease with any is neither reused nor released by `end`.
+/** `busy` or `rides` (0 or 1) is the one call in flight on the lease, which is then neither reused nor released by `end`; `riders` are the shared calls queued for their turn.
  * A `lent` lease is one a shared call was granted during a wait: it goes back once free, instead of staying as the run's kept lease. */
-type Held = { idx: number; endpoint: string; busy: boolean; rides: number; granted?: true; lent?: true; stopBeat: () => void };
+type Held = { idx: number; endpoint: string; busy: boolean; rides: number; riders: Array<() => void>; granted?: true; lent?: true; stopBeat: () => void };
 /** One begun model call; `end` takes it back so the call frees its own lease, whatever order calls finish in. */
 export type GatedCall = { lease?: Held; ride?: true };
 const free = (l: Held) => !l.busy && !l.rides;
@@ -61,7 +61,8 @@ export class CapacityGate {
   #releasing = Promise.resolve();
   #downUntil = 0;
   #warned = false;
-  #queued = new Map<Held, ModelWait>();
+  // Keyed by a lease queued at the service, or by a ride waiting its turn on a held lease.
+  #queued = new Map<object, ModelWait>();
 
   constructor(options: GateOptions) {
     this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setWait: () => {}, ...options, clock: options.clock ?? realClock };
@@ -71,7 +72,7 @@ export class CapacityGate {
   #holder = (l: Held) => (l.idx ? `${this.#o.holder}#${l.idx}` : this.#o.holder);
 
   /** Holds a lease on `endpoint` before a model request, one per call in flight; resolves when granted, or at once if the service is down (fail-open).
-   * A `shared` call (the judge's) runs under the run's own lease, taking one only when the run holds none. */
+   * A `shared` call (the judge's) runs under the run's own lease, taking one only when the run holds none, and waits while another call is in flight on it. */
   async begin(endpoint: string, signal?: AbortSignal, shared = false): Promise<GatedCall> {
     const call: GatedCall = {};
     this.#calls.add(call);
@@ -85,13 +86,14 @@ export class CapacityGate {
     return call;
   }
 
-  /** A model response ended. Without `call`, the newest open one ends. */
+  /** A model response ended. Without `call`, the newest open one that holds a lease ends, so a ride still waiting its turn is never taken for it. */
   end(call?: GatedCall): void {
-    const done = call ?? [...this.#calls].at(-1);
+    const done = call ?? [...this.#calls].findLast((c) => c.lease) ?? [...this.#calls].at(-1);
     if (!done || !this.#calls.delete(done) || !done.lease) return;
     const lease = done.lease;
-    if (done.ride) lease.rides--;
+    if (done.ride) lease.rides = 0;
     else lease.busy = false;
+    this.#nextRide(lease);
     // The run keeps its lowest-numbered free lease per endpoint that it is not lending; a parallel call's extra one goes back with the call.
     const idleOn = this.#leases.filter((l) => free(l) && l.endpoint === lease.endpoint);
     const keep = idleOn.filter((l) => !l.lent).sort((a, b) => a.idx - b.idx)[0];
@@ -118,20 +120,49 @@ export class CapacityGate {
 
   // Every shared call rides a granted lease, the one it took included; with none held, the first takes one and the rest wait for it.
   async #share(endpoint: string, signal?: AbortSignal): Promise<Held | undefined> {
-    const held = this.#leases.find((l) => l.granted && l.endpoint === endpoint);
-    if (held) return Object.assign(held, { rides: held.rides + 1 });
+    const ours = this.#leases.filter((l) => l.granted && l.endpoint === endpoint);
+    const held = ours.find(free) ?? ours[0];
+    if (held) return this.#ride(held, signal);
     const pending = this.#taking.get(endpoint);
     if (pending) {
       const got = await pending.catch(() => undefined);
-      return got && this.#leases.includes(got) ? Object.assign(got, { rides: got.rides + 1 }) : undefined;
+      return got && this.#leases.includes(got) ? this.#ride(got, signal) : undefined;
     }
-    const taking = this.#lease(endpoint, signal, true).then((l) => l && Object.assign(l, { busy: false, rides: l.rides + 1 }));
+    const taking = this.#lease(endpoint, signal, true).then((l) => l && Object.assign(l, { busy: false, rides: 1 }));
     this.#taking.set(endpoint, taking);
     try {
       return await taking;
     } finally {
       this.#taking.delete(endpoint);
     }
+  }
+
+  // A lease carries one model call at a time, so a judge round adds no lane or KV load beyond its session's slot; the rest queue in order.
+  async #ride(lease: Held, signal?: AbortSignal): Promise<Held | undefined> {
+    if (free(lease)) return Object.assign(lease, { rides: 1 });
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const leave = () => (this.#queued.delete(go), this.#listRiders(lease));
+      const stop = () => (lease.riders.splice(lease.riders.indexOf(go), 1), leave(), reject(signal!.reason));
+      const go = () => (signal?.removeEventListener('abort', stop), leave(), resolve(this.#leases.includes(lease) ? lease : undefined));
+      lease.riders.push(go);
+      this.#listRiders(lease);
+      signal?.addEventListener('abort', stop, { once: true });
+    });
+  }
+
+  // A ride waiting its turn reports as a call queued at the service does: since it began, and the rides ahead of it.
+  #listRiders(lease: Held) {
+    lease.riders.forEach((go, ahead) => this.#queued.set(go, { since: this.#queued.get(go)?.since ?? this.#o.clock.now(), ahead, provider: lease.endpoint }));
+    this.#publish();
+  }
+
+  // A call's end hands the lease straight to the next queued rider, so a non-shared call never finds it free in between.
+  #nextRide(lease: Held) {
+    const next = lease.riders.shift();
+    if (!next) return;
+    lease.rides = 1;
+    next();
   }
 
   // A run keeps one slot per gated endpoint until it ends or waits: gating a second provider the judge or decide uses
@@ -141,7 +172,7 @@ export class CapacityGate {
     if (idle) return Object.assign(idle, { busy: true });
     // Pushed before the first await, so a concurrent call takes the next index.
     const idx = Array.from({ length: this.#leases.length + 1 }, (_, i) => i).find((i) => !this.#leases.some((l) => l.idx === i))!;
-    const lease: Held = { idx, endpoint, busy: true, rides: 0, stopBeat: () => {} };
+    const lease: Held = { idx, endpoint, busy: true, rides: 0, riders: [], stopBeat: () => {} };
     this.#leases.push(lease);
     try {
       const got = await this.#acquire(lease, signal);
@@ -157,9 +188,11 @@ export class CapacityGate {
     return undefined;
   }
 
+  // Riders still queued on a lease that goes away run ungated, as a call does when the service is down.
   #remove(lease: Held) {
     lease.stopBeat();
     this.#leases = this.#leases.filter((l) => l !== lease);
+    for (const go of lease.riders.splice(0)) go();
   }
 
   async #drop(lease: Held): Promise<void> {

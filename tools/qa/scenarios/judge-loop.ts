@@ -3,19 +3,33 @@ import { paneOf, visible, type Scenario } from '../scenario.ts';
 
 // The research agent through the judge extension, with the fake model as both writer and judge (no judgeModel: the agent's own).
 const SOURCE = 'https://example.com/';
-const report = (cites: string) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n- Example.com is reserved for examples in documents. ${cites}\n`;
+const GOOD = 'Example.com is reserved for examples in documents.';
+const BAD = 'Example.com is run by the moon.';
+const report = (finding: string) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n- ${finding} [s1]\n`;
 const text = (m: { content?: unknown }) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
+
+// supported_by_source answers no for BAD; contradicted_by_source answers no for both drafts. The regexes key on the question wording in packages/research/src/report.ts.
+const verdict = (question: string, evidence: string) => (/contradict it\?|conflict with another passage/.test(question) || (evidence.includes(BAD) && /state what the finding claims/.test(question)) ? 'no' : 'yes');
+const choice = (c: string) => ({ choice: c, confidence: 1, reason: 'qa' });
+
+// The judge asks both source checks of a finding in one packed request ({"q0":..,"q1":..}); answer each question by its own text, and a single question by the whole request.
+function judgeReply(all: string, prompt: string) {
+  if (process.env.JL_DEBUG) console.log("JUDGE", prompt.slice(0, 150).replace(/\n/g, " "), "..", prompt.slice(-200).replace(/\n/g, " "));
+  if (!/"q0": \{/.test(prompt)) return { content: JSON.stringify(choice(verdict(all, all))) };
+  const qs = [...prompt.matchAll(/^- (q\d+): (.*)$/gm)];
+  return { content: JSON.stringify(Object.fromEntries(qs.map(([, id, q]) => [id, choice(verdict(q, prompt))]))) };
+}
 
 // The writer's next move from the flow its input names and the last tool result; a request without tools is the judge asking.
 const script: FakeScript = ({ messages = [], tools = [] }) => {
   const all = JSON.stringify(messages);
-  if (!tools.length) return { content: JSON.stringify({ choice: /contradict it\?|conflict with another passage/.test(all) ? 'no' : 'yes', confidence: 1, reason: 'qa' }) };
+  if (!tools.length) return judgeReply(all, text(messages.at(-1) ?? {}));
   const flow = text(messages.find((m) => m.role === 'user') ?? {});
   const last = messages.at(-1)?.role === 'tool' ? text(messages.at(-1)!) : '';
   const written = messages.filter((m) => m.role === 'tool' && /passed|failed/.test(text(m))).length;
   if (!last) return { tool: { name: 'web_fetch', arguments: { urls: [SOURCE] } } };
   if (/passed\.|Stop: this run is over/.test(last) || (/revision limit is reached/.test(last) && !flow.includes('flow:past'))) return { content: 'Done.' };
-  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: report(written ? '[s1]' : '[s1][s2]') } } };
+  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: report(written ? GOOD : BAD) } } };
   return { tool: { name: 'submit_report', arguments: {} } };
 };
 
@@ -24,7 +38,7 @@ const agent = (maxRevisions: number) => ({
   prompt: 'You research and write artifacts/report.md, then call submit_report.\n',
 });
 
-type Export = { transcript: unknown[]; artifacts: Array<{ kind: string; version: number; verdict: { passed: boolean; limitReached: boolean } | null }> };
+type Export = { transcript: unknown[]; artifacts: Array<{ kind: string; version: number; verdict: { passed: boolean; limitReached: boolean; checks?: Array<{ id: string; label: string; met: number | null }> } | null }> };
 
 async function runFlow(url: string, key: string, agentName: string, flow: string): Promise<{ results: string; versions: Export['artifacts'] }> {
   const res = await fetch(`${url}/sessions/${key}/invocations?agent=${agentName}`, { method: 'POST', body: JSON.stringify({ input: `flow:${flow} What is example.com for?`, wait: true }) });
@@ -47,7 +61,9 @@ const scenario: Scenario = {
     await ctx.step('revise then pass: a failing version comes back, the revision passes', async () => {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-revise', 'qa-judge-2', 'revise');
       expect(JSON.stringify(versions.map((v) => v.verdict?.passed)) === '[false,true]', 'verdicts', versions);
-      expect(/cites s2, which this session never fetched/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
+      const check = versions[0].verdict?.checks?.find((c) => c.id === 'supported_by_source');
+      expect(check?.met === 0 && check.label === "A finding isn't stated by its source", 'supported_by_source judged the claim (a dropped claim unit would pass the draft)', versions[0]);
+      expect(/missed claims_grounded\.supported_by_source/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
       expect(/research\.report v2: \d+% \(research\.report@\d+\), passed\. Version 2 is final for this run; finish without revising it\./.test(results), 'the pass note', results);
     });
     await ctx.step('limit release: a failing version at the limit goes out with its failures marked', async () => {

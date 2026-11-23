@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { ledgerId } from './Artifacts.tsx';
-import { delivered, versionOf } from './delivered.ts';
+import { byVerdict, delivered, versionOf, type MarkOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
 import { compact, needId, spendLabel } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
@@ -11,7 +11,7 @@ import type { View } from './view.ts';
 import { useMedia, WIDE } from './useDesktop.ts';
 import { RailSections } from './slots.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
-import { verdictMark, VersionMark } from './VersionMenu.tsx';
+import { VersionMark } from './VersionMenu.tsx';
 
 const head = 'm-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase';
 const jumpBtn = 'flex min-h-11 w-full cursor-pointer items-start border-0 bg-transparent p-0 text-left text-[13px] text-ink lg:min-h-8';
@@ -28,13 +28,13 @@ const clock = (at: string | number) => new Date(at).toLocaleString(undefined, { 
 const RECENT_VERSIONS = 3;
 
 // The row shows the number and a mark; what it means, where it went and when are its tooltip and spoken label.
-function detail(a: SealedArtifact): string {
+function detail(a: SealedArtifact, markOf: MarkOf): string {
   const postedTo = EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.postedTo;
   const posted = a.links?.length ? (postedTo ?? 'Posted') : '';
-  return [`v${versionOf(a)}`, verdictMark(a.verdict).status, posted, clock(a.sealedAt)].filter(Boolean).join(', ');
+  return [`v${versionOf(a)}`, markOf(a).status, posted, clock(a.sealedAt)].filter(Boolean).join(', ');
 }
 
-function Versions({ items }: { items: SealedArtifact[] }) {
+function Versions({ items, markOf }: { items: SealedArtifact[]; markOf: MarkOf }) {
   const [all, setAll] = useState(false);
   const kind = items.reduce<SealedArtifact | undefined>((n, a) => (!n || a.sealedAt >= n.sealedAt ? a : n), undefined)?.kind;
   const every = delivered(items.filter((a) => a.kind === kind));
@@ -47,8 +47,8 @@ function Versions({ items }: { items: SealedArtifact[] }) {
       <ul id="rail-version-list" className="m-0 flex list-none flex-col gap-1 p-0">
         {rows.map((a) => (
           <li key={ledgerId(a)}>
-            <button type="button" aria-label={detail(a)} title={detail(a)} onClick={() => jump(ledgerId(a))} className={`${jumpBtn.replace('items-start', 'items-center')} gap-2`}>
-              <span className="font-mono font-semibold">{`v${versionOf(a)}`}</span><VersionMark mark={verdictMark(a.verdict).mark} />
+            <button type="button" aria-label={detail(a, markOf)} title={detail(a, markOf)} onClick={() => jump(ledgerId(a))} className={`${jumpBtn.replace('items-start', 'items-center')} gap-2`}>
+              <span className="font-mono font-semibold">{`v${versionOf(a)}`}</span><VersionMark mark={markOf(a).mark} />
             </button>
           </li>
         ))}
@@ -139,6 +139,7 @@ export type RailData = {
   sessionKey: string; title: string; view: View; meta: readonly Record<string, unknown>[];
   items: SealedArtifact[]; approvals: Approval[]; questions: Question[]; spend?: Spend;
   agent?: string; about?: { agent: string; created: string; activity: string };
+  /** Each version's mark; its verdict when absent. */ markOf?: MarkOf;
 };
 
 /** The session's context: its pull request, versions, what waits on the person, cost and identity. */
@@ -146,7 +147,7 @@ export function RailBody(d: RailData) {
   return (
     <div className="flex flex-col gap-7">
       <RailSections sessionKey={d.sessionKey} title={d.title} opening={openingOf(d.view)} meta={d.meta} />
-      <Versions items={d.items} />
+      <Versions items={d.items} markOf={d.markOf ?? byVerdict} />
       <NeedsYou approvals={d.approvals} questions={d.questions} />
       <Cost spend={d.spend} />
       <SessionInfo agent={d.about?.agent ?? d.agent} created={d.about?.created} activity={d.about?.activity} />

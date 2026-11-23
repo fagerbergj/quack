@@ -631,11 +631,11 @@ test('lists artifacts with their check status and failing criteria', async () =>
   expect(items).toHaveLength(2);
   expect(items[0]).toHaveTextContent("Review didn't pass its checks");
   expect(items[1]).toHaveTextContent(/Review ready/);
-  expect(items[1]).not.toHaveTextContent(/Cards|github\.review|v2|sealed/);
+  expect(items[1]).not.toHaveTextContent(/Cards|github\.review|sealed/);
   // The pane starts collapsed; Open on an older line expands it to that version, and Follow newest jumps to the latest.
   expect(screen.queryByRole('region', { name: 'Review' })).toBeNull();
   expect(section).not.toHaveTextContent('final review');
-  await userEvent.click(within(items[0]).getByRole('button', { name: 'Open Review' }));
+  await userEvent.click(within(items[0]).getByRole('button', { name: /^Open Review v1/ }));
   const pane = screen.getByRole('region', { name: 'Review' });
   expect(within(pane).getByText('draft one')).toBeInTheDocument();
   expect(within(pane).getByRole('button', { name: /^Version: v1, failed checks/ })).toBeInTheDocument();
@@ -650,7 +650,7 @@ test('the artifact pane copies the raw content, and its status is an icon with a
   ws.frame(snapshot());
   const section = await screen.findByRole('log', { name: 'Transcript' });
   await waitFor(() => expect(ledgerOf(section)).toHaveLength(1));
-  await userEvent.click(within(ledgerOf(section)[0]!).getByRole('button', { name: 'Open Review' }));
+  await userEvent.click(within(ledgerOf(section)[0]!).getByRole('button', { name: /^Open Review v1/ }));
   const pane = screen.getByRole('region', { name: 'Review' });
   const picker = within(pane).getByRole('button', { name: 'Version: v1, passed checks' });
   expect(picker).toHaveTextContent(/^v1$/);
@@ -805,7 +805,7 @@ test('a non-studio artifact pane starts collapsed on desktop and expands/collaps
   expect(screen.queryByRole('region', { name: 'Report' })).toBeNull();
   expect(screen.queryByRole('separator')).toBeNull();
   // Opening from the transcript expands the pane; the close button inside the pane collapses it again.
-  await userEvent.click(screen.getByRole('button', { name: 'Open Report version 2' }));
+  await userEvent.click(screen.getByRole('button', { name: /^Open Report v2/ }));
   expect(screen.getByRole('region', { name: 'Report' })).toBeInTheDocument();
   const close = screen.getByRole('button', { name: 'Close Report' });
   expect(close.className).toContain('h-11');
@@ -919,7 +919,7 @@ test('Open on a ledger line shows that version on the pane tab on a phone', asyn
   const ws = await openSession();
   ws.frame(snapshot());
   expect(await screen.findByRole('tab', { name: 'Chat 1' })).toHaveAttribute('aria-selected', 'true');
-  await userEvent.click(screen.getByRole('button', { name: 'Open Report' }));
+  await userEvent.click(screen.getByRole('button', { name: /^Open Report v1/ }));
   expect(screen.getByRole('tab', { name: 'Report' })).toHaveAttribute('aria-selected', 'true');
   expect(within(screen.getByRole('tabpanel', { name: 'Report' })).getByText('first take')).toBeInTheDocument();
 });
@@ -1582,13 +1582,13 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   ws.frame(snapshot());
   ws.frame(view({ run: true }));
   const line = (await screen.findByText('Previous review')).closest<HTMLElement>('[data-ledger]')!;
-  expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
+  expect(line.querySelector('[data-mark]'), 'no mark while a new request runs').toBeNull();
   expect(within(line).queryByRole('region', { name: 'Review' })).toBeNull();
   expect(line).not.toHaveTextContent('Double-checked');
   ws.frame(view({}));
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
   const done = screen.getByText('Review posted').closest<HTMLElement>('[data-ledger]')!;
-  expect(within(done).getAllByRole('img', { name: 'Double-checked' })).toHaveLength(1);
+  expect(done.querySelectorAll('[data-mark="ok"]')).toHaveLength(1);
   // The card, in the pane beside the chat, carries the one Posted link; the line drops its own.
   expect(within(done).queryByRole('link', { name: /Posted/ })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Show Review' }));
@@ -2009,7 +2009,7 @@ describe('the session page as a ledger', () => {
     entry('e4', [at(90, [{ type: 'text', text: 'All done.' }])]),
   ];
 
-  test('each version sits in time order between the work around it, and a revised version shows its round', async () => {
+  test('each version sits in time order between the work around it, and a revised version says which try it was in its tooltip', async () => {
     (live['ui%3Au1'] ??= {}).artifacts = [review(1, 30, fail), review(2, 70, pass)];
     const ws = await openSession();
     ws.frame(snapshot({ entries }));
@@ -2019,8 +2019,10 @@ describe('the session page as a ledger', () => {
     const order = ['Worked', "Review didn't pass its checks", 'Worked', 'Review ready', 'All done.'].reduce<number[]>((acc, s) => [...acc, text.indexOf(s, (acc.at(-1) ?? -1) + 1)], []);
     expect(order.every((n) => n >= 0)).toBe(true);
     const [one, two] = ledgerOf(log);
-    expect(one).not.toHaveTextContent(/revision \d/);
-    expect(two).toHaveTextContent('Version 2 · revision 1');
+    // The line shows the number and mark; which try it was is the tooltip and spoken label.
+    expect(one.querySelector('[data-detail]')).toHaveAttribute('title', expect.stringMatching(/^v1, failed checks/));
+    expect(two.querySelector('[data-detail]')).toHaveAttribute('title', 'v2, passed checks, after 1 failed try');
+    expect(two).not.toHaveTextContent(/revision|Version/);
     expect(screen.queryByRole('region', { name: 'Artifacts' })).toBeNull();
   });
 
@@ -2034,7 +2036,7 @@ describe('the session page as a ledger', () => {
     expect(within(one).getByText(/Double-check failed · 1 to fix$/).closest('details')).toHaveAttribute('open');
     expect(within(one).getByText('The revision must fix')).toBeInTheDocument();
     expect(within(one).getByText('Finding 2 has no line number.')).toBeInTheDocument();
-    expect(within(two).getByRole('img', { name: 'Double-checked' })).toBeInTheDocument();
+    expect(two.querySelector('[data-mark="ok"]')).not.toBeNull();
     expect(within(two).queryByText(/Double-check passed/)).toBeNull();
   });
 

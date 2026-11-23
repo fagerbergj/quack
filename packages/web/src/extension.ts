@@ -1,6 +1,14 @@
 import { createContext, type ComponentType, type ReactNode } from 'react';
 import type { Approval, Artifact, Question, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
+import type { VersionItem } from './VersionMenu.tsx';
+
+/** A version's mark and its words. */
+export type Marking = Pick<VersionItem, 'mark' | 'status'>;
+/** Where one version stands with the person, in its extension's own word (`state`, "proposed"), and how version lists mark it. */
+export type Stand = Marking & { state: string };
+/** Each version's stand from one read, given the open approvals, which the socket can carry before that read has them. */
+export type StandOf = (a: SealedArtifact, approvals: Approval[]) => Stand | undefined;
 
 /** The session an artifact is shown from, for links that open it on its own page. */
 export const SessionKeyContext = createContext<string | undefined>(undefined);
@@ -30,8 +38,8 @@ export type SessionKind = {
 export type ListRow = { open?: string; line?: ReactNode; end?: ReactNode; fold?: { label: string; group: string; ok: boolean } };
 
 /** What a studio pane is given: the session's live artifacts, pending approvals and questions, its opening message, what the run is doing now,
- * and `decided` to drop an approval it settled. */
-export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void; questions: Question[]; brief?: string; activity: string };
+ * `decided` to drop an approval it settled, and `stand`, the one standing read the rail and transcript mark by (undefined until it answers). */
+export type StudioProps = { sessionKey: string; artifacts: SealedArtifact[]; approvals: Approval[]; running: boolean; decided: (id: string) => void; questions: Question[]; brief?: string; activity: string; stand: (a: SealedArtifact) => Stand | undefined };
 
 /** What an extension's web module hands the shell; every field is optional. */
 export type Extension = {
@@ -50,6 +58,9 @@ export type Extension = {
   listRow?: (latest: Artifact[]) => ListRow | undefined;
   /** Artifacts rows that need the extension's own records (a contract's version and mark), read once per list by session key; they override `listRow`. */
   listRows?: (rows: Row[]) => Promise<ReadonlyMap<string, ListRow>>;
+  /** Reads where each sealed version of `kind` stands with the person, drawn in place of its verdict wherever versions are listed; read once per
+   * session view and handed to its studio. Undefined for a kind it does not own; it resolves undefined when there is no answer. */
+  standing?: (sessionKey: string, kind: string) => Promise<StandOf | undefined> | undefined;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** Extra UI beneath a tool call row in the transcript (a subagent's child conversation). */

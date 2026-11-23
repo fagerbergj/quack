@@ -20,7 +20,7 @@ const MARKS: Record<Mark, [string, ReactNode]> = {
 export function VersionMark({ mark }: { mark?: Mark }) {
   if (!mark) return null;
   const [cls, g] = MARKS[mark];
-  return <span aria-hidden="true" className={`grid h-5 w-5 flex-none place-items-center rounded-full ${cls}`}>{g}</span>;
+  return <span aria-hidden="true" data-mark={mark} className={`grid h-5 w-5 flex-none place-items-center rounded-full ${cls}`}>{g}</span>;
 }
 
 /** A sealed version's mark and words from its verdict: over REST it has none, and null means its checks are still running. */
