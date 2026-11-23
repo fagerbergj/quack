@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
@@ -16,6 +16,7 @@ import { useMenu } from './useMenu.ts';
 import { useDesktop } from './useDesktop.ts';
 import { useStickToBottom } from './useStickToBottom.ts';
 import { stepLabel } from './step.ts';
+import { Waiting } from './Waiting.tsx';
 import { externalLink, pendingInput } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
 import { MoreIcon } from './MoreIcon.tsx';
@@ -28,7 +29,7 @@ import { composerKeyDown } from './composer.ts';
 
 type Standing = { questions: Question[]; failures: Failure[]; approvals: Approval[] };
 type Queued = { id: string; text: string };
-type Frame = { type: 'queued'; items: Queued[] } | { type: 'artifacts'; artifacts: SealedArtifact[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
+type Frame = { type: 'queued'; items: Queued[] } | { type: 'waiting'; waiting: ModelWait | null } | { type: 'artifacts'; artifacts: SealedArtifact[] } | ViewFrame | ({ type: 'standing' } & Standing) | { type: 'error'; error: string; requestId?: string } | { type: 'accepted'; requestId?: string };
 
 let nextRequest = 0;
 
@@ -43,6 +44,7 @@ function useSocket(key: string, agent: string | undefined) {
   const [standing, setStanding] = useState<Standing>({ questions: [], failures: [], approvals: [] });
   const [artifacts, setArtifacts] = useState<SealedArtifact[]>([]);
   const [queued, setQueued] = useState<Queued[]>([]);
+  const [wait, setWait] = useState<ModelWait | null>(null);
   // One per input in flight, keyed by the requestId the server echoes on its `accepted` or `error`; it handles inputs concurrently, so answers can arrive out of order.
   const acks = useRef(new Map<string, (ok: boolean) => void>());
   const settle = (id: string | undefined, ok: boolean) => {
@@ -83,6 +85,7 @@ function useSocket(key: string, agent: string | undefined) {
         } else if (frame.type === 'standing') setStanding(frame);
         else if (frame.type === 'artifacts') setArtifacts(sealedFrom(frame.artifacts));
         else if (frame.type === 'queued') setQueued(frame.items);
+        else if (frame.type === 'waiting') setWait(frame.waiting);
         else if (frame.type === 'error') (setError(frame.error), settle(frame.requestId, false));
         else if (frame.type === 'accepted') settle(frame.requestId, true);
       };
@@ -111,7 +114,7 @@ function useSocket(key: string, agent: string | undefined) {
   const unqueue = useCallback((type: 'withdraw' | 'steer', id: string) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }))), []);
   // An earlier or gap row asks the server for the entries the window does not hold.
   const load = useCallback((req: { type: 'earlier' } | { type: 'gap'; after: number; upTo: number }) => void (ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify(req))), []);
-  return { view, state, error, setError, standing, artifacts, queued, send, unqueue, load };
+  return { view, state, error, setError, standing, artifacts, queued, wait, send, unqueue, load };
 }
 
 const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
@@ -320,9 +323,11 @@ function useSeed(sessionKey: string, state: SocketState, send: Send) {
 }
 
 // While the judge runs, its criteria and each result as it lands replace the bare step label.
-function Running({ view, waiting, active }: { view: View; waiting: boolean; active: boolean }) {
+function Running({ view, waiting, active, queued }: { view: View; waiting: boolean; active: boolean; queued?: ModelWait }) {
   if (waiting) return <Working label="Waiting for you" />;
   if (!active) return null;
+  // Queued for a model slot nothing generates, so the line is still: no paddling duck.
+  if (queued) return <p className="m-0 text-[13px] text-muted"><Waiting w={queued} /></p>;
   const checks = liveChecks(view.tool?.details);
   if (!checks) return <Working label={stepLabel(view)} />;
   return (
@@ -335,7 +340,7 @@ function Running({ view, waiting, active }: { view: View; waiting: boolean; acti
 
 const NO_META: Array<Record<string, unknown>> = [];
 // A running step names itself; waiting, idle or failed reads as the header's status.
-const activityOf = (status: string, tone: Tone, view: View) => (tone === 'run' ? stepLabel(view) : status);
+const activityOf = (status: string, tone: Tone, view: View, queued?: ModelWait) => (tone === 'run' ? (queued ? 'Waiting…' : stepLabel(view)) : status);
 
 // The reason a studio's approval is declined with when the person writes instead of approving; their message says the rest.
 export const SUPERSEDED = 'Sent a message instead';
@@ -441,7 +446,7 @@ function JumpToLatest({ away, onClick }: { away: boolean; onClick: () => void })
 const chatClass = (live: Live) => [live.paneOpen && 'lg:w-(--chat-w) lg:max-w-[calc(100%-360px)] lg:min-w-[320px] lg:flex-none', live.label && live.tab !== 'chat' && 'max-lg:hidden'].filter(Boolean).join(' ');
 
 export function SessionView({ sessionKey, agent, name, spend, manage, about }: { sessionKey: string; agent?: string; name: SessionTitle; spend?: Spend; manage?: Manage; about?: { agent: string; created: string; activity: string } }) {
-  const { view, state, error, setError, standing, artifacts: items, queued, send, unqueue, load } = useSocket(sessionKey, agent);
+  const { view, state, error, setError, standing, artifacts: items, queued, wait, send, unqueue, load } = useSocket(sessionKey, agent);
   const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null);
   const stopRun = useCallback(() => abortRun(sessionKey), [sessionKey]);
   const abort = () => stopRun().catch((e: Error) => setError(e.message));
@@ -454,6 +459,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const details = useDetails(!live.paneOpen);
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
+  const queuedWait = wait && tone === 'run' ? wait : undefined;
   const paneStyle = usePaneStyle();
   const bottom = useStickToBottom();
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
@@ -480,7 +486,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
             {/* A studio pane answers its session's questions above the contract, so the chat does not repeat them. */}
             {!live.studio && <SessionQuestions sessionKey={sessionKey} items={standing.questions} />}
             <SessionFailures sessionKey={sessionKey} items={standing.failures} />
-            <Running view={view} waiting={waiting > 0} active={tone === 'run'} />
+            <Running view={view} waiting={waiting > 0} active={tone === 'run'} queued={queuedWait} />
           </div>
         </div>
         {/* On a phone the keyboard leaves room for an open answer field or the composer, not both; focus would flicker it under a tap. */}
@@ -492,7 +498,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
         </div>
       </div>
       {live.paneOpen && <div {...split.separator} className="relative hidden w-px flex-none cursor-col-resize bg-line outline-none before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-line-strong focus-visible:bg-link focus-visible:ring-2 focus-visible:ring-link lg:block" />}
-      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
+      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view, queuedWait)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />
     </div>

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
-import { appEndpoint, gateGenerations, onRunEnded, onWaiting, statusNote, waitingNow } from '@quack/sdk';
+import { appEndpoint, gateGenerations, modelWait, onRunEnded, onWaiting, waitingNow } from '@quack/sdk';
 import { CapacityGate, httpClient, type GateOptions, type GatedCall } from './gate.ts';
 
 export type CapacityConfig = Partial<Pick<GateOptions, 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
@@ -24,7 +24,7 @@ function reachable() {
 export function capacitySessionExtensions(config: CapacityConfig, gate?: CapacityGate): Extension[] {
   const holder = config.holder ?? randomUUID();
   if (!gate && !(config.serviceUrl && config.serviceToken)) return [];
-  const g = gate ?? new CapacityGate({ ...config, holder, client: httpClient(config.serviceUrl!, config.serviceToken!), setNote: statusNote.set, waiting: () => waitingNow() > 0 });
+  const g = gate ?? new CapacityGate({ ...config, holder, client: httpClient(config.serviceUrl!, config.serviceToken!), setWait: modelWait.set, waiting: () => waitingNow() > 0 });
   onWaiting((n) => n > 0 && void g.idle());
   // Direct completions (the judge, workflow model steps) bypass GenerationTask, so they take the same lease.
   gateGenerations({ before: (provider, signal, shared) => g.begin(provider, signal, shared), after: (call) => g.end(call as GatedCall) });

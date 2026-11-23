@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { Artifacts, decide, gated, person } from '@quack/sdk';
+import { Artifacts, decide, gated, modelWait, person } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
 import { nextFrame, runEnded } from './ws-helpers.ts';
 
@@ -32,6 +32,32 @@ test('shutdown closes the server while a page holds its live socket open', async
 
 const dir = await mkdtemp(join(tmpdir(), 'quack-live-'));
 after(() => rm(dir, { recursive: true, force: true }));
+
+test('a session queued for a model slot sends a waiting frame on connect and on each change, and /ping reports it', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const own = await mkdtemp(join(tmpdir(), 'quack-live-'));
+  after(() => rm(own, { recursive: true, force: true }));
+  const session = await openSession({ dir: own, models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `127.0.0.1:${(server.address() as AddressInfo).port}`;
+  modelWait.set({ since: 1000, ahead: 2, provider: 'local' });
+  const ws = new WebSocket(`ws://${base}/ws`);
+  assert.deepEqual((await nextFrame(ws, (f) => f.type === 'waiting')).waiting, { since: 1000, ahead: 2, provider: 'local' });
+  const ping = await fetch(`http://${base}/ping`).then((r) => r.json());
+  assert.deepEqual(ping.waiting, { since: 1000, ahead: 2, provider: 'local' });
+  assert.equal(ping.note, 'Waiting for model capacity (2 ahead)');
+  const cleared = nextFrame(ws, (f) => f.type === 'waiting' && f.waiting === null);
+  modelWait.set(null);
+  await cleared;
+  assert.equal((await fetch(`http://${base}/ping`).then((r) => r.json())).waiting, undefined);
+  ws.close();
+  await server.shutdown();
+  await session.close();
+});
 
 test('streams the conversation view, then the run, and accepts input over the socket', async () => {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });

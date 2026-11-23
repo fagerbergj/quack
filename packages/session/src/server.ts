@@ -125,9 +125,9 @@ async function resume(session: Session): Promise<[number, unknown]> {
 // The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the messages, approvals, questions, failures, artifacts and abort of this session.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => {
-    const { busy, waitingOnHuman, wakeAt, note } = await s.standing();
+    const { busy, waitingOnHuman, wakeAt, waiting, note } = await s.standing();
     // pid lets a process host tell its own child from a stranger that took the port first.
-    return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
+    return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined, waiting: waiting ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
   ['GET', /^\/messages$/, messages],

@@ -4,7 +4,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { ConversationTranscript, type TranscriptItem, type TranscriptView } from '@earendil-works/pi-durable';
 import { MAX_IMAGE_CHARS, MAX_IMAGES, parseImages } from './images.ts';
 import type { ImageContent } from '@earendil-works/pi-ai';
-import { Approvals, Artifacts, failedRows, Failures, pendingQuestions, type Principal, Questions } from '@quack/sdk';
+import { Approvals, Artifacts, failedRows, Failures, modelWait, pendingQuestions, type ModelWait, type Principal, Questions } from '@quack/sdk';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Caller, Session } from './runtime.ts';
 
@@ -117,6 +117,11 @@ async function stream(session: Session, ws: WebSocket, caller: Caller) {
       ws.send(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err), requestId }));
     }
   });
+  // Queued for a model slot rides its own frame, a full snapshot like the rest.
+  const sendWait = (waiting: ModelWait | null) => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'waiting', waiting }));
+  sendWait(modelWait.get());
+  const unsubscribe = modelWait.subscribe(sendWait);
+  ws.on('close', unsubscribe);
   await watchStanding(session, ws);
 }
 

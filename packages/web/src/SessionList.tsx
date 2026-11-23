@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { look, type Look, type Tone } from './kinds.ts';
 import { SearchFilter, type FilterField, type FilterValues } from './SearchFilter.tsx';
 import { age, group, sessionQuery, startOf, type Row } from './sessions.ts';
+import { Waiting } from './Waiting.tsx';
 import { SpendChip } from './SpendChip.tsx';
 import { ListNotices, SessionChips } from './slots.tsx';
 import { useLoad } from './useLoad.ts';
@@ -11,12 +12,14 @@ const TONE: Record<Tone, string> = { muted: 'text-muted', warn: 'text-warning', 
 type Kind = 'needs' | 'running' | 'recent' | 'failed';
 const DEFAULT_Q = sessionQuery('', {});
 
-function Tile({ l, kind }: { l: Look; kind: Kind }) {
+// A running session queued for a model slot shows a pause mark where the running dot would pulse; the row's line says it in words.
+function Tile({ l, kind, queued }: { l: Look; kind: Kind; queued: boolean }) {
   const tint = kind === 'failed' ? 'bg-danger-bg text-danger' : kind === 'needs' ? 'bg-warning-bg text-warning' : kind === 'running' ? l.tint : 'bg-soft text-muted';
   return (
     <span aria-hidden="true" className={`relative grid h-[34px] w-[34px] flex-none place-items-center rounded-[10px] lg:h-7 lg:w-7 lg:rounded-lg ${tint}`}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={l.icon} /></svg>
-      {kind === 'running' && <span className="pulse-dot absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-canvas bg-accent-ink" />}
+      {kind === 'running' && queued && <span className="absolute -right-0.5 -bottom-0.5 grid size-3 place-items-center rounded-full border-2 border-canvas bg-soft text-muted box-content"><svg width="8" height="8" viewBox="7 5 10 14" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round"><path d="M9 6v12M15 6v12" /></svg></span>}
+      {kind === 'running' && !queued && <span className="pulse-dot absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-canvas bg-accent-ink" />}
     </span>
   );
 }
@@ -34,7 +37,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
         aria-description={`${l.full} (${r.key})`}
         className="col-span-3 col-start-1 row-span-2 row-start-1 grid grid-cols-subgrid grid-rows-subgrid text-ink no-underline before:absolute before:inset-0"
       >
-        <span className="row-span-2 self-start"><Tile l={l} kind={kind} /></span>
+        <span className="row-span-2 self-start"><Tile l={l} kind={kind} queued={Boolean(r.waiting)} /></span>
         <span className="col-span-2 flex gap-2">
           <span className={`min-w-0 flex-1 truncate text-[15px] lg:text-[13.5px] ${kind === 'recent' ? 'font-medium' : 'font-semibold'}`}>
             {l.repo && <><span className="text-[11px] font-normal text-muted">{l.repo}</span>{' '}</>}
@@ -43,7 +46,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
           </span>
           <time dateTime={r.lastActivity} title="Last activity" className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.lastActivity, now)}</time>
         </span>
-        <span className={`min-w-0 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
+        <span className={`min-w-0 truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.wait ? <Waiting w={l.wait} /> : l.line}</span>
       </a>
       <span className="col-start-3 row-start-2 flex items-center gap-2">
         <SessionChips sessionKey={r.key} />

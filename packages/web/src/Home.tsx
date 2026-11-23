@@ -1,3 +1,4 @@
+import { Waiting } from './Waiting.tsx';
 import { escapeTerm } from '@quack/sdk/query';
 import { useRef, useState, type SubmitEvent } from 'react';
 import { listSessions, startSession } from './api.ts';
@@ -76,10 +77,10 @@ function SessionLink({ r, now }: { r: Row; now: number }) {
   const l = look(r);
   return (
     <a href={`#/s/${encodeURIComponent(r.key)}`} className="flex min-h-11 items-center gap-3 rounded-2xl border border-line bg-surface px-3.5 py-2.5 text-ink no-underline hover:bg-soft">
-      <span aria-hidden="true" className="pulse-dot size-2 flex-none rounded-full bg-accent-ink" />
+      <span aria-hidden="true" className={`size-2 flex-none rounded-full ${r.waiting ? 'bg-line-strong' : 'pulse-dot bg-accent-ink'}`} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[14.5px] font-semibold">{titleOf(r)}</span>
-        <span className="truncate text-[12.5px] text-muted">{[...new Set([l.label, l.line, age(r.createdAt, now)])].filter(Boolean).join(' · ')}</span>
+        <span className="truncate text-[12.5px] text-muted">{[...new Set([l.label, l.wait ? '' : l.line, age(r.createdAt, now)])].filter(Boolean).join(' · ')}{l.wait && <> · <Waiting w={l.wait} /></>}</span>
       </span>
       <span aria-hidden="true" className="text-muted">›</span>
     </a>
