@@ -275,9 +275,9 @@ export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: Seale
   return judgeVersion(api, opts, sealed, ctx, memo);
 }
 
-/** What a caller is told when the judge model could not answer some checks. */
+/** What a caller is told when no model could answer some checks. */
 export function undecidedMessage(ids: string[], toolName: string): string {
-  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again.`;
+  return `No model gave a usable answer for ${ids.join(', ')} (usually one is at capacity or unreachable), so nothing was scored. Call ${toolName} again.`;
 }
 
 export function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {

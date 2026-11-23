@@ -37,16 +37,25 @@ function callApi(classify: () => Promise<unknown>) {
 
 const confident = { stopReason: 'stop', answers: { q0: { type: 'bool', probability: 0.95 } } };
 
-test('a decision model that throws is not memoized: a rerun of the call asks it again', async () => {
+test('a decision-model outage leaves its items undecided without a judge-model call, and a later round with it back decides them', async () => {
   const outcomes = [() => Promise.reject(new Error('503 busy')), () => Promise.resolve({ stopReason: 'error', answers: {} }), () => Promise.resolve(confident)];
   const api = callApi(() => outcomes.shift()!());
-  const first = await answerUnit(api, ref, BACKGROUND_CONTEXT);
-  assert.equal(first['c.says_why']!.resolver, 'agent-model', 'an outage escalates this time');
-  assert.equal(api.memos.has(memoKey), false);
-  await answerUnit(api, ref, BACKGROUND_CONTEXT);
-  assert.equal(api.memos.has(memoKey), false, 'an error stop is an outage too');
-  const third = await answerUnit(api, ref, BACKGROUND_CONTEXT);
-  assert.deepEqual([api.calls(), third['c.says_why']!.resolver], [3, 'clef']);
+  let escalated = 0;
+  const one = limiter(1);
+  const s = { ref, memo: 'judge:github.review:v1', clef: limiter(1), escalations: ((task) => (escalated++, one(task))) as typeof one };
+  const round = async () => (await answerItems(api as never, s, [{ unit, checks }], BACKGROUND_CONTEXT))[0].answer!;
+  assert.deepEqual([(await round()).met, escalated, api.memos.has(memoKey)], [null, 0, false], 'a thrown call is an outage, not memoized');
+  assert.deepEqual([(await round()).met, escalated, api.memos.has(memoKey)], [null, 0, false], 'an error stop is an outage too');
+  const back = await round();
+  assert.deepEqual([api.calls(), back.met, back.resolver, escalated], [3, true, 'clef', 0]);
+});
+
+test('during an outage a check that skips the decision model still escalates', async () => {
+  const api = callApi(() => Promise.reject(new Error('503 busy')));
+  const skip = { id: 'c.says_why', question: checks[0].question, decisionModel: false as const };
+  const two = [{ ...checks[0], id: 'c.asked' }, skip];
+  const answered = await answerItems(api as never, { ref, memo: 'judge:github.review:v1', clef: limiter(1), escalations: limiter(1) }, [{ unit, checks: two }], BACKGROUND_CONTEXT);
+  assert.deepEqual(answered.map((a) => [a.check.id, a.answer!.met, a.answer!.resolver]), [['c.asked', null, 'none'], ['c.says_why', true, 'agent-model']]);
 });
 
 test('a unit\'s questions go to the decision model numbered, never under their check ids, and each answer comes back to its check', async () => {
