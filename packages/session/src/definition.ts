@@ -251,7 +251,7 @@ function withJudge(raw: Record<string, unknown>, catalog: Catalog): Record<strin
   const from = ['github', 'research', 'contracts', 'workflows'].find((n) => isObject(extensions[n]) && ('maxRevisions' in extensions[n] || 'decisionModel' in extensions[n]));
   if (!from) return raw;
   const c = extensions[from] as Record<string, unknown>;
-  const judge = { maxRevisions: c.maxRevisions ?? (from === 'workflows' ? 1 : 2), decisionModel: c.decisionModel, judgeModel: c.judgeModel, escalations: c.escalations };
+  const judge = { maxRevisions: c.maxRevisions ?? (from === 'workflows' ? 1 : 2), decisionModel: c.decisionModel, judgeModel: c.judgeModel };
   return { ...raw, extensions: { ...extensions, judge: JSON.parse(JSON.stringify(judge)) } };
 }
 

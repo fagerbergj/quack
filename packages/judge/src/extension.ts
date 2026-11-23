@@ -7,7 +7,7 @@ import type { DecisionModelRef, ModelRef } from './resolve.ts';
 import type { Rubric } from './rubric.ts';
 
 /** An agent's `extensions.judge`: the judge is on for that agent, with these settings. */
-export type JudgeConfig = { maxRevisions?: number; decisionModel?: DecisionModelRef; judgeModel?: ModelRef; escalations?: number };
+export type JudgeConfig = { maxRevisions?: number; decisionModel?: DecisionModelRef; judgeModel?: ModelRef };
 
 /** How one artifact kind is judged. */
 export type Judged = {
@@ -36,7 +36,7 @@ async function verdictFor(api: ToolExecutionApi, ctx: Context, how: Judged, conf
   const refused = await how.refuse?.(api, ctx);
   if (refused) return { kind: 'deny', reason: refused };
   const tool = toolOf(sealed.kind) ?? 'the judge';
-  const opts: JudgeOptions = { kind: sealed.kind, rubric: how.rubric, declaration: how.declaration, inputs: how.inputs, maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, escalations: config.escalations, reuse: true };
+  const opts: JudgeOptions = { kind: sealed.kind, rubric: how.rubric, declaration: how.declaration, inputs: how.inputs, maxRevisions: config.maxRevisions ?? 2, decisionModel: config.decisionModel, judgeModel: config.judgeModel, reuse: true };
   const out = await check(api, opts, sealed, tool, ctx);
   if ('deny' in out) return { kind: 'deny', reason: out.deny };
   if ('undecided' in out) return { kind: 'continue', feedback: out.undecided };
@@ -110,11 +110,10 @@ const ref = (v: unknown, cap: boolean) => v === undefined || (isObject(v) && typ
 export function configProblems(config: unknown): string[] {
   if (config === undefined) return [];
   if (!isObject(config)) return ['judge must be an object'];
-  const known = ['maxRevisions', 'decisionModel', 'judgeModel', 'escalations'];
+  const known = ['maxRevisions', 'decisionModel', 'judgeModel'];
   return [
     ...Object.keys(config).filter((k) => !known.includes(k)).map((k) => `judge.${k} is not a judge setting; known: ${known.join(', ')}`),
     ...(countOk(config.maxRevisions, 0) ? [] : ['judge.maxRevisions must be a non-negative integer']),
-    ...(countOk(config.escalations, 1) ? [] : ['judge.escalations must be a positive integer']),
     ...(ref(config.decisionModel, true) ? [] : ['judge.decisionModel must be { provider, modelId, maxInputTokens }']),
     ...(ref(config.judgeModel, false) ? [] : ['judge.judgeModel must be { provider, modelId }']),
   ];
