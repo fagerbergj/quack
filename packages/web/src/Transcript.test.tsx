@@ -17,6 +17,14 @@ test('a fold the person opened stays open when the streamed message commits', ()
   expect(fold().open).toBe(true);
 });
 
+test('the work line reads a long step in minutes and seconds', () => {
+  const call = { role: 'assistant', timestamp: 0, content: [{ type: 'toolCall', id: 'w1', name: 'bash', arguments: { command: 'ls' } }] };
+  const result = { role: 'toolResult', timestamp: 756_000, toolCallId: 'w1', toolName: 'bash', content: [{ type: 'text', text: 'ok' }], isError: false };
+  const items = [{ kind: 'entry', entry: { id: 'a', kind: 'pi.assistant', model: [call] } }, { kind: 'entry', entry: { id: 'b', kind: 'pi.tool-result', model: [result] } }] as unknown as View['items'];
+  render(<Transcript view={{ ...emptyView, items }} load={() => undefined} />);
+  expect(screen.getByText(/Worked 12 min 36 s/)).toBeInTheDocument();
+});
+
 test('a subagent call nests its child conversation, fetched from the session when opened', async () => {
   const call = { role: 'assistant', timestamp: 1, content: [{ type: 'toolCall', id: 's1', name: 'subagent', arguments: { task: 'look it up' } }] };
   const result = { role: 'toolResult', timestamp: 2, toolCallId: 's1', toolName: 'subagent', content: [{ type: 'text', text: 'found it' }], isError: false, details: { conversationId: 'child-1' } };

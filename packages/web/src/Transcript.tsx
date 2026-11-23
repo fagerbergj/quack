@@ -8,6 +8,7 @@ import { Args } from './JsonView.tsx';
 import { Markdown } from './Markdown.tsx';
 import { Duck } from './Pond.tsx';
 import { same } from './same.ts';
+import { duration as formatDuration } from './sessions.ts';
 import { ToolCallExtra } from './slots.tsx';
 import type { View } from './view.ts';
 
@@ -91,7 +92,7 @@ const countBy = (names: string[]) => [...Map.groupBy(names, (n) => n)].map(([n, 
 function duration(start: number, steps: Step[]) {
   const ends = steps.flatMap((s) => (s.t === 'call' && s.result ? [s.result.timestamp] : s.t === 'orphan' ? [s.result.timestamp] : []));
   const ms = ends.length ? Math.max(...ends) - start : 0;
-  return ms >= 1000 ? ` ${Math.round(ms / 1000)} s` : '';
+  return ms >= 1000 ? ` ${formatDuration(ms / 1000)}` : '';
 }
 
 // Everything between two prose blocks, as one line that opens into a timeline.

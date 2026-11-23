@@ -55,6 +55,15 @@ export const failedLine = (f: Failure) => `Run failed at ${f.step} · ${f.error.
 export const needId = (id: string) => `need-${id}`;
 
 // 2417000 reads as 2.4M, not 2417k; one decimal only below ten.
+/** Whole seconds as "42 s", "12 min 36 s" or "1 h 5 min": the two largest units, zero parts dropped. */
+export function duration(seconds: number) {
+  const s = Math.round(seconds);
+  if (s < 60) return `${s} s`;
+  const [h, m, r] = [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60];
+  const part = (n: number, u: string) => (n ? ` ${n} ${u}` : '');
+  return (h ? `${h} h${part(m, 'min')}` : `${m} min${part(r, 's')}`);
+}
+
 export const compact = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
 /** The short spend reading (dollars when the model is priced, else input plus output tokens) and its token breakdown for the tooltip; undefined when nothing was spent. */
