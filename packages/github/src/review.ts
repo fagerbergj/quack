@@ -143,7 +143,7 @@ export function reviewInputs(repoDir = 'repo') {
       const e = await excerpt(api, repoDir, f, ctx, tracked);
       const id = String(f.index);
       facts.findings.push({ id, cited: e.exists });
-      findings.push({ id, blocking: f.label === 'blocking', text: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' });
+      findings.push({ id, blocking: f.label === 'blocking', anchor: f.anchor, text: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' });
     }
     return {
       review: sealed.content,

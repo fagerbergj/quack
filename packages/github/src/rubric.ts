@@ -1,4 +1,4 @@
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
+import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl, type Where } from '@quack/judge';
 import { parseReview, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
@@ -38,7 +38,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks; reviewDeclaration says how each model check is asked.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 10,
+  version: 11,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -82,11 +82,15 @@ const ALL = { name: 'all' } as const;
 const SHARE = { name: 'share' } as const;
 
 // Findings of every label see the CI result, the same for all, so a review's findings pack into few decision-model requests.
-const findings = (where?: 'truthy' | 'falsy'): Scope => ({
-  split: { name: 'jsonItems', from: 'findings', pick: ['text', 'citedCode'], ...(where ? { where: [{ path: 'blocking', op: where }] } : {}) },
+const findings = (where: Where[] = []): Scope => ({
+  split: { name: 'jsonItems', from: 'findings', pick: ['text', 'citedCode'], ...(where.length ? { where } : {}) },
   piece: 'finding',
   context: { ci: { name: 'json', from: 'facts', pointer: '/ci' } },
 });
+const BLOCKING: Where = { path: 'blocking', op: 'truthy' };
+// A promise, a principle or out-of-scope work claims no failure, so it has no failing run to show; `tests` stays, since a
+// broken test has one.
+const CLAIMS_NO_FAILURE = ['delivery', 'design', 'scope'].map((value): Where => ({ path: 'anchor', op: 'ne', value }));
 
 // A PR description splits at its own ## and ### headings, its opening first: each part makes its own promises. A part whose
 // heading is a short label for verification ("Tests", "Smoke test (…)", "Evidence") lists what was run and promises nothing.
@@ -130,8 +134,9 @@ export const reviewDeclaration: Declaration = {
     approve: { split: { name: 'whole', from: 'approve' }, piece: 'review' },
     verified: { split: { name: 'listItems', from: 'review', sections: ['Verified'] }, piece: 'item', context: { sources: { name: 'github.namedSources' } } },
     finding: findings(),
-    blocking: findings('truthy'),
-    nonblocking: findings('falsy'),
+    blocking: findings([BLOCKING]),
+    failure: findings([BLOCKING, ...CLAIMS_NO_FAILURE]),
+    nonblocking: findings([{ path: 'blocking', op: 'falsy' }]),
     // Each part sees the whole diff (cut at 120k characters; retrieved hunks missed delivering helpers). With it a part rarely
     // fits Clef, so promises skip Clef and go to the judge model, all of one review's parts in one request.
     promise: {
@@ -146,12 +151,12 @@ export const reviewDeclaration: Declaration = {
   checks: {
     // Clef passes every bare approve, so the judge model answers.
     approval_grounded: { scope: 'approve', aggregate: ALL, decisionModel: false, question: yes('This review approves. Do its Takeaway and Verified sections say what about the change makes it safe to merge (which behaviour was checked and how it was checked), rather than only praising the change or asserting that it looks good or that tests pass?') },
-    // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
+    // Blocking means it goes wrong once merged; a question finding also handles a promise, since it holds the verdict at comment.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
-    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: false, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, reported in the review as a blocking finding, or intentionally not delivered with the review explaining why the promise was walked back? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
+    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: false, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, reported in the review as a blocking finding or asked about in a question finding, or intentionally not delivered with the review explaining why the promise was walked back? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
     toolchain_as_defect: { scope: 'finding', aggregate: SHARE, question: defect('Does this finding report a sandbox, toolchain or network failure as a code defect while the CI checks are green?') },
     matches_cited_code: { scope: 'finding', aggregate: SHARE, question: yes('Does the cited code show what this finding says about it?') },
-    shows_how: { scope: 'blocking', aggregate: SHARE, question: yes('Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?') },
+    shows_how: { scope: 'failure', aggregate: SHARE, question: yes('Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?') },
     // Clef reads a loosely named source (a file without a line, a described search) as none, so the judge model answers.
     verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, decisionModel: false, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
     // Clef answers this without tracing the cited code, so it goes to the judge model.

@@ -104,6 +104,16 @@ test('each finding is an item with its cited code, sorted by label, all sharing 
   assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
 });
 
+test('shows_how asks only a blocking finding whose anchor claims a failure; the other blocking checks ask every one', async () => {
+  const anchors = ['defect', 'delivery', 'security', 'design', 'scope', 'tests'];
+  const content = `## Takeaway\nx\n## Verdict\nrequest_changes\n## Findings\n${anchors.map((a, i) => `- blocking (${a}): a.ts:${i + 1} — y`).join('\n')}\n- question: a.ts:9 — z?\n`;
+  const inputs = await reviewInputs()({ snapshot: async () => undefined, conversationId: 'c', env: { readTextFile: async () => ({ ok: true, value: 'x\n'.repeat(9) }) } } as never, { content } as never, {} as never);
+  const { evidence } = await buildEvidence(reviewDeclaration, inputs);
+  assert.equal(reviewDeclaration.checks.shows_how.scope, 'failure');
+  assert.deepEqual(evidence.failure.map((u) => u.id), ['failure 1', 'failure 3', 'failure 6'], 'defect, security and a broken test show how they fail; delivery, design and scope have no failing run');
+  assert.equal(evidence.blocking.length, 6);
+});
+
 test('every model check is declared; a pitfall is asked as the defect and costs the share of items it flags', () => {
   const checks = reviewerRubric.criteria.flatMap((c) => c.checks);
   assert.deepEqual(checks.filter((k) => !k.code).map((k) => k.id).sort(), Object.keys(reviewDeclaration.checks).sort());
