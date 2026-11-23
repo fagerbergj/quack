@@ -139,7 +139,6 @@ async function citationsOf(api: ToolExecutionApi, repoDir: string, f: Finding, o
   const seen = new Set([`${f.path}:${f.line}`, out[0].cite]);
   for (const [, path, line] of f.text.matchAll(MENTION)) {
     if (seen.has(`${path}:${line}`)) continue;
-    seen.add(`${path}:${line}`);
     const e = await excerpt(api, repoDir, { path, line: Number(line) }, ctx, tracked);
     if (!e.exists || seen.has(`${e.path}:${line}`)) continue;
     seen.add(`${e.path}:${line}`);
