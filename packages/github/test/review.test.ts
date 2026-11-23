@@ -68,22 +68,30 @@ test('the verdict must match the findings labels', () => {
   assert.equal(verdict(green.replace('approve', 'comment'), ci('go-test=success')).met, 0, 'green CI with nothing open still calls for approve');
 });
 
-test('blocking findings must name an anchor, and findings must cite lines that exist', () => {
-  const anchor = code('severity_grounded', 'blocking_names_anchor');
-  assert.equal(anchor(review, {}).met, 1);
-  assert.match(anchor(review.replace('blocking (defect)', 'blocking'), {}).detail!, /finding-1/);
+test('findings must cite lines that exist', () => {
   const cites = code('claims_grounded', 'cites_existing_lines');
   const two = cites('', facts({ ci: '', findings: [{ id: '1', cited: true }, { id: '2', cited: false }] }));
   assert.deepEqual([two.met, two.detail], [0.5, 'no existing path:line cited in finding-2']);
   assert.equal(cites('', facts({ ci: '', findings: [] })).met, 1);
 });
 
-test('approval_grounded judges an approve on the review alone, and has no item on any other verdict', async () => {
-  const evidence = async (verdict: string) => (await buildEvidence(reviewDeclaration, await reviewInputs()({ snapshot: async () => undefined, conversationId: 'c' } as never, { content: `## Takeaway\nx\n## Verdict\n${verdict}\n## Findings\n` } as never, {} as never))).evidence;
-  const approve = await evidence('approve');
-  assert.deepEqual(approve.approve, [{ id: 'approve', state: { review: '## Takeaway\nx\n## Verdict\napprove\n## Findings\n' } }]);
-  for (const v of ['request_changes', 'comment']) assert.deepEqual((await evidence(v)).approve, []);
+// The points each review shape had in play at version 10, whose threshold was 0.8, and the checks that apply to it now.
+const SHAPES = {
+  'bare approve': { before: 10, applies: ['promises_handled', 'verified_names_evidence'] },
+  'comment, no findings': { before: 7, applies: ['promises_handled', 'verified_names_evidence'] },
+  'findings, no blocker': { before: 16, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'shows_proposed_change'] },
+  'approve with findings': { before: 19, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'shows_proposed_change'] },
+  'blocking findings': { before: 21, applies: ['promises_handled', 'verified_names_evidence', 'matches_cited_code', 'shows_proposed_change', 'anchor_borne_out'] },
+};
+
+test('no review shape may fall further short of full marks and still pass than it could at version 10', () => {
+  const weights = Object.fromEntries(reviewerRubric.criteria.flatMap((c) => c.checks).map((k) => [k.id, k.weight]));
+  for (const [shape, { before, applies }] of Object.entries(SHAPES)) {
+    const possible = applies.reduce((n, id) => n + (weights[id] as number), 0);
+    assert.ok((1 - reviewerRubric.threshold) * possible <= 0.2 * before + 1e-9, `${shape}: ${(1 - reviewerRubric.threshold) * possible} points of slack, was ${0.2 * before}`);
+  }
 });
+
 
 test('each finding is an item with its cited code, sorted by label, all sharing the CI result; the description splits at its headings', async () => {
   const body = 'Adds a flag.\n\n## What changed\n- the flag\n\n## Verification\n- npm test: ok\n\n### Rollout\nbehind a setting';
@@ -116,7 +124,7 @@ test('every model check is declared; a pitfall is asked as the defect and costs 
   }
   assert.ok(checks.some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
-  assert.equal(possible, 24);
+  assert.equal(possible, 13);
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {

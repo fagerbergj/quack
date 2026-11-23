@@ -120,15 +120,19 @@ const resolveAsk = (key: string, id: string, resolution: Resolution) =>
   fetch(`${base(key)}/asks/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ resolution }) });
 export const answerQuestion = async (key: string, id: string, resolution: Resolution) => void (await json(await resolveAsk(key, id, resolution)));
 
-/** False when the server answers 409 because the approval is already decided, so the caller's view of it is stale;
- * a withdrawn one throws its reason, which the person is shown. */
+const STEERED = "the request was withdrawn: a person's message reached the run while it waited";
+
+/** False when the server answers 409 because the approval is already decided, or a person's message withdrew it, so the
+ * caller's view of it is stale; one withdrawn for another reason throws it, which the person is shown. */
 export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string): Promise<boolean> {
   const res = await resolveAsk(key, id, { choice: decision, ...(reason ? { reason } : {}) });
   if (res.status !== 409) {
     await json(res);
     return true;
   }
-  const p = (await res.json().catch(() => null)) as { detail?: string } | null;
+  const p = (await res.json().catch(() => null)) as { detail?: string; withdrawn?: { reason?: string } } | null;
+  // The Sessions API names a withdrawal's cause in prose only, so the steered text stands in where `withdrawn.reason` is absent.
+  if (p?.withdrawn?.reason === 'steered' || p?.detail === STEERED) return false;
   if (p?.detail?.startsWith('the request was withdrawn')) throw new Error(p.detail);
   return false;
 }

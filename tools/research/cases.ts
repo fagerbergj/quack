@@ -2,7 +2,7 @@
 // The entities are invented so the judge's own knowledge cannot settle a case; each source text is a short page.
 import { inputsOf } from '@quack/research';
 
-export type Target = 'supported_by_source' | 'contradicted_by_source' | 'answers_every_ask' | 'summary_follows_findings' | 'no_self_contradiction';
+export type Target = 'supported_by_source' | 'contradicted_by_source';
 export type Labelled = { case: string; kind: 'research.report'; content: string; inputs: ReturnType<typeof inputsOf>; good: boolean; targets: Target[] };
 
 const REQUEST = {
@@ -40,7 +40,6 @@ const SPECS: Spec[] = [
   { name: 'good-buses', request: REQUEST.buses, source: SOURCE.buses, content: GOOD.buses },
   { name: 'good-library', request: REQUEST.library, source: SOURCE.library, content: GOOD.library },
   { name: 'good-grant', request: REQUEST.grant, source: SOURCE.grant, content: GOOD.grant },
-  // Two companies in two roles: no_self_contradiction must not call them a conflict.
   { name: 'good-two-suppliers', request: 'Who supplies Kestrel Transit\'s electric buses and their chargers?', source: SOURCE.suppliers, content: report('Vantor builds Kestrel Transit\'s electric buses and Voltra supplies the chargers.', ['Kestrel Transit buys its electric buses from Vantor.', 'Kestrel Transit buys the depot chargers for its electric buses from Voltra.']) },
   { name: 'good-unsettled-cost', request: REQUEST.busCost, source: SOURCE.buses, content: report('Kestrel Transit runs 38 electric buses rated at 190 km; the sources give no per-bus cost.', ['Kestrel Transit operates 38 battery-electric buses, all Vantor E12 rated at 190 km on a full charge.'], 'The fleet report states no purchase price, so the cost per bus is unsettled.') },
 
@@ -52,25 +51,14 @@ const SPECS: Spec[] = [
   { name: 'contradicted-buses', request: REQUEST.buses, source: SOURCE.buses, targets: ['contradicted_by_source'], content: GOOD.buses.replaceAll('190 km', '240 km') },
   { name: 'contradicted-grant', request: REQUEST.grant, source: SOURCE.grant, targets: ['contradicted_by_source'], content: GOOD.grant.replaceAll('$15,000', '$25,000') },
 
-  { name: 'unanswered-harbour-start', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['answers_every_ask'], content: report("Port Alder's council approved $4.2 million for harbour repairs in January 2026.", ['The council approved $4.2 million for repairs to the east breakwater and ferry pier on 14 January 2026.', 'The money comes from the harbour reserve fund, with no new borrowing.']) },
-  { name: 'unanswered-buses-cost', request: REQUEST.busCost, source: SOURCE.buses, targets: ['answers_every_ask'], content: GOOD.buses },
-  { name: 'unanswered-library-parking', request: REQUEST.library, source: SOURCE.library, targets: ['answers_every_ask'], content: report('Marlow Public Library is open Saturday 10am to 5pm and Sunday 1pm to 5pm in 2026.', ['Hours effective 5 January 2026: Saturday 10am to 5pm and Sunday 1pm to 5pm, closed on public holidays.']) },
-
   { name: 'wrong-year-harbour', request: REQUEST.harbour, source: SOURCE.harbour2025, targets: ['supported_by_source'], content: report("Port Alder's council approved $3.1 million for harbour repairs in January 2026, and work starts on 3 March 2026.", ['The council approved $3.1 million for repairs to the east breakwater on 14 January 2026.', 'The contractor, Tidewater Marine, mobilises on 3 March 2026 and expects to finish by September 2026.']) },
-  { name: 'wrong-year-library', request: REQUEST.library, source: SOURCE.library2025, targets: ['answers_every_ask'], content: report('Marlow Public Library is open Saturday 10am to 5pm and Sunday 1pm to 5pm; parking is free for three hours.', ['Hours effective 6 January 2025: Saturday 10am to 5pm and Sunday 1pm to 5pm.', 'The Elm Street lot is free for the first three hours, then $2 per hour.']) },
 
-  { name: 'summary-overreach-grant', request: REQUEST.grant, source: SOURCE.grant, targets: ['summary_follows_findings'], content: GOOD.grant.replace(SUMMARY_LINE, '## Summary\nFarms under 40 hectares in Fernhill County can get up to $15,000, and decisions are made within 30 days.') },
-  { name: 'summary-overreach-harbour', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['summary_follows_findings'], content: GOOD.harbour.replace(SUMMARY_LINE, "## Summary\nPort Alder's council approved $4.2 million for harbour repairs, work starts on 2 March 2026, and the repairs will halve ferry delays.") },
-
-  { name: 'self-contradiction-buses', request: REQUEST.buses, source: SOURCE.buses, targets: ['no_self_contradiction'], content: GOOD.buses.replace('All are the Vantor E12', 'All 28 electric buses are the Vantor E12') },
-  { name: 'self-contradiction-harbour-name', request: REQUEST.harbour, source: SOURCE.harbour, targets: ['no_self_contradiction'], content: GOOD.harbour.replace(SUMMARY_LINE, "## Summary\nPort Alder's council approved $4.2 million for harbour repairs in January 2026. The contractor, Harbour Works, mobilises on 2 March 2026.") },
-  { name: 'self-contradiction-library', request: REQUEST.library, source: SOURCE.library, targets: ['no_self_contradiction'], content: GOOD.library.replace('Saturday 10am to 5pm and Sunday 1pm to 5pm.', 'Saturday 9am to 5pm and Sunday 1pm to 5pm.') },
 ];
 
 /** The cases with inputs built by the code the live judge uses; every cited source is `s1`. */
 export function researchCases(): Labelled[] {
   return SPECS.map((s) => ({
     case: s.name, kind: 'research.report', content: s.content, good: s.name.startsWith('good-'), targets: s.targets ?? [],
-    inputs: inputsOf(s.content, s.request, new Map([['s1', s.source]]), ['s1']),
+    inputs: inputsOf(s.content, new Map([['s1', s.source]])),
   }));
 }

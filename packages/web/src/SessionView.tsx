@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
@@ -342,9 +342,6 @@ const NO_META: Array<Record<string, unknown>> = [];
 // A running step names itself; waiting, idle or failed reads as the header's status.
 const activityOf = (status: string, tone: Tone, view: View, queued?: ModelWait) => (tone === 'run' ? (queued ? 'Waiting…' : stepLabel(view)) : status);
 
-// The reason a studio's approval is declined with when the person writes instead of approving; their message says the rest.
-export const SUPERSEDED = 'Sent a message instead';
-
 type Tab = 'pane' | 'chat';
 
 // Where the person answers what waits on them: a studio pane takes its questions and the approvals it owns, the chat everything else.
@@ -359,7 +356,7 @@ const tabFor = (label: string | undefined, picked: Tab | undefined, studio: Retu
 
 // A studio pane opens beside the chat by default; other sessions start collapsed on desktop and expand on demand.
 // Below lg, a studio opens on its pane unless an ask waits on the chat; other sessions open on the chat tab.
-function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
+function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, running: boolean) {
   const studio = studioFor(sessionKey);
   const [picked, setTab] = useState<Tab>();
   const [expanded, setExpanded] = useState(false);
@@ -382,14 +379,8 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const tab = tabFor(label, picked, studio, asks);
   const owned = useRef(asks.owned);
   owned.current = asks.owned;
-  // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
-  const steer: Send = useCallback(async (input, whenBusy, images) => {
-    const pending = owned.current;
-    if (!pending.length) return send(input, whenBusy, images);
-    if (!(await send(input, 'steer', images))) return false;
-    await Promise.all(pending.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
-    return true;
-  }, [sessionKey, send, decide, setError]);
+  // Steered, the message withdraws the approvals it waits on and reaches the run at once, instead of queueing behind a wait.
+  const steer: Send = useCallback((input, whenBusy, images) => send(input, owned.current.length ? 'steer' : whenBusy, images), [send]);
   const panel = (t: Tab) => (label && tabbed ? { id: `${id}${t}`, role: 'tabpanel', 'aria-labelledby': `${id}${t}-tab` } : {});
   const headerToggle: ArtifactToggle | undefined = !studio && shown && !tabbed
     ? { label: `${paneOpen ? 'Hide' : 'Show'} ${label}`, open: paneOpen, toggle }
@@ -453,7 +444,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
-  const live = usePane(sessionKey, items, approvals, standing.questions, send, pending.decide, setError, view.running);
+  const live = usePane(sessionKey, items, approvals, standing.questions, send, view.running);
   const split = useSplit();
   // The pane takes the room the rail would; the rail then opens as the Details sheet at any width.
   const details = useDetails(!live.paneOpen);

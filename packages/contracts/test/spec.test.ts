@@ -10,6 +10,7 @@ import { scheduleSpecV1, scheduleSpecV2, SLEEPER_PAGE } from './fixtures.ts';
 
 // The contract's own sealed spec: its document is the shape of every contract.spec, and the spec is one itself.
 const CONTRACT = { key: 'contracts:d45ad598-d0a3-4302-9d5c-faf634c3911d', version: 7 };
+const STR_ID = 'no id — write it as an object with an "id" key and a "text" key, e.g. {"id": "gate.names-only", "text": "..."} — a Label: text string has no id';
 const sealedContract = JSON.parse(readFileSync(new URL('fixtures-specs/contract-spec-v7.json', import.meta.url), 'utf8')) as ContractSpec;
 const accepts = new Ajv2020({ strict: false, validateFormats: false }).compile(sealedContract.document as object);
 
@@ -94,7 +95,7 @@ const CODE_REFUSED: Array<[string, unknown]> = [
 ];
 
 test('the seal requires an id on every entry with no baseline or "shipped", and unique ids across both lists', () => {
-  const noId = 'facts are not decomposed: guarantees[0]: no id — give it one';
+  const noId = `facts are not decomposed: guarantees[0]: ${STR_ID}`;
   assert.deepEqual(problems(withFacts(v1, ['Read-only'])), [noId]);
   assert.deepEqual(problems(withFacts(shippedV1, ['Read-only'])), [noId]);
   assert.deepEqual(problems(withFacts(revision, ['Read-only'])), [], 'beside an approved baseline the judge decides whether a string is unchanged');
@@ -143,15 +144,11 @@ test('a revision of an approved contract must name that version as its baseline'
   }
 });
 
-test('facts_decomposed compares a revision\'s facts with the approved spec\'s and names each offender', async () => {
-  const decomposed = async (spec: unknown, approved = [approvedRecord(1, 1, 20)]) => (await judgedFacts([sealed(1, v1, 10), sealed(2, spec, 30, null)], approved)).results.find((r) => r.id === 'facts_decomposed')!;
-  assert.equal((await decomposed(revision)).met, 1);
-  const edited = withFacts(revision, [fact('Read-only, always', 'read-only'), v1.intent.guarantees[1]]);
-  assert.deepEqual([(await decomposed(edited)).met, (await decomposed(edited)).notes], [0, ["facts are not decomposed: guarantees[0]: id named in no changes row's facts — 'read-only' was added with new text, changed or removed, so name it in the row that touches the list."]]);
-  assert.equal((await decomposed({ ...edited, changes: [{ ...revision.changes![0], facts: ['read-only'] }] })).met, 1);
-  const stringsOnly = withFacts(revision, ['Read-only']);
-  assert.match((await decomposed(stringsOnly, [])).notes[0], /^facts are not decomposed: guarantees\[0\]: no id — give it one\.$/, 'with nothing approved every entry needs an id');
-  assert.equal(contractRubric.criteria.find((c) => c.id === 'sound')!.checks.find((c) => c.id === 'facts_decomposed')!.weight, 'gate');
+test('a revision whose facts no changes row names, or that has no ids, fails no gate: that bookkeeping is not judged', async () => {
+  const gates = async (spec: unknown, approved = [approvedRecord(1, 1, 20)]) => (await judgedFacts([sealed(1, v1, 10), sealed(2, spec, 30, null)], approved)).results.filter((r) => r.weight === 'gate' && r.met !== 1).map((r) => r.id);
+  assert.deepEqual(await gates(withFacts(revision, [fact('Read-only, always', 'read-only'), v1.intent.guarantees[1]])), []);
+  assert.deepEqual(await gates(withFacts(revision, ['Read-only'])), []);
+  assert.deepEqual(contractRubric.criteria.flatMap((c) => c.checks).filter((k) => k.weight === 'gate').map((k) => k.id), ['version_matches', 'baseline_matches', 'pointers_resolve', 'breaking_named']);
 });
 
 // #2391: contract.spec numbers by gate-passed versions and "approval does not affect numbering", so a withdrawn proposal's number stays used.
@@ -200,9 +197,11 @@ test('specs sealed before the baseline rule still read through the judge and the
   assert.deepEqual(versionsOf(artifacts, []), [{ artifact: 1, version: 2, status: 'draft' }]);
 });
 
-test('every kind guide and the contracts prompt carry the one-fact rule word for word as the contract records it', () => {
+test('every kind guide and the contracts prompt carry the one-fact rule word for word as the contract records it, then the object-form sentence', () => {
   const decision = sealedContract.choices.find((c) => c.id === 'authoring-rule')!.decision;
   const rule = /carries it too: '(.+)'$/.exec(decision)![1]!;
-  for (const kind of Object.values(kinds)) assert.equal(guideRules(kind.skill).get('one fact per entry'), rule);
-  assert.ok(readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8').includes(`\n${rule}\n`));
+  const object = 'Write each guarantee and non-goal a revision adds or changes as an `{"id", "text"}` object, e.g. `{"id": "gate.names-only", "text": "..."}`, never as a `Label: text` string.';
+  for (const kind of Object.values(kinds)) assert.equal(guideRules(kind.skill).get('one fact per entry'), `${rule} ${object}`);
+  const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
+  assert.ok(prompt.includes(`\n${rule}\n`) && prompt.includes(`\n${object}\n`));
 });
