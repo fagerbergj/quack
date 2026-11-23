@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { buildEvidence } from '@quack/judge';
+import { buildEvidence, decisionModelTokens } from '@quack/judge';
 import { parseReview, reviewDeclaration, reviewKind, resolveCitedPath, reviewInputs, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
 import { namedSources } from '../src/rubric.ts';
@@ -110,6 +110,43 @@ test('each finding is an item with its cited code, sorted by label, all sharing 
   ], 'what was run to verify it promises nothing, so it is skipped');
   assert.deepEqual(Object.keys(built.evidence.promise[0].shared!), ['diff', 'review'], 'the parts share the diff and the review');
   assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
+});
+
+const PROMISE_DIFF = `diff --git a/src/flag.ts b/src/flag.ts
+--- a/src/flag.ts
++++ b/src/flag.ts
+@@ -1,2 +1,3 @@
++export const verbose = process.argv.includes('--verbose');
+diff --git a/docs/cli.md b/docs/cli.md
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -5 +5,2 @@
++The verbose output lists every request.
+`;
+
+test("every check is asked of Clef, and every unit the shared review fixtures build fits Clef's window", async () => {
+  const maxInputTokens = 8192;
+  // promises_handled is still on the judge model; its rework is pending.
+  const checks = Object.entries(reviewDeclaration.checks).filter(([id]) => id !== 'promises_handled');
+  assert.deepEqual(checks.filter(([, d]) => d.decisionModel === false).map(([id]) => id), []);
+  const dir = new URL('../../../test-fixtures/review/', import.meta.url);
+  // Every cited file is 400 long lines, so each excerpt is its full 41 lines.
+  const file = `${'const value = compute(input, options); '.repeat(3)}\n`.repeat(400);
+  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 'Adds a `--verbose` flag to the CLI', body: 'Sessions now resume where they stopped.', baseRef: 'main', headSha: 'abc', checks: [], linkedIssues: [] };
+  const exec = async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o.onOutput?.(PROMISE_DIFF), { ok: true, value: { exitCode: 0 } });
+  const api = { conversationId: 'c', snapshot: async () => ({ pr }), env: { exec, readTextFile: async () => ({ ok: true, value: file }) } };
+  const reviews = readdirSync(dir).filter((n) => n.endsWith('.md'));
+  const asked = new Set<string>();
+  for (const name of reviews) {
+    const built = await buildEvidence(reviewDeclaration, await reviewInputs()(api as never, { content: readFileSync(new URL(name, dir), 'utf8') } as never, {} as never));
+    for (const [id, d] of checks) {
+      for (const unit of built.evidence[d.scope]) {
+        asked.add(id);
+        assert.ok(decisionModelTokens(unit, [{ id, question: d.question }]) <= maxInputTokens, `${name}: ${unit.id}`);
+      }
+    }
+  }
+  assert.deepEqual([...asked].sort(), checks.map(([id]) => id).sort(), 'the fixtures give every check a unit');
 });
 
 test('matches_cited_code asks about every path:line a finding cites, each excerpt with the finding once per group', async () => {
