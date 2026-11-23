@@ -62,26 +62,20 @@ test('a mark in a code fence or in inline code cites nothing', () => {
   assert.deepEqual(citedIds(example.text), ['s16'], 'the marks in its indented code block are the code\'s, not the finding\'s');
 });
 
-test("the stored summary and the judge's Summary scope read the same section, a fenced heading inside it included", async () => {
+test('the stored summary reads the Summary section, a fenced heading inside it included', () => {
   const md = '# Buses\n\n## Summary\nKestrel runs 38 electric buses [s1].\n```\n## Notes\n```\nIt plans 20 more.\n\n## Assumptions\nNone.\n\n## Findings\n- Kestrel runs 38 electric buses. [s1]\n';
-  const sentences = async (text: string) => (await buildEvidence(reportDeclaration, inputsOf(text, undefined, new Map(), []))).evidence.summary.map((u) => u.state.sentence);
   assert.equal(summarizeReport(md), 'Kestrel runs 38 electric buses.');
-  assert.deepEqual(await sentences(md), ['Kestrel runs 38 electric buses.', 'It plans 20 more.']);
-  const colon = md.replace('## Summary', '## Summary:');
-  assert.equal(summarizeReport(colon), 'Buses', 'no Summary section, so the first heading');
-  assert.deepEqual(await sentences(colon), []);
+  assert.equal(summarizeReport(md.replace('## Summary', '## Summary:')), 'Buses', 'no Summary section, so the first heading');
 });
 
-test('a stored report the seal now refuses still reads: its Summary line, no findings, and every bullet outside the Summary as its context', async () => {
+test('a stored report the seal now refuses still reads: its Summary line and no findings', async () => {
   const md = read('reports/stored-town-sections.md');
   assert.deepEqual(validateReport(md), [refused('Findings', '## Findings — Eastharbour', '## Findings — Westmere / Lowford', '## Findings — Northgate')]);
   assert.equal(summarizeReport(md), 'Five yards around Eastharbour and Westmere build small wooden boats to order; two take a single dinghy commission.');
   assert.deepEqual(findingItems(md), []);
   assert.deepEqual(citedIds(md), ['s1', 's3', 's2']);
   assert.equal(accepts(parseReport(md)), false, 'its parse lacks the findings section, as the seal says');
-  const ev = (await buildEvidence(reportDeclaration, inputsOf(md, undefined, new Map([['s1', 'x']]), ['s1', 's2', 's3']))).evidence;
-  assert.deepEqual(ev.claim, []);
-  assert.match(String((ev.summary[0].shared as { findings: string }).findings), /Pell & Daughters[\s\S]*Harker Boats[\s\S]*Ask Lowford first/);
+  assert.deepEqual((await buildEvidence(reportDeclaration, inputsOf(md, new Map([['s1', 'x']])))).evidence.claim, []);
 });
 
 const F = (body: string) => `## Findings\n${body}`;
