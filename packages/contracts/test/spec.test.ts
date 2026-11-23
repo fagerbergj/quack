@@ -204,7 +204,7 @@ test('specs sealed before the baseline rule still read through the judge and the
 test('every kind guide and the contracts prompt carry the one-fact rule word for word as the contract records it, then the object-form sentence', () => {
   const decision = sealedContract.choices.find((c) => c.id === 'authoring-rule')!.decision;
   const rule = /carries it too: '(.+)'$/.exec(decision)![1]!;
-  const object = 'Write each touched guarantee and non-goal as an `{"id", "text"}` object, e.g. `{"id": "gate.names-only", "text": "..."}`, never as a `Label: text` string.';
+  const object = 'Write each guarantee and non-goal a revision adds or changes as an `{"id", "text"}` object, e.g. `{"id": "gate.names-only", "text": "..."}`, never as a `Label: text` string.';
   for (const kind of Object.values(kinds)) assert.equal(guideRules(kind.skill).get('one fact per entry'), `${rule} ${object}`);
   const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
   assert.ok(prompt.includes(`\n${rule}\n`) && prompt.includes(`\n${object}\n`));

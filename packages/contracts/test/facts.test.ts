@@ -8,10 +8,10 @@ const spec = ({ guarantees = [], nonGoals = [] }: Lists, facts?: string[][]) => 
   intent: { guarantees, nonGoals },
   changes: (facts ?? []).map((f): Change => ({ choice: 'c', was: 'w', now: 'n', why: 'y', facts: f })),
 });
-// The reasons the approved contract.spec v13 records in factEntry's $comment, as patterns; a drifted message fails the gate().
+// factEntry's $comment as pasted from contract artifact version 17 of contracts:d45ad598-d0a3-4302-9d5c-faf634c3911d (approved spec v13); a drifted message fails the gate().
 const approved = readFileSync(new URL('fixtures-specs/contract-spec-v13-facts-comment.txt', import.meta.url), 'utf8');
 const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const REASON = approved.split('{reason} is one of: ')[1].replace(/\.$/, '').split('; ')
+const REASON = approved.split('{reason} is one of: ')[1].replace(/\.\s*$/, '').split('; ')
   .map((r) => r.split(/(\{id\}|\{n\})/).map((t) => (t === '{id}' ? '[^\']*' : t === '{n}' ? '\\d+' : esc(t))).join(''));
 const TEMPLATE = new RegExp(`^facts are not decomposed: (?:(?:guarantees|nonGoals)\\[\\d+\\]|\\(id '[^']*'\\)|changes\\[\\d+\\]\\.facts): (?:${REASON.join('|')})$`);
 const STR_ID = 'no id — write it as an object with an "id" key and a "text" key, e.g. {"id": "gate.names-only", "text": "..."} — a Label: text string has no id';
