@@ -1,10 +1,11 @@
+import type { ModelWait } from './api.ts';
 import { BLUE, plain, type Nameable, type SessionKind, type Words } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { failedLine, type Row } from './sessions.ts';
 
 export type Tone = 'muted' | 'warn' | 'bad';
 
-export type Look = { label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
+export type Look = { wait?: ModelWait; label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
 
 const CHAT = 'M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM8 10h8M8 13h5';
 const DOC = 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6';
@@ -32,7 +33,7 @@ export function look(r: Row): Look {
   const { num, repo, title, full } = kind.name(r);
   const w = kind.words(r);
   const failure = r.failures[0];
-  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : r.pendingAsks ? { line: waiting(r.pendingAsks), tone: 'warn' as const } : w ? state(r, w) : { line: r.agent, tone: 'muted' as const };
+  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : r.pendingAsks ? { line: waiting(r.pendingAsks), tone: 'warn' as const } : r.state === 'running' && r.waiting ? { line: 'Waiting…', tone: 'muted' as const, wait: r.waiting } : w ? state(r, w) : { line: r.agent, tone: 'muted' as const };
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
 }
 
