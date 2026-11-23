@@ -3,7 +3,7 @@
     "sections": {
       "takeaway": "One sentence.\n\n",
       "verdict": "approve\n\n",
-      "findings": "- question: node:18 is the pin, right?\n- nit: `src/a.ts:12-20` — a backticked range.\n- nit: src/b.ts:7 a citation without a dash\n- blocking(defect): Dockerfile:3 - anchor without a space, root file.\n- nit: ./x/y.go:4 — dot-slash path.\n- nit (scope): Makefile:0 — line zero.\n- nit: README.md:5 – en dash.\n- nit: no citation at all\n\n"
+      "findings": "- question: node:18 is the pin, right?\n- nit: `src/a.ts:12-20` — a backticked range.\n- nit: src/b.ts:7 a citation without a dash\n- blocking(defect): Dockerfile:3 - anchor without a space, root file.\n- nit: ./x/y.go:4 — dot-slash path.\n- nit (scope): Makefile:0 — line zero.\n- nit: README.md:5 – en dash.\n- nit: .gitignore:11 — a root dotfile.\n- nit: no citation at all\n\n"
     },
     "verdict": "approve",
     "findings": [
@@ -58,6 +58,13 @@
       },
       {
         "index": 8,
+        "label": "nit",
+        "path": ".gitignore",
+        "line": 11,
+        "text": "a root dotfile."
+      },
+      {
+        "index": 9,
         "label": "nit",
         "text": "no citation at all"
       }
