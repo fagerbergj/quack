@@ -12,7 +12,8 @@ const scenario: Scenario = {
       await page.goto(`${ctx.url}/#/schedules`);
       const main = page.locator('main');
       await visible(main.getByRole('link', { name: DIGEST }));
-      await visible(main.getByText('Every Monday at 9:00 America/New_York'));
+      await visible(main.getByText('Every Monday', { exact: true }));
+      if ((await main.getByText('Every Monday', { exact: true }).getAttribute('aria-hidden')) !== 'true') throw new Error('the short cadence is read aloud beside the full one');
       await ctx.shot(page, `schedules-${label}`);
       await main.getByRole('button', { name: `More for ${RETRO}` }).click();
       await visible(main.getByRole('menu', { name: `More for ${RETRO}` }).getByRole('menuitem', { name: 'Delete schedule' }));

@@ -57,13 +57,13 @@ test('a schedule is titled by its session, falls back to the agent for a new ses
   expect(await screen.findByRole('link', { name: 'Week 11 recap' })).toHaveAttribute('href', '#/s/sleeper%3AL1%3A11%3Adigest');
   expect(screen.queryByText('sleeper/digest/recap')).toBeNull();
   expect(screen.getByRole('link', { name: 'Weekly plan' })).toHaveAttribute('href', '#/s/weekly');
-  expect(screen.getByText('Every Monday at 9:00 America/New_York')).toBeInTheDocument();
+  expect(screen.getByText('Every Monday')).toBeInTheDocument();
   expect(screen.getByText(/last ran Nov 2/)).toBeInTheDocument();
   expect(screen.getByText('2 missed')).toBeInTheDocument();
   expect(screen.getByText('morning-note')).toBeInTheDocument();
   expect(screen.getByText(/New session each run/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'More for morning-note' })).toBeInTheDocument();
-  expect(screen.getAllByText(/^Every /)).toHaveLength(2);
+  expect(screen.getAllByText(/^Every (day|Monday)$/)).toHaveLength(2);
   expect(screen.queryByText(/Once/)).toBeNull();
   expect(screen.queryByText(/has not run yet/)).toBeNull();
 });
@@ -206,4 +206,25 @@ test('one set time says nothing more, several say how many are coming', async ()
   const thrice = (await screen.findByRole('link', { name: 'thrice' })).closest('li')!;
   expect(thrice).toHaveTextContent('sleeper-digest · 3 set times');
   expect(screen.getByRole('link', { name: 'once' }).closest('li')).not.toHaveTextContent(/set time|Once/);
+});
+
+test('a cron schedule says its cadence in a word or two; the time and zone are in its tooltip and accessible text', async () => {
+  server([
+    s('weekly', { cron: '0 9 * * 1', tz: 'America/New_York', times: undefined }),
+    s('weekdays', { cron: '30 7 * * 1-5', tz: 'America/New_York', times: undefined }),
+    s('daily', { cron: '0 8 * * *', times: undefined }),
+    s('odd', { cron: '*/15 * * * *', times: undefined }),
+  ]);
+  render(<Schedules rows={undefined} />);
+  const row = async (name: string) => (await screen.findByRole('link', { name })).closest('li')!;
+  const cadence = async (name: string, short: string, full: string) => {
+    const shown = within(await row(name)).getByText(short);
+    expect(shown).toHaveAttribute('aria-hidden', 'true');
+    expect(shown.parentElement).toHaveAttribute('title', full);
+    expect(within(await row(name)).getByText(full)).toHaveClass('sr-only');
+  };
+  await cadence('weekly', 'Every Monday', 'Every Monday at 9:00 America/New_York');
+  await cadence('weekdays', 'Weekdays', 'Weekdays at 7:30 America/New_York');
+  await cadence('daily', 'Every day', 'Every day at 8:00 UTC');
+  await cadence('odd', 'Repeats', '*/15 * * * * (UTC)');
 });
