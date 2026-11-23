@@ -1,4 +1,4 @@
-import { isRetryableAssistantError, retryDelayMs, type AssistantMessage } from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream, isRetryableAssistantError, retryDelayMs, type AssistantMessage, type AssistantMessageEventStream, type Provider } from '@earendil-works/pi-ai';
 
 // pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
@@ -30,6 +30,24 @@ type Reply = { stopReason: string; errorMessage?: string };
 
 // An input over the model's context fails the same way every time, whatever status the host gives it (llama.cpp: 500).
 export const inputTooLarge = (reply: Reply) => reply.stopReason === 'error' && /too large|exceeds? the (?:available )?context|context (?:length|size|window)/i.test(reply.errorMessage ?? '');
+
+// Strata's full K/V pool drains as other requests finish, unlike an input over the context window; its error carries no status.
+const POOL_FULL = /K\/V pool is full \(\d+ positions on this lane, \d+ more pages wanted, \d+ free\)/;
+
+/** Wraps a provider so a full-pool reply reads as a 503: pi-ai's retry (pi-durable runs and `retryModelCall` alike) retries on a status. */
+export function retryPoolFull<P extends Provider>(provider: P): P {
+  const busy = (m: AssistantMessage) => (m.stopReason === 'error' && POOL_FULL.test(m.errorMessage ?? '') ? { ...m, errorMessage: `503 ${m.errorMessage}` } : m);
+  const wrap = (stream: unknown) => (...args: unknown[]) => {
+    const source = (stream as (...a: unknown[]) => AssistantMessageEventStream).apply(provider, args);
+    const out = createAssistantMessageEventStream();
+    void (async () => {
+      for await (const e of source) out.push(e.type === 'error' ? { ...e, error: busy(e.error) } : e);
+      out.end();
+    })();
+    return out;
+  };
+  return new Proxy(provider, { get: (t, k) => (k === 'stream' || k === 'streamSimple' ? wrap(t[k]) : Reflect.get(t, k, t)) });
+}
 
 /** Retries a model call's transient failures (429, 5xx, connection, timeout) on MODEL_RETRY; a 4xx or any model answer returns at once. */
 // `call` must hand the provider the `fetch` it gets, or Retry-After is never seen; an abort during the backoff rejects.

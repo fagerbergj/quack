@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { createModels, createProvider } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { decide, MODEL_RETRY, modelResolver, type DecisionPoint } from '../src/index.ts';
+import { decide, MODEL_RETRY, modelResolver, retryPoolFull, type DecisionPoint } from '../src/index.ts';
 
 const point: DecisionPoint = { name: 'c', question: 'Does it hold?', options: ['yes', 'no'] };
 const model = { id: '27b', name: '27b', api: 'openai-completions', provider: 'local', baseUrl: 'http://llm.test/v1', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 512 };
@@ -17,7 +17,7 @@ const refused = (status: number, headers: Record<string, string> = {}, body: obj
 
 function rig(replies: Array<() => Response>, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>) {
   const models = createModels();
-  models.setProvider(createProvider({ id: 'local', baseUrl: model.baseUrl, auth: auth as never, models: [model] as never, api: openAICompletionsApi() }));
+  models.setProvider(retryPoolFull(createProvider({ id: 'local', baseUrl: model.baseUrl, auth: auth as never, models: [model] as never, api: openAICompletionsApi() })));
   const sent: number[] = [];
   const slept: number[] = [];
   const logs: string[] = [];
@@ -54,6 +54,21 @@ test('an input the model says is too large is not retried, though the host answe
   const r = rig([refused(500, {}, over), answer]);
   assert.equal(await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT), undefined);
   assert.deepEqual([r.sent.length, r.logs], [1, []]);
+});
+
+// Strata answers 200 and ends the stream with an error event, so the reply carries no status.
+const full = () => new Response(`data: ${JSON.stringify({ error: { type: 'server_error', message: 'prompt read (BGEN slot 1): the K/V pool is full (153729 positions on this lane, 801 more pages wanted, 761 free)' } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+
+test('a full K/V pool is retried and the next answer decides', async () => {
+  const r = rig([full, full, answer]);
+  assert.equal((await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT))?.choice, 'yes');
+  assert.deepEqual([r.sent.length, r.slept], [3, [2000, 4000]]);
+});
+
+test('a full K/V pool that never drains is returned after maxRetries', async () => {
+  const r = rig(Array.from({ length: MODEL_RETRY.maxRetries + 2 }, () => full));
+  assert.equal(await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT), undefined);
+  assert.equal(r.sent.length, MODEL_RETRY.maxRetries + 1);
 });
 
 test('exhausted retries leave the decision undecided', async () => {

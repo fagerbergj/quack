@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, retryDelayMs, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { failedRows, Failures } from '@quack/sdk';
+import { failedRows, Failures, retryPoolFull } from '@quack/sdk';
 import { createSessionServer, MODEL_RETRY, openSession } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-retry-'));
@@ -20,7 +20,7 @@ async function open(name: string, steps: FauxResponseStep[], retry: Partial<type
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(steps);
   const models = createModels();
-  models.setProvider(faux.provider);
+  models.setProvider(retryPoolFull(faux.provider));
   const m = faux.getModel();
   const session = await openSession({ dir: join(root, name), models, agent: { model: { provider: m.provider, modelId: m.id } }, retry });
   return { session, faux };
@@ -30,6 +30,13 @@ test('two 502s then success completes the run', async () => {
   const { session, faux } = await open('transient', [bad502(), bad502(), fauxAssistantMessage('Paris')]);
   const r = await session.submit('Capital of France?', 'q', true);
   assert.deepEqual([r.status, faux.state.callCount], ['done', 3]);
+  await session.close();
+});
+
+test('a full K/V pool is retried like a 503', async () => {
+  const { session, faux } = await open('pool-full', [fail('prompt read (BGEN slot 1): the K/V pool is full (153729 positions on this lane, 801 more pages wanted, 761 free)'), fauxAssistantMessage('Paris')]);
+  const r = await session.submit('Capital of France?', 'q', true);
+  assert.deepEqual([r.status, faux.state.callCount], ['done', 2]);
   await session.close();
 });
 
