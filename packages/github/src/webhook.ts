@@ -8,7 +8,7 @@ export function verifySignature(secret: string, body: Buffer, header: string | u
 }
 
 /** A run to start: which session, in which role, with what input. */
-export type Trigger = { sessionKey: string; role: 'reviewer' | 'implementer'; input: string; repo: { owner: string; name: string }; number: number; title: string; /** The run starts from an issue, so a refusal is worded for one. */ issue?: boolean; /** Set only on an automatic push input: it is dropped once the app's review is on this head. A label or /review is a person's request and is never stale by head. */ pushedHead?: string };
+export type Trigger = { sessionKey: string; role: 'reviewer' | 'implementer'; input: string; repo: { owner: string; name: string }; number: number; title: string; /** The run starts from an issue, so a refusal is worded for one. */ issue?: boolean; /** Set only on an automatic push input: it is dropped once the app's review is on this head. A label or /review is a person's request and is never stale by head. */ pushedHead?: string; /** Set when a run of this role already going should hear it as a steer at its next tool boundary. */ steer?: string };
 
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
@@ -48,8 +48,11 @@ function fixTrigger(event: string | undefined, p: Payload): Trigger | undefined 
   if (!m || !TRUSTED.has(c.author_association)) return undefined;
   const owner = p.repository.owner.login;
   const name = p.repository.name;
-  const input = [`Fix pull request ${owner}/${name}#${p.issue.number} (/fix by ${c.user?.login}).`, `Title: ${p.issue.title ?? ''}`, '', CHECKOUT_FIRST, '', `Instruction: ${m[1]?.trim() || '(none; fix failing CI and open review findings)'}`].join('\n');
-  return { sessionKey: `github:${owner}/${name}#${p.issue.number}`, role: 'implementer', input, repo: { owner, name }, number: p.issue.number, title: String(p.issue.title ?? '') };
+  const instruction = m[1]?.trim() || '(none; fix failing CI and open review findings)';
+  const input = [`Fix pull request ${owner}/${name}#${p.issue.number} (/fix by ${c.user?.login}).`, `Title: ${p.issue.title ?? ''}`, '', CHECKOUT_FIRST, '', `Instruction: ${instruction}`].join('\n');
+  // Whole on its own too: a run that ends between the ping and the steer starts from this text. checkout_task mid-change would reset the branch.
+  const steer = `${c.user?.login} sent /fix on pull request ${owner}/${name}#${p.issue.number}. Instruction: ${instruction}\nIf you are already changing it, include this in that change before you deliver; otherwise start with checkout_task.`;
+  return { sessionKey: `github:${owner}/${name}#${p.issue.number}`, role: 'implementer', input, repo: { owner, name }, number: p.issue.number, title: String(p.issue.title ?? ''), steer };
 }
 
 const IMPLEMENT = /^\/implement(?:\s([\s\S]*))?$/;
@@ -73,11 +76,32 @@ function implementTrigger(event: string | undefined, p: Payload): Trigger | unde
   return { sessionKey: `github:${owner}/${name}#${i.number}`, role: 'implementer', input, repo: { owner, name }, number: i.number, title: String(i.title ?? ''), issue: true };
 }
 
+/** What a reviewer mid-run is told of a push; it also reads as a whole request if the run ends before the steer lands. */
+export const steerInput = (q: { owner: string; repo: string; number: number; pushedHead?: string }) =>
+  `New commits were pushed to pull request ${q.owner}/${q.repo}#${q.number}: its head is now ${q.pushedHead}. Call checkout_pr again and review ${q.pushedHead}; a review of an older head will not be posted.`;
+
+// deliver refuses a push from a head that is no longer live, so the implementer must check out again rather than rebase.
+const movedInput = (owner: string, name: string, number: number, by: string, sha: string) =>
+  `${by} pushed to the branch of pull request ${owner}/${name}#${number}: it is now at ${sha}. If you have a change under way, deliver will not push it from the old head: call checkout_task again and redo it on ${sha}. Otherwise there is nothing to do.`;
+
+/** A person's push to a pull request's branch, for an implementer working on it; the app's own push (`bot`, its `<slug>[bot]` login) is not one. */
+export function branchMoved(event: string | undefined, p: Payload, bot: string): Trigger | undefined {
+  const by = String(p.sender?.login ?? '');
+  if (event !== 'pull_request' || p.action !== 'synchronize' || !p.pull_request?.head?.sha || by.toLowerCase() === bot.toLowerCase()) return undefined;
+  const { owner: { login: owner }, name } = p.repository;
+  const pr = p.pull_request;
+  const steer = movedInput(owner, name, pr.number, by, pr.head.sha);
+  return { sessionKey: `github:${owner}/${name}#${pr.number}`, role: 'implementer', input: steer, repo: { owner, name }, number: pr.number, title: String(pr.title ?? ''), pushedHead: pr.head.sha, steer };
+}
+
 // The review label starts the first review, and a push to a labelled PR starts one for the new head; `/review` from a trusted commenter starts later ones.
 export function triggerFor(event: string | undefined, p: Payload, label: string): Trigger | undefined {
   if (event === 'pull_request' && p.action === 'labeled' && p.label?.name === label) return reviewTrigger(p, p.pull_request, `label ${label}`);
   // Without this a force-push after an approval left the new head unreviewed; checkout_pr ends a turn whose head was already posted.
-  if (event === 'pull_request' && p.action === 'synchronize' && p.pull_request?.labels?.some((l: Payload) => l.name === label)) return { ...reviewTrigger(p, p.pull_request, `new commits pushed to a ${label} PR`), pushedHead: p.pull_request.head?.sha };
+  if (event === 'pull_request' && p.action === 'synchronize' && p.pull_request?.labels?.some((l: Payload) => l.name === label)) {
+    const t = reviewTrigger(p, p.pull_request, `new commits pushed to a ${label} PR`);
+    return { ...t, pushedHead: p.pull_request.head?.sha, steer: steerInput({ owner: t.repo.owner, repo: t.repo.name, number: t.number, pushedHead: p.pull_request.head?.sha }) };
+  }
   const fix = fixTrigger(event, p) ?? implementTrigger(event, p);
   if (fix) return fix;
   const isReviewComment = event === 'issue_comment' && p.action === 'created' && p.issue?.pull_request && p.comment?.body?.trim() === '/review';
