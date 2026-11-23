@@ -209,3 +209,10 @@ test('every kind guide and the contracts prompt carry the one-fact rule word for
   const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
   assert.ok(prompt.includes(`\n${rule}\n`) && prompt.includes(`\n${object}\n`));
 });
+
+// Line cites went stale with every merge on 33777f8a and 0e13c5c3 and cost whole rounds of re-anchoring.
+test('the contracts prompt and every kind guide ask for a file, never a path:line', () => {
+  const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
+  for (const text of [prompt, ...Object.values(kinds).map((k) => k.skill)]) assert.doesNotMatch(text, /path:line|\.ts:\d+/);
+  assert.match(prompt, /`ref` is the file's path relative to your workspace/);
+});

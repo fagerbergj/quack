@@ -31,7 +31,7 @@ These break callers: removing or renaming a field (optional ones too), adding a 
 
 Adding optional response fields, new operations and loosened input validation are safe.
 
-Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers and one migration: what they change to keep working.
+Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A breaking change names its callers, by file or package, and one migration: what they change to keep working.
 
 ### deprecation
 Check. `deprecated: true` plus a description saying where callers go. Signal with `Deprecation` and `Sunset` headers. Watch usage before sunset; get consent from known callers first.

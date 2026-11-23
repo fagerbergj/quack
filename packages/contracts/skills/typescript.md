@@ -16,7 +16,7 @@ Check. A `.d.ts` module of `export type`, `export interface`, `export declare fu
 Ask. Suggested: export only what extensions or core must name. A helper type that only one export uses stays unexported. Every export is a promise, and removing one breaks whoever names it.
 
 ### tsdoc
-Check. Every export has a TSDoc comment. It says what the thing is, who provides it and who consumes it.
+Check. Every export has a TSDoc comment. It says what the thing is, who provides it and who consumes it, and what a consumer can rely on, not how it works inside.
 
 ### additions
 Ask. Suggested: add new fields as optional. A new required field breaks every extension that already provides the value; an optional one breaks nobody.
@@ -36,7 +36,7 @@ If the new type does not fit the old one, values core now produces break old con
 
 A new export or a new optional field is safe. Removing an optional field is not reported, so judge it yourself and list it in `compatibility`. Re-exported names are checked for removal only, and `export *` is refused: list the names.
 
-Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A break names its callers and one migration: what they change to keep working.
+Measure breaks against the spec's baseline (the last approved version, or the shipped code), never an earlier draft. A break names its callers, by file or package, and one migration: what they change to keep working.
 
 ### versioning
 Ask. Suggested: compatible changes ship in place; a break gets a new export name (`FooV2`) kept beside the old while both are in use.
