@@ -30,7 +30,7 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
   gateGenerations({ before: (provider, signal, shared) => g.begin(provider, signal, shared), after: (call) => g.end(call as GatedCall) });
   // A generation's lease is paired with its task, so calls finishing out of order free their own.
   const calls = new Map<string, GatedCall>();
-  // An aborted request never reaches afterResponse, so the run's end takes back busy leases too.
+  // The run's end gives every lease back, the one kept between generations included.
   onRunEnded(() => (calls.clear(), void g.release()));
   return [defineExtension({
     name: 'capacity',
@@ -38,11 +38,16 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
       // The lease is keyed by the agent's provider: one provider is one model endpoint.
       async beforeRequest(_request, api, ctx) {
         const endpoint = (await api.snapshot(AgentDoc, api.conversationId, ctx))?.model?.provider;
-        if (endpoint) {
-          const stale = calls.get(String(api.taskId));
-          if (stale) g.end(stale);
-          calls.set(String(api.taskId), await g.begin(endpoint, ctx.abortSignal));
-        }
+        if (!endpoint) return undefined;
+        const key = String(api.taskId);
+        const stale = calls.get(key);
+        if (stale) g.end(stale);
+        const call = await g.begin(endpoint, ctx.abortSignal);
+        calls.set(key, call);
+        // The signal aborts when the invocation ends, also when an abort throws before afterResponse, so the call ends with it.
+        const close = () => (calls.get(key) === call && calls.delete(key), g.end(call));
+        if (ctx.abortSignal?.aborted) close();
+        else ctx.abortSignal?.addEventListener('abort', close, { once: true });
         return undefined;
       },
       afterResponse: (_message, api) => {

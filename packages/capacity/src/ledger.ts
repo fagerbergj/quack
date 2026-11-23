@@ -25,7 +25,9 @@ export class LeaseLedger {
   constructor(config: LedgerConfig) {
     this.#config = config;
     this.#db = new DatabaseSync(config.dbPath);
+    // WAL + NORMAL skips the per-commit fsync; a crash can drop the last commits, which lease expiry recovers.
     this.#db.exec(`
+      PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;
       CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, endpoint TEXT NOT NULL, holder TEXT NOT NULL, state TEXT NOT NULL, since INTEGER NOT NULL, expires INTEGER NOT NULL, UNIQUE (endpoint, holder));
       CREATE TABLE IF NOT EXISTS waits (endpoint TEXT NOT NULL, holder TEXT NOT NULL, queued INTEGER NOT NULL, granted INTEGER NOT NULL);
     `);

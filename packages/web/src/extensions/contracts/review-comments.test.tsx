@@ -281,8 +281,8 @@ test('viewing an older version hides inline comment actions while keeping the ne
   const pane = open('proposed', [draft('cmt_1')]);
   await waitFor(() => expect(bar()).toHaveTextContent('1 draft comment'));
   expect(await within(pane).findByRole('button', { name: 'Comment on GET /apps/sleeper/schedule' })).toBeInTheDocument();
-  await userEvent.click(within(pane).getByRole('button', { name: /^Compare to version/ }));
-  await userEvent.click(screen.getByRole('menuitem', { name: /^Version 1/ }));
+  await userEvent.click(within(pane).getByRole('button', { name: /^Version: v2/ }));
+  await userEvent.click(screen.getByRole('menuitem', { name: /^v1/ }));
   await waitFor(() => expect(within(pane).queryByRole('button', { name: /^Comment on/ })).toBeNull());
   expect(within(bar()).getByRole('button', { name: 'Review · 1' })).toBeInTheDocument();
   expect(bar()).toHaveTextContent('1 draft comment');

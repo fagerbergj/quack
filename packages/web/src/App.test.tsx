@@ -638,7 +638,7 @@ test('lists artifacts with their check status and failing criteria', async () =>
   await userEvent.click(within(items[0]).getByRole('button', { name: 'Open Review' }));
   const pane = screen.getByRole('region', { name: 'Review' });
   expect(within(pane).getByText('draft one')).toBeInTheDocument();
-  expect(within(pane).getByRole('button', { name: "Version: Version 1, didn't pass" })).toBeInTheDocument();
+  expect(within(pane).getByRole('button', { name: /^Version: v1, failed checks/ })).toBeInTheDocument();
   await userEvent.click(within(pane).getByRole('button', { name: 'Follow the newest version' }));
   expect(within(pane).getByText('final review')).toBeInTheDocument();
 });
@@ -652,9 +652,9 @@ test('the artifact pane copies the raw content, and its status is an icon with a
   await waitFor(() => expect(ledgerOf(section)).toHaveLength(1));
   await userEvent.click(within(ledgerOf(section)[0]!).getByRole('button', { name: 'Open Review' }));
   const pane = screen.getByRole('region', { name: 'Review' });
-  const picker = within(pane).getByRole('button', { name: 'Version: Version 1, passed' });
-  expect(picker).not.toHaveTextContent(/passed/i);
-  expect(within(picker).getByTitle('Passed')).toBeInTheDocument();
+  const picker = within(pane).getByRole('button', { name: 'Version: v1, passed checks' });
+  expect(picker).toHaveTextContent(/^v1$/);
+  expect(picker).toHaveAttribute('title', 'v1, passed checks');
   await userEvent.click(within(pane).getByRole('button', { name: 'Copy' }));
   expect(writeText).toHaveBeenCalledWith('# Raw **markdown**');
   expect(await within(pane).findByRole('status')).toHaveTextContent('Copied');
@@ -795,7 +795,7 @@ test('a non-studio artifact pane starts collapsed on desktop and expands/collaps
   const pane = screen.getByRole('region', { name: 'Report' });
   expect(within(pane).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
   expect(screen.getByRole('log', { name: 'Transcript' })).not.toHaveTextContent('Gain is 1.9x');
-  expect(within(pane).getByRole('button', { name: "Version: Version 2, didn't pass" })).toBeInTheDocument();
+  expect(within(pane).getByRole('button', { name: "Version: v2, failed checks, 1 to fix" })).toBeInTheDocument();
   expect(pane).toHaveTextContent('Cites a source that does not say it');
   expect(pane).toHaveTextContent('S7 does not mention TP');
   expect(pane).not.toHaveTextContent('citations.support');
@@ -1276,8 +1276,8 @@ test('Artifacts opens one on its own page with a real URL: versions to pick, a l
   expect(main.getByRole('heading', { name: 'Review' })).toBeInTheDocument();
   expect(main.getByText('Old work')).toBeInTheDocument();
   expect(main.getByRole('link', { name: 'Open its session' })).toHaveAttribute('href', '#/s/gh%3A3');
-  await userEvent.click(main.getByRole('button', { name: 'Version: Version 2' }));
-  await userEvent.click(main.getByRole('menuitem', { name: 'Version 1' }));
+  await userEvent.click(main.getByRole('button', { name: /^Version: v2/ }));
+  await userEvent.click(main.getByRole('menuitem', { name: /^v1/ }));
   await waitFor(() => expect(location.hash).toBe('#/s/gh%3A3/a/github.review?v=1'));
   expect(await main.findByText('first draft')).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -2121,9 +2121,10 @@ describe('the session context rail', () => {
     expect(within(pr).getByLabelText('212 added, 14 removed')).toHaveTextContent('+212 −14');
     expect(within(pr).getByRole('link', { name: 'Open on GitHub ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
     const versions = within(rail).getByRole('region', { name: 'Versions' });
-    expect(await within(versions).findByText('Review v1')).toBeInTheDocument();
-    expect(within(versions).getByText("Didn't pass its checks, 50%")).toBeInTheDocument();
-    expect(within(versions).getByText('Double-checked · Posted to GitHub as Approve')).toBeInTheDocument();
+    // Each row is its number and mark; the words live in its label and tooltip.
+    expect(await within(versions).findByRole('button', { name: /^v1, failed checks, / })).toHaveTextContent(/^v1$/);
+    expect(within(versions).getByRole('button', { name: /^v2, passed checks, Posted to GitHub as Approve, / })).toHaveTextContent(/^v2$/);
+    expect(versions).not.toHaveTextContent(/%|checks|Posted/);
     expect(within(rail).queryByRole('region', { name: 'Needs you' })).toBeNull();
     expect(within(rail).queryByRole('region', { name: 'Cost' })).toBeNull();
     const info = within(rail).getByRole('region', { name: 'Session' });
@@ -2158,7 +2159,7 @@ describe('the session context rail', () => {
     const user = userEvent.setup();
     await openReview(true, { approvals: [{ id: 'a1', tool: 'push', args: { summary: 'Push the fix' }, requestedAt: 1 }] });
     const rail = await screen.findByRole('complementary', { name: 'Context' });
-    await user.click(await within(rail).findByRole('button', { name: /Review v1/ }));
+    await user.click(await within(rail).findByRole('button', { name: /^v1, / }));
     const target = vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1) as HTMLElement;
     expect(target.id).toMatch(/^v-github\.review-1-/);
     expect(target).toHaveAttribute('data-ledger');
