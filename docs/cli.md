@@ -74,11 +74,11 @@ A list prints one page, of at most `--page-size` rows (the server's default 100,
 `show --verdict` adds the judge's verdict on each kind's newest version, when it has one: passed or failed, the score, the rubric and its version, the failed gates, and each failed check with its first note cut to one line. Verdicts are not on the REST artifact rows, so `--verdict` reads them from the session's socket, which starts a stopped session's process as opening it in the web UI does. `--json` adds them as `verdicts`.
 
 ```
-$ quack show --verdict 'github:fagerbergj/quack#2238'
+$ quack show --verdict 'github:fagerbergj/quack#2491'
 ...
 Verdicts
-github.review v1  passed  score 0.87  github.reviewer@7
-  constructive_actionable.says_why: finding-1: The finding explains the mechanism of the false positive ...
+github.review v3  passed  score 0.95  github.reviewer@10
+  constructive_actionable.shows_proposed_change: finding 2: It proposes replacing the assertion regex, but it only shows the regex in inline backticks rather than the f…
 ```
 
 ## Extension apps

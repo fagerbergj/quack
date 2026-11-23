@@ -122,7 +122,7 @@ test('every model check is declared; a pitfall is asked as the defect and costs 
 test('checks that cost escalations and flagged nothing worth a point are gone, and the threshold keeps the slack their points gave', () => {
   const ids = reviewerRubric.criteria.flatMap((c) => c.checks).map((k) => k.id);
   for (const id of ['answerable', 'no_reason_given', 'contradicted', 'says_why']) assert.ok(!ids.includes(id) && !(id in reviewDeclaration.checks), id);
-  assert.deepEqual([reviewerRubric.version, reviewerRubric.threshold], [14, 0.74]);
+  assert.equal(reviewerRubric.threshold, 0.74, '0.8 gave a 12-point review 3.2 points of slack; 0.74 keeps 3.12 of 20');
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {

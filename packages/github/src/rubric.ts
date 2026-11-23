@@ -39,7 +39,8 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
   version: 14,
-  // A review with findings weighs 12 to 17 points; 0.74 lets it fall 3.1 to 4.4 short, the slack 0.8 gave over 4 more points every review earned.
+  // With findings (12-17 points) 0.74 keeps the 3.1-4.4 slack 0.8 gave over 4 more earned points; without findings it loosens:
+  // a bare approve (10 points) may fall 2.60 short, was 2.00, and a comment with none (7 points) 1.82, was 1.40.
   threshold: 0.74,
   criteria: [
     { id: 'catches_real_issues', checks: [
