@@ -13,7 +13,7 @@ import { exportsOf } from './typescript-rules.ts';
 import { commentProblems } from './answered.ts';
 import { safeClaims, unnamedBreaks } from './breaks.ts';
 import { FACT_LIMIT, factProblems, type Fact } from './facts.ts';
-import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent } from './spec.ts';
+import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent, type Why } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
 /** Each guide rule's text by its anchor (a ### heading), up to the next heading. */
@@ -76,15 +76,26 @@ async function codeRefProblem(read: Reader | undefined, roots: string[], ref: st
   return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
 
-async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answered: Set<string>, world: World): Promise<string[]> {
+// A guide ref names any ## or ### heading, matched without case and with a dash read as a space, as agents write anchors.
+const headingKey = (s: string) => s.trim().toLowerCase().replace(/[\s-]+/g, ' ');
+const guideHeadings = (skill: string) => [...skill.matchAll(/^#{2,3}\s+(.+)$/gm)].map((m) => m[1].trim());
+
+async function whyProblem(w: Why, headings: string[], answered: Set<string>, world: World): Promise<string | undefined> {
+  const ref = anchorOf(w.ref);
+  // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
+  if (w.source === 'answer') return ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve';
+  if (w.source === 'guide') return headings.some((h) => headingKey(h) === headingKey(ref)) ? undefined : `does not resolve; the guide's headings are ${headings.map((h) => `"${h}"`).join(', ')}`;
+  return codeRefProblem(world.read, world.roots, w.ref);
+}
+
+async function unresolvedLinks(spec: ContractSpec, skill: string, answered: Set<string>, world: World): Promise<string[]> {
+  const headings = guideHeadings(skill);
   const out: string[] = [];
   for (const c of spec.choices) {
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
-      const ref = anchorOf(w.ref);
-      // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
-      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(world.read, world.roots, w.ref);
+      const problem = await whyProblem(w, headings, answered, world);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
   }
@@ -258,7 +269,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const prev = base && (parseSpec(base.content) as ContractSpec);
   const [findings, unresolved, breaking] = await Promise.all([
     kind.check(spec.document),
-    unresolvedLinks(spec, guideAnchors(kind.skill), w.answered, w),
+    unresolvedLinks(spec, kind.skill, w.answered, w),
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility, baseline } = spec;
