@@ -11,7 +11,7 @@ import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
-import { buildEvidence, decisionModelTokens, registerSelector, type Declaration, type Evidence, type Unit } from '@quack/judge';
+import { buildEvidence, type Evidence } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
 import { contractDeclaration, kinds, manifest, recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
 import { fakeClef } from './clef.ts';
@@ -25,8 +25,6 @@ const lifecycle = JSON.parse(fixture('lifecycle-channel-v1.json')) as ContractSp
 const storePort = JSON.parse(fixture('store-port-v1.json')) as ContractSpec;
 const sdk = fixture('sdk-v3b.d.ts.txt');
 const env = JSON.parse(fixture('env-v4.schema.json')) as Record<string, Record<string, unknown>>;
-// A bare document is judged with the store port's intent, a real one of the usual size.
-const wrap = (kind: ContractSpec['kind'], document: unknown): ContractSpec => ({ ...storePort, kind, document, choices: [] });
 
 const inputsOf = (spec: ContractSpec, session: Partial<RecordedSession> = {}) => {
   const content = JSON.stringify(spec);
@@ -34,11 +32,6 @@ const inputsOf = (spec: ContractSpec, session: Partial<RecordedSession> = {}) =>
   return recordedSpecInputs({ docs: {}, artifacts: { 'contract.spec': [sealed] }, readFile: async () => undefined, ...session }, content);
 };
 const evidenceOf = async (spec: ContractSpec): Promise<Evidence> => (await buildEvidence(contractDeclaration, await inputsOf(spec))).evidence;
-const checksOf = (scope: string) => Object.entries(contractDeclaration.checks).filter(([, d]) => d.scope === scope).map(([id, d]) => ({ id: `matches_intent.${id}`, question: d.question }));
-const ids = (units: Unit[]) => units.map((u) => u.id);
-// The definition splitter's chunk metadata, shown as context, to read what code settles a definition by.
-registerSelector('test.meta', (_i, c) => JSON.stringify(c.meta));
-const metaDecl: Declaration = { scopes: { definition: { split: contractDeclaration.scopes.definition.split, context: { meta: { name: 'test.meta' } } } }, checks: {} };
 const noSpace = (s: string) => s.replace(/\s+/g, '');
 
 test('openapi: one definition per operation and per named component, and the rest of the document apart', () => {
@@ -72,37 +65,6 @@ test('typescript: one definition per declaration with its TSDoc, and together wi
   }
   const money = kinds.typescript.definitions(storePort.document).find((d) => d.id === '/Money')!.definition as string;
   assert.match(money, /^\/\*\*[\s\S]*export type Money = /, 'the TSDoc goes with its declaration');
-});
-
-test('every definition unit of the approved contracts fits the decision model', async () => {
-  const counts: Record<string, number> = {};
-  for (const [name, spec] of [['lifecycle', lifecycle], ['store-port', storePort], ['sdk', wrap('typescript', sdk)], ['env', wrap('json-schema', env)]] as const) {
-    const ev: Evidence = await evidenceOf(spec);
-    const over = ev.definition.filter((u) => decisionModelTokens(u, checksOf('definition')) >= 8192);
-    assert.deepEqual(ids(over), [], name);
-    counts[name] = ev.definition.length;
-  }
-  assert.deepEqual(counts, { lifecycle: 30, 'store-port': 28, sdk: 82, env: 19 });
-});
-
-test('a definition unit shares the kind and the purpose, and no choice is judged against the guide', async () => {
-  const ev = await evidenceOf(lifecycle);
-  assert.equal(ev.choice, undefined, 'contradicts_guide is gone, so no scope splits the choices');
-  assert.deepEqual(ev.definition[0].shared, { kind: 'rest', purpose: lifecycle.intent.purpose }, 'every definition shares only the kind and the purpose, so they pack together');
-  assert.deepEqual(Object.keys(ev.definition[0].state), ['definition', 'consumersAndGuarantees'], 'no definition carries the whole intent');
-  const covered = async (spec: ContractSpec, id: string) => {
-    const { evidence } = await buildEvidence(metaDecl, await inputsOf(spec));
-    return evidence.definition.find((u) => u.id === `definition ${id}`)!.state.meta as unknown as { decided: string[]; usedBy: string[] };
-  };
-  // A definition's chunk carries the choices that decide it: by pointer, or by naming it in the decision.
-  const problem = await covered(lifecycle, '/components/schemas/Problem');
-  assert.ok(problem.decided.includes('errors'));
-  assert.ok((await covered(lifecycle, 'POST /sessions/{key}/events')).decided.includes('transport'), 'an operation is decided by a choice on its path');
-  const money = await covered(storePort, '/Money');
-  assert.ok(money.decided.includes('money'));
-  // And the definitions that use it, so a shared shape reads as asked for: a local $ref, or a TypeScript name.
-  assert.ok(problem.usedBy.includes('POST /sessions/{key}/events'));
-  assert.ok(money.usedBy.includes('/SessionCatalogStore'));
 });
 
 test('an answer is cited by the question as asked or by its ask_question id, once answered before the seal', async () => {
@@ -196,31 +158,22 @@ test('only a git repository is the clone: a stray directory gets the no-clone hi
   ]);
 });
 
-test('code settles every definition of the lifecycle spec, so Clef is asked nothing and the judge model answers the guarantees', async (t) => {
+test('the lifecycle spec asks the judge model each guarantee and the decision model nothing', async (t) => {
   const judge = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
   judge.setResponses(Array.from({ length: 20 }, () => () => fauxAssistantMessage(JSON.stringify({ choice: 'yes', confidence: 0.9, reason: 'the evidence shows it' }))));
   const models = createModels();
   models.setProvider(judge.provider);
-  // Every guarantee holds, every definition is named by an intent entry and nothing departs, so no pitfall is present.
-  const clef = await fakeClef(t, (q) => (q.includes('named or implied') ? 'yes' : 'no'));
+  const clef = await fakeClef(t, () => 'no');
   models.setProvider(clef.provider);
-  const adapters = manifest.evalAdapters!;
   const content = JSON.stringify(lifecycle);
   const inputs = await inputsOf(lifecycle);
   const { rows } = await replayJudge({
-    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent', 'adds_unasked', 'implements_non_goal'], content, inputs }],
-    arms: [{ label: 'clef', adapters, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
+    cases: [{ case: 'lifecycle', kind: 'contract.spec', checks: ['meets_intent'], content, inputs }],
+    arms: [{ label: 'clef', adapters: manifest.evalAdapters!, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }],
     repeat: 1, concurrency: 1, models, judgeModel: { provider: 'judge', modelId: 'j' },
   });
-  const by = Object.fromEntries(rows.map((r) => [r.check, { met: r.met, clef: r.clef, esc: r.esc }]));
   const ev = await evidenceOf(lifecycle);
-  const asked = ev.definition.filter((u) => !u.related?.covered).length;
-  assert.deepEqual(by, {
-    meets_intent: { met: 1, clef: 0, esc: ev.guarantee.length },
-    adds_unasked: { met: 0, clef: asked, esc: 0 },
-    implements_non_goal: { met: 0, clef: 0, esc: 0 },
-  });
-  const pairs = ev.nonGoal.filter((u) => !u.related?.held).length;
-  assert.deepEqual([asked, pairs, ev.nonGoal.length], [0, 0, 30], 'a choice covers or another definition uses each of the 30 definitions, so code settles them all and no pair is asked');
-  assert.equal(clef.asked.flat().length, asked + pairs, 'one question per unit, and none for a guarantee');
+  assert.deepEqual(rows.map((r) => [r.check, r.met, r.clef, r.esc]), [['meets_intent', 1, 0, ev.guarantee.length]]);
+  assert.deepEqual(Object.keys(ev), ['facts', 'guarantee'], 'no definition, purpose or non-goal scope is split');
+  assert.equal(clef.asked.flat().length, 0);
 });
