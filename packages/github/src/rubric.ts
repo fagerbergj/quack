@@ -1,4 +1,4 @@
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
+import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
 import { parseReview, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
@@ -38,7 +38,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks; reviewDeclaration says how each model check is asked.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 10,
+  version: 15,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -132,8 +132,8 @@ export const reviewDeclaration: Declaration = {
     finding: findings(),
     blocking: findings('truthy'),
     nonblocking: findings('falsy'),
-    // Each part sees the whole diff (cut at 120k characters; retrieved hunks missed delivering helpers). With it a part rarely
-    // fits Clef, so promises skip Clef and go to the judge model, all of one review's parts in one request.
+    // Each part sees the whole diff (cut at 120k characters; retrieved hunks missed delivering helpers), so only a small PR's parts fit
+    // Clef. Clef read a part promising nothing as unkept (#2289), so promises_handled is pass-only: the judge model fails, with a reason.
     promise: {
       split: { name: 'github.descriptionParts', from: ['description', 'issues'] },
       piece: 'part',
@@ -148,7 +148,7 @@ export const reviewDeclaration: Declaration = {
     approval_grounded: { scope: 'approve', aggregate: ALL, decisionModel: false, question: yes('This review approves. Do its Takeaway and Verified sections say what about the change makes it safe to merge (which behaviour was checked and how it was checked), rather than only praising the change or asserting that it looks good or that tests pass?') },
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
-    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: false, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, reported in the review as a blocking finding, or intentionally not delivered with the review explaining why the promise was walked back? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
+    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, reported in the review as a blocking finding, or intentionally not delivered with the review explaining why the promise was walked back? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
     toolchain_as_defect: { scope: 'finding', aggregate: SHARE, question: defect('Does this finding report a sandbox, toolchain or network failure as a code defect while the CI checks are green?') },
     matches_cited_code: { scope: 'finding', aggregate: SHARE, question: yes('Does the cited code show what this finding says about it?') },
     shows_how: { scope: 'blocking', aggregate: SHARE, question: yes('Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?') },

@@ -111,7 +111,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@10\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@15\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
@@ -125,6 +125,8 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: URL7 }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
   assert.deepEqual([...resolvers].sort(), ['clef', 'code', 'j'], 'contradicted and approval_grounded skip Clef for the judge model');
+  const promises = verdict.checks.find((c: any) => c.id === 'promises_handled');
+  assert.deepEqual([promises.met, promises.resolvers], [1, { clef: promises.units }], 'a promise Clef is sure is kept needs no judge model');
   assert.ok(clefUnits.includes('context+items'), 'findings are packed with the CI result they share');
   assert.ok(clefUnits.includes('review'), 'the takeaway is judged on the review whole');
   await session.close();
