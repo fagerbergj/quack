@@ -137,6 +137,6 @@ export const reviewDeclaration: Declaration = {
     shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show the whole change in a fenced block with a language tag, or in inline backticks when it fits on one line (or does it propose no specific change)?') },
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
     blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?') },
-    wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Will someone get a wrong result from this once the change merges?') },
+    wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Once this change merges, does this give a wrong result in a case that can already happen?') },
   },
 };
