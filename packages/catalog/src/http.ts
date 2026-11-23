@@ -16,6 +16,8 @@ export type SessionsApiDeps = {
   /** Hands the answer to the session's gate or question, which waits on it: true, false when the session holds it answered,
    * `withdrawn` when the session withdrew the approval, or the session's reason for refusing a malformed answer. */
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
+  /** The session's wait for a model slot, when it is queued for one; shown on its row while it runs. */
+  waiting?(key: string): { since: number; ahead: number; provider: string } | undefined;
 };
 
 // Re-exported from the sdk, the one definition, so existing @quack/catalog imports keep working.
@@ -95,6 +97,11 @@ function resolutionOf(b: Record<string, unknown>) {
 
 /** The Sessions API's routes over the catalog; false for a request that is not one of them. */
 export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
+  const wire = (s: SessionRow) => {
+    const waiting = s.state === 'running' ? deps.waiting?.(s.key) : undefined;
+    return waiting ? { ...sessionWire(s), waiting } : sessionWire(s);
+  };
+
   async function patchSession(req: IncomingMessage, key: string, caller: Caller) {
     const by = writer(caller);
     const change = patchOf(await body(req));
@@ -106,7 +113,7 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     if (change.state === 'archived') await catalog.archive(key);
     if (change.state === 'stopped') await catalog.unarchive(key);
     console.log(`session ${key} changed by ${by.kind === 'person' ? by.id : 'the tailnet'}`);
-    return sessionWire((await catalog.getSession(key))!);
+    return wire((await catalog.getSession(key))!);
   }
 
   async function deleteSession(key: string, caller: Caller) {
@@ -137,7 +144,7 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
     mayRead(caller, key);
     const row = await catalog.getSession(key);
     if (!row) throw new Problem(404, 'no such session');
-    return sessionWire(row);
+    return wire(row);
   }
 
   async function sub(req: IncomingMessage, url: URL, key: string, rest: string[], caller: Caller): Promise<unknown> {
@@ -160,7 +167,7 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
   async function top(url: URL, caller: Caller): Promise<unknown> {
     mayRead(caller);
     const r = listRequest(url.searchParams);
-    if (url.pathname === '/sessions') return paged('sessions', await catalog.listSessions(r), sessionWire);
+    if (url.pathname === '/sessions') return paged('sessions', await catalog.listSessions(r), wire);
     if (url.pathname === '/asks') return paged('asks', await catalog.listAsks(r), askWire);
     return paged('artifacts', await catalog.listArtifacts(r), (a) => artifactWire(a, false));
   }

@@ -70,9 +70,9 @@ async function first<T>(s: Open, d: unknown, pick: (v: any) => T | undefined): P
 const nextQuestion = (s: Open, seen: string[] = []) => first(s, Questions, (v) => pendingQuestions(v).find((q) => !seen.includes(q.id)));
 const nextApproval = (s: Open, seen: string[] = []) => first(s, Approvals, (v) => Object.entries<{ verdict: unknown }>(v?.items ?? {}).find(([k, a]) => !a.verdict && !seen.includes(k))?.[0]);
 const text = (c: Msgs) => { const m = c.messages.at(-1)!.content; return typeof m === 'string' ? m : (m as Array<{ text?: string }>).map((p) => p.text ?? '').join(''); };
-// The judge's single ("Decision: ...") and batched ("Evidence: ...") questions get yes, except the pitfall ones; other requests take the next scripted step.
+// The judge's single ("Decision: ...") and batched ("Evidence: ...") questions all get yes; other requests take the next scripted step.
 const judged = (script: Step[]): Step[] => {
-  const answer = (q: string) => ({ choice: /never asked for|contradict a guide rule/.test(q) ? 'no' : 'yes', confidence: 1, reason: 'fine' });
+  const answer = (_q: string) => ({ choice: 'yes', confidence: 1, reason: 'fine' });
   return Array.from({ length: 80 }, () => (c: Msgs) => {
     const p = text(c);
     if (p.startsWith('Decision:')) return fauxAssistantMessage(JSON.stringify(answer(p)));

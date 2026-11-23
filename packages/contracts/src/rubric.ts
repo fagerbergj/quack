@@ -13,7 +13,7 @@ import { exportsOf } from './typescript-rules.ts';
 import { commentProblems } from './answered.ts';
 import { safeClaims, unnamedBreaks } from './breaks.ts';
 import { FACT_LIMIT, factProblems, type Fact } from './facts.ts';
-import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent } from './spec.ts';
+import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent, type Why } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
 /** Each guide rule's text by its anchor (a ### heading), up to the next heading. */
@@ -76,15 +76,26 @@ async function codeRefProblem(read: Reader | undefined, roots: string[], ref: st
   return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
 }
 
-async function unresolvedLinks(spec: ContractSpec, anchors: Set<string>, answered: Set<string>, world: World): Promise<string[]> {
+// A guide ref names any ## or ### heading, matched without case and with a dash read as a space, as agents write anchors.
+const headingKey = (s: string) => s.trim().toLowerCase().replace(/[\s-]+/g, ' ');
+const guideHeadings = (skill: string) => [...skill.matchAll(/^#{2,3}\s+(.+)$/gm)].map((m) => m[1].trim());
+
+async function whyProblem(w: Why, headings: string[], answered: Set<string>, world: World): Promise<string | undefined> {
+  const ref = anchorOf(w.ref);
+  // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
+  if (w.source === 'answer') return ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve';
+  if (w.source === 'guide') return headings.some((h) => headingKey(h) === headingKey(ref)) ? undefined : `does not resolve; the guide's headings are ${headings.map((h) => `"${h}"`).join(', ')}`;
+  return codeRefProblem(world.read, world.roots, w.ref);
+}
+
+async function unresolvedLinks(spec: ContractSpec, skill: string, answered: Set<string>, world: World): Promise<string[]> {
+  const headings = guideHeadings(skill);
   const out: string[] = [];
   for (const c of spec.choices) {
     // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
     if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
     for (const w of c.why) {
-      const ref = anchorOf(w.ref);
-      // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
-      const problem = w.source === 'answer' ? (ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve') : w.source === 'guide' ? (anchors.has(ref) ? undefined : 'does not resolve') : await codeRefProblem(world.read, world.roots, w.ref);
+      const problem = await whyProblem(w, headings, answered, world);
       if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
     }
   }
@@ -247,7 +258,7 @@ const purposeSentences = (intent: { purpose: string }): Entry[] =>
   (intent.purpose ?? '').split(/(?<=[.;])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
 registerSplitter('contract.purposeSentences', (inputs, o) => promiseItems(inputs, o, purposeSentences));
 
-// The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
+// The named texts the judge reads: the facts code found, the spec and its kind.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const spec = parseSpec(sealed.content) as ContractSpec;
   const kind = kinds[spec.kind];
@@ -258,34 +269,29 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const prev = base && (parseSpec(base.content) as ContractSpec);
   const [findings, unresolved, breaking] = await Promise.all([
     kind.check(spec.document),
-    unresolvedLinks(spec, guideAnchors(kind.skill), w.answered, w),
+    unresolvedLinks(spec, kind.skill, w.answered, w),
     prev ? kind.diff(prev.document, spec.document) : [],
   ]);
   const { intent, choices, document, version, compatibility, baseline } = spec;
   const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text, operation, path }) => ({ id, text, operation, path })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
-  const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
     facts: JSON.stringify(facts),
     spec: JSON.stringify({ intent, choices, document }),
     kind: spec.kind,
-    choices: JSON.stringify(choices.map((c) => ({ ...c, cites: cites(c) }))),
-    guide: JSON.stringify(Object.fromEntries(guideRules(kind.skill))),
   };
 }
 
-// A pitfall asks about the departure and holds on "no": worded as the claim cost Clef confidence (61% of choices, 74% of definitions at 0.8; 97%, 98% this way).
+// A pitfall asks about the departure and holds on "no": worded as the claim cost Clef confidence (74% of definitions at 0.8, 98% this way).
 // adds_unasked is the owner's exception, worded as the claim and holding on "yes"; the replay's clef and esc columns track its cost.
 const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
-// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
-// and a departure nobody cited is what the check is for. Promises read at most four parts plus the root via meets_intent and delivers_purpose.
+// Promises read at most four parts plus the root via meets_intent and delivers_purpose.
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     // One item per guarantee, and one per promising sentence of the purpose; the evidence is the parts each may hold in.
     guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
     purpose: { split: { name: 'contract.purposeSentences', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { evidence: { name: 'contract.evidence' } } },
-    choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
     // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
     definition: {
       split: { name: 'contract.definitions', from: ['spec', 'kind'] },
@@ -304,7 +310,6 @@ export const contractDeclaration: Declaration = {
     // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
     // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
-    contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
   },
@@ -314,7 +319,7 @@ export const contractDeclaration: Declaration = {
 const answeredIn = (items: Record<string, Question>, by = Infinity) =>
   new Set(Object.entries(items).filter(([, q]) => q.answer && q.answer.at <= by).flatMap(([key, q]) => [q.question, key.slice(key.indexOf(':') + 1)]));
 
-/** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec with its guide. */
+/** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec. */
 export function specInputs() {
   return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
     return inputsIn(sealed, {
@@ -411,7 +416,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 10,
+  version: 12,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -431,7 +436,6 @@ export const contractRubric: Rubric = {
       // The old meets_intent's weight, split: each miss alone still fails a spec; the purpose, one broad statement, counts least.
       { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 3 },
       { id: 'delivers_purpose', label: "The document doesn't deliver the intent's purpose", weight: 1 },
-      { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },
       // The two halves of "unasked" share the weight it had alone.
       { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -2 },
       { id: 'implements_non_goal', label: 'The spec implements a non-goal', weight: -1 },

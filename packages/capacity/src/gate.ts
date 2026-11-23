@@ -1,3 +1,4 @@
+import type { ModelWait } from '@quack/sdk';
 import type { Lease } from './ledger.ts';
 
 export type LeaseClient = {
@@ -37,7 +38,8 @@ export type GateOptions = {
   /** After the service fails, generations skip it this long. */
   downMs?: number;
   log?: (line: string) => void;
-  setNote?: (text: string | null) => void;
+  /** Hears the run's wait for a slot: the oldest queued call's wait (since, ahead and provider all from that call), or null when none queues. */
+  setWait?: (wait: ModelWait | null) => void;
 };
 
 /** `rides` counts the shared calls running under the lease; a lease with any is neither reused nor released by `end`. */
@@ -57,9 +59,10 @@ export class CapacityGate {
   #releasing = Promise.resolve();
   #downUntil = 0;
   #warned = false;
+  #queued = new Map<Held, ModelWait>();
 
   constructor(options: GateOptions) {
-    this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setNote: () => {}, ...options, clock: options.clock ?? realClock };
+    this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setWait: () => {}, ...options, clock: options.clock ?? realClock };
   }
 
   // The first lease keeps the session's holder name, so a restarted process takes its old place back.
@@ -74,7 +77,6 @@ export class CapacityGate {
       if (this.#o.clock.now() >= this.#downUntil) call.lease = await (shared ? this.#share(endpoint, signal) : this.#lease(endpoint, signal));
     } catch (err) {
       this.#calls.delete(call);
-      this.#o.setNote(null);
       throw err;
     }
     if (shared && call.lease) call.ride = true;
@@ -179,6 +181,26 @@ export class CapacityGate {
 
   // False when the service failed and the generation goes ungated.
   async #acquire(lease: Held, signal?: AbortSignal): Promise<Held | undefined> {
+    try {
+      return await this.#poll(lease, signal);
+    } finally {
+      this.#queued.delete(lease);
+      this.#publish();
+    }
+  }
+
+  #queue(lease: Held, ahead: number) {
+    this.#queued.set(lease, { since: this.#queued.get(lease)?.since ?? this.#o.clock.now(), ahead, provider: lease.endpoint });
+    this.#publish();
+  }
+
+  #publish() {
+    const all = [...this.#queued.values()];
+    const first = all.reduce((a, w) => (w.since < a.since ? w : a), all[0]!);
+    this.#o.setWait(all.length ? { ...first } : null);
+  }
+
+  async #poll(lease: Held, signal?: AbortSignal): Promise<Held | undefined> {
     for (;;) {
       signal?.throwIfAborted();
       await this.#releasing;
@@ -187,7 +209,6 @@ export class CapacityGate {
         r = await this.#o.client.acquire(lease.endpoint, this.#holder(lease));
       } catch (err) {
         this.#downUntil = this.#o.clock.now() + this.#o.downMs;
-        this.#o.setNote(null);
         if (!this.#warned) this.#o.log(`capacity: service unreachable, generations run ungated: ${(err as Error).message}`);
         this.#warned = true;
         return undefined;
@@ -195,18 +216,16 @@ export class CapacityGate {
       if (await this.#orphaned(lease)) return undefined;
       if (r.state === 'granted') {
         lease.granted = true;
-        this.#o.setNote(null);
         this.#beat(lease, r);
         return lease;
       }
-      this.#o.setNote(`Waiting for model capacity (${r.ahead} ahead)`);
+      this.#queue(lease, r.ahead);
       await this.#o.clock.sleep(this.#o.pollMs, signal);
       // A call of this session that ended frees its own idle lease; take that over the queue.
       const spare = this.#leases.find((l) => l !== lease && free(l) && l.endpoint === lease.endpoint);
       if (spare) {
         spare.busy = true;
         await this.#drop(lease);
-        this.#o.setNote(null);
         return spare;
       }
     }

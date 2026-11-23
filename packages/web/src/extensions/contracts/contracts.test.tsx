@@ -233,8 +233,8 @@ test('the page links to its session and offers versions, reading only the shown 
   expect(await screen.findByText('1 route · version 1')).toBeInTheDocument();
   expect(fetcher.mock.calls.map(([u]) => decodeURIComponent(u)).filter((u) => u.includes('version:'))).toHaveLength(1);
   expect(screen.getByRole('link', { name: 'Open its session' })).toHaveAttribute('href', '#/s/home%3Amain');
-  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 1' }));
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Version 2' }));
+  await userEvent.click(screen.getByRole('button', { name: /^Version: v1/ }));
+  await userEvent.click(screen.getByRole('menuitem', { name: /^v2/ }));
   expect(location.hash).toBe('#/s/home%3Amain/a/contract.spec?v=2');
   vi.unstubAllGlobals();
 });
@@ -246,8 +246,8 @@ test('the page labels seals by the contracts app, grouping the seals of one vers
   // The link names the spec version, as it did when the page read it from the content.
   render(<ArtifactPage sessionKey="home:main" kind="contract.spec" version={2} rows={undefined} />);
   expect(await screen.findByText('1 route · version 2')).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Version: Version 2' }));
-  expect(screen.getAllByRole('menuitem').map((o) => o.textContent)).toEqual(['Version 2', 'Version 1']);
+  await userEvent.click(screen.getByRole('button', { name: /^Version: v2/ }));
+  expect(screen.getAllByRole('menuitem').map((o) => o.textContent)).toEqual(['v2', 'v1']);
   const reads = fetcher.mock.calls.map(([u]) => decodeURIComponent(u)).filter((u) => u.includes('version:'));
   expect(reads).toHaveLength(1);
   expect(reads[0]).toMatch(/version:3/);
