@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import type { SealedArtifact } from './api.ts';
-import type { Standing } from './extension.ts';
+import type { Approval, SealedArtifact } from './api.ts';
+import type { Marking, StandOf } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { useLoad } from './useLoad.ts';
 import { verdictMark } from './VersionMenu.tsx';
@@ -21,16 +21,23 @@ export function delivered(all: SealedArtifact[]): SealedArtifact[] {
   return [...groups.entries()].sort((x, y) => y[0] - x[0]).map(([, g]) => g.find((a) => a.verdict?.passed || a.verdict?.limitReached) ?? g[0]!);
 }
 
-export type MarkOf = (a: SealedArtifact) => Standing;
-const NO_STANDING = new Map<string, Standing>();
+export type MarkOf = (a: SealedArtifact) => Marking;
+/** A version's mark from its verdict alone, for kinds no extension stands for. */
+export const byVerdict: MarkOf = (a) => verdictMark(a.verdict);
+const NO_STANDING = new Map<string, StandOf>();
 
-/** Each version's mark and words: the owning extension's standing with the person where it has one (a contract's approval), else its verdict.
- * Read again when a version is sealed or `tick` changes (a proposal opening or being decided). */
-export function useMarks(sessionKey: string, items: SealedArtifact[], tick: unknown): MarkOf {
+/** The session's one read of where its versions stand with the person (a contract's approval), by kind; `stand` folds in the open approvals as
+ * they arrive, and `markOf` falls back to the verdict. Read again when a version is sealed, an approval opens or closes, or a run starts or ends. */
+export function useStanding(sessionKey: string, items: SealedArtifact[], approvals: Approval[], running: boolean) {
   const kinds = [...new Set(items.map((a) => a.kind))];
+  // The approvals come as a new array every render; only which are open re-reads and re-marks, so transcript rows stay put.
+  const open = approvals.map((p) => p.id).join();
   const { data } = useLoad(async () => {
-    const read = await Promise.all(kinds.flatMap((k) => EXTENSIONS.map((e) => e.standing?.(sessionKey, k)?.then((m) => [...m].map(([n, s]) => [`${k}:${n}`, s] as const)) ?? [])));
-    return new Map(read.flat());
-  }, [sessionKey, kinds.join(), items.length, tick], NO_STANDING);
-  return useCallback((a: SealedArtifact) => data.get(`${a.kind}:${a.version}`) ?? verdictMark(a.verdict), [data]);
+    const read = await Promise.all(kinds.flatMap((k) => EXTENSIONS.map((e) => e.standing?.(sessionKey, k)?.then((f) => (f ? [[k, f] as const] : [])) ?? [])));
+    const owned = read.flat();
+    return owned.length ? new Map(owned) : NO_STANDING;
+  }, [sessionKey, kinds.join(), items.length, open, running], NO_STANDING);
+  const stand = useCallback((a: SealedArtifact) => data.get(a.kind)?.(a, approvals), [data, open]);
+  const markOf = useCallback<MarkOf>((a) => stand(a) ?? byVerdict(a), [stand]);
+  return { stand, markOf };
 }

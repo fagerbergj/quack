@@ -457,12 +457,12 @@ test('before the first version the Contract tab opens on the waiting question, s
 });
 
 const ledgerLines = () => waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(3); return l; });
-const tips = (lines: HTMLElement[]) => lines.map((l) => l.querySelector('[title^="v"]')?.getAttribute('title'));
+const tips = (lines: HTMLElement[]) => lines.map((l) => l.querySelector('[data-detail]')?.getAttribute('title'));
 
 test('the chat names each seal by the contract version a person knows, with which save it is in the tooltip only', async () => {
   open([spec(21, { ...v2, version: 15 }), spec(22, { ...v2, version: 15 }, null), spec(23, { ...v2, version: 16 })]);
   const lines = await ledgerLines();
-  expect(lines.map((l) => l.querySelector('[title^="v"]')?.textContent?.match(/^v\d+/)?.[0])).toEqual(['v15', 'v15', 'v16']);
+  expect(lines.map((l) => l.querySelector('[data-detail]')?.textContent?.match(/^v\d+/)?.[0])).toEqual(['v15', 'v15', 'v16']);
   expect(tips(lines)).toEqual(['v15, passed checks, save 1', 'v15, save 2', 'v16, passed checks']);
   expect(within(lines[1]!).getByRole('button', { name: 'Open Spec v15, save 2' })).toBeInTheDocument();
 });
@@ -473,6 +473,24 @@ test("the chat marks a contract's versions by the person's decision, as the vers
   const lines = await waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(4); return l; });
   await waitFor(() => expect(tips(lines)).toEqual(['v1, approved', 'v2, changes asked', 'v3, needs you', 'v1']));
   expect(lines.map((l) => l.querySelector('[data-mark]')?.getAttribute('data-mark')), 'the approval record has no verdict to mark').toEqual(['ok', 'bad', 'you', undefined]);
+});
+
+test('a proposal the socket carries before the catalog has it needs you in the chat as in the menu, not a draft', async () => {
+  routes[STATUS] = status([1, 'approved']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, { ...v2, version: 2 })], [proposal(2, 2)]);
+  await waitFor(() => expect(shown()).toHaveAccessibleName('Version: v2, needs you'));
+  const lines = await waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(3); return l; });
+  expect(tips(lines)).toEqual(['v1, approved', 'v2, needs you', 'v1']);
+  expect(lines[1]!.querySelector('[data-mark]')).toHaveAttribute('data-mark', 'you');
+});
+
+test('a save that failed its checks is marked failed, in the chat as in the menu, not as a draft', async () => {
+  routes[STATUS] = status([1, 'approved'], [2, 'draft']);
+  open([spec(1, v1), approvedRec(1, 1), spec(2, { ...v2, version: 2 }, fail)]);
+  await waitFor(() => expect(shown()).toHaveAccessibleName('Version: v2, failed checks, 1 to fix'));
+  const lines = await waitFor(() => { const l = [...document.querySelectorAll<HTMLElement>('[data-ledger]')]; expect(l).toHaveLength(3); return l; });
+  expect(tips(lines)[1]).toBe('v2, failed checks, 1 to fix');
+  expect(lines[1]!.querySelector('[data-mark]')).toHaveAttribute('data-mark', 'bad');
 });
 
 // What the session sends now: only the newest version of a kind carries its content.

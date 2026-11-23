@@ -3,8 +3,8 @@ import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import type { SealedArtifact } from './api.ts';
 import { CheckResult } from './CheckResult.tsx';
-import { versionOf, type MarkOf } from './delivered.ts';
-import { verdictMark, VersionMark } from './VersionMenu.tsx';
+import { byVerdict, versionOf, type MarkOf } from './delivered.ts';
+import { VersionMark } from './VersionMenu.tsx';
 
 // An extension may draw its artifact as a card; undefined leaves the plain line. A card that throws falls back to the saved text.
 export function artifactCard(a: SealedArtifact, now?: { running: boolean; meta: readonly Record<string, unknown>[] }) {
@@ -42,7 +42,6 @@ export const ledgerId = (a: SealedArtifact) => `v-${a.kind}-${a.version}-${a.sea
 
 const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
 
-const byVerdict: MarkOf = (a) => verdictMark(a.verdict);
 // Which save of a version this is, or how many failed versions came just before it: detail for the tooltip, never the line.
 const retry = (draft: number | undefined, round: number) => (draft ? `save ${draft}` : round > 0 ? `after ${round} failed ${round === 1 ? 'try' : 'tries'}` : '');
 
@@ -52,13 +51,14 @@ export function LedgerItem({ a, round, draft, running, onOpen, markOf = byVerdic
   const hasCard = Boolean(artifactCard(a));
   const n = versionOf(a);
   // An unjudged record (an approval) also carries a null verdict, so the line leaves "checking" to the pane, as it always has.
-  const m = a.verdict === null && markOf(a).mark === 'checking' ? {} : markOf(a);
+  const s = markOf(a);
+  const m = a.verdict === null && s.mark === 'checking' ? {} : s;
   const detail = [`v${n}`, m.status, retry(draft, round)].filter(Boolean).join(', ');
   return (
     <div data-ledger id={ledgerId(a)} className="flex flex-col gap-1 text-[13px] text-muted">
       <div className="flex items-center gap-2">
         <span className="min-w-0 truncate">{lineOf(a, named)}</span>
-        <span title={detail} className="flex flex-none items-center gap-1.5 text-[12px]">
+        <span data-detail title={detail} className="flex flex-none items-center gap-1.5 text-[12px]">
           <span aria-hidden="true" className="font-mono font-semibold text-ink-2">{`v${n}`}</span>{!named?.previous && <VersionMark mark={m.mark} />}<span className="sr-only">{detail}</span>
         </span>
         <button type="button" aria-label={`Open ${artifactName(a)} ${detail}`} onClick={() => onOpen(a)} className={link}>Open</button>

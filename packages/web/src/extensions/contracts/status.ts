@@ -1,7 +1,8 @@
-import { listAll, postInvocation } from '../../api.ts';
-import type { Standing } from '../../extension.ts';
+import { listAll, postInvocation, type Approval, type SealedArtifact } from '../../api.ts';
+import type { Marking, Stand } from '../../extension.ts';
 import type { Row } from '../../sessions.ts';
 import type { Mark } from '../../StatusIcon.tsx';
+import { verdictMark } from '../../VersionMenu.tsx';
 
 /** One contract row: `version` and `mark` are all it shows of its state, and `status` is the mark's words. `approved` puts it in the Approved group. */
 export type Contract = { key: string; name: string; kind?: { tag: string; name: string }; version: number | undefined; mark: Mark; status: string; approved: boolean; rank: number; at: number };
@@ -47,7 +48,17 @@ export const contractRecords = async (): Promise<Map<string, ContractRecord>> =>
 export type VersionStatus = 'draft' | 'proposed' | 'approved' | 'changes_requested';
 
 /** A version's standing as every version list draws it: one mark, its words spoken and in the tooltip. */
-export const STANDING: Record<VersionStatus, Required<Standing>> = { draft: { mark: 'draft', status: 'draft' }, proposed: { mark: 'you', status: 'needs you' }, approved: { mark: 'ok', status: 'approved' }, changes_requested: { mark: 'bad', status: 'changes asked' } };
+export const STANDING: Record<VersionStatus, Required<Marking>> = { draft: { mark: 'draft', status: 'draft' }, proposed: { mark: 'you', status: 'needs you' }, approved: { mark: 'ok', status: 'approved' }, changes_requested: { mark: 'bad', status: 'changes asked' } };
+
+/** The sealed spec a proposal puts up for approval. */
+export const offered = (p: Approval) => (p.tool === 'propose_contract' ? (p.args as { artifact?: number } | null)?.artifact : undefined);
+
+/** Where a spec stands from the app's answer; the socket can show a proposal before the catalog has it. A draft the judge failed is marked failed. */
+export const standOf = (statuses: Map<number, VersionStatus>) => (a: SealedArtifact, approvals: Approval[]): Stand => {
+  const s = statuses.get(a.version) ?? 'draft';
+  const state = s === 'draft' && approvals.some((p) => offered(p) === a.version) ? 'proposed' : s;
+  return { state, ...(state === 'draft' && a.verdict?.passed === false ? verdictMark(a.verdict) : STANDING[state]) };
+};
 
 /** Each spec artifact's status by artifact number (GET apps/contracts/contracts/{key}); undefined when the app answers not found or an error,
  * or the request fails, which Studio shows as no answer yet. */

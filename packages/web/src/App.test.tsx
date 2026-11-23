@@ -2020,8 +2020,8 @@ describe('the session page as a ledger', () => {
     expect(order.every((n) => n >= 0)).toBe(true);
     const [one, two] = ledgerOf(log);
     // The line shows the number and mark; which try it was is the tooltip and spoken label.
-    expect(one.querySelector('[title^="v"]')).toHaveAttribute('title', expect.stringMatching(/^v1, failed checks/));
-    expect(two.querySelector('[title^="v"]')).toHaveAttribute('title', 'v2, passed checks, after 1 failed try');
+    expect(one.querySelector('[data-detail]')).toHaveAttribute('title', expect.stringMatching(/^v1, failed checks/));
+    expect(two.querySelector('[data-detail]')).toHaveAttribute('title', 'v2, passed checks, after 1 failed try');
     expect(two).not.toHaveTextContent(/revision|Version/);
     expect(screen.queryByRole('region', { name: 'Artifacts' })).toBeNull();
   });

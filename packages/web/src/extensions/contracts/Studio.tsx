@@ -2,7 +2,7 @@ import { createElement, useCallback, useContext, useMemo, useRef, useState, type
 import { checkFailed, listAsks, type Approval, type Ask, type SealedArtifact, type Verdict } from '../../api.ts';
 import { ArtifactBoundary } from '../../ArtifactBoundary.tsx';
 import { CheckResult } from '../../CheckResult.tsx';
-import { SessionKeyContext, type StudioProps } from '../../extension.ts';
+import { SessionKeyContext, type Stand, type StudioProps } from '../../extension.ts';
 import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
 import { FollowNewest, iconButton, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
@@ -16,7 +16,7 @@ import { RestView } from './RestView.tsx';
 import { ReviewContext, Sheet, Stepper, useStepper } from './Review.tsx';
 import { changeItems, markBreaks, type Item } from './review.ts';
 import { parseSpec, specVersion, type ContractSpec } from './spec.ts';
-import { contractVersions, STANDING, type VersionStatus } from './status.ts';
+import { offered, type VersionStatus } from './status.ts';
 import { TypeScriptView, useModel } from './TypeScriptView.tsx';
 
 export const VIEWS = { rest: RestView, 'json-schema': JsonSchemaView, typescript: TypeScriptView };
@@ -42,19 +42,8 @@ export function ApprovedSpec({ approval }: { approval: { artifact: number; hash:
 
 /** One sealed spec artifact and the number a person knows it by. Its spec is read from its content, which only the newest version carries. */
 export type Version = { a: SealedArtifact; n: number };
-/** Where a version stands with the person, from the contracts app. */
-export type StatusOf = (v: Version) => VersionStatus;
-const offered = (p: Approval) => (p.tool === 'propose_contract' ? (p.args as { artifact?: number } | null)?.artifact : undefined);
-
-/** Each version's status from the contracts app, read again whenever a version is sealed, a proposal opens or is decided, or a run ends;
- * undefined until the first read answers. */
-function useStatus(sessionKey: string, artifacts: SealedArtifact[], approvals: Approval[], running: boolean): StatusOf | undefined {
-  const asked = approvals.map(offered).filter((n) => n !== undefined);
-  const { data } = useLoad(() => contractVersions(sessionKey), [sessionKey, artifacts.length, asked.join(), running], undefined);
-  if (!data) return undefined;
-  // The socket can show a proposal before the catalog has it.
-  return (v) => { const s = data.get(v.a.version) ?? 'draft'; return s === 'draft' && asked.includes(v.a.version) ? 'proposed' : s; };
-}
+/** Where a version stands with the person and its mark, from the session's one standing read. */
+export type StatusOf = (v: Version) => Stand & { state: VersionStatus };
 
 /** The status line: what is going on (`title`) and whether anything waits on the person (`sub`); `can` when the newest version is up for approval. */
 export type State = { can: boolean; done?: boolean; title: string; sub?: string; detail?: string };
@@ -148,9 +137,9 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
   );
 }
 
-const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => ({ id: v.a.version, short: short(v), ...(status && STANDING[status(v)]) }));
+const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => { const s = status?.(v); return { id: v.a.version, short: short(v), ...(s && { mark: s.mark, status: s.status }) }; });
 // The person sees the versions they decided on and the newest; a save the checker sent back before it reached them is left out.
-const listed = (versions: Version[], newest: Version, status?: StatusOf) => (status ? versions.filter((v) => v === newest || ['approved', 'changes_requested'].includes(status(v))) : versions);
+const listed = (versions: Version[], newest: Version, status?: StatusOf) => (status ? versions.filter((v) => v === newest || ['approved', 'changes_requested'].includes(status(v).state)) : versions);
 
 const x = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>;
 
@@ -192,7 +181,7 @@ function Contract({ sessionKey, versions: all, newest, spec, status, approvals, 
   const versions = useMemo(() => listed(all, newest, status), [all, newest, status]);
   const top = useRef<HTMLDivElement>(null);
   const proposal = approvals.find((a) => offered(a) === newest.a.version);
-  const approvedV = status && versions.findLast((v) => status(v) === 'approved');
+  const approvedV = status && versions.findLast((v) => status(v).state === 'approved');
   const to = versions.find((v) => v.a.version === (picked?.to ?? newest.a.version)) ?? newest;
   // Until the status answers there is no approved version, so nothing is compared.
   const base = approvedV !== newest ? approvedV : undefined;
@@ -205,7 +194,7 @@ function Contract({ sessionKey, versions: all, newest, spec, status, approvals, 
   const review = useStepper(items, from && short(from), short(to), true);
   const marks = useMemo(() => diff && markBreaks(diff.marks, items), [diff, items]);
   const name = short(newest);
-  const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest), proposal, approved: approvedV && short(approvedV), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
+  const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest).state, proposal, approved: approvedV && short(approvedV), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
   const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base), name };
   // Comments are made only on the version up for approval; a sent one's versions are named as the person knows them.
   const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
@@ -231,13 +220,14 @@ function Contract({ sessionKey, versions: all, newest, spec, status, approvals, 
 
 /** The contract as it stands, live beside the conversation: one status line for where it stands, the changes since the approved version
  * first, the map and the spec beneath it, and Approve or Ask for changes once the judge has passed the newest version and it is up for approval. */
-export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, questions, brief, activity }: StudioProps) {
+export function ContractStudio({ sessionKey, artifacts, approvals, running, decided, questions, brief, activity, stand }: StudioProps) {
   const versions = useMemo(() => artifacts.filter((a) => a.kind === 'contract.spec').map((a) => ({ a, n: specVersion(a) ?? a.version })), [artifacts]);
   const newest = versions.at(-1);
   // Only the newest version carries its content on the socket; one that cannot be drawn is no contract yet.
   const spec = useMemo(() => (newest?.a.content === undefined ? undefined : parseSpec(newest.a.content)), [newest?.a.content]);
-  const status = useStatus(sessionKey, artifacts, approvals, running);
-  const rejected = useRejection(sessionKey, newest?.a.version ?? 0, !!newest && status?.(newest) === 'changes_requested');
+  // Every spec has a stand once the read answers; until then nothing is.
+  const status = useMemo(() => (newest && stand(newest.a) ? (v: Version) => stand(v.a) as ReturnType<StatusOf> : undefined), [newest, stand]);
+  const rejected = useRejection(sessionKey, newest?.a.version ?? 0, !!newest && status?.(newest).state === 'changes_requested');
   const decisions = <Decided sessionKey={sessionKey} asked={questions.length} running={running} open={!newest || !spec} />;
   if (!newest || !spec) return <div className={`${layout} pb-10`}><Progress activity={activity} brief={brief} waiting={questions.length > 0} />{decisions}</div>;
   return <Contract sessionKey={sessionKey} versions={versions} newest={newest} spec={spec} status={status} approvals={approvals} running={running} decided={decided} rejected={rejected} decisions={decisions} />;

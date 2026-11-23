@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from 'react';
 import { listAgents, type AgentSummary, type Approval, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { ledgerId } from './Artifacts.tsx';
-import { delivered, versionOf, type MarkOf } from './delivered.ts';
+import { byVerdict, delivered, versionOf, type MarkOf } from './delivered.ts';
 import { describe } from './Needs.tsx';
 import { compact, needId, spendLabel } from './sessions.ts';
 import { SpendChip } from './SpendChip.tsx';
@@ -11,7 +11,7 @@ import type { View } from './view.ts';
 import { useMedia, WIDE } from './useDesktop.ts';
 import { RailSections } from './slots.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
-import { verdictMark, VersionMark } from './VersionMenu.tsx';
+import { VersionMark } from './VersionMenu.tsx';
 
 const head = 'm-0 mb-3 text-xs font-semibold tracking-[.06em] text-muted uppercase';
 const jumpBtn = 'flex min-h-11 w-full cursor-pointer items-start border-0 bg-transparent p-0 text-left text-[13px] text-ink lg:min-h-8';
@@ -33,7 +33,6 @@ function detail(a: SealedArtifact, markOf: MarkOf): string {
   const posted = a.links?.length ? (postedTo ?? 'Posted') : '';
   return [`v${versionOf(a)}`, markOf(a).status, posted, clock(a.sealedAt)].filter(Boolean).join(', ');
 }
-const byVerdict: MarkOf = (a) => verdictMark(a.verdict);
 
 function Versions({ items, markOf }: { items: SealedArtifact[]; markOf: MarkOf }) {
   const [all, setAll] = useState(false);
