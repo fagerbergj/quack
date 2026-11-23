@@ -155,10 +155,10 @@ test('matches_cited_code asks about every path:line a finding cites, each excerp
   const api = { conversationId: 'c', snapshot: async () => undefined, env: { exec: async () => ({ ok: true, value: { exitCode: 0 } }), readTextFile: async (p: string) => (files[p.slice('repo/'.length)] ? { ok: true, value: files[p.slice('repo/'.length)] } : { ok: false }) } };
   const content = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- suggestion: src/rubric.ts:3 — `whole` is unreachable since src/index.ts:3 never sets it (see github.com:443 and src/rubric.ts:3)\n- nit: gone.ts:9 — z\n';
   const built = await buildEvidence(reviewDeclaration, await reviewInputs()(api as never, { content } as never, {} as never));
-  assert.deepEqual(built.evidence.citation.map((u) => [u.id, (u.state.excerpt as { cite: string }).cite]), [['citation 1.1', 'src/rubric.ts:3'], ['citation 1.2', 'src/index.ts:3'], ['citation 2.3', 'gone.ts:9']], 'a mention that resolves to no file is dropped');
+  assert.deepEqual(built.evidence.citation.map((u) => [u.id, (u.state.excerpt as { cite: string }).cite]), [['citation 1.1', 'src/rubric.ts:3'], ['citation 1.2', 'src/index.ts:3'], ['citation 2.1', 'gone.ts:9']], 'a mention that resolves to no file is dropped');
   assert.match((built.evidence.citation[1].state.excerpt as { code: string }).code, /3: noteOf/);
   assert.equal((built.evidence.citation[2].state.excerpt as { code: string }).code, '(the cited lines do not exist)', "a finding's own citation stays, so a missing line still fails");
-  assert.deepEqual(built.groups?.citation, { 'citation 1.1': '1', 'citation 1.2': '1', 'citation 2.3': '2' });
+  assert.deepEqual(built.groups?.citation, { 'citation 1.1': '1', 'citation 1.2': '1', 'citation 2.1': '2' });
   assert.match(String(built.evidence.citation[0].shared?.finding), /^suggestion: src\/rubric\.ts:3 `whole` is unreachable/);
   assert.equal(reviewDeclaration.checks.contradicted, undefined, 'a contradiction is the plainest excerpt that does not show the claim');
 });
@@ -286,6 +286,9 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual(loose.map((t) => namedSources(t) > 0), [true, true, true], 'the diff or files read, a suite run, and a file without a line count');
   // #2470 v2 Verified item 9 claimed a result and named nothing; the judge flagged it, and it is still asked.
   assert.equal(namedSources('Quote pairing itself is sound: on a line with two quoted phrases both read as mentions, and a real claim after a closed quote on the same line is still checked.'), 0);
+  const undone = ['Nobody ran the tests for this path.', 'I have not read the diff, only the summary.', 'did not read the vendored files'];
+  assert.deepEqual(undone.map((t) => namedSources(t) > 0), [false, false, false], 'a verb source after a negation is a disclosed gap, not a source');
+  assert.ok(namedSources('Ran the tests; nothing is broken.') > 0 && namedSources('Read the diff and found no issues.') > 0);
   const checks = ['build', 'e2e'];
   assert.deepEqual(['`e2e` passed on this head.', 'build=success.', 'The build passed.'].map((t) => namedSources(t, checks) > 0), [true, true, false], "the PR's own checks count when cited, not as bare words");
   const absent = ['Nothing imports `legacy` any more.', 'No callers of `x` are left.', '`rg legacy` finds nothing; no imports remain.', 'Searched the tree: nothing references `x`.'];

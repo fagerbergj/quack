@@ -81,7 +81,7 @@ function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
 registerSplitter('github.descriptionParts', descriptionParts);
 
 // One item per path:line a finding cites, grouped by finding: the finding goes once on the group's shared context.
-const citationItems = (inputs: Inputs): Chunk[] => (JSON.parse(inputs.citations) as Citation[]).map((c, n) => ({ id: `${c.group}.${n + 1}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
+const citationItems = (inputs: Inputs): Chunk[] => (JSON.parse(inputs.citations) as Citation[]).map((c, n, all) => ({ id: `${c.group}.${all.slice(0, n + 1).filter((o) => o.group === c.group).length}`, text: JSON.stringify({ cite: c.cite, code: c.code }), meta: { group: c.group, finding: c.finding } }));
 registerSplitter('github.citations', citationItems);
 
 // A backticked command line: env assignments, a lowercase executable, then arguments, flags or quoted strings.
@@ -93,6 +93,7 @@ const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]
   /\b[\w-]+(?:\/[\w.-]+)*\.(?:[cm]?[jt]sx?|json|md|go|py|rs|kt|java|ya?ml|toml|sql|sh|css|html)\b/, /\b(?:ran|re-?ran)\b(?:\s+\S+){0,4}?\s+(?:suites?|tests?|typecheck|lint|build)\b/i, /\b(?:read|re-?read)\b(?:\s+\S+){0,3}?\s+(?:diff|files?)\b/i];
 // A claim that something is absent (a negation, then a reference, import, use or caller) is backed only by a named search.
 const ABSENCE = /\b(?:no|not|nothing|none|nowhere|zero)\b\W+(?:\w+\W+){0,3}?(?:referenc\w*|import\w*|us(?:e|es|ed|age)|call(?:s|ed|ers?)?|remain\w*|left)\b|\b(?:referenc\w*|import\w*|used|called)\s+nowhere\b/i;
+const NOT_DONE = /\b(?:not|never|nobody|no one|cannot|couldn[t']|didn[t']|unable to|without)\b[^\n]{0,30}?\b(?:ran|read)\b/i;
 const SEARCH_TOOL = /\b(?:grep|rg|ag|ack|find|search)\b/;
 const SEARCH_VERB = /\b(?:searched|grepped)\b/i;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -102,8 +103,10 @@ export function namedSources(text: string, checks: string[] = []): number {
   const commands = text.match(COMMAND) ?? [];
   if (ABSENCE.test(text) && !SEARCH_VERB.test(text) && !commands.some((c) => SEARCH_TOOL.test(c))) return 0;
   // A check is named in backticks or as name=conclusion: a bare word like "check" is not a citation of the job.
+  // A verb source named after a negation is a disclosed gap, not a source: only the two verb alternatives are dropped.
+  const verbs = NOT_DONE.test(text) ? 2 : 0;
   const ci = checks.some((name) => new RegExp(String.raw`\`${escape(name)}\`|\b${escape(name)}=\w+`).test(text));
-  return SOURCES.filter((rx) => rx.test(text)).length + (commands.length ? 1 : 0) + (ci ? 1 : 0) + (SEARCH_VERB.test(text) ? 1 : 0);
+  return SOURCES.filter((rx, i) => rx.test(text) && (!verbs || i < SOURCES.length - verbs)).length + (commands.length ? 1 : 0) + (ci ? 1 : 0) + (SEARCH_VERB.test(text) ? 1 : 0);
 }
 // The PR's check names come from its CI facts ("name=conclusion, ..."). The value stays empty so an item Clef is asked
 // about reads as it did before the pre-check.

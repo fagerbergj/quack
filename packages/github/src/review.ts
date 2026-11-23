@@ -126,7 +126,8 @@ async function excerpt(api: ToolExecutionApi, repoDir: string, cited: Pick<Findi
   return { exists: true, excerpt: text, file: read.value, path };
 }
 
-// A path:line named in a finding's text: a path with a directory, a file with an extension, or a root dotfile.
+// A path:line named in a finding's text: a path with a directory, a file with an extension, or a root dotfile. A bare root file
+// (Dockerfile:12) is left out so that prose like TODO:12 or host:8080 does not read as a path.
 const MENTION = /(?<![\w./@+-])((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]*\w|[\w@+-]+\.[A-Za-z][\w.@+-]*\w|\.[\w@+-][\w.@+-]*\w):(\d+)/g;
 const NO_LINES = '(the cited lines do not exist)';
 export type Citation = { group: string; finding: string; cite: string; code: string };
@@ -135,12 +136,14 @@ export type Citation = { group: string; finding: string; cite: string; code: str
 // cites_existing_lines already holds the finding to its own citation.
 async function citationsOf(api: ToolExecutionApi, repoDir: string, f: Finding, own: Awaited<ReturnType<typeof excerpt>>, text: string, ctx: Context, tracked: Tracked): Promise<Citation[]> {
   const out = [{ group: String(f.index), finding: text, cite: `${own.path ?? '?'}:${f.line ?? '?'}`, code: own.excerpt || NO_LINES }];
-  const seen = new Set([`${f.path}:${f.line}`]);
+  const seen = new Set([`${f.path}:${f.line}`, out[0].cite]);
   for (const [, path, line] of f.text.matchAll(MENTION)) {
     if (seen.has(`${path}:${line}`)) continue;
     seen.add(`${path}:${line}`);
     const e = await excerpt(api, repoDir, { path, line: Number(line) }, ctx, tracked);
-    if (e.exists) out.push({ ...out[0], cite: `${e.path}:${line}`, code: e.excerpt });
+    if (!e.exists || seen.has(`${e.path}:${line}`)) continue;
+    seen.add(`${e.path}:${line}`);
+    out.push({ ...out[0], cite: `${e.path}:${line}`, code: e.excerpt });
   }
   return out;
 }
