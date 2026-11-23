@@ -31,18 +31,27 @@ type Reply = { stopReason: string; errorMessage?: string };
 // An input over the model's context fails the same way every time, whatever status the host gives it (llama.cpp: 500).
 export const inputTooLarge = (reply: Reply) => reply.stopReason === 'error' && /too large|exceeds? the (?:available )?context|context (?:length|size|window)/i.test(reply.errorMessage ?? '');
 
-// Strata's full K/V pool drains as other requests finish, unlike an input over the context window; its error carries no status.
-const POOL_FULL = /K\/V pool is full \(\d+ positions on this lane, \d+ more pages wanted, \d+ free\)/;
+// Strata refuses these while its pool is full or its engine restarts (about 2 min); both clear on their own, unlike a prompt over the pool.
+const ENGINE_BUSY = /K\/V pool is full \(\d+ positions on this lane, \d+ more pages wanted, \d+ free\)|the engine stopped while this request waited; it was not sent/;
 
-/** Wraps a provider so a full-pool reply reads as a 503: pi-ai's retry (pi-durable runs and `retryModelCall` alike) retries on a status. */
-export function retryPoolFull<P extends Provider>(provider: P): P {
-  const busy = (m: AssistantMessage) => (m.stopReason === 'error' && POOL_FULL.test(m.errorMessage ?? '') ? { ...m, errorMessage: `503 ${m.errorMessage}` } : m);
+/** Wraps a provider so an engine-busy reply reads as `server_busy`: pi-ai's retry (pi-durable runs and `retryModelCall` alike) matches text only. */
+export function retryEngineBusy<P extends Provider>(provider: P): P {
+  const busy = (m: AssistantMessage) => (m.stopReason === 'error' && ENGINE_BUSY.test(m.errorMessage ?? '') ? { ...m, errorMessage: `server_busy ${m.errorMessage}` } : m);
   const wrap = (stream: unknown) => (...args: unknown[]) => {
     const source = (stream as (...a: unknown[]) => AssistantMessageEventStream).apply(provider, args);
     const out = createAssistantMessageEventStream();
+    let last: AssistantMessage | undefined;
     void (async () => {
-      for await (const e of source) out.push(e.type === 'error' ? { ...e, error: busy(e.error) } : e);
-      out.end();
+      try {
+        for await (const e of source) {
+          const event = e.type === 'error' ? { ...e, error: busy(e.error) } : e;
+          if (event.type === 'done') last = event.message;
+          if (event.type === 'error') last = event.error;
+          out.push(event);
+        }
+      } finally {
+        out.end(last); // end() with no message leaves result() pending forever
+      }
     })();
     return out;
   };

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, retryDelayMs, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { failedRows, Failures, retryPoolFull } from '@quack/sdk';
+import { failedRows, Failures, retryEngineBusy } from '@quack/sdk';
 import { createSessionServer, MODEL_RETRY, openSession } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-retry-'));
@@ -20,7 +20,7 @@ async function open(name: string, steps: FauxResponseStep[], retry: Partial<type
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(steps);
   const models = createModels();
-  models.setProvider(retryPoolFull(faux.provider));
+  models.setProvider(retryEngineBusy(faux.provider));
   const m = faux.getModel();
   const session = await openSession({ dir: join(root, name), models, agent: { model: { provider: m.provider, modelId: m.id } }, retry });
   return { session, faux };

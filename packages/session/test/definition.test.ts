@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, isRetryableAssistantError } from '@earendil-works/pi-ai';
 import { gate } from '@quack/sdk';
 import { agentSpec, bundleProblems, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, referencedProviders, resolveDeployment, resolveExtensions, withCurrentExtensions, type Catalog } from '../src/index.ts';
 
@@ -204,6 +204,22 @@ test('an images: true model sends the image block; a text-only model sends a pla
   const textOnly = await sentBody(false);
   assert.doesNotMatch(textOnly, /base64,AAAA/);
   assert.match(textOnly, /image/i);
+});
+
+// The wrapper is applied in buildModels, so prove it there: the helper alone passes while a refactor drops the wiring.
+test('a provider built from the deployment reports a full K/V pool as retryable', async () => {
+  const message = 'prompt read (BGEN slot 1): the K/V pool is full (153729 positions on this lane, 801 more pages wanted, 761 free)';
+  const server = createServer((_req, res) => res.writeHead(200, { 'content-type': 'text/event-stream' }).end(`data: ${JSON.stringify({ error: { type: 'server_error', message } })}\n\ndata: [DONE]\n\n`));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    process.env.QUACK_WIRING_TEST_KEY = 'k';
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    const models = buildModels(parseDeployment({ defaultModel: 'local/m', providers: { local: { baseUrl, apiKeyEnv: 'QUACK_WIRING_TEST_KEY', models: { m: { contextWindow: 8192, maxTokens: 512 } } } } }));
+    const reply = await models.completeSimple(models.getModel('local', 'm')!, { messages: [{ role: 'user', content: 'go', timestamp: 0 }] });
+    assert.ok(isRetryableAssistantError(reply as never), 'buildModels must wrap the provider');
+  } finally {
+    server.close();
+  }
 });
 
 test('an agent receives only the variables its extensions declare, and exec settings are validated', async () => {

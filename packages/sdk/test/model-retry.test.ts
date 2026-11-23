@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { createModels, createProvider } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
-import { decide, MODEL_RETRY, modelResolver, retryPoolFull, type DecisionPoint } from '../src/index.ts';
+import { decide, MODEL_RETRY, modelResolver, retryEngineBusy, type DecisionPoint } from '../src/index.ts';
 
 const point: DecisionPoint = { name: 'c', question: 'Does it hold?', options: ['yes', 'no'] };
 const model = { id: '27b', name: '27b', api: 'openai-completions', provider: 'local', baseUrl: 'http://llm.test/v1', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 512 };
@@ -17,7 +17,7 @@ const refused = (status: number, headers: Record<string, string> = {}, body: obj
 
 function rig(replies: Array<() => Response>, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>) {
   const models = createModels();
-  models.setProvider(retryPoolFull(createProvider({ id: 'local', baseUrl: model.baseUrl, auth: auth as never, models: [model] as never, api: openAICompletionsApi() })));
+  models.setProvider(retryEngineBusy(createProvider({ id: 'local', baseUrl: model.baseUrl, auth: auth as never, models: [model] as never, api: openAICompletionsApi() })));
   const sent: number[] = [];
   const slept: number[] = [];
   const logs: string[] = [];
@@ -69,6 +69,22 @@ test('a full K/V pool that never drains is returned after maxRetries', async () 
   const r = rig(Array.from({ length: MODEL_RETRY.maxRetries + 2 }, () => full));
   assert.equal(await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT), undefined);
   assert.equal(r.sent.length, MODEL_RETRY.maxRetries + 1);
+});
+
+const sse = (message: string) => () => new Response(`data: ${JSON.stringify({ error: { type: 'server_error', message } })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+const stopped = sse("the engine stopped while this request waited; it was not sent. The engine exited (code 1) after it reported: prefill: a pass did not finish in 120 s (a ring step's flag never came?). The next request starts the engine again. Its log: /tmp/strata-engine.log");
+// The engine's own words for a conversation no pool can hold: waiting cannot help.
+const outgrew = sse('prompt read (BGEN slot 1): the K/V pool is full with one lane decoding: its conversation outgrew the pool');
+
+test('an engine that stopped while the request waited is retried until it is back', async () => {
+  const r = rig([stopped, stopped, answer]);
+  assert.equal((await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT))?.choice, 'yes');
+  assert.deepEqual([r.sent.length, r.slept], [3, [2000, 4000]]);
+});
+
+test('a lane whose conversation outgrew the pool is not retried', async () => {
+  const r = rig([outgrew, answer]);
+  assert.deepEqual([await r.resolver.resolve(point, r.api, BACKGROUND_CONTEXT), r.sent.length, r.logs], [undefined, 1, []]);
 });
 
 test('exhausted retries leave the decision undecided', async () => {
