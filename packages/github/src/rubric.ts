@@ -1,4 +1,4 @@
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
+import { PASS_ONLY, registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question, type Rubric, type Scope, type SplitDecl } from '@quack/judge';
 import { parseReview, type ReviewFacts } from './review.ts';
 
 const share = (n: number, of: number, detail: string): CodeResult => ({ met: of === 0 ? 1 : n / of, detail: n < of ? detail : undefined });
@@ -33,7 +33,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // model check is asked. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 13,
+  version: 16,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -79,7 +79,54 @@ function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
   const parts = [o.from].flat().flatMap((name) => inputs[name].split(/^(?=#{2,3} )/m));
   return parts.map((text) => ({ id: /^#{2,3} (.+)/.exec(text)?.[1].trim() ?? 'opening', text: text.trim() })).filter((c) => c.text && !(c.id !== 'opening' && VERIFYING.test(c.id)));
 }
-registerSplitter('github.descriptionParts', descriptionParts);
+
+// A part's sentences outside code blocks, tables, headings and the generated-by footer.
+const FENCED = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$/gm;
+const sentencesOf = (part: string) => part.replace(FENCED, '').split('\n').map((l) => l.trim())
+  .filter((l) => l && !/^[|#]/.test(l) && !/Generated with \[Claude Code\]/.test(l))
+  .flatMap((l) => l.replace(/^([-*]|\d+\.)\s+(\[[ x]\]\s*)?/, '').split(/(?<=[.!?])\s+(?=[A-Z`"(*])/));
+
+// What a diff can show: a backticked token without spaces, or a file path (one with a slash, or a source file's name).
+const PATH = /(?:[\w.@-]+\/)+[\w@-]+\.[a-z][a-z0-9]{1,4}\b|\b[\w-]+\.(?:ts|tsx|js|mjs|json|md|ya?ml|go|py|sh|sql|css|html)\b/g;
+const namesOf = (s: string) => [...new Set([
+  ...[...s.matchAll(/`([^`\s]{2,80})`/g)].map((m) => m[1].replace(/(?:\(\)|:\d+(?:-\d+)?)$/, '')),
+  ...(s.replace(/`[^`]*`|https?:\/\/\S+/g, ' ').match(PATH) ?? []),
+])];
+
+type Hunk = { file: string; text: string };
+const hunksOf = (diff: string): Hunk[] => diff.split(/^(?=diff --git )/m).flatMap((f) => {
+  const file = /^diff --git a\/\S+ b\/(\S+)/.exec(f)?.[1];
+  return file ? f.split(/^(?=@@ )/m).slice(1).map((text) => ({ file, text })) : [];
+});
+
+// In JSON characters, which Clef's tokenizer reads at about 3 a token: with the sentence (cut to 1.5k) and the question,
+// an item stays under 8192 tokens.
+const HUNK_BUDGET = 19_000;
+// The hunks that contain one of the names, in diff order, as many whole ones as fit; one too big alone is cut.
+function hunkText(names: string[], hunks: Hunk[]): string {
+  const found = hunks.filter((h) => names.some((n) => h.text.includes(n) || h.file.endsWith(n.replace(/^\.?\//, ''))));
+  let text = '';
+  for (const h of found) {
+    const next = `${text}${h.file}\n${h.text}`;
+    if (JSON.stringify(next).length <= HUNK_BUDGET) text = next;
+  }
+  return text || (found.length ? `${found[0].file}\n${found[0].text}`.slice(0, HUNK_BUDGET / 2) : '');
+}
+
+/** One item per description sentence that names code or a file, with the hunks containing those names. A sentence that names
+ *  nothing makes no item, nor does one whose names a blocking finding repeats, since the review reported it. */
+function promiseItems(inputs: Inputs, o: SplitDecl): Chunk[] {
+  const hunks = hunksOf(inputs.diff);
+  const blocking = (JSON.parse(inputs.findings) as Array<{ blocking: boolean; text: string }>).filter((f) => f.blocking).map((f) => f.text).join('\n');
+  const files = [...new Set(hunks.map((h) => h.file))].join(', ').slice(0, 1000);
+  return descriptionParts(inputs, o).flatMap((p) => sentencesOf(p.text)).flatMap((sentence, n) => {
+    const names = namesOf(sentence);
+    if (!names.length || names.some((x) => blocking.includes(x))) return [];
+    const diff = hunkText(names, hunks) || `no hunk contains ${names.map((x) => `\`${x}\``).join(' or ')}; the diff changes ${files || 'nothing'}`;
+    return [{ id: `s${n + 1}`, text: JSON.stringify({ sentence: sentence.slice(0, 1500), diff }) }];
+  });
+}
+registerSplitter('github.promises', promiseItems);
 
 // A backticked command line: env assignments, a lowercase executable, then arguments, flags or quoted strings.
 const ARG = String.raw`(?:'[^'\`]*'|"[^"\`]*"|-{1,2}[\w-]*(?:=[^\s\`]+)?|[\w./:@*=+-]+)`;
@@ -106,7 +153,7 @@ export function namedSources(text: string, checks: string[] = []): number {
 const checkNames = (inputs: Inputs) => (inputs.facts ? (JSON.parse(inputs.facts) as ReviewFacts).ci.split(', ').map((c) => c.split('=')[0]).filter(Boolean) : []);
 registerSelector('github.namedSources', (inputs, chunk) => ({ value: '', matches: namedSources(chunk.text, checkNames(inputs)) }));
 
-/** How each model check of reviewerRubric is asked: per finding with its cited code, per part of the PR description with the diff, or per Verified item. */
+/** How each model check of reviewerRubric is asked: per finding with its cited code, per PR description sentence with the hunks it names, or per Verified item. */
 export const reviewDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
@@ -114,21 +161,13 @@ export const reviewDeclaration: Declaration = {
     finding: findings(),
     blocking: findings('truthy'),
     nonblocking: findings('falsy'),
-    // Each part sees the whole diff (cut at 120k characters; retrieved hunks missed delivering helpers). With it a part rarely
-    // fits Clef, so promises skip Clef and go to the judge model, all of one review's parts in one request.
-    promise: {
-      split: { name: 'github.descriptionParts', from: ['description', 'issues'] },
-      piece: 'part',
-      context: {
-        diff: { name: 'whole', from: 'diff', maxChars: 120_000 },
-        review: { name: 'whole', from: 'review' },
-      },
-    },
+    // promises_handled is pass-only: a sentence whose names no hunk contains is the rare escalation the judge model explains.
+    promise: { split: { name: 'github.promises', from: ['description', 'issues'] }, piece: 'promise' },
   },
   checks: {
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
-    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: false, question: yes('Is every behaviour this part of the pull request description says the change delivers either present in the diff, deferred to a linked follow-up, reported in the review as a blocking finding, or intentionally not delivered with the review explaining why the promise was walked back? A part that promises no behaviour holds, and a loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.') },
+    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Does the `diff` deliver the behaviour this sentence of the pull request description says the change has? A sentence that states no behaviour of the change (a motivation, a measurement, a check that was run, or code it only mentions) holds, as does one that defers the behaviour to a linked follow-up.') },
     matches_cited_code: { scope: 'finding', aggregate: SHARE, question: yes('Does the cited code show what this finding says about it?') },
     // Clef reads a loosely named source (a file without a line, a described search) as none, so the judge model answers.
     verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, decisionModel: false, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },

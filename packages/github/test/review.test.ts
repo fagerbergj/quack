@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { buildEvidence } from '@quack/judge';
+import { buildEvidence, decisionModelTokens, PASS_ONLY } from '@quack/judge';
 import { parseReview, reviewDeclaration, reviewKind, resolveCitedPath, reviewInputs, reviewerRubric, validateReview } from '../src/index.ts';
 import { commentableLines, splitReview } from '../src/inline.ts';
 import { namedSources } from '../src/rubric.ts';
@@ -93,7 +93,7 @@ test('no review shape may fall further short of full marks and still pass than i
 });
 
 
-test('each finding is an item with its cited code, sorted by label, all sharing the CI result; the description splits at its headings', async () => {
+test('each finding is an item with its cited code, sorted by label, all sharing the CI result', async () => {
   const body = 'Adds a flag.\n\n## What changed\n- the flag\n\n## Verification\n- npm test: ok\n\n### Rollout\nbehind a setting';
   const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body, baseRef: 'main', headSha: 'abc', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [{ number: 3, title: 'flag', body: 'we need a flag' }] };
   const api = { conversationId: 'c', snapshot: async () => ({ pr }), env: { exec: async () => ({ ok: true, value: { exitCode: 0 } }), readTextFile: async () => ({ ok: true, value: 'const a = 1;\nconst b = 2;\n' }) } };
@@ -102,14 +102,68 @@ test('each finding is an item with its cited code, sorted by label, all sharing 
   assert.deepEqual(built.evidence.blocking.map((u) => u.id), ['blocking 1']);
   assert.deepEqual(built.evidence.nonblocking.map((u) => u.id), ['nonblocking 2', 'nonblocking 3']);
   assert.deepEqual(built.evidence.finding[0], { id: 'finding 1', state: { finding: { text: 'blocking (defect): internal/eval/replay.go:214 adds cached_input to input, which already includes it.\n  ```go\n  total := in.Input\n  ```', citedCode: '(the cited lines do not exist)' } }, shared: { ci: 'ci=success' } });
-  assert.deepEqual(built.evidence.promise.map((u) => [u.id, u.state.part]), [
-    ['promise opening', 't\n\nAdds a flag.'],
-    ['promise What changed', '## What changed\n- the flag'],
-    ['promise Rollout', '### Rollout\nbehind a setting'],
-    ['promise Linked issue #3: flag', '## Linked issue #3: flag\nwe need a flag'],
-  ], 'what was run to verify it promises nothing, so it is skipped');
-  assert.deepEqual(Object.keys(built.evidence.promise[0].shared!), ['diff', 'review'], 'the parts share the diff and the review');
   assert.deepEqual(built.evidence.verified.map((u) => u.state.item), ['read replay.go:200-230']);
+});
+
+const PROMISE_DIFF = `diff --git a/src/flag.ts b/src/flag.ts
+--- a/src/flag.ts
++++ b/src/flag.ts
+@@ -1,2 +1,3 @@
++export const verbose = process.argv.includes('--verbose');
+diff --git a/docs/cli.md b/docs/cli.md
+--- a/docs/cli.md
++++ b/docs/cli.md
+@@ -5 +5,2 @@
++The verbose output lists every request.
+`;
+
+async function promiseUnits(body: string, diff: string, findings = '') {
+  const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body, baseRef: 'main', headSha: 'abc', checks: [], linkedIssues: [] };
+  const exec = async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o.onOutput?.(diff), { ok: true, value: { exitCode: 0 } });
+  const api = { conversationId: 'c', snapshot: async () => ({ pr }), env: { exec, readTextFile: async () => ({ ok: true, value: 'x\n' }) } };
+  const content = `## Takeaway\nx\n## Verdict\n${findings ? 'request_changes' : 'approve'}\n## Findings\n${findings}`;
+  return buildEvidence(reviewDeclaration, await reviewInputs()(api as never, { content } as never, {} as never)).evidence.promise;
+}
+const promiseOf = (u: { state: Record<string, unknown> }) => u.state.promise as { sentence: string; diff: string };
+
+test('promises_handled asks only sentences that name code or a file, each with the hunks containing those names', async () => {
+  const body = 'Adds a `--verbose` flag to the CLI.\n\n```console\n$ quack --verbose\n```\n\nSessions now resume where they stopped.\n\n`backoff` now doubles the retry budget.\n\nThe `colour` output also changes in docs/cli.md.\n\n## Tests\n- `npm test` passes on this head.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)';
+  const units = await promiseUnits(body, PROMISE_DIFF);
+  assert.deepEqual(units.map((u) => [u.id, promiseOf(u).sentence, promiseOf(u).diff.split('\n')[0]]), [
+    ['promise s2', 'Adds a `--verbose` flag to the CLI.', 'src/flag.ts'],
+    ['promise s4', '`backoff` now doubles the retry budget.', 'no hunk contains `backoff`; the diff changes src/flag.ts, docs/cli.md'],
+    ['promise s5', 'The `colour` output also changes in docs/cli.md.', 'docs/cli.md'],
+  ], 'a sentence that names nothing, a code block, the Tests part and the footer make no item');
+  assert.equal(promiseOf(units[0]).diff.includes('docs/cli.md'), false, 'only the hunks that contain a name are shown');
+  const reported = await promiseUnits(body, PROMISE_DIFF, '- blocking (delivery): src/flag.ts:1 — `backoff` is untouched, so nothing doubles\n');
+  assert.deepEqual(reported.map((u) => u.id), ['promise s2', 'promise s5'], 'a promise a blocking finding names was reported, so it is not asked');
+});
+
+const P2422 = JSON.parse(readFileSync(new URL('./fixtures/promises-2422-v1.json', import.meta.url), 'utf8')) as { description: string; diff: string };
+
+test('#2422 v1: the promised `contract.guaranteeChunks` splitter the diff lacks is an item that says no hunk contains it', async () => {
+  // Prod: the review called the missing splitter a nit; the whole-diff question per part caught it, and this item must too.
+  const units = await promiseUnits(P2422.description.slice(P2422.description.indexOf('\n\n') + 2), P2422.diff);
+  const miss = units.find((u) => promiseOf(u).sentence.includes('`contract.guaranteeChunks`'));
+  assert.ok(miss, 'the sentence makes an item');
+  assert.match(promiseOf(miss).diff, /^no hunk contains `contract\.guaranteeChunks`; the diff changes packages\/contracts\/src\/rubric\.ts/);
+  assert.equal(units.length, 32, 'only the sentences that name code or a file are asked');
+  assert.equal(reviewDeclaration.checks.promises_handled.decisionModel, PASS_ONLY, 'Clef cannot fail it, so it reaches the judge model');
+});
+
+test("every promises_handled unit fits Clef's 8192-token window, however long the sentence and the hunks it names", async () => {
+  const d = reviewDeclaration.checks.promises_handled;
+  const fits = (units: Awaited<ReturnType<typeof promiseUnits>>) => units.every((u) => decisionModelTokens(u, [{ id: 'promises_handled', question: d.question, decisionModel: d.decisionModel }]) <= 8192);
+  assert.ok(fits(await promiseUnits(P2422.description, P2422.diff)));
+  // Every hunk names `widget`, one alone is over the budget, and the lines carry quotes and backslashes JSON escapes.
+  const line = '+const widget = "a \\"quoted\\" path\\\\to\\\\it";\n';
+  const hunk = (n: number, lines: number) => `diff --git a/src/w${n}.ts b/src/w${n}.ts\n--- a/src/w${n}.ts\n+++ b/src/w${n}.ts\n@@ -1 +1,${lines} @@\n${line.repeat(lines)}`;
+  const diff = [hunk(0, 2000), ...Array.from({ length: 40 }, (_, n) => hunk(n + 1, 30))].join('');
+  const long = `The \`widget\` ${'"keeps" every "quoted" word '.repeat(200)}stays.`;
+  const units = await promiseUnits(`Adds a \`widget\`.\n\n${long}`, diff);
+  assert.equal(units.length, 2);
+  assert.ok(fits(units));
+  assert.ok(fits(await promiseUnits('Adds a `widget`.', hunk(0, 2000))), 'a single hunk over the budget is cut');
 });
 
 test('every model check is declared; a pitfall is asked as the defect and costs the share of items it flags', () => {
