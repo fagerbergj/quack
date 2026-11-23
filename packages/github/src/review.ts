@@ -127,7 +127,7 @@ async function excerpt(api: ToolExecutionApi, repoDir: string, cited: Pick<Findi
 }
 
 // A path:line named in a finding's text: a path with a directory, a file with an extension, or a root dotfile. A bare root file
-// (Dockerfile:12) is left out so that prose like TODO:12 or host:8080 does not read as a path.
+// (Dockerfile:12) is left out so that prose like TODO:12 does not read as a path.
 const MENTION = /(?<![\w./@+-])((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]*\w|[\w@+-]+\.[A-Za-z][\w.@+-]*\w|\.[\w@+-][\w.@+-]*\w):(\d+)/g;
 const NO_LINES = '(the cited lines do not exist)';
 export type Citation = { group: string; finding: string; cite: string; code: string };
