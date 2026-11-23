@@ -42,8 +42,9 @@ export type GateOptions = {
   setWait?: (wait: ModelWait | null) => void;
 };
 
-/** `rides` counts the shared calls running under the lease; a lease with any is neither reused nor released by `end`. */
-type Held = { idx: number; endpoint: string; busy: boolean; rides: number; granted?: true; stopBeat: () => void };
+/** `rides` counts the shared calls running under the lease; a lease with any is neither reused nor released by `end`.
+ * A `lent` lease is one a shared call was granted during a wait: it goes back once free, instead of staying as the run's kept lease. */
+type Held = { idx: number; endpoint: string; busy: boolean; rides: number; granted?: true; lent?: true; stopBeat: () => void };
 /** One begun model call; `end` takes it back so the call frees its own lease, whatever order calls finish in. */
 export type GatedCall = { lease?: Held; ride?: true };
 const free = (l: Held) => !l.busy && !l.rides;
@@ -51,6 +52,7 @@ const free = (l: Held) => !l.busy && !l.rides;
 /** A run's leases on model endpoints: one per model call in flight, and one per endpoint kept between generations until the run ends or waits. */
 export class CapacityGate {
   readonly #o: Required<Omit<GateOptions, 'clock'>> & { clock: Clock };
+  #waiting = false;
   #leases: Held[] = [];
   #calls = new Set<GatedCall>();
   // A shared call's pending lease per endpoint, which the round's other shared calls wait for instead of queueing their own.
@@ -90,9 +92,17 @@ export class CapacityGate {
     const lease = done.lease;
     if (done.ride) lease.rides--;
     else lease.busy = false;
-    // The run keeps its lowest-numbered free lease per endpoint; a parallel call's extra one goes back with the call.
-    const spare = this.#leases.filter((l) => free(l) && l.endpoint === lease.endpoint).sort((a, b) => a.idx - b.idx).slice(1);
-    for (const l of spare) void this.#drop(l);
+    // The run keeps its lowest-numbered free lease per endpoint that it is not lending; a parallel call's extra one goes back with the call.
+    const idleOn = this.#leases.filter((l) => free(l) && l.endpoint === lease.endpoint);
+    const keep = idleOn.filter((l) => !l.lent).sort((a, b) => a.idx - b.idx)[0];
+    for (const l of idleOn) if (l !== keep) void this.#drop(l);
+  }
+
+  /** The run opened or closed a wait (a person, a child run). Waits count per process, so a child run's calls see its parent's;
+   * a lease granted to a shared call during one is lent, but a wait that opens after the grant leaves that lease kept. */
+  setWaiting(open: boolean): void {
+    this.#waiting = open;
+    if (open) void this.idle();
   }
 
   /** The run waits on something other than its own next model call (a person, a child run): it gives its leases back. */
@@ -115,7 +125,7 @@ export class CapacityGate {
       const got = await pending.catch(() => undefined);
       return got && this.#leases.includes(got) ? Object.assign(got, { rides: got.rides + 1 }) : undefined;
     }
-    const taking = this.#lease(endpoint, signal).then((l) => l && Object.assign(l, { busy: false, rides: l.rides + 1 }));
+    const taking = this.#lease(endpoint, signal, true).then((l) => l && Object.assign(l, { busy: false, rides: l.rides + 1 }));
     this.#taking.set(endpoint, taking);
     try {
       return await taking;
@@ -126,7 +136,7 @@ export class CapacityGate {
 
   // A run keeps one slot per gated endpoint until it ends or waits: gating a second provider the judge or decide uses
   // would park a slot there for every judging run.
-  async #lease(endpoint: string, signal?: AbortSignal): Promise<Held | undefined> {
+  async #lease(endpoint: string, signal?: AbortSignal, shared = false): Promise<Held | undefined> {
     const idle = this.#leases.find((l) => free(l) && l.endpoint === endpoint);
     if (idle) return Object.assign(idle, { busy: true });
     // Pushed before the first await, so a concurrent call takes the next index.
@@ -135,6 +145,8 @@ export class CapacityGate {
     this.#leases.push(lease);
     try {
       const got = await this.#acquire(lease, signal);
+      // Decided at the grant, not the take: a wait that opened while this take queued still lends it; a spare it adopted stays the run's.
+      if (shared && got === lease && this.#waiting) lease.lent = true;
       if (got) return got;
     } catch (err) {
       void this.#releaseAt(endpoint, this.#holder(lease));
