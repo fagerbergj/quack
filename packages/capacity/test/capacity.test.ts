@@ -508,8 +508,8 @@ test('a queued call claiming a spare lease marks it busy before releasing its ow
   assert.equal(third, undefined, 'a concurrent call must not steal the spare lease while the waiter drops its queued one');
 });
 
-// A session with the gate and the lifecycle sender, which is what hears a run end; a waiter queues once the run holds the slot.
-async function gatedSession(steps: FauxResponseStep[], limit = 1) {
+// A session with the gate and, unless `hear` is false, the lifecycle sender, which is what hears a run end.
+async function gatedSession(steps: FauxResponseStep[], limit = 1, hear = true) {
   const faux = fauxProvider({ models: [{ id: 'm' }] });
   faux.setResponses(steps);
   const models = createModels();
@@ -519,7 +519,7 @@ async function gatedSession(steps: FauxResponseStep[], limit = 1) {
   open.push(table);
   const dir = await mkdtemp(join(tmpdir(), 'quack-capacity-'));
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: capacitySessionExtensions({}, gate('s')) }, retry: { enabled: false } });
-  const sender = await startLifecycleSender(session, { url: 'http://d', token: 't', key: 'k', facts: async () => ({ agent: 'a', version: 1, createdAt: 0 }), fetch: async () => Response.json({ acked: 0 }), setTimer: () => () => {} });
+  const sender = hear ? await startLifecycleSender(session, { url: 'http://d', token: 't', key: 'k', facts: async () => ({ agent: 'a', version: 1, createdAt: 0 }), fetch: async () => Response.json({ acked: 0 }), setTimer: () => () => {} }) : { stop: async () => {} };
   const close = async () => (await sender.stop(), await session.close(), await rm(dir, { recursive: true, force: true }));
   return { session, provider: m.provider, close };
 }
@@ -565,6 +565,19 @@ test('an aborted in-flight call leaves no busy lease, so the next run takes the 
   void session.submit('second', undefined, true).then(() => (answered = true));
   assert.ok(await within(5000, () => answered), 'a leaked busy lease would queue the next call behind its own session');
   assert.ok(await within(5000, () => heldBy().length === 0));
+  await close();
+});
+
+test('a call aborted before afterResponse ends with its invocation, so the next run reuses its lease even when no run end is heard', async () => {
+  // A stop folded with the next run's start in one watch value: the lifecycle sender never calls runEnded.
+  const { session, close } = await gatedSession([hangs, fauxAssistantMessage('done')], 1, false);
+  void session.submit('first');
+  assert.ok(await within(5000, () => heldBy().includes('s')));
+  await session.abort('service');
+  let answered = false;
+  void session.submit('second', undefined, true).then(() => (answered = true));
+  assert.ok(await within(5000, () => answered), 'a dead busy lease would queue the next call behind it');
+  assert.deepEqual(heldBy(), ['s'], 'one lease, never two');
   await close();
 });
 
