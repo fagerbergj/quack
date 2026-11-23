@@ -297,6 +297,19 @@ test('while a judge round rides the session\'s lease, a parallel call that is no
   assert.deepEqual(table.endpoints()[0].waiting, ['s#1']);
 });
 
+test('a shared call that takes a lease during a wait gives it back when it ends; with no wait the run keeps it', async () => {
+  for (const waiting of [true, false]) {
+    fresh(2);
+    const g = new CapacityGate({ client: direct(table), holder: 's', clock, waiting: () => waiting });
+    await g.idle();
+    const call = await g.begin('swap', undefined, true);
+    assert.deepEqual(heldBy(), ['s']);
+    g.end(call);
+    await clock.settle();
+    assert.deepEqual(heldBy(), waiting ? [] : ['s'], waiting ? 'the lease goes back' : 'the run keeps its lowest lease');
+  }
+});
+
 test('a non-judge call ending mid-round leaves the lease the round rides held until its last ride ends', async () => {
   fresh(2);
   table.acquire('swap', 'o1');

@@ -38,6 +38,8 @@ export type GateOptions = {
   downMs?: number;
   log?: (line: string) => void;
   setNote?: (text: string | null) => void;
+  /** Whether the run has a wait open (a person, a child run), so a call ending during it gives its lease back. */
+  waiting?: () => boolean;
 };
 
 /** `rides` counts the shared calls running under the lease; a lease with any is neither reused nor released by `end`. */
@@ -59,7 +61,7 @@ export class CapacityGate {
   #warned = false;
 
   constructor(options: GateOptions) {
-    this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setNote: () => {}, ...options, clock: options.clock ?? realClock };
+    this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setNote: () => {}, waiting: () => false, ...options, clock: options.clock ?? realClock };
   }
 
   // The first lease keeps the session's holder name, so a restarted process takes its old place back.
@@ -88,6 +90,7 @@ export class CapacityGate {
     const lease = done.lease;
     if (done.ride) lease.rides--;
     else lease.busy = false;
+    if (this.#o.waiting()) return void this.idle();
     // The run keeps its lowest-numbered free lease per endpoint; a parallel call's extra one goes back with the call.
     const spare = this.#leases.filter((l) => free(l) && l.endpoint === lease.endpoint).sort((a, b) => a.idx - b.idx).slice(1);
     for (const l of spare) void this.#drop(l);
