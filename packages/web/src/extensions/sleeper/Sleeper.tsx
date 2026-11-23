@@ -160,6 +160,7 @@ function WeekStrip({ lock, now, runs }: { lock?: number; now: number; runs: Run[
 const btn = 'inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border-0 bg-transparent px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1';
 
 // The title button is the toggle; its ::after stretches over the header row so the meta and chevron open the card too.
+// The tick sits above it (relative) so its tooltip still shows; a tap there does not toggle.
 const toggle = "cursor-pointer border-0 bg-transparent p-0 text-left outline-none after:absolute after:inset-0 after:rounded-[22px] focus-visible:after:outline-2 focus-visible:after:outline-link";
 
 type HeadProps = { r: Result; title: string; meta?: string; open: boolean; quiet: boolean; onToggle: () => void };
@@ -188,7 +189,7 @@ function ResultCard({ r, compact, team }: { r: Result; compact?: boolean; team?:
   const Shape = job?.Shape;
   const meta = compact ? whatIs(r) : quiet ? r.card.summary : job?.meta?.(r.card);
   return (
-    <article id={`sleeper-${r.job}`} aria-label={title} className={`scroll-mt-4 rounded-[22px] border border-line bg-surface shadow-card ${width ? '@3xl:col-span-2' : ''} ${width === 'quiet' ? 'order-last' : ''}`}>
+    <article id={`sleeper-${r.job}`} aria-label={title} className={`@container scroll-mt-4 rounded-[22px] border border-line bg-surface shadow-card ${width ? '@3xl:col-span-2' : ''} ${width === 'quiet' ? 'order-last' : ''}`}>
       <Head r={r} title={title} meta={meta} open={open} quiet={quiet} onToggle={() => setOpen(!open)} />
       <div className="flex min-w-0 flex-col gap-3 px-4 pb-4 [overflow-wrap:anywhere] empty:hidden">
         {open ? <Full r={r} /> : !compact && !quiet && Shape && <Shape c={r.card} team={team} />}
@@ -205,8 +206,8 @@ function Outcome({ week, results }: { week: number; results: Result[] }) {
   const label = o.won === undefined ? 'Tied' : o.won ? 'Won' : 'Lost';
   return (
     <section aria-label={`Week ${week} result`} className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
-      <p className={`m-0 text-[12px] font-bold uppercase tracking-[0.08em] ${o.won ? 'text-success' : 'text-ink-2'}`}>{label}</p>
-      <p className="m-0 mt-1 text-[28px] font-semibold tabular-nums tracking-[-0.02em]">{o.opp === undefined ? o.started : `${o.started} to ${o.opp}`}</p>
+      {o.opp != null && <p className={`m-0 text-[12px] font-bold uppercase tracking-[0.08em] ${o.won ? 'text-success' : 'text-ink-2'}`}>{label}</p>}
+      <p className="m-0 mt-1 text-[28px] font-semibold tabular-nums tracking-[-0.02em]">{o.opp == null ? o.started : `${o.started} to ${o.opp}`}</p>
       <p className="m-0 mt-1 text-[14px] text-ink-2">{`Left ${o.left} on the bench (best lineup ${o.best})`}</p>
     </section>
   );

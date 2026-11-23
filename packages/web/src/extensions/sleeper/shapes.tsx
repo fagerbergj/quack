@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { sentence } from '../../extension.ts';
 import { Blurb } from '../../Markdown.tsx';
 import { weekday } from './parts.tsx';
 
@@ -38,7 +39,7 @@ function Claim({ x }: { x: Card }) {
       <span className="row-span-2 grid h-7 w-7 place-items-center rounded-full bg-warning-bg font-display font-bold text-warning"><span className="sr-only">Rank </span>{x.rank}</span>
       <span className="min-w-0 break-words text-[15px] font-semibold">{`+ ${x.player.name}`}<Pos>{x.player.pos}</Pos></span>
       <span className={`row-span-2 text-right text-[18px] ${big}`}>{Number(x.proj).toFixed(1)}<small className="block text-[10.5px] font-medium text-muted">proj</small></span>
-      <span className="min-w-0 break-words text-[13px] text-danger">{drop && <>{`− ${drop.player.name} `}<span className="text-muted">{[drop.player.pos, drop.role === 'ir' ? 'IR' : drop.role].filter(Boolean).join(' · ')}</span></>}</span>
+      <span className="min-w-0 break-words text-[13px] text-danger">{drop && <>{`− ${drop.player.name} `}<span className="text-muted">{[drop.player.pos, drop.role === 'ir' ? 'IR' : drop.role && sentence(drop.role)].filter(Boolean).join(' · ')}</span></>}</span>
       {x.owned_pct != null && <span className="col-start-2 col-end-4 flex items-center gap-2 text-[11.5px] text-muted">{`Rostered in ${Math.round(x.owned_pct)}% of leagues`}<Bar pct={x.owned_pct} tone="bg-muted" /></span>}
     </div>
   );
@@ -68,7 +69,7 @@ function Chips({ items }: { items: Card[] }) {
         return (
           <li key={n} className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-2.5 pl-1.5 text-[13px]">
             <span aria-hidden="true" className={`grid h-[18px] w-[18px] flex-none place-items-center rounded-full text-[11px] font-bold ${tone}`}>{glyph}</span>
-            <span className="min-w-0 break-words">{i.player.name}<Pos>{i.player.pos}</Pos></span>
+            <span className="min-w-0 break-words">{i.player.name}{i.player.pos && <Pos>{i.player.pos}</Pos>}</span>
             {i.player.inj && <span className="text-[12px] text-muted">{i.player.inj}</span>}
           </li>
         );
@@ -87,10 +88,11 @@ export function addsOf(text: string): number | undefined {
 const short = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 
 function Adds({ rows }: { rows: Array<{ i: Card; n: number }> }) {
-  const top = Math.max(...rows.map((r) => r.n));
+  const ranked = rows.toSorted((a, b) => b.n - a.n);
+  const top = ranked[0]?.n || 1;
   return (
     <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-[13px]">
-      {rows.map(({ i, n }) => (
+      {ranked.map(({ i, n }) => (
         <li key={i.player.id ?? i.player.name} className="grid grid-cols-[minmax(0,9.5em)_minmax(0,1fr)_3.2em] items-center gap-2.5">
           <span className="truncate">{i.player.name} <span className="text-muted">{i.player.pos}</span></span>
           <Bar pct={(n / top) * 100} tone="bg-success" />
@@ -106,7 +108,7 @@ function TrendGroup({ kind, items }: { kind: string; items: Card[] }) {
   const chart = kind === 'waiver' && rows.every((r) => r.n !== undefined);
   return (
     <section className="flex flex-col gap-1.5">
-      <Label>{chart ? `${KINDS.waiver} · adds` : (KINDS[kind] ?? kind)}</Label>
+      <Label>{chart ? `${KINDS.waiver} · adds` : (KINDS[kind] ?? sentence(kind))}</Label>
       {chart ? <Adds rows={rows as Array<{ i: Card; n: number }>} /> : <Chips items={items} />}
     </section>
   );
@@ -216,7 +218,7 @@ function Swings({ c }: Shape) {
           <li key={s.text} className="flex items-baseline gap-2">
             <span className="w-[3.4em] flex-none font-semibold tabular-nums text-warning">{`+${pts(s.d)}`}</span>
             <span className="min-w-0 break-words">{s.text}</span>
-            <span className="ml-auto hidden flex-none text-[12px] text-muted @3xl:inline">{s.why}</span>
+            <span className="ml-auto hidden flex-none text-[12px] text-muted @md:inline">{s.why}</span>
           </li>
         ))}
       </ul>
@@ -229,12 +231,14 @@ const bench = 'bg-[repeating-linear-gradient(135deg,var(--color-mark)_0_4px,tran
 function Retro({ c }: Shape) {
   if (c.bye) return <Blurb text={c.summary ?? 'Bye week.'} />;
   const pct = (n: number) => `${c.best > 0 ? (n / c.best) * 100 : 0}%`;
+  const played = c.opp != null;
+  const against = [played && `to ${pts(c.opp)}`, c.opponent && `vs ${c.opponent}`].filter(Boolean).join(' ');
   return (
     <>
       <p className="m-0 flex flex-wrap items-baseline gap-x-2.5">
-        <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold tracking-[0.08em] ${c.won ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{c.won ? 'WON' : 'LOST'}</span>
+        {played && <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold tracking-[0.08em] ${c.won ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>{c.won ? 'WON' : 'LOST'}</span>}
         <span className={`text-[26px] ${big}`}>{pts(c.started)}</span>
-        <span className="text-[13px] text-muted">{`to ${pts(c.opp)}${c.opponent ? ` vs ${c.opponent}` : ''}`}</span>
+        {against && <span className="text-[13px] text-muted">{against}</span>}
       </p>
       <div role="img" aria-label={`Scored ${pts(c.started)} of a best possible ${pts(c.best)}; ${pts(c.left)} left on the bench`} className="flex h-3.5 overflow-hidden rounded-full bg-line">
         <span className="bg-accent" style={{ width: pct(c.started) }} /><span className={`bg-mark/40 ${bench}`} style={{ width: pct(c.left) }} />
@@ -258,7 +262,7 @@ function Season({ s }: { s: Card }) {
     <li className="grid grid-cols-[auto_3.2em_minmax(0,1fr)_3.4em] items-center gap-2.5 whitespace-nowrap text-[12.5px]">
       <span className={`font-semibold ${s.in_progress ? 'text-accent-ink' : ''}`}>{s.season}</span>
       <span className="tabular-nums text-ink-2">{record(s)}</span>
-      <span role="img" aria-label={`${s.season} week by week: ${weeks.map((w) => w.result).join(' ') || 'no games'}`} className="grid gap-[3px]" style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>
+      <span role="img" aria-label={`${s.season} week by week: ${weeks.map((w) => w.result ?? '–').join(' ') || 'no games'}`} className="grid gap-[3px]" style={{ gridTemplateColumns: `repeat(${cells.length}, minmax(0, 1fr))` }}>
         {cells.map((r, i) => <span key={i} className={`h-3.5 rounded-[3px] ${RESULT[r ?? ''] ?? 'bg-line'}`} />)}
       </span>
       <span className="text-right tabular-nums text-muted">{s.eff == null ? '' : `${s.eff}%`}</span>
