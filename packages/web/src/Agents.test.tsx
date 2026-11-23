@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { agentGroups } from './Agents.tsx';
+import { agentGroups, commonModel } from './Agents.tsx';
 import { App } from './App.tsx';
 import { lineDiff } from './lineDiff.ts';
 
@@ -50,15 +50,14 @@ test('the list shows each agent with its description and one version whose mark 
   expect(within(main().getByRole('link', { name: /quack/ })).getByRole('img')).toHaveAccessibleName('Promoted: runs unattended');
 });
 
-test('promoted agents lead, and a model the agents differ on shows on each row', async () => {
+test('promoted agents lead, and with no majority model the lead names none and every row names its own', async () => {
   open('#/agents');
   await main().findByRole('link', { name: /reviewer/ });
   expect(main().getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/agents/quack', '#/agents/reviewer']);
-  // One agent each: the tie goes to the default, so only the row that differs from it names a model, at every width.
+  // One agent each is a tie, not a majority, so the lead claims no model and each row says its own.
   expect(main().getByRole('link', { name: /reviewer/ })).toHaveTextContent('local/m');
-  expect(main().getByText('local/m')).not.toHaveClass('hidden');
-  expect(main().getByRole('link', { name: /quack/ })).not.toHaveTextContent(/model/i);
-  expect(main().getByText(/most on the default model/)).toBeInTheDocument();
+  expect(main().getByRole('link', { name: /quack/ })).toHaveTextContent('Default model');
+  expect(main().queryByText(/ on /)).toBeNull();
   expect(main().getByText('1 promoted')).toBeInTheDocument();
   expect(main().queryByText(/all on/)).toBeNull();
 });
@@ -140,4 +139,11 @@ test('one agent reads as one agent, and the lead keeps its parts apart for a scr
   await main().findByRole('link', { name: /reviewer/ });
   const lead = main().getByText('1 agent').parentElement!;
   expect(lead.textContent).toBe('1 agent · 1 promoted ✓ · all on the default model');
+});
+
+test('commonModel names a model only when more than half run it: none on a tie or an empty list', () => {
+  const agent = (name: string, model?: string) => ({ name, version: 1, status: 'draft' as const, ...(model && { model }) });
+  expect(commonModel([agent('a'), agent('b'), agent('c', 'local/m')])).toEqual({ model: 'Default model', all: false });
+  expect(commonModel([agent('a', 'x'), agent('b', 'x'), agent('c', 'y'), agent('d', 'y')])).toEqual({ model: undefined, all: false });
+  expect(commonModel([])).toEqual({ model: undefined, all: true });
 });

@@ -28,16 +28,16 @@ export function agentGroups(agents: AgentSummary[]): Array<{ prefix: string; age
   return [{ prefix: '', agents: loose }, ...named.map(([prefix, xs]) => ({ prefix, agents: xs }))].filter((g) => g.agents.length);
 }
 
-/** The model most agents run on (the default on a tie): the lead names it, and a row names its own only when it differs. */
-export function commonModel(agents: AgentSummary[]): { model: string; all: boolean } {
-  const [model, xs] = [...Map.groupBy(agents, modelOf)].sort(([m, x], [n, y]) => y.length - x.length || Number(n === DEFAULT) - Number(m === DEFAULT))[0]!;
-  return { model, all: xs.length === agents.length };
+/** The model more than half the agents run on, if any: the lead names it and a row names its own only when it differs; with none, every row names its own. */
+export function commonModel(agents: AgentSummary[]): { model?: string; all: boolean } {
+  const [model, xs = []] = [...Map.groupBy(agents, modelOf)].sort(([, x], [, y]) => y.length - x.length)[0] ?? [];
+  return { model: xs.length * 2 > agents.length ? model : undefined, all: xs.length === agents.length };
 }
 
 const chip = 'flex-none rounded-md border border-line bg-soft px-1.5 py-0.5 font-mono text-[11px] text-ink-2';
 
 // The spaces between parts only keep them apart in the accessible name; on screen the flex gap does that.
-function AgentRow({ a, prefix, common }: { a: AgentSummary; prefix: string; common: string }) {
+function AgentRow({ a, prefix, common }: { a: AgentSummary; prefix: string; common?: string }) {
   const status = markOf(a.status);
   return (
     <li>
@@ -59,32 +59,31 @@ const list = 'm-0 flex list-none flex-col divide-y divide-line p-0';
 const head = 'm-0 flex items-baseline gap-2 border-y border-line bg-soft px-4 py-2 font-sans text-xs font-semibold tracking-wider text-muted uppercase';
 const dot = <span aria-hidden="true" className="text-muted">·</span>;
 
-function Lead({ agents }: { agents: AgentSummary[] }) {
+function Lead({ agents, common: { model, all } }: { agents: AgentSummary[]; common: ReturnType<typeof commonModel> }) {
   const promoted = agents.filter((a) => a.status === 'promoted').length;
-  const { model, all } = commonModel(agents);
   return (
     <p className="m-0 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[13px] text-ink-2">
       <span>{count(agents.length, 'agent')}</span>
       {promoted > 0 && <>{' '}{dot}{' '}<span className="inline-flex items-center gap-1.5">{`${promoted} promoted`}{' '}<StatusMark mark="ok" label="Promoted: runs unattended" /></span></>}
-      {' '}{dot}{' '}<span>{all ? 'all' : 'most'} on {model === DEFAULT ? 'the default model' : <span className={chip}>{model}</span>}</span>
+      {model && <>{' '}{dot}{' '}<span>{all ? 'all' : 'most'} on {model === DEFAULT ? 'the default model' : <span className={chip}>{model}</span>}</span></>}
     </p>
   );
 }
 
 export function AgentList() {
   const { data: value, error } = useLoad(listAgents, [], undefined);
-  const common = value?.length ? commonModel(value).model : DEFAULT;
+  const common = commonModel(value ?? []);
   return (
     <div className="mx-auto max-w-3xl px-4 py-4 lg:py-8">
       <h1 className="m-0 mb-3 hidden text-[19px] lg:block">Agents</h1>
       {error && <p role="alert" className="px-1 text-sm text-danger">Could not load agents: {error}</p>}
       {value?.length === 0 && <p className="px-1 text-sm text-muted">No agents yet.</p>}
-      {!!value?.length && <Lead agents={value} />}
+      {!!value?.length && <Lead agents={value} common={common} />}
       <div className="overflow-hidden rounded-[18px] border border-line bg-surface shadow-card empty:hidden">
         {value && agentGroups(value).map((g) => (
           <section key={g.prefix} aria-label={g.prefix ? `${g.prefix} agents` : 'Agents'}>
             {g.prefix && <h2 className={head}>{g.prefix}{' '}<span className="font-normal tracking-normal normal-case">{count(g.agents.length, 'agent')}</span></h2>}
-            <ul className={list}>{g.agents.map((a) => <AgentRow key={a.name} a={a} prefix={g.prefix} common={common} />)}</ul>
+            <ul className={list}>{g.agents.map((a) => <AgentRow key={a.name} a={a} prefix={g.prefix} common={common.model} />)}</ul>
           </section>
         ))}
       </div>
