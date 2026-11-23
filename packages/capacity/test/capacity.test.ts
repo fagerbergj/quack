@@ -28,7 +28,7 @@ const direct = (t: LeaseLedger): LeaseClient => ({
 });
 
 const notes: Record<string, ModelWait | null> = {};
-function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void; waiting?: () => boolean } = {}) {
+function gate(holder: string, client: LeaseClient = direct(table), extra: { log?: (l: string) => void } = {}) {
   return new CapacityGate({ client, holder, clock, setWait: (w) => void (notes[holder] = w), ...extra });
 }
 function begin(g: CapacityGate) {
@@ -320,8 +320,8 @@ test('while a judge round rides the session\'s lease, a parallel call that is no
 test('a shared call that takes a lease during a wait gives it back when it ends; with no wait the run keeps it', async () => {
   for (const waiting of [true, false]) {
     fresh(2);
-    const g = new CapacityGate({ client: direct(table), holder: 's', clock, waiting: () => waiting });
-    await g.idle();
+    const g = gate('s');
+    g.setWaiting(waiting);
     const call = await g.begin('swap', undefined, true);
     assert.deepEqual(heldBy(), ['s']);
     g.end(call);
@@ -332,7 +332,8 @@ test('a shared call that takes a lease during a wait gives it back when it ends;
 
 test('during a parent\'s wait, a child\'s call keeps its lease between turns, and the child\'s judge ride does not drop it', async () => {
   fresh(2);
-  const g = gate('s', direct(table), { waiting: () => true });
+  const g = gate('s');
+  g.setWaiting(true);
   g.end(await g.begin('swap'));
   assert.deepEqual(heldBy(), ['s'], 'a non-shared call keeps the run\'s lowest lease');
   g.end(await g.begin('swap', undefined, true));
@@ -342,7 +343,8 @@ test('during a parent\'s wait, a child\'s call keeps its lease between turns, an
 
 test('during a wait, a parallel call\'s spare lease still goes back when it ends while another call runs', async () => {
   fresh(3);
-  const g = gate('s', direct(table), { waiting: () => true });
+  const g = gate('s');
+  g.setWaiting(true);
   const first = await g.begin('swap');
   const second = await g.begin('swap');
   await g.begin('swap');
@@ -350,6 +352,54 @@ test('during a wait, a parallel call\'s spare lease still goes back when it ends
   g.end(second);
   await clock.settle();
   assert.deepEqual(heldBy().sort(), ['s', 's#2'], 'one free lease kept, the spare dropped, the running call\'s held');
+});
+
+test('a shared take queued before a wait opens and granted during it gives its lease back when the round ends', async () => {
+  fresh(1);
+  table.acquire('swap', 'o');
+  const g = gate('s');
+  const round = g.begin('swap', undefined, true);
+  await clock.settle();
+  g.setWaiting(true);
+  table.release('swap', 'o');
+  await clock.advance(1000);
+  g.end(await round);
+  await clock.settle();
+  assert.deepEqual(heldBy(), [], 'the wait was open at the grant');
+});
+
+test('during a wait, a child\'s own lease outlives a lent one the round took first on a lower index', async () => {
+  fresh(2);
+  table.acquire('swap', 'o1');
+  table.acquire('swap', 'o2');
+  const g = gate('s');
+  g.setWaiting(true);
+  const round = g.begin('swap', undefined, true);
+  await clock.settle();
+  const child = g.begin('swap');
+  await clock.settle();
+  assert.deepEqual(table.endpoints()[0].waiting, ['s', 's#1'], 'the round queued first, then the child');
+  table.release('swap', 'o1');
+  await clock.advance(1000);
+  table.release('swap', 'o2');
+  await clock.advance(1000);
+  g.end(await child);
+  g.end(await round);
+  await clock.settle();
+  assert.deepEqual(heldBy(), ['s#1'], 'the lent s goes back, the child keeps its own');
+});
+
+test('wired through the session, a shared take during a person wait gives its lease back', async () => {
+  fresh(2);
+  const g = gate('s');
+  capacitySessionExtensions({}, g);
+  let finish!: () => void;
+  const wait = whileWaiting(() => new Promise<void>((r) => (finish = r)));
+  g.end(await g.begin('swap', undefined, true));
+  await clock.settle();
+  assert.deepEqual(heldBy(), [], 'the wait the session wired reached the gate');
+  finish();
+  await wait;
 });
 
 test('a non-judge call ending mid-round leaves the lease the round rides held until its last ride ends', async () => {
