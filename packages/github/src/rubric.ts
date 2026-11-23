@@ -30,7 +30,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 }
 
 // v0's five code-reviewer criteria, kept to checks that caught a real fault in a prod review; reviewDeclaration says how each
-// model check is asked. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
+// model check is asked. `miss: 4` on matches_cited_code keeps the -4 the contradicted check carried in v13. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
   version: 14,
@@ -41,7 +41,7 @@ export const reviewerRubric: Rubric = {
     ] },
     { id: 'claims_grounded', checks: [
       { id: 'cites_existing_lines', label: "Cites a line that doesn't exist", weight: 'gate', code: citesExistingLines },
-      { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3 },
+      { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3, miss: 4 },
       { id: 'verified_names_evidence', label: 'Says verified without saying what was run', weight: 2 },
     ] },
     { id: 'constructive_actionable', checks: [

@@ -24,6 +24,8 @@ export type Check = {
   /** Plain words for what went wrong when this fails, shown to the user in place of the id. */
   label: string;
   weight: number | 'gate';
+  /** Extra points a positive check subtracts per share missed, outside `possible`, for a miss that is also a pitfall. */
+  miss?: number;
   code?: (artifact: string, evidence: Evidence) => CodeResult;
 };
 
@@ -62,6 +64,7 @@ export function score(rubric: Rubric, results: CheckResult[]): Score {
   let possible = 0;
   let penalty = 0;
   const gatesFailed: string[] = [];
+  const miss = new Map(rubric.criteria.flatMap((c) => c.checks.map((k) => [`${c.id}.${k.id}`, k.miss ?? 0] as const)));
   for (const r of results) {
     if (r.met === null) continue;
     const met = Number(r.met);
@@ -70,6 +73,7 @@ export function score(rubric: Rubric, results: CheckResult[]): Score {
     } else if (r.weight > 0) {
       earned += r.weight * met;
       possible += r.weight;
+      penalty += (miss.get(`${r.criterion}.${r.id}`) ?? 0) * (1 - met);
     } else {
       penalty += -r.weight * met;
     }
