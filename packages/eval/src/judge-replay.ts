@@ -68,7 +68,7 @@ export type Replayed = { rows: Row[]; declined: Declined[]; seed?: number };
 export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; escalations?: number; seed?: number; onRows?: (rows: Row[]) => void };
 
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
-const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
+export const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
 /** What a job is judged on: the rubric's declaration and inputs. */
 type Judged = { declaration: Declaration; inputs: Inputs };
 type Prepared = Omit<Job, 'rep' | 'pos'> & { found: Set<string> };
@@ -281,6 +281,21 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
     for (const x of per) for (const n of new Set(x.rs.flatMap((r) => r.notes))) out.push(`  - ${x.a}: ${n}`);
   }
   return out.length ? ['', 'disagreements (case check: met per repeat by arm, then the notes each arm gave):', ...out] : [];
+}
+
+/** The share of a check's asked items it may escalate before it reads as unhealthy. */
+const ESCALATION_BUDGET = 0.1;
+
+/** Per key, escalated / (decision model + escalated), highest first, each over the budget marked UNHEALTHY; keys nothing was asked of are left out. */
+export function budget(counts: Array<{ key: string; clef: number; esc: number }>): { lines: string[]; unhealthy: number } {
+  const by = new Map<string, { clef: number; esc: number }>();
+  for (const c of counts) {
+    const t = by.get(c.key) ?? { clef: 0, esc: 0 };
+    by.set(c.key, { clef: t.clef + c.clef, esc: t.esc + c.esc });
+  }
+  const rated = [...by].filter(([, t]) => t.clef + t.esc).map(([key, t]) => ({ key, ...t, rate: t.esc / (t.clef + t.esc) })).sort((a, b) => b.rate - a.rate || a.key.localeCompare(b.key));
+  const lines = rated.map((r) => `${r.rate > ESCALATION_BUDGET ? 'UNHEALTHY' : 'ok       '} ${`${Math.round(r.rate * 100)}%`.padStart(4)} ${r.esc}/${r.clef + r.esc} ${r.key}`);
+  return { lines, unhealthy: rated.filter((r) => r.rate > ESCALATION_BUDGET).length };
 }
 
 /** The replay table: per case and check, met per repeat and counts per arm; `reportChecks` filters displayed rows while keeping full-round per-arm timing and counts. */

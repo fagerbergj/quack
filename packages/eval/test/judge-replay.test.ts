@@ -11,7 +11,8 @@ import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, faux
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { Declaration, Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
+import { countsOf } from '../src/escalation-report.ts';
+import { armAt, budget, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
 
 const rubric: Rubric = {
   name: 'acme', version: 1, threshold: 0.5,
@@ -262,4 +263,17 @@ test('watch skips checks an arm lacks (erroring only if no arm has them) and tab
   assert.doesNotMatch(md, /\| a \| helpful \|/);
   assert.match(md, /- cand: requests 2 \(j 2\); items decision model 0, escalated 2/);
   await assert.rejects(replayJudge({ cases: [{ ...cases[0], checks: ['missing'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /no check missing/);
+});
+
+test('the budget rates each key escalated over asked, highest first, marks those over 10% UNHEALTHY and skips keys nothing was asked of', () => {
+  const { lines, unhealthy } = budget([{ key: 'a x', clef: 9, esc: 1 }, { key: 'b y', clef: 5, esc: 0 }, { key: 'b y', clef: 3, esc: 2 }, { key: 'code', clef: 0, esc: 0 }]);
+  assert.deepEqual(lines, ['UNHEALTHY  20% 2/10 b y', 'ok         10% 1/10 a x']);
+  assert.equal(unhealthy, 1);
+});
+
+test('an export report counts each verdict check by rubric, the decision model\'s items apart from escalated ones and code, from the given time', () => {
+  const check = (id: string, resolvers: Record<string, number>) => ({ criterion: 'c', id, label: id, weight: 1, met: true, units: 1, resolvers, notes: [] });
+  const verdict = { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'acme@2', undecided: [], checks: [check('why', { clef: 3, 'qwen3.8-27b': 1, code: 2 }), check('how', { 'agent-model': 2 })] };
+  const exports = [{ artifacts: [{ sealedAt: 5, verdict }, { sealedAt: 1, verdict }, { sealedAt: 9, verdict: null }] }];
+  assert.deepEqual(countsOf(exports, 'clef', 2), [{ key: 'acme@2 c.why', clef: 3, esc: 1 }, { key: 'acme@2 c.how', clef: 0, esc: 2 }]);
 });

@@ -69,6 +69,9 @@ A `:reuse` arm's batch, one session's drafts in version order against one store,
 
 `--rows` appends each case's rows to a JSON-lines file as the case finishes, so a stopped run keeps what it judged, and `replay-judge.ts --table rows.jsonl` prints the table from such a file.
 
+`--budget`, on a run or with `--table`, prints each arm's checks by escalation rate, escalated / (`clef` + `esc`), after the table, marks any check over 10% `UNHEALTHY`, and then exits non-zero.
+`node packages/eval/src/escalation-report.ts <dir> [--decision-model clef] [--since <epoch ms>]` prints the same rates per `rubric@version` and check from the prod verdicts in a directory of `quack export` files.
+
 A row is one check of one case under one arm: `met`, its place (`pos`, 1 first), the items the decision model settled (`clef`), the items escalated (`esc`) and the items reused from an earlier draft (`reused`), and the case's judge milliseconds (`ms`) and model requests by model id (`requests`).
 
 A replay rebuilds a `contract.spec` version's evidence as the session stood at its seal: the versions, approvals and answers recorded by then, and each file of a git clone in the workspace as the commit the clone's reflog says HEAD held then, since a session goes on pulling after it seals a version.
