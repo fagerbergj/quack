@@ -213,6 +213,7 @@ test('the contracts prompt and every kind guide ask for a file, never a path:lin
   assert.match(prompt, /`ref` is the file's path relative to your workspace/);
 });
 
+// Guards against bringing back line resolution: a file ref is the form the prompt asks for, and no gate may refuse it.
 test('a code why that names a file with no line passes every contract.spec gate', async () => {
   const why = [{ source: 'code', ref: 'repo/packages/x/src/server.ts', text: 'serve answers each route' }];
   const spec = { ...v1, choices: [{ ...v1.choices[0], why }, ...v1.choices.slice(1)] };
