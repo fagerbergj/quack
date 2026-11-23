@@ -150,7 +150,7 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const t = Date.now();
   const v = await j.rejudge(only?.api ?? on, opts, sealed, memo, ctx);
   const ms = Date.now() - t;
-  // Rejudged with every escalated item passing, then failing; Clef's answers come from the first round's memo, so neither asks a model.
+  // Rejudged with every escalated item failing, then passing; Clef's answers come from the first round's memo, so neither asks a model.
   const as = async (pass: boolean) => (await j.rejudge(decisionOnly(on, memo, (ask) => choiceOf(declsOf(j).get(ask)!, pass)).api, opts, sealed, memo, ctx)).passed;
   const verdict: Range | undefined = only && ((await as(false)) ? 'pass' : (await as(true)) ? 'open' : 'fail');
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
