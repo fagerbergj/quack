@@ -10,6 +10,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
+import { steerInput } from '../src/service.ts';
 import { cleanup, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
@@ -52,7 +53,7 @@ approve
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
 
-async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[], pr: Record<string, unknown> = {}, faults: { loseFirstReview?: boolean } = {}) {
+async function reviewRun(responses: (seen: string[], advance: () => string, steer: (text: string) => Promise<unknown>) => FauxResponseStep[], pr: Record<string, unknown> = {}, faults: { loseFirstReview?: boolean } = {}) {
   process.env.QUACK_CLEF_KEY = 'none';
   const { base, head } = await remotes();
   const live: Record<string, unknown> = { headSha: head, ...pr };
@@ -67,7 +68,8 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
   const clefUrl = await fakeClef();
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
-  faux.setResponses(responses(seen, advance));
+  // A steer as the service sends one mid-run: the session places it at the run's next tool boundary.
+  faux.setResponses(responses(seen, advance, (text) => session.submit(text, 'gh-steer', false, 'steer')));
   const models = buildModels(parseDeployment({ defaultModel: 'clef/clef', providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
   models.setProvider(fauxJudge().provider);
@@ -192,6 +194,26 @@ test('a PR pushed to while it is reviewed is not posted against the old head; re
   assert.match(seen[5], /Posted as APPROVE: /);
   assert.deepEqual(service.posted.map((p) => p.commitId), [moved]);
   assert.match(service.posted[0].body, /approve on the new head/);
+  await session.close();
+});
+
+test('a push steered into a running review: the old head is not posted, and the same run checks out and posts the new head', async () => {
+  let moved = '';
+  const { done, seen, service, session } = await reviewRun((seen, advance, steer) => {
+    const step = recorder(seen);
+    return [
+      checkout(),
+      step(write(review)),
+      async () => { moved = advance(); await steer(steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: moved })); return call('submit_review', {}); },
+      (c) => (seen.push(JSON.stringify(c.messages.slice(-2))), checkout()),
+      step(write(review.replace('approve.', 'approve on the new head.'))),
+      step(call('submit_review', {})),
+      step(fauxAssistantMessage('Posted.')),
+    ];
+  });
+  assert.equal(done.status === 'done' && done.answer, 'Posted.', 'one run');
+  assert.match(seen[1], new RegExp(`Nothing was posted: the pull request moved .*"role":"user".*its head is now ${moved}\\. Call checkout_pr again`), 'the steer follows the refused submit');
+  assert.deepEqual(service.posted.map((p) => p.commitId), [moved]);
   await session.close();
 });
 

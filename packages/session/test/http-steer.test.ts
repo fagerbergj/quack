@@ -39,11 +39,14 @@ test('an HTTP steer joins the running run at its next turn instead of queueing b
   await invoke({ input: 'check the code' });
   await running;
   assert.equal((await invoke({ input: 'x', whenBusy: 'later' })).status, 400);
-  const steer = await invoke({ input: 'also check the docs', whenBusy: 'steer' });
+  const steer = await invoke({ input: 'also check the docs', requestId: 'd-1/steer', whenBusy: 'steer' });
   assert.equal(steer.status, 202, JSON.stringify(steer.body));
+  // A caller that re-sends a steer under its request id, as the github queue does each sweep, adds no second copy.
+  const again = await invoke({ input: 'also check the docs', requestId: 'd-1/steer', whenBusy: 'steer' });
+  assert.equal(again.body.submissionId, steer.body.submissionId);
   release();
   const settled = await (await session.harness.submission(steer.body.submissionId, ctx))!.wait(ctx);
   assert.equal(settled.status, 'done');
   assert.equal(turns.length, 1);
-  assert.ok(turns[0]!.some((u) => u.includes('also check the docs')), `the turn after the tool saw the steer: ${JSON.stringify(turns)}`);
+  assert.equal(turns[0]!.filter((u) => u.includes('also check the docs')).length, 1, `the turn after the tool saw the steer once: ${JSON.stringify(turns)}`);
 });
