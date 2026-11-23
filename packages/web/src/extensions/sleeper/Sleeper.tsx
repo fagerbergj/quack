@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { SealedArtifact } from '../../api.ts';
 import { sentence } from '../../extension.ts';
 import type { Row } from '../../sessions.ts';
-import { CURRENT, Full, JOBS, ORDER, Short, brief, titleOf, whatIs } from './cards.tsx';
+import { CURRENT, Full, JOBS, ORDER, titleOf, whatIs } from './cards.tsx';
 import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, TitleTick, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { sessionsOf, useResults, wanted, weekResult, type Result, type Sess } from './week.ts';
@@ -159,23 +159,40 @@ function WeekStrip({ lock, now, runs }: { lock?: number; now: number; runs: Run[
 
 const btn = 'inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border-0 bg-transparent px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1';
 
-function ResultCard({ r, compact }: { r: Result; compact?: boolean }) {
+// The title button is the toggle; its ::after stretches over the header row so the meta and chevron open the card too.
+// The tick sits above it (relative) so its tooltip still shows; a tap there does not toggle.
+const toggle = "cursor-pointer border-0 bg-transparent p-0 text-left outline-none after:absolute after:inset-0 after:rounded-[22px] focus-visible:after:outline-2 focus-visible:after:outline-link";
+
+type HeadProps = { r: Result; title: string; meta?: string; open: boolean; quiet: boolean; onToggle: () => void };
+
+// A quiet card is one line: the job's name, then its summary where the meta goes.
+function Head({ r, title, meta, open, quiet, onToggle }: HeadProps) {
+  return (
+    <div className="relative flex min-w-0 items-center gap-2 px-4 py-3">
+      <h2 className="m-0 min-w-0 flex-none text-[15px] font-semibold"><button type="button" aria-expanded={open} onClick={onToggle} className={toggle}>{quiet ? JOBS[r.job]!.label : title}</button></h2>
+      <span className="relative flex-none empty:hidden"><TitleTick artifact={r.artifact} /></span>
+      <span className={`min-w-0 flex-1 text-muted ${quiet ? 'text-[13px]' : 'text-right text-[12px]'}`}>{meta}</span>
+      <span aria-hidden="true" className={`flex-none text-[18px] leading-none text-muted transition-transform ${open ? 'rotate-90' : ''}`}>›</span>
+    </div>
+  );
+}
+
+function ResultCard({ r, compact, team }: { r: Result; compact?: boolean; team?: string }) {
   const [open, setOpen] = useState(false);
   const title = titleOf(r);
   if (open && r.job === 'lineup' && Array.isArray(r.card.starters)) {
     return <div className="flex flex-col gap-1"><LineupCard card={r.card as Card} artifact={r.artifact} sessionKey={r.key} /><button type="button" onClick={() => setOpen(false)} className={`${btn} self-end`} aria-label={`Close ${title}`}>Close</button></div>;
   }
+  const job = JOBS[r.job];
+  const width = job?.width?.(r.card);
+  const quiet = width === 'quiet' && !open;
+  const Shape = job?.Shape;
+  const meta = compact ? whatIs(r) : quiet ? r.card.summary : job?.meta?.(r.card);
   return (
-    <article id={`sleeper-${r.job}`} aria-label={title} className="scroll-mt-4 rounded-[22px] border border-line bg-surface shadow-card">
-      <div className="flex items-center gap-3 px-4 pt-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="m-0 flex items-center gap-2 text-[15px] font-semibold">{title}<TitleTick artifact={r.artifact} /></h2>
-          <p className="m-0 text-[12px] text-muted">{compact ? whatIs(r) : brief(r).sub}</p>
-        </div>
-        <button type="button" aria-expanded={open} aria-label={`${open ? 'Close' : 'Open'} ${title}`} onClick={() => setOpen(!open)} className={btn}>{open ? 'Close' : 'Open ›'}</button>
-      </div>
-      <div className="flex flex-col gap-2 px-4 pt-1 pb-4">
-        {open ? <Full r={r} /> : !compact && <Short r={r} />}
+    <article id={`sleeper-${r.job}`} aria-label={title} className={`@container scroll-mt-4 rounded-[22px] border border-line bg-surface shadow-card ${width ? '@3xl:col-span-2' : ''} ${width === 'quiet' ? 'order-last' : ''}`}>
+      <Head r={r} title={title} meta={meta} open={open} quiet={quiet} onToggle={() => setOpen(!open)} />
+      <div className="flex min-w-0 flex-col gap-3 px-4 pb-4 [overflow-wrap:anywhere] empty:hidden">
+        {open ? <Full r={r} /> : !compact && !quiet && Shape && <Shape c={r.card} team={team} />}
         <Verdict artifact={r.artifact} />
         {open && <a href={`#/s/${encodeURIComponent(r.key)}`} className={`${btn} self-start`}>Ask about this</a>}
       </div>
@@ -189,8 +206,8 @@ function Outcome({ week, results }: { week: number; results: Result[] }) {
   const label = o.won === undefined ? 'Tied' : o.won ? 'Won' : 'Lost';
   return (
     <section aria-label={`Week ${week} result`} className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
-      <p className={`m-0 text-[12px] font-bold uppercase tracking-[0.08em] ${o.won ? 'text-success' : 'text-ink-2'}`}>{label}</p>
-      <p className="m-0 mt-1 text-[28px] font-semibold tabular-nums tracking-[-0.02em]">{o.opp === undefined ? o.started : `${o.started} to ${o.opp}`}</p>
+      {o.opp != null && <p className={`m-0 text-[12px] font-bold uppercase tracking-[0.08em] ${o.won ? 'text-success' : 'text-ink-2'}`}>{label}</p>}
+      <p className="m-0 mt-1 text-[28px] font-semibold tabular-nums tracking-[-0.02em]">{o.opp == null ? o.started : `${o.started} to ${o.opp}`}</p>
       <p className="m-0 mt-1 text-[14px] text-ink-2">{`Left ${o.left} on the bench (best lineup ${o.best})`}</p>
     </section>
   );
@@ -343,7 +360,7 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
       {league && week === undefined && <p className="m-0 text-[13px] text-ink-2">No results yet. Run a job from the menu.</p>}
       {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} runs={runs} /><Lineup r={lineup} running={jobs.running('lineup') !== undefined} /></>}
       {past && <Outcome week={week!} results={found} />}
-      {shown.map((r) => <ResultCard key={r.key} r={r} compact={past} />)}
+      <div className="@container"><div className="grid items-start gap-4 @3xl:grid-cols-2">{shown.map((r) => <ResultCard key={r.key} r={r} compact={past} team={team} />)}</div></div>
       {past && shown.length === 0 && <p className="m-0 text-[13px] text-ink-2">Nothing from this week.</p>}
       {menu && <JobSheet found={found} runs={runs} live={jobs.live} status={jobs.status} onRun={jobs.run} onClose={() => setMenu(false)} />}
     </div>

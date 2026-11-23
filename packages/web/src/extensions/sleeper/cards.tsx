@@ -2,40 +2,13 @@ import type { ComponentType, ReactNode } from 'react';
 import { sentence } from '../../extension.ts';
 import { Blurb, Markdown } from '../../Markdown.tsx';
 import { NewsList } from './parts.tsx';
+import { KINDS, SHAPES, metas, pts, record, unid, type Shape } from './shapes.tsx';
 import type { Result } from './week.ts';
 
 type P = { name: string; pos: string; team: string | null; inj?: string | null };
 type Card = Record<string, any>;
 
 const who = (p: P) => `${p.name} · ${p.pos}${p.team ? ` · ${p.team}` : ''}`;
-const pts = (n: number) => String(Math.round(n * 100) / 100);
-const record = (s: { wins: number; losses: number; ties: number }) => `${s.wins}-${s.losses}${s.ties ? `-${s.ties}` : ''}`;
-// Trend text carries Sleeper player ids ("4881 Lamar Jackson: ..."), which mean nothing to a reader.
-const unid = (t: string) => t.replace(/\b(?!(?:19|20)\d{2}(?!\d))\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Z])/g, '').replace(/\b\d{4,5}(?:\/\d{4,5})+:?\s*/g, '');
-const KINDS: Record<string, string> = { injury: 'Injuries', waiver: 'Rising on waivers', note: 'Notes' };
-
-/** One calm line under the title, and the lines a short card lists. */
-export function brief(r: Result): { sub: string; lines: string[] } {
-  const c = r.card;
-  switch (r.job) {
-    case 'waivers': return { sub: `Week ${c.week} · priority ${c.my_priority}`, lines: (c.candidates ?? []).slice(0, 2).map((x: any) => `${x.rank}. ${x.player.name} · ${x.player.pos}`) };
-    case 'trends': {
-      const items: any[] = c.items ?? [];
-      return { sub: c.date, lines: [...items.slice(0, 2).flatMap((i) => (i.player ? [i.player.name] : [])), ...(items.length > 2 ? [`${items.length - 2} more`] : [])] };
-    }
-    case 'digest': {
-      const games: any[] = [...(c.games ?? [])].sort((a, b) => Number(b.mine) - Number(a.mine) || b.margin - a.margin);
-      return { sub: `Week ${c.week}`, lines: games.slice(0, 2).map((g) => `${g.home.team.trim()} ${pts(g.home.pts)} · ${g.away.team.trim()} ${pts(g.away.pts)}`) };
-    }
-    case 'trade-finder': {
-      const top = c.suggestions?.[0];
-      return { sub: `Week ${c.week}`, lines: [top ? `Give ${top.give.name}, get ${top.get.name}` : 'No deal this week'] };
-    }
-    case 'history': return { sub: `${c.seasons.length} seasons`, lines: c.seasons.slice(0, 4).map((s: any) => `${s.season} · ${record(s)}`) };
-    case 'retro': return c.bye ? { sub: 'Bye week', lines: [] } : { sub: `${pts(c.started)} scored`, lines: [`${pts(c.best)} best lineup`, `${pts(c.left)} left on the bench`] };
-    default: return { sub: `Week ${c.week}`, lines: [] };
-  }
-}
 
 const chip = 'rounded-md bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-2';
 const Chip = ({ children, tone = chip }: { children: ReactNode; tone?: string }) => <span className={tone}>{children}</span>;
@@ -195,17 +168,20 @@ function History({ c }: { c: Card }) {
 }
 
 /** One Sleeper job: its `label` wherever the job itself is named, the `title` of a week's result (Week 9 recap), the line under that title in
- * a past week, its running line, its colour on the week strip, and its opened view (the lineup has its own). */
-type Job = { label: string; title?: (week: number) => string; what: string; run: string; tone: string; View?: ComponentType<{ c: Card }> };
+ * a past week, its running line, its colour on the week strip, its closed card (Shape, meta beside the title, width) and its opened View. */
+type Job = {
+  label: string; title?: (week: number) => string; what: string; run: string; tone: string; View?: ComponentType<{ c: Card }>;
+  Shape?: ComponentType<Shape>; meta?: (c: Card) => string | undefined; width?: (c: Card) => 'wide' | 'quiet' | undefined;
+};
 
 export const JOBS: Record<string, Job> = {
   lineup: { label: 'Lineup', what: 'Your starters and bench', run: 'Checking your lineup', tone: 'bg-link' },
-  waivers: { label: 'Waivers', what: 'Claims for the week', run: 'Looking at waivers', tone: 'bg-warning', View: Waivers },
-  'trade-finder': { label: 'Trade finder', what: 'Deals worth asking about', run: 'Looking for trades', tone: 'bg-success', View: Trades },
-  trends: { label: 'Trends', what: 'What is moving in the league', run: 'Reading trends', tone: 'bg-muted', View: Trends },
-  digest: { label: 'Recap', what: 'League recap', run: 'Writing the recap', tone: 'bg-muted', View: Recap },
-  retro: { label: 'Retro', what: 'Your lineup calls, looked back on', run: 'Writing the retro', tone: 'bg-muted', View: Retro },
-  history: { label: 'League history', title: () => 'League history', what: 'Your seasons so far', run: 'Reading league history', tone: 'bg-info', View: History },
+  waivers: { label: 'Waivers', what: 'Claims for the week', run: 'Looking at waivers', tone: 'bg-warning', View: Waivers, Shape: SHAPES.waivers, meta: metas.waivers },
+  'trade-finder': { label: 'Trade finder', what: 'Deals worth asking about', run: 'Looking for trades', tone: 'bg-success', View: Trades, Shape: SHAPES.trades, width: (c) => (c.suggestions?.length ? undefined : 'quiet') },
+  trends: { label: 'Trends', what: 'What is moving in the league', run: 'Reading trends', tone: 'bg-muted', View: Trends, Shape: SHAPES.trends, meta: metas.trends },
+  digest: { label: 'Recap', what: 'League recap', run: 'Writing the recap', tone: 'bg-muted', View: Recap, Shape: SHAPES.digest, meta: metas.digest, width: () => 'wide' },
+  retro: { label: 'Retro', what: 'Your lineup calls, looked back on', run: 'Writing the retro', tone: 'bg-muted', View: Retro, Shape: SHAPES.retro },
+  history: { label: 'League history', title: () => 'League history', what: 'Your seasons so far', run: 'Reading league history', tone: 'bg-info', View: History, Shape: SHAPES.history, meta: metas.history },
 };
 export const ORDER = Object.keys(JOBS);
 // The lineup heads the current week on its own.
@@ -236,15 +212,4 @@ export const whatIs = (r: Result) => (preview(r.job, r.card) ? 'Preview of the w
 export function Full({ r }: { r: Result }) {
   const Body = JOBS[r.job]?.View;
   return Body ? <Body c={r.card} /> : <Markdown text={r.card.summary ?? ''} />;
-}
-
-/** What a short card says without opening: the model's own line, first sentence only. */
-export function Short({ r }: { r: Result }) {
-  const { lines } = brief(r);
-  return (
-    <div className="flex min-w-0 flex-col gap-2">
-      {r.card.summary && <Blurb text={r.card.summary} />}
-      {lines.length > 0 && <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-0.5 p-0 text-[12.5px] text-ink-2">{lines.map((l) => <li key={l}>{l}</li>)}</ul>}
-    </div>
-  );
 }

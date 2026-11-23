@@ -52,7 +52,7 @@ export function useResults(sessions: Sess[], refresh: number) {
   return { results, error };
 }
 
-export type WeekResult = { won: boolean | undefined; started: number; opp?: number; left: number; best: number };
+export type WeekResult = { won: boolean | undefined; started: number; opp?: number | null; left: number; best: number };
 
 /** How the week ended: the retro's own figures, else the history job's row for that week. Undefined when neither has it. */
 export function weekResult(week: number, results: Result[]): WeekResult | undefined {
