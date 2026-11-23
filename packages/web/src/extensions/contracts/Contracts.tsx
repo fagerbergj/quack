@@ -43,7 +43,7 @@ function Group({ label, items, limit }: { label: string; items: Contract[]; limi
   const shown = all || !limit ? items : items.slice(0, limit);
   return (
     <section aria-label={label} className="mb-5">
-      <h2 className="m-0 mb-1.5 flex items-baseline gap-2 px-1 font-sans text-xs font-semibold tracking-wider text-muted uppercase">{label}<span className="font-normal tabular-nums">{items.length}</span></h2>
+      <h2 className="m-0 mb-1.5 flex items-baseline gap-2 px-1 font-sans text-xs font-semibold tracking-wider text-muted uppercase">{label}{' '}<span className="font-normal tabular-nums">{items.length}</span></h2>
       <ul className="m-0 flex list-none flex-col divide-y divide-line overflow-hidden rounded-[22px] border border-line bg-surface p-0 shadow-card">
         {shown.map((c) => <Item key={c.key} c={c} />)}
         {shown.length < items.length && (

@@ -16,17 +16,29 @@ const markOf = (status: 'draft' | 'promoted') => MARK[status];
 // Promoted first, then by name.
 const order = (x: AgentSummary, y: AgentSummary) => Number(y.status === 'promoted') - Number(x.status === 'promoted') || x.name.localeCompare(y.name);
 const prefixOf = (name: string) => (name.includes('-') ? name.slice(0, name.indexOf('-')) : '');
+const count = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+const DEFAULT = 'Default model';
+const modelOf = (a: AgentSummary) => a.model ?? DEFAULT;
 
-/** Agents sharing a name prefix (sleeper-digest, sleeper-retro) form a group; the rest list first, ungrouped. */
+/** Agents sharing a name prefix (sleeper-digest, sleeper-retro) form a group, groups by prefix; the rest list first, ungrouped. */
 export function agentGroups(agents: AgentSummary[]): Array<{ prefix: string; agents: AgentSummary[] }> {
-  const by = Map.groupBy(agents.toSorted(order), (a) => prefixOf(a.name));
-  const loose = [...by].flatMap(([p, xs]) => (p && xs.length > 1 ? [] : xs)).toSorted(order);
-  return [{ prefix: '', agents: loose }, ...[...by].filter(([p, xs]) => p && xs.length > 1).map(([prefix, xs]) => ({ prefix, agents: xs }))].filter((g) => g.agents.length);
+  const by = [...Map.groupBy(agents.toSorted(order), (a) => prefixOf(a.name))];
+  const loose = by.flatMap(([p, xs]) => (p && xs.length > 1 ? [] : xs)).toSorted(order);
+  const named = by.filter(([p, xs]) => p && xs.length > 1).sort(([p], [q]) => p.localeCompare(q));
+  return [{ prefix: '', agents: loose }, ...named.map(([prefix, xs]) => ({ prefix, agents: xs }))].filter((g) => g.agents.length);
 }
 
-// The model shows once in the lead when every agent shares it, otherwise on each row; the spaces only part the accessible name.
-function AgentRow({ a, prefix, model }: { a: AgentSummary; prefix: string; model: boolean }) {
-  const { mark, label } = markOf(a.status);
+/** The model most agents run on (the default on a tie): the lead names it, and a row names its own only when it differs. */
+export function commonModel(agents: AgentSummary[]): { model: string; all: boolean } {
+  const [model, xs] = [...Map.groupBy(agents, modelOf)].sort(([m, x], [n, y]) => y.length - x.length || Number(n === DEFAULT) - Number(m === DEFAULT))[0]!;
+  return { model, all: xs.length === agents.length };
+}
+
+const chip = 'flex-none rounded-md border border-line bg-soft px-1.5 py-0.5 font-mono text-[11px] text-ink-2';
+
+// The spaces between parts only keep them apart in the accessible name; on screen the flex gap does that.
+function AgentRow({ a, prefix, common }: { a: AgentSummary; prefix: string; common: string }) {
+  const status = markOf(a.status);
   return (
     <li>
       <a href={`#/agents/${encodeURIComponent(a.name)}`} className="flex min-h-12 items-center gap-3 px-4 py-2 text-ink no-underline hover:bg-soft">
@@ -35,40 +47,44 @@ function AgentRow({ a, prefix, model }: { a: AgentSummary; prefix: string; model
           {a.description && ' '}
           {a.description && <span className="truncate text-[12.5px] text-muted">{a.description}</span>}
         </span>{' '}
-        {model && <><span className="hidden flex-none rounded-md border border-line bg-soft px-1.5 py-0.5 font-mono text-[11px] text-ink-2 sm:inline">{a.model ?? DEFAULT}</span>{' '}</>}
-        <VersionMark version={a.version} mark={mark} label={label} />
+        {modelOf(a) !== common && <><span className={chip}>{modelOf(a)}</span>{' '}</>}
+        <VersionMark version={a.version} {...status} />
         <span aria-hidden="true" className="flex-none text-muted">›</span>
       </a>
     </li>
   );
 }
 
-const DEFAULT = 'Default model';
 const list = 'm-0 flex list-none flex-col divide-y divide-line p-0';
 const head = 'm-0 flex items-baseline gap-2 border-y border-line bg-soft px-4 py-2 font-sans text-xs font-semibold tracking-wider text-muted uppercase';
+const dot = <span aria-hidden="true" className="text-muted">·</span>;
+
+function Lead({ agents }: { agents: AgentSummary[] }) {
+  const promoted = agents.filter((a) => a.status === 'promoted').length;
+  const { model, all } = commonModel(agents);
+  return (
+    <p className="m-0 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[13px] text-ink-2">
+      <span>{count(agents.length, 'agent')}</span>
+      {promoted > 0 && <>{' '}{dot}{' '}<span className="inline-flex items-center gap-1.5">{`${promoted} promoted`}{' '}<StatusMark mark="ok" label="Promoted: runs unattended" /></span></>}
+      {' '}{dot}{' '}<span>{all ? 'all' : 'most'} on {model === DEFAULT ? 'the default model' : <span className={chip}>{model}</span>}</span>
+    </p>
+  );
+}
 
 export function AgentList() {
   const { data: value, error } = useLoad(listAgents, [], undefined);
-  const models = new Set(value?.map((a) => a.model ?? DEFAULT));
-  const shared = models.size === 1 ? [...models][0] : undefined;
-  const promoted = value?.filter((a) => a.status === 'promoted').length ?? 0;
+  const common = value?.length ? commonModel(value).model : DEFAULT;
   return (
     <div className="mx-auto max-w-3xl px-4 py-4 lg:py-8">
       <h1 className="m-0 mb-3 hidden text-[19px] lg:block">Agents</h1>
       {error && <p role="alert" className="px-1 text-sm text-danger">Could not load agents: {error}</p>}
       {value?.length === 0 && <p className="px-1 text-sm text-muted">No agents yet.</p>}
-      {!!value?.length && (
-        <p className="m-0 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[13px] text-ink-2">
-          <span>{`${value.length} agents`}</span>
-          {promoted > 0 && <><span aria-hidden="true" className="text-muted">·</span><span className="inline-flex items-center gap-1.5">{`${promoted} promoted`}<StatusMark mark="ok" label="Promoted: runs unattended" /></span></>}
-          {shared && <><span aria-hidden="true" className="text-muted">·</span><span>all on {shared === DEFAULT ? 'the default model' : <span className="rounded-md border border-line bg-soft px-1.5 py-0.5 font-mono text-[11.5px]">{shared}</span>}</span></>}
-        </p>
-      )}
+      {!!value?.length && <Lead agents={value} />}
       <div className="overflow-hidden rounded-[18px] border border-line bg-surface shadow-card empty:hidden">
         {value && agentGroups(value).map((g) => (
           <section key={g.prefix} aria-label={g.prefix ? `${g.prefix} agents` : 'Agents'}>
-            {g.prefix && <h2 className={head}>{g.prefix}<span className="font-normal tracking-normal normal-case">{`${g.agents.length} agents`}</span></h2>}
-            <ul className={list}>{g.agents.map((a) => <AgentRow key={a.name} a={a} prefix={g.prefix} model={!shared} />)}</ul>
+            {g.prefix && <h2 className={head}>{g.prefix}{' '}<span className="font-normal tracking-normal normal-case">{count(g.agents.length, 'agent')}</span></h2>}
+            <ul className={list}>{g.agents.map((a) => <AgentRow key={a.name} a={a} prefix={g.prefix} common={common} />)}</ul>
           </section>
         ))}
       </div>

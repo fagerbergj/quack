@@ -11,6 +11,9 @@ const scenario: Scenario = {
       const sleeper = main.getByRole('region', { name: 'sleeper agents' });
       await visible(sleeper.getByRole('link', { name: /digest/ }).getByRole('img', { name: /^(Draft|Promoted: runs unattended)$/ }));
       if (await main.getByRole('link').getByText(/^(Draft|Promoted)$/).count()) throw new Error('a row prints its status');
+      // The shipped bundles pin no model, so the lead says so once and no row names one.
+      await visible(main.getByText(/all on the default model/));
+      if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error('the page scrolls sideways');
       await ctx.shot(page, `agents-${label}`);
     });
   },

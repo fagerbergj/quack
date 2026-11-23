@@ -54,7 +54,11 @@ test('promoted agents lead, and a model the agents differ on shows on each row',
   open('#/agents');
   await main().findByRole('link', { name: /reviewer/ });
   expect(main().getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/agents/quack', '#/agents/reviewer']);
+  // One agent each: the tie goes to the default, so only the row that differs from it names a model, at every width.
   expect(main().getByRole('link', { name: /reviewer/ })).toHaveTextContent('local/m');
+  expect(main().getByText('local/m')).not.toHaveClass('hidden');
+  expect(main().getByRole('link', { name: /quack/ })).not.toHaveTextContent(/model/i);
+  expect(main().getByText(/most on the default model/)).toBeInTheDocument();
   expect(main().getByText('1 promoted')).toBeInTheDocument();
   expect(main().queryByText(/all on/)).toBeNull();
 });
@@ -102,12 +106,14 @@ test('lineDiff marks changes, trims distant context and reports no change as emp
   expect(lines.map((l) => l.kind)).toEqual(['gap', 'same', 'same', 'del', 'add', 'same', 'same', 'gap']);
 });
 
-test('agents sharing a name prefix group under it, and a model every agent shares is said once', () => {
+test('agents sharing a name prefix group under it, and the groups sort by prefix', () => {
   const agent = (name: string, status: 'draft' | 'promoted' = 'draft') => ({ name, version: 1, status, model: 'local/m' });
-  const groups = agentGroups([agent('sleeper-retro'), agent('reviewer', 'promoted'), agent('sleeper-digest'), agent('remarkable-ingest'), agent('contracts')]);
+  const groups = agentGroups([agent('sleeper-retro'), agent('reviewer', 'promoted'), agent('zeta-b', 'promoted'), agent('sleeper-digest'), agent('zeta-a'), agent('remarkable-ingest'), agent('contracts')]);
+  // zeta holds a promoted agent, yet its heading still follows sleeper: promoting one agent never moves a heading.
   expect(groups.map((g) => [g.prefix, g.agents.map((a) => a.name)])).toEqual([
     ['', ['reviewer', 'contracts', 'remarkable-ingest']],
     ['sleeper', ['sleeper-digest', 'sleeper-retro']],
+    ['zeta', ['zeta-b', 'zeta-a']],
   ]);
 });
 
@@ -115,7 +121,7 @@ test('with one model for all, the lead names it once and no row repeats it', asy
   fetchMock.mockImplementationOnce(async () => Response.json({ agents: [{ name: 'sleeper-retro', version: 6, status: 'draft', model: 'local/m' }, { name: 'sleeper-digest', version: 3, status: 'draft', model: 'local/m' }] }));
   open('#/agents');
   const group = await main().findByRole('region', { name: 'sleeper agents' });
-  expect(within(group).getByRole('heading')).toHaveTextContent('sleeper2 agents');
+  expect(within(group).getByRole('heading')).toHaveAccessibleName('sleeper 2 agents');
   expect(main().getByText('local/m')).toBeInTheDocument();
   expect(within(group).getAllByRole('link').map((l) => l.textContent)).toEqual(['sleeper-digest v3 ›', 'sleeper-retro v6 ›']);
 });
@@ -126,4 +132,12 @@ test('agents with no pinned model read as all on the default model, with no chip
   await main().findByRole('link', { name: /contracts/ });
   expect(main().getByText(/all on the default model/)).toBeInTheDocument();
   expect(main().queryByText('Default model')).toBeNull();
+});
+
+test('one agent reads as one agent, and the lead keeps its parts apart for a screen reader', async () => {
+  fetchMock.mockImplementationOnce(async () => Response.json({ agents: [{ name: 'reviewer', version: 16, status: 'promoted' }] }));
+  open('#/agents');
+  await main().findByRole('link', { name: /reviewer/ });
+  const lead = main().getByText('1 agent').parentElement!;
+  expect(lead.textContent).toBe('1 agent · 1 promoted ✓ · all on the default model');
 });
