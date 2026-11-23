@@ -1,5 +1,5 @@
 import { createContext, type ComponentType, type ReactNode } from 'react';
-import type { Approval, Question, SealedArtifact } from './api.ts';
+import type { Approval, Artifact, Question, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
 /** The session an artifact is shown from, for links that open it on its own page. */
@@ -18,14 +18,16 @@ export type Nameable = Pick<Row, 'key' | 'agent' | 'title'> & { multiRepo?: bool
 /** How one family of sessions reads in lists and headers; the first kind whose `match` hits names the row. */
 export type SessionKind = {
   label: string;
-  /** What this kind's artifacts are called on the Artifacts page ("Review"). */
-  noun?: (r: Row) => string;
   match: (r: Nameable) => boolean;
   icon: string;
   tint: string;
   name: (r: Nameable) => Named;
   words: (r: Row) => Words | undefined;
 };
+
+/** A session's row on the Artifacts page: the kind it opens, the line under its title (null for none, else its summary), its right edge,
+ * and `fold`, which collapses a day's rows sharing a `label` into one that lists their `group`s and counts the `ok` ones. */
+export type ListRow = { open?: string; line?: ReactNode; end?: ReactNode; fold?: { label: string; group: string; ok: boolean } };
 
 /** What a studio pane is given: the session's live artifacts, pending approvals and questions, its opening message, what the run is doing now,
  * and `decided` to drop an approval it settled. */
@@ -44,6 +46,10 @@ export type Extension = {
   versionOf?: (a: SealedArtifact) => number | undefined;
   /** Reads rows that came without their `outcome` (the Sessions API has none), so a kind's own data can label them; rows it cannot label come back as they were. */
   label?: (sessionKey: string, kind: string, rows: SealedArtifact[]) => Promise<SealedArtifact[]>;
+  /** A session's Artifacts row, given its newest artifact of each kind, newest first; undefined when it is not this extension's session. */
+  listRow?: (latest: Artifact[]) => ListRow | undefined;
+  /** Artifacts rows that need the extension's own records (a contract's version and mark), read once per list by session key; they override `listRow`. */
+  listRows?: (rows: Row[]) => Promise<ReadonlyMap<string, ListRow>>;
   /** Plain words for a tool this extension owns while it runs, by tool name, given the call's args. */
   steps?: Record<string, (args: Record<string, unknown>) => string>;
   /** Extra UI beneath a tool call row in the transcript (a subagent's child conversation). */

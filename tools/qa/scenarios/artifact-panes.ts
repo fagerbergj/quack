@@ -124,13 +124,13 @@ const scenario: Scenario = {
     await eachView(ctx, 'the Artifacts list opens an artifact on its own page; Back returns to the list', async (page, label) => {
       await fakeServices(page);
       await page.goto(`${ctx.url}/#/artifacts`);
-      await page.getByRole('link', { name: /^Open #2243/ }).click();
+      await page.getByRole('main').getByRole('link', { name: /quack#2243/ }).click();
       await page.waitForURL(/#\/s\/github%3Afagerbergj%2Fquack%232243\/a\/github\.review$/);
       await visible(page.getByRole('main').getByText('ready to merge').first());
       await visible(page.getByRole('link', { name: 'Open its session' }));
       await ctx.shot(page, `artifact-page-${label}`);
       await page.goBack();
-      await visible(page.getByRole('link', { name: /^Open #2243/ }));
+      await visible(page.getByRole('main').getByRole('link', { name: /quack#2243/ }));
       await page.goForward();
       await visible(page.getByRole('main').getByText('ready to merge').first());
     }, WITH_WIDE);

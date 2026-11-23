@@ -1260,10 +1260,10 @@ test('Artifacts opens one on its own page with a real URL: versions to pick, a l
   ]);
   location.hash = '#/artifacts';
   render(<App />);
-  const open = await screen.findByRole('link', { name: 'Open Old work' });
+  const open = await within(screen.getByRole('main')).findByRole('link', { name: /^Old work/ });
   expect(within(open).queryByRole('img')).toBeNull();
   expect(open).not.toHaveTextContent(/versions|Double-checked|Passed/);
-  expect(screen.getAllByRole('link', { name: /^Open / })).toHaveLength(1);
+  expect(within(screen.getByRole('main')).getAllByRole('link', { name: /^Old work/ })).toHaveLength(1);
   expect(open).toHaveAttribute('href', '#/s/gh%3A3/a/github.review');
   await userEvent.click(open);
   await waitFor(() => expect(location.hash).toBe('#/s/gh%3A3/a/github.review'));
@@ -1282,7 +1282,7 @@ test('Artifacts opens one on its own page with a real URL: versions to pick, a l
   expect(await main.findByText('first draft')).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).toBeNull();
   history.back();
-  expect(await screen.findByRole('link', { name: 'Open Old work' })).toBeInTheDocument();
+  expect(await within(screen.getByRole('main')).findByRole('link', { name: /^Old work/ })).toBeInTheDocument();
   expect(location.hash).toBe('#/artifacts');
   history.forward();
   expect(await within(screen.getByRole('main')).findByText('first draft')).toBeInTheDocument();
@@ -1295,7 +1295,7 @@ test('an artifact route names its session, kind and version, and round-trips the
   expect(parseArtifactRoute('#/s/%E0%A4%A/a/x')).toBeUndefined();
 });
 
-test('Artifacts rows say what each is and its summary, and the kind filter asks the server', async () => {
+test('Artifacts rows show what each kind draws, and the kind filter asks the server', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:o/r#7', { title: 'feat: Declare requires' }), sess('ui:r1', { agent: 'researcher', title: 'Why is it slow?', state: 'running' })] };
   routes['GET /artifacts'] = { artifacts: [
     { session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', summary: 'Approve · 1 nit', sealedAt: iso(2) },
@@ -1304,15 +1304,16 @@ test('Artifacts rows say what each is and its summary, and the kind filter asks 
   ] };
   location.hash = '#/artifacts';
   render(<App />);
-  const review = await screen.findByRole('link', { name: 'Open #7 Declare requires' });
-  expect(review).toHaveTextContent('Review · Approve · 1 nit');
-  const research = screen.getByRole('link', { name: 'Open Why is it slow?' });
-  expect(research).toHaveTextContent('Research report · Cold caches dominate');
-  expect(screen.getByRole('link', { name: 'Open ui:old' })).not.toHaveTextContent('·');
+  const main = within(await screen.findByRole('main'));
+  const review = await main.findByRole('link', { name: /^Declare requires r#7 1 nit Approved/ });
+  expect(within(review).getByRole('img', { name: 'Approved' })).toBeInTheDocument();
+  expect(main.getByRole('link', { name: /^Why is it slow\? Cold caches dominate/ })).toBeInTheDocument();
+  expect(main.getByRole('link', { name: /^ui:old \d+:\d\d [AP]M$/ })).toBeInTheDocument();
+  const rows = () => within(screen.getByRole('main')).getAllByRole('link').filter((l) => l.getAttribute('href')?.includes('/a/'));
   routes[listed('artifacts', 'kind:github\\.review')] = { artifacts: [{ session: 'github:o/r#7', kind: 'github.review', version: 1, hash: 'h', sealedAt: iso(2) }] };
   await userEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Filter' }));
   await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Kind' }), 'Review');
-  await waitFor(() => expect(screen.getAllByRole('link', { name: /^Open / })).toHaveLength(1));
+  await waitFor(() => expect(rows()).toHaveLength(1));
   expect(screen.getByRole('option', { name: 'Report' })).toBeInTheDocument();
 });
 
