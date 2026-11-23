@@ -5,7 +5,7 @@ import { CheckResult } from '../../CheckResult.tsx';
 import { SessionKeyContext, type StudioProps } from '../../extension.ts';
 import { ContentState, useContent, type Content } from '../../useContent.tsx';
 import { useLoad } from '../../useLoad.ts';
-import { FollowNewest, VersionMenu, type VersionItem } from '../../VersionMenu.tsx';
+import { FollowNewest, iconButton, VersionMenu, type Mark, type VersionItem } from '../../VersionMenu.tsx';
 import { ApproveSheet, AskSheet, prim, sec, useDecide, type Break, type Pending } from './Approval.tsx';
 import { CommentsProvider, DraftsLine, StrandedLine, useComments } from './Comments.tsx';
 import { reasonText } from './comments.ts';
@@ -95,11 +95,7 @@ export function approvalState(s: Standing & { isApproved: boolean }): State {
   return waiting(s);
 }
 
-const LABEL: Record<VersionStatus, string> = { draft: 'draft', proposed: 'awaiting approval', approved: 'approved', changes_requested: 'changes requested' };
-// A person knows a version by its number; when several seals share one, each is a draft of it, counted from 1.
-const draftOf = (v: Version, all: Version[]) => { const same = all.filter((x) => x.n === v.n); return same.length > 1 ? same.indexOf(v) + 1 : undefined; };
-const nameOf = (v: Version, all: Version[]) => `Version ${v.n}${draftOf(v, all) ? `, draft ${draftOf(v, all)}` : ''}`;
-const short = (v: Version, all: Version[]) => `v${v.n}${draftOf(v, all) ? ` draft ${draftOf(v, all)}` : ''}`;
+const short = (v: Version) => `v${v.n}`;
 
 /** A version's spec: the newest is already in hand, an older one is loaded on demand (`wait` says how that stands). */
 function useSpec(sessionKey: string, v: Version | undefined, newest: Version, spec: ContractSpec): { spec?: ContractSpec; wait: Content } {
@@ -152,25 +148,31 @@ function DecisionBar({ sessionKey, state, proposal, decided, pending, stale }: {
   );
 }
 
-const TONE: Record<VersionStatus, [string, string]> = {
-  draft: ['draft', 'bg-soft text-muted'], proposed: ['awaiting', 'bg-warning-bg text-warning'], approved: ['approved', 'bg-success-bg text-success'], changes_requested: ['changes asked', 'bg-danger-bg text-danger'],
-};
+const MARK: Record<VersionStatus, [Mark, string]> = { draft: ['draft', 'draft'], proposed: ['you', 'needs you'], approved: ['ok', 'approved'], changes_requested: ['bad', 'changes asked'] };
 const itemsOf = (versions: Version[], status?: StatusOf): VersionItem[] => versions.map((v) => {
-  const s = status?.(v);
-  return { id: v.a.version, short: short(v, versions), name: nameOf(v, versions), note: draftOf(v, versions) ? `#${v.a.version}` : undefined, status: s && LABEL[s], badge: s && { text: TONE[s][0], cls: TONE[s][1] } };
+  const s = status && MARK[status(v)];
+  return { id: v.a.version, short: short(v), ...(s && { mark: s[0], status: s[1] }) };
 });
+// The person sees the versions they decided on and the newest; a save the checker sent back before it reached them is left out.
+const listed = (versions: Version[], newest: Version, status?: StatusOf) => (status ? versions.filter((v) => v === newest || ['approved', 'changes_requested'].includes(status(v))) : versions);
 
-// The two versions compared on one row; once the person picks, an icon goes back to following the newest version.
-function Compare({ versions, status, from, to, auto, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; auto?: string; pick: (p: { from?: number; to: number } | undefined) => void }) {
+const x = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>;
+
+// The shown version; Compare with… in its menu, or the approved version by default, adds the "since" chip, whose ✕ shows the version whole.
+function Compare({ versions, status, from, to, picked, pick }: { versions: Version[]; status?: StatusOf; from?: number; to: number; picked: boolean; pick: (p: { from?: number; to: number } | undefined) => void }) {
   const items = itemsOf(versions, status);
+  const older = items.slice(0, items.findIndex((i) => i.id === to));
   return (
-    <div className="flex items-center gap-0.5 text-[13px] text-muted">
-      <span className="hidden min-[480px]:inline">Comparing</span>
-      <VersionMenu quiet name="Compare from version" items={items} value={from} none="None: the whole contract" title={from && auto ? `Since ${auto}` : undefined} onPick={(f) => pick({ from: f, to })} />
-      <span aria-hidden="true">→</span>
-      <VersionMenu quiet name="Compare to version" items={items} value={to} onPick={(t) => pick({ from, to: t ?? to })} />
+    <div className="flex items-center gap-1.5">
+      <VersionMenu name="Version" items={items} value={to} compare={(f) => pick({ from: f, to })} onPick={(t) => pick({ to: t })} />
+      {from !== undefined && (
+        <span className="flex items-center rounded-full border border-dashed border-line-strong">
+          <VersionMenu since name="Compare with" items={older} value={from} onPick={(f) => pick({ from: f, to })} />
+          <button type="button" aria-label="Stop comparing" title="Stop comparing" onClick={() => pick({ to })} className={`${iconButton} lg:h-9 lg:w-9`}>{x}</button>
+        </span>
+      )}
       <span className="flex-1" />
-      {auto === undefined && <FollowNewest onClick={() => pick(undefined)} />}
+      {picked && <FollowNewest onClick={() => pick(undefined)} />}
     </div>
   );
 }
@@ -179,8 +181,9 @@ function Compare({ versions, status, from, to, auto, pick }: { versions: Version
 function staleRequest(approvals: Approval[], versions: Version[], newest: Version): string | undefined {
   const stale = versions.filter((v) => v !== newest && approvals.some((a) => offered(a) === v.a.version));
   const was = stale.at(-1);
-  const what = stale.length > 1 ? `${stale.length} approval requests are out of date, the newest for ${short(was!, versions)}` : `The approval request for ${was && short(was, versions)} is out of date`;
-  return was && `${what}: the agent has since written ${short(newest, versions)}.`;
+  if (!was) return undefined;
+  const what = stale.length > 1 ? `${stale.length} approval requests are out of date, the newest for ${short(was)}` : `The approval request for ${short(was)} is out of date`;
+  return `${what}: the agent has since ${was.n === newest.n ? 'rewritten' : 'written'} ${short(newest)}.`;
 }
 
 const layout = 'mx-auto flex min-h-full w-full max-w-[1100px] min-w-0 flex-col gap-5 px-4 pt-3 sm:px-5';
@@ -188,8 +191,9 @@ const layout = 'mx-auto flex min-h-full w-full max-w-[1100px] min-w-0 flex-col g
 type Opened = { sessionKey: string; versions: Version[]; newest: Version; spec: ContractSpec; status?: StatusOf; approvals: Approval[]; running: boolean; decided: (id: string) => void; rejected?: Rejection; decisions: ReactNode };
 
 /** A contract with at least one version: the changes against the approved version (or any two picked), the view, and the decision bar. */
-function Contract({ sessionKey, versions, newest, spec, status, approvals, running, decided, rejected, decisions }: Opened) {
+function Contract({ sessionKey, versions: all, newest, spec, status, approvals, running, decided, rejected, decisions }: Opened) {
   const [picked, pick] = useState<{ from?: number; to: number }>();
+  const versions = useMemo(() => listed(all, newest, status), [all, newest, status]);
   const top = useRef<HTMLDivElement>(null);
   const proposal = approvals.find((a) => offered(a) === newest.a.version);
   const approvedV = status && versions.findLast((v) => status(v) === 'approved');
@@ -202,28 +206,28 @@ function Contract({ sessionKey, versions, newest, spec, status, approvals, runni
   const diff = useDiff(fromSpec.spec, toSpec.spec), decisionDiff = useDiff(baseSpec.spec, spec);
   const items = useItems(diff, toSpec.spec, to === newest ? found : undefined);
   const decisionItems = useItems(decisionDiff, spec, found);
-  const review = useStepper(items, from && short(from, versions), short(to, versions), true);
+  const review = useStepper(items, from && short(from), short(to), true);
   const marks = useMemo(() => diff && markBreaks(diff.marks, items), [diff, items]);
-  const name = short(newest, versions);
-  const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest), proposal, approved: approvedV && short(approvedV, versions), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
-  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base, versions), name };
+  const name = short(newest);
+  const state = approvalState({ name, verdict: newest.a.verdict, status: status?.(newest), proposal, approved: approvedV && short(approvedV), running, rejection: rejected, isApproved: !!approvedV && approvedV === newest });
+  const pending: Pending = { spec, verdict: newest.a.verdict, found, items: decisionItems, base: base && short(base), name };
   // Comments are made only on the version up for approval; a sent one's versions are named as the person knows them.
   const commentable = useMemo(() => (state.can && proposal ? { artifact: newest.a.version, name, proposal } : undefined), [state.can, proposal, newest.a.version, name]);
-  const versionName = useCallback((n: number) => { const v = versions.find((x) => x.a.version === n); return v ? short(v, versions) : `#${n}`; }, [versions]);
+  const versionName = useCallback((n: number) => { const v = all.find((x) => x.a.version === n); return v ? short(v) : `#${n}`; }, [all]);
   return (
     <CommentsProvider sessionKey={sessionKey} pending={commentable} newest={newest.a.version} viewing={to.a.version} versionName={versionName} decided={decided} deps={[versions.length, approvals.length, running]}>
     <div ref={top} className={layout}>
       <ReviewContext value={review}>
         {items.length > 0 && <Stepper onTop={() => top.current?.scrollIntoView?.({ block: 'start' })} />}
-        <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} auto={picked ? undefined : 'the approved version'} pick={pick} />
-        {from && <ContentState what={short(from, versions)} {...fromSpec.wait} />}
+        <Compare versions={versions} status={status} from={from?.a.version} to={to.a.version} picked={!!picked} pick={pick} />
+        {from && <ContentState what={short(from)} {...fromSpec.wait} />}
         <DiffContext value={marks}>
           {toSpec.spec ? <ArtifactBoundary artifact={to.a}>{createElement(VIEWS[toSpec.spec.kind], { key: to.a.version, spec: toSpec.spec, verdict: to.a.verdict })}</ArtifactBoundary>
-            : <ContentState what={short(to, versions)} {...toSpec.wait} />}
+            : <ContentState what={short(to)} {...toSpec.wait} />}
         </DiffContext>
       </ReviewContext>
       {decisions}
-      <DecisionBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} pending={pending} stale={staleRequest(approvals, versions, newest)} />
+      <DecisionBar sessionKey={sessionKey} state={state} proposal={proposal} decided={decided} pending={pending} stale={staleRequest(approvals, all, newest)} />
     </div>
     </CommentsProvider>
   );
