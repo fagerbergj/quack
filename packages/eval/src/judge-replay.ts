@@ -58,15 +58,17 @@ export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'reju
   const engine = (await import(at('judge'))) as typeof import('@quack/judge');
   return { adapters: adaptersOf(await loadManifests(specs)), rejudge: engine.rejudge };
 }
-/** One check of one job: `pos` is the arm's place in its case's order that repeat (1 first); `clef`, `esc` and `reused` count settled items; `ms` and `requests` (by model id) are the job's. */
-/** `rubric` (name@version), `criterion` and `declared` (the check never asks the decision model) are absent in rows written before they were recorded. */
-export type Row = { arm: string; rep: number; pos: number; case: string; rubric?: string; criterion?: string; check: string; declared?: true; met: number | null; clef: number; esc: number; reused: number; ms: number; requests: Record<string, number>; notes: string[] };
+/** One check of one job: `pos` is the arm's place in its case's order that repeat (1 first); `clef`, `esc` and `reused` count settled items; `ms` and `requests` (by model id) are the job's.
+ * `route` says whether the arm asked the decision model, the check is declared off it, or the arm has none; `rubric`, `criterion` and `route` are absent in older rows files. */
+export type Row = { arm: string; rep: number; pos: number; case: string; rubric?: string; criterion?: string; check: string; route?: Route; met: number | null; clef: number; esc: number; reused: number; ms: number; requests: Record<string, number>; notes: string[] };
 /** A case an arm could not judge, with what its recording lacks. */
 export type Declined = { arm: string; case: string; reason: string };
 export type Replayed = { rows: Row[]; declined: Declined[]; seed?: number };
 /** `seed` orders the arms within each case and repeat (random when unset); `onRows` gets each job's rows as it finishes. */
 export type Options = { cases: Case[]; arms: Arm[]; repeat: number; concurrency: number; models: MutableModels; judgeModel: ModelRef; seed?: number; onRows?: (rows: Row[]) => void };
 
+type Route = 'asked' | 'declared' | 'not-asked';
+const routeOf = (j: Job, check: string): Route => (j.judged.declaration.checks[check]?.decisionModel === false ? 'declared' : j.decisionModel ? 'asked' : 'not-asked');
 // Items no code and no decision model settled were escalated; an older arm names them judge-model or agent-model, a newer one by modelId.
 export const escalated = (resolvers: Record<string, number>, decisionModel?: string) => Object.entries(resolvers).reduce((n, [r, c]) => (r === 'code' || r === decisionModel ? n : n + c), 0);
 /** What a job is judged on: the rubric's declaration and inputs. */
@@ -143,7 +145,7 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const ms = Date.now() - t;
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
   const at = { arm: j.arm, rep: j.rep, pos: j.pos, case: j.c.case, ms, requests };
-  return v.checks.map((k) => ({ ...at, rubric: v.rubric, criterion: k.criterion, check: k.id, ...(j.judged.declaration.checks[k.id]?.decisionModel === false && { declared: true as const }), met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), reused: Object.keys(k.reused ?? {}).length, notes: k.notes }));
+  return v.checks.map((k) => ({ ...at, rubric: v.rubric, criterion: k.criterion, check: k.id, route: routeOf(j, k.id), met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), reused: Object.keys(k.reused ?? {}).length, notes: k.notes }));
 }
 
 // mulberry32: a small seeded generator, so a seed replays the arm order exactly.
@@ -286,17 +288,22 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
 /** The share of a check's asked items it may escalate before it reads as unhealthy. */
 const ESCALATION_BUDGET = 0.1;
 
-type Count = { key: string; clef: number; esc: number; declared?: boolean };
+type Count = { key: string; clef: number; esc: number; route?: Route };
 
-// A key the decision model settled nothing for (a declared check, a `:none` arm) cannot move by fixing the check, so it is listed apart and never fails.
-const markOf = (r: Count & { rate: number }) => (r.declared ? 'declared ' : !r.clef ? 'no-clef  ' : r.rate > ESCALATION_BUDGET ? 'UNHEALTHY' : 'ok       ');
+// A key never asked of the decision model (declared off it, or an arm without one) cannot move by fixing the check, so it is listed apart and never fails.
+// Without a route (an export, an old rows file) a key the decision model settled nothing for may be either, so it is listed apart as no-clef.
+function markOf(r: Count & { rate: number }) {
+  if (r.route === 'declared' || r.route === 'not-asked') return r.route.padEnd(9);
+  if (!r.route && !r.clef) return 'no-clef  ';
+  return r.rate > ESCALATION_BUDGET ? 'UNHEALTHY' : 'ok       ';
+}
 
 /** Per key, escalated / (decision model + escalated), highest first; asked keys over the budget are UNHEALTHY, and keys nothing was asked of are left out. */
 export function budget(counts: Count[]): { lines: string[]; unhealthy: number } {
   const by = new Map<string, Count>();
   for (const c of counts) {
     const t = by.get(c.key) ?? { key: c.key, clef: 0, esc: 0 };
-    by.set(c.key, { key: c.key, clef: t.clef + c.clef, esc: t.esc + c.esc, declared: t.declared || c.declared });
+    by.set(c.key, { key: c.key, clef: t.clef + c.clef, esc: t.esc + c.esc, route: t.route ?? c.route });
   }
   const rated = [...by.values()].filter((t) => t.clef + t.esc).map((t) => ({ ...t, rate: t.esc / (t.clef + t.esc) })).sort((a, b) => b.rate - a.rate || a.key.localeCompare(b.key));
   const lines = rated.map((r) => `${markOf(r)} ${`${Math.round(r.rate * 100)}%`.padStart(4)} ${r.esc}/${r.clef + r.esc} ${r.key}`);

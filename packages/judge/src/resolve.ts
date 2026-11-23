@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { contentText, type ClassifierModel, type ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { JsonObject, ToolExecutionApi } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
-import { agentModel, decide, modelResolver, observeGeneration, inputTooLarge, parseDecision, retryModelCall, type RetrySeams } from '@quack/sdk';
+import { agentModel, decide, modelResolver, observeGeneration, parseDecision, retryModelCall, transientModelError, type RetrySeams } from '@quack/sdk';
 import { PASS_ONLY, type Question } from './declaration.ts';
 import { limiter } from './limit.ts';
 import type { Unit } from './rubric.ts';
@@ -88,7 +88,7 @@ function massOf(ask: Ask, a: { type: string; probability?: number; probabilities
   return undefined;
 }
 
-// null is a deterministic miss (over the cap, no such model) and is memoized; undefined is an outage, retried on a rerun.
+// null is a deterministic miss (over the cap, no such model, a refusal) and is memoized; undefined is an outage, retried on a rerun.
 async function classify(api: ToolExecutionApi, ref: DecisionModelRef, items: Item[], s: Settings, ctx: Context): Promise<Record<string, number> | null | undefined> {
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
   if (tokensOf(items) > ref.maxInputTokens) return null;
@@ -100,11 +100,16 @@ async function classify(api: ToolExecutionApi, ref: DecisionModelRef, items: Ite
   const ask = (fetch: typeof globalThis.fetch) => api.models.classify(model, request(items), { signal: ctx.abortSignal, fetch, maxRetries: 0 });
   const result = await s.clef(() => retryModelCall(`${ref.provider}/${ref.modelId}`, ask, ctx.abortSignal, s.retry).catch(() => undefined));
   ctx.abortSignal?.throwIfAborted();
-  // The estimate can undercount a request the model then refuses as too large: that is over the cap, not an outage.
-  if (result && inputTooLarge(result)) return null;
-  if (result?.stopReason !== 'stop') return undefined;
+  if (result?.stopReason === 'stop') return probabilitiesFrom(items, result.answers);
+  // Only a transient failure that outlasted the retries is an outage; a refusal (a 4xx, an input too large) or a non-stop answer comes back the same next round.
+  if (!result || transientModelError(result)) return undefined;
+  (s.retry?.log ?? console.error)(`judge: decision model ${ref.provider}/${ref.modelId} refused (${result.stopReason}: ${(result.errorMessage ?? '').slice(0, 120)}); its questions escalate`);
+  return null;
+}
+
+function probabilitiesFrom(items: Item[], answers: Record<string, unknown>): Record<string, number> {
   const asks = new Map(questionsOf(items).map((q, n): [string, (typeof q)] => [`q${n}`, q]));
-  return Object.fromEntries(Object.entries(result.answers).flatMap(([key, a]) => {
+  return Object.fromEntries(Object.entries(answers).flatMap(([key, a]) => {
     const q = asks.get(key);
     const p = q && massOf(q.c, a as never);
     return q && p !== undefined ? [[q.id, p]] : [];

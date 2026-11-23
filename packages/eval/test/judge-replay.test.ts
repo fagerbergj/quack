@@ -121,7 +121,7 @@ test('arms that differ only in decision model: the decision-model arm answers fr
   assert.match(out[5], /^- base: requests 1 \(j 1\); items decision model 0, escalated 1, reused 0;/);
   assert.match(out[6], /^- clef: requests 1 \(clef 1\); items decision model 1, escalated 0, reused 0;/, 'a decision-model request counts under its model');
   assert.equal(out[10], '- a helpful: base 1; clef 0');
-  assert.deepEqual(result.rows.map((r) => [r.rubric, r.criterion, r.declared]), [['acme@1', 'c', undefined], ['acme@1', 'c', undefined]], 'rows name their rubric and criterion, so same-named checks stay apart');
+  assert.deepEqual(result.rows.map((r) => [r.arm, r.rubric, r.criterion, r.route]).sort(), [['base', 'acme@1', 'c', 'not-asked'], ['clef', 'acme@1', 'c', 'asked']], 'rows name their rubric and criterion, so same-named checks stay apart, and whether the arm asked the decision model');
 });
 
 test('a row marks a check declared off the decision model', async () => {
@@ -129,7 +129,7 @@ test('a row marks a check declared off the decision model', async () => {
   const decl = off.judge!.declaration as Declaration;
   const skip = { ...off, judge: { ...off.judge!, declaration: { ...decl, checks: { ...decl.checks, helpful: { ...decl.checks.helpful, decisionModel: false as const } } } } };
   const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [skip] }], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel });
-  assert.deepEqual(result.rows.map((r) => [r.check, r.declared]), [['helpful', true]]);
+  assert.deepEqual(result.rows.map((r) => [r.check, r.route]), [['helpful', 'declared']]);
 });
 
 test('an adapter that cannot rebuild a case declines it with its reason, and the other cases are still judged', async () => {
@@ -273,13 +273,13 @@ test('watch skips checks an arm lacks (erroring only if no arm has them) and tab
   await assert.rejects(replayJudge({ cases: [{ ...cases[0], checks: ['missing'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /no check missing/);
 });
 
-test('the budget rates each key escalated over asked, highest first, fails only asked keys over 10% and lists declared and Clef-less keys apart', () => {
+test('the budget rates each key escalated over asked, highest first, fails only asked keys over 10% and lists keys never asked apart', () => {
   const { lines, unhealthy } = budget([
-    { key: 'a x', clef: 9, esc: 1 }, { key: 'b y', clef: 5, esc: 0 }, { key: 'b y', clef: 3, esc: 2 }, { key: 'code', clef: 0, esc: 0 },
-    { key: 'd skip', clef: 0, esc: 4, declared: true }, { key: 'n none', clef: 0, esc: 3 },
+    { key: 'a x', clef: 9, esc: 1, route: 'asked' }, { key: 'b y', clef: 5, esc: 0 }, { key: 'b y', clef: 3, esc: 2 }, { key: 'code', clef: 0, esc: 0 },
+    { key: 'd skip', clef: 0, esc: 4, route: 'declared' }, { key: 'n none', clef: 0, esc: 3, route: 'not-asked' }, { key: 'o over', clef: 0, esc: 2, route: 'asked' }, { key: 'x export', clef: 0, esc: 1 },
   ]);
-  assert.deepEqual(lines, ['declared  100% 4/4 d skip', 'no-clef   100% 3/3 n none', 'UNHEALTHY  20% 2/10 b y', 'ok         10% 1/10 a x']);
-  assert.equal(unhealthy, 1);
+  assert.deepEqual(lines, ['declared  100% 4/4 d skip', 'not-asked 100% 3/3 n none', 'UNHEALTHY 100% 2/2 o over', 'no-clef   100% 1/1 x export', 'UNHEALTHY  20% 2/10 b y', 'ok         10% 1/10 a x']);
+  assert.equal(unhealthy, 2, 'an asked check Clef settled nothing for (over its cap, or always unsure) still fails');
 });
 
 test('an export report counts each verdict check by rubric, the decision model\'s items apart from escalated ones and code, from the given time', () => {

@@ -13,7 +13,7 @@ const reportChecks = values['report-checks']?.flatMap((s) => s.split(',').filter
 // --budget: each arm's checks by escalation rate after the table; a check over budget fails the command.
 function printBudget(rows: Row[]): number {
   if (!values.budget) return 0;
-  const { lines, unhealthy } = budget(rows.map((r) => ({ key: `${r.arm} ${r.rubric ?? '?'} ${r.criterion ?? '?'}.${r.check}`, clef: r.clef, esc: r.esc, declared: r.declared })));
+  const { lines, unhealthy } = budget(rows.map((r) => ({ key: `${r.arm} ${r.rubric ?? '?'} ${r.criterion ?? '?'}.${r.check}`, clef: r.clef, esc: r.esc, route: r.route })));
   console.log(['', 'escalation budget (escalated / asked per arm, rubric and check):', ...lines].join('\n'));
   return unhealthy ? 1 : 0;
 }

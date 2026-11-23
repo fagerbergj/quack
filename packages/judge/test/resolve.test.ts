@@ -37,17 +37,39 @@ function callApi(classify: () => Promise<unknown>) {
 
 const confident = { stopReason: 'stop', answers: { q0: { type: 'bool', probability: 0.95 } } };
 
-test('a decision-model outage leaves its items undecided without a judge-model call, and a later round with it back decides them', async () => {
-  const outcomes = [() => Promise.reject(new Error('503 busy')), () => Promise.resolve({ stopReason: 'error', answers: {} }), () => Promise.resolve(confident)];
-  const api = callApi(() => outcomes.shift()!());
-  let escalated = 0;
+// One round of the unit under a counted escalation limiter and silent, instant retries; `escalated` counts judge-model slots taken.
+function counted(api: unknown) {
+  const count = { escalated: 0, log: [] as string[] };
   const one = limiter(1);
-  const s = { ref, memo: 'judge:github.review:v1', clef: limiter(1), escalations: ((task) => (escalated++, one(task))) as typeof one };
-  const round = async () => (await answerItems(api as never, s, [{ unit, checks }], BACKGROUND_CONTEXT))[0].answer!;
-  assert.deepEqual([(await round()).met, escalated, api.memos.has(memoKey)], [null, 0, false], 'a thrown call is an outage, not memoized');
-  assert.deepEqual([(await round()).met, escalated, api.memos.has(memoKey)], [null, 0, false], 'an error stop is an outage too');
-  const back = await round();
-  assert.deepEqual([api.calls(), back.met, back.resolver, escalated], [3, true, 'clef', 0]);
+  const retry = { sleep: async () => {}, random: () => 0, log: (l: string) => void count.log.push(l) };
+  const s = { ref, memo: 'judge:github.review:v1', clef: limiter(1), escalations: ((task) => (count.escalated++, one(task))) as typeof one, retry };
+  return { count, round: async () => (await answerItems(api as never, s, [{ unit, checks }], BACKGROUND_CONTEXT))[0].answer! };
+}
+
+const transient = ['connect ECONNREFUSED: connection refused', 'socket hang up', 'Request timed out', '429 Too Many Requests', 'System One API error (503): busy', 'server_busy the engine stopped while this request waited; it was not sent'];
+
+test('a transient decision-model failure is an outage: its items stay undecided without a judge-model call, and a later round with it back decides them', async () => {
+  for (const errorMessage of transient) {
+    const api = callApi(async () => (api.calls() > 10 ? confident : { stopReason: 'error', answers: {}, errorMessage }));
+    const { count, round } = counted(api);
+    assert.deepEqual([(await round()).met, count.escalated, api.memos.has(memoKey), api.calls()], [null, 0, false, 10], `${errorMessage}: retried, then left undecided and not memoized`);
+    const back = await round();
+    assert.deepEqual([back.met, back.resolver, count.escalated], [true, 'clef', 0], errorMessage);
+  }
+  const thrown = callApi(() => Promise.reject(new Error('fetch failed')));
+  const { count, round } = counted(thrown);
+  assert.deepEqual([(await round()).met, count.escalated, thrown.memos.has(memoKey)], [null, 0, false], 'a thrown call is an outage too');
+});
+
+test('a durable decision-model refusal is not an outage: asked once, memoized, logged and escalated, so judging still ends', async () => {
+  const refusals = ['401 Unauthorized', '403 Forbidden: invalid api key', '400 Bad Request', '404 model not found', '422 Unprocessable Entity'].map((errorMessage) => ({ stopReason: 'error', answers: {}, errorMessage }));
+  for (const reply of [...refusals, { stopReason: 'length', answers: {} }]) {
+    const api = callApi(async () => reply);
+    const { count, round } = counted(api);
+    const a = await round();
+    assert.deepEqual([a.met, a.resolver, count.escalated, api.memos.get(memoKey), api.calls()], [true, 'agent-model', 1, null, 1], JSON.stringify(reply));
+    assert.match(count.log.join('\n'), /decision model clef\/clef refused/);
+  }
 });
 
 test('during an outage a check that skips the decision model still escalates', async () => {
