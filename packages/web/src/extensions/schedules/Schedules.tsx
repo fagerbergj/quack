@@ -47,7 +47,8 @@ function dayNote(d: Date, now: Date): string | undefined {
 
 /** Schedules by local day of their next run, soonest first; a run in the same minute as the row above repeats no time. */
 function agenda(items: ScheduleItem[], rows: Row[] | undefined, now: Date): Group[] {
-  const sorted = [...items].sort((a, b) => (a.nextRun ?? '￿').localeCompare(b.nextRun ?? '￿'));
+  const at = (s: ScheduleItem) => (s.nextRun ? Date.parse(s.nextRun) : Infinity);
+  const sorted = items.toSorted((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1));
   const groups: Group[] = [];
   for (const s of sorted) {
     const next = s.nextRun ? new Date(s.nextRun) : undefined;
@@ -78,7 +79,8 @@ function RowMenu({ title, href, remove }: { title: string; href?: string; remove
 
 function Detail({ s }: { s: ScheduleItem }) {
   const who = sessionOf(s) ? s.agent : 'New session each run';
-  if (!s.cron) return <span className="text-[12.5px] text-muted">{who}</span>;
+  // One set time is the default and says nothing; several say how many are coming.
+  if (!s.cron) return <span className="text-[12.5px] text-muted">{(s.times?.length ?? 0) > 1 ? `${who} · ${s.times!.length} set times` : who}</span>;
   return (
     <span className="truncate text-[12.5px] text-muted">
       {who} · <span className="text-accent-ink">
@@ -112,12 +114,17 @@ function Item({ e, remove }: { e: Entry; remove: () => void }) {
   );
 }
 
-// Deleting hides the row at once; the DELETE goes out when the Undo window lapses, another delete starts, or the page closes.
-function useUndoDelete(reload: () => void, setError: (e: string) => void) {
+// A DELETE that failed after the page went away; the next visit says so, since the row is back.
+let lost: string | undefined;
+
+// Deleting hides the row at once; the DELETE goes out once, when the Undo window lapses, another delete starts, the page unmounts or the tab closes.
+function useUndoDelete(items: ScheduleItem[] | undefined, reload: () => void, setError: (e: string) => void) {
   const [pending, setPending] = useState<Entry>();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const held = useRef<{ e: Entry; timer: ReturnType<typeof setTimeout> }>(undefined);
+  const alive = useRef(true);
   const show = (id: string, on: boolean) => setHidden((h) => new Set([...h].filter((x) => x !== id).concat(on ? [] : [id])));
+  const failed = (e: Entry, err: Error) => (alive.current ? (show(e.s.id, true), setError(err.message)) : (lost = `Could not delete ${e.title}: ${err.message}`));
   const settle = (send: boolean) => {
     const p = held.current;
     if (!p) return;
@@ -125,9 +132,23 @@ function useUndoDelete(reload: () => void, setError: (e: string) => void) {
     held.current = undefined;
     setPending(undefined);
     if (!send) return show(p.e.s.id, true);
-    deleteSchedule(p.e.s.id).then(() => (setError(''), reload()), (err: Error) => (show(p.e.s.id, true), setError(err.message)));
+    deleteSchedule(p.e.s.id).then(() => (setError(''), reload()), (err: Error) => failed(p.e, err));
   };
-  useEffect(() => () => settle(true), []);
+  // A tab close or reload never unmounts React, so pagehide settles the window too.
+  useEffect(() => {
+    alive.current = true;
+    if (lost) setError(lost);
+    lost = undefined;
+    const flush = () => settle(true);
+    addEventListener('pagehide', flush);
+    return () => {
+      removeEventListener('pagehide', flush);
+      alive.current = false;
+      settle(true);
+    };
+  }, []);
+  // A row the server no longer lists needs hiding no more.
+  useEffect(() => void (items && setHidden((h) => new Set([...h].filter((id) => items.some((s) => s.id === id))))), [items]);
   const remove = (e: Entry) => {
     settle(true);
     show(e.s.id, false);
@@ -137,10 +158,22 @@ function useUndoDelete(reload: () => void, setError: (e: string) => void) {
   return { pending, hidden, remove, undo: () => settle(false) };
 }
 
+// The row that held the menu is gone, so focus moves to Undo, which would otherwise be the last stop in the page.
+function Toast({ title, undo }: { title: string; undo: () => void }) {
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => button.current?.focus(), []);
+  return (
+    <div role="status" className="fixed bottom-[calc(64px+var(--safe-b))] left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-xl border border-line-strong bg-surface py-1 pr-1 pl-4 text-[13.5px] text-ink shadow-lift lg:bottom-8 lg:left-[calc(50%+9rem)]">
+      <span className="truncate">Deleted {title}</span>
+      <button ref={button} type="button" onClick={undo} className="min-h-11 flex-none cursor-pointer rounded-lg border-0 bg-transparent px-3 font-semibold text-accent-ink hover:bg-soft focus-visible:outline-2 focus-visible:outline-link">Undo</button>
+    </div>
+  );
+}
+
 export function Schedules({ rows }: { rows: Row[] | undefined }) {
   const { data: items, error: loadError, reload } = useLoad<ScheduleItem[] | undefined>(listSchedules, [], undefined);
   const [removeError, setRemoveError] = useState('');
-  const { pending, hidden, remove, undo } = useUndoDelete(reload, setRemoveError);
+  const { pending, hidden, remove, undo } = useUndoDelete(items, reload, setRemoveError);
   const error = removeError || (loadError && (loadError === 'no such app' ? 'Schedules is not connected.' : `Schedules is unavailable: ${loadError}`));
   const shown = items?.filter((s) => !hidden.has(s.id));
   return (
@@ -157,12 +190,7 @@ export function Schedules({ rows }: { rows: Row[] | undefined }) {
           </ul>
         </section>
       ))}
-      {pending && (
-        <div role="status" className="fixed bottom-[calc(64px+var(--safe-b))] left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-xl border border-line-strong bg-surface py-1 pr-1 pl-4 text-[13.5px] text-ink shadow-lift lg:bottom-8 lg:left-[calc(50%+9rem)]">
-          <span className="truncate">Deleted {pending.title}</span>
-          <button type="button" onClick={undo} className="min-h-11 flex-none cursor-pointer rounded-lg border-0 bg-transparent px-3 font-semibold text-accent-ink hover:bg-soft">Undo</button>
-        </div>
-      )}
+      {pending && <Toast key={pending.s.id} title={pending.title} undo={undo} />}
     </div>
   );
 }

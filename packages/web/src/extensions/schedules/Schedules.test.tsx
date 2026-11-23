@@ -119,6 +119,49 @@ test('leaving the page sends the pending DELETE, and a failed one brings the row
   deleteVia('weekly');
   view.unmount();
   expect(api.deletes()).toHaveLength(2);
+  // That failure landed after the page went away, so the next visit names it beside the row it left.
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  vi.useRealTimers();
+  render(<Schedules rows={undefined} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete weekly: db down');
+  expect(await screen.findByRole('link', { name: 'weekly' })).toBeInTheDocument();
+});
+
+test('a second delete inside the Undo window sends the first at once and holds the second', async () => {
+  const api = server([s('weekly'), s('daily')]);
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'daily' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('daily');
+  deleteVia('weekly');
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/daily']);
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/daily', 'DELETE apps/schedules/weekly']);
+});
+
+test('closing or reloading the tab mid-countdown sends the DELETE once, as a request that outlives the page', async () => {
+  const inits: Array<RequestInit | undefined> = [];
+  const api = server([s('weekly')]);
+  const served = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => (init?.method === 'DELETE' && inits.push(init), served(url, init))));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('weekly');
+  dispatchEvent(new Event('pagehide'));
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/weekly']);
+  expect(inits[0]?.keepalive).toBe(true);
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+  view.unmount();
+  expect(api.deletes()).toHaveLength(1);
+});
+
+test('a delete moves focus to Undo, since the row that held the menu is gone', async () => {
+  server([s('weekly')]);
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  deleteVia('weekly');
+  expect(screen.getByRole('button', { name: 'Undo' })).toHaveFocus();
 });
 
 test('the list follows its pages', async () => {
@@ -155,4 +198,12 @@ test('a network failure names the cause', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
   render(<Schedules rows={undefined} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Schedules is unavailable: Failed to fetch');
+});
+
+test('one set time says nothing more, several say how many are coming', async () => {
+  server([s('once'), s('thrice', { times: [at(24, 9, 0), at(25, 9, 0), at(26, 9, 0)] })]);
+  render(<Schedules rows={undefined} />);
+  const thrice = (await screen.findByRole('link', { name: 'thrice' })).closest('li')!;
+  expect(thrice).toHaveTextContent('sleeper-digest · 3 set times');
+  expect(screen.getByRole('link', { name: 'once' }).closest('li')).not.toHaveTextContent(/set time|Once/);
 });
