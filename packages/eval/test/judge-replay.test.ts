@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, type TestContext } from 'node:test';
 import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
-import type { Declaration, Rubric } from '@quack/judge';
+import { PASS_ONLY, type Declaration, type Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
 import { armAt, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
 
@@ -262,4 +262,73 @@ test('watch skips checks an arm lacks (erroring only if no arm has them) and tab
   assert.doesNotMatch(md, /\| a \| helpful \|/);
   assert.match(md, /- cand: requests 2 \(j 2\); items decision model 0, escalated 2/);
   await assert.rejects(replayJudge({ cases: [{ ...cases[0], checks: ['missing'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /no check missing/);
+});
+
+// A Clef stand-in that answers each question of a request by the unit's text and the question, so every item gets its own probability.
+async function clefBy(t: TestContext, p: (text: string, instructions: string) => number) {
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    type Piece = { piece: { text: string } };
+    const body = JSON.parse(raw) as { state: Partial<Piece> & { items?: Piece[] }; questions: Record<string, { instructions: string }> };
+    // A packed request names its items in `items` and each question's item by index.
+    const text = (q: string) => body.state.piece?.text ?? body.state.items![Number(/items\[(\d+)\]/.exec(q)![1])].piece.text;
+    const answers = Object.fromEntries(Object.entries(body.questions).map(([q, v]) => [q, { type: 'noul', noul: p(text(v.instructions), v.instructions) }]));
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 1, output_tokens: 0 } }));
+  }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const key = process.env.QUACK_CLEF_KEY;
+  process.env.QUACK_CLEF_KEY = 'none';
+  t.after(() => (server.close(), key === undefined ? delete process.env.QUACK_CLEF_KEY : (process.env.QUACK_CLEF_KEY = key)));
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  const clef = { id: 'clef', name: 'clef', type: 'classifier', api: 'typesafe-system-one', provider: 'clef', baseUrl, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192 };
+  return createProvider({ id: 'clef', baseUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clef] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } });
+}
+
+test('decision-only asks no judge model, records each escalated item with its cause, and bounds each round\'s verdict', async (t) => {
+  const { models, asked } = judgeBy(() => true);
+  // x passes both; y is unsure on helpful and a no on the pass-only strict; z is a no that stands on helpful.
+  const answers: Record<string, [number, number]> = { x: [0.95, 0.95], y: [0.5, 0.05], z: [0.05, 0.95] };
+  models.setProvider(await clefBy(t, (text, q) => answers[text][q.includes('strict') ? 1 : 0]));
+  const decl: Declaration = {
+    scopes: { note: { split: { name: 'jsonItems', from: 'note' } }, gap: { split: { name: 'jsonItems', from: 'gap' } } },
+    checks: {
+      helpful: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it helpful?' } },
+      strict: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it strict?' }, decisionModel: PASS_ONLY },
+      manual: { scope: 'gap', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Manual?' }, decisionModel: false },
+    },
+  };
+  // Score = (2 helpful + strict + manual) / 4: 1/3 with every escalated item failing, 5/6 with every one passing.
+  const at = (threshold: number): EvalAdapter => ({ kind: 'acme.note', judge: { declaration: decl, inputs: async () => ({}), rubric: { name: 'acme', version: 1, threshold, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'H', weight: 2 }, { id: 'strict', label: 'S', weight: 1 }, { id: 'manual', label: 'M', weight: 1 }] }] } } });
+  const clef = (maxInputTokens: number) => ({ provider: 'clef', modelId: 'clef', maxInputTokens });
+  const arms: Arm[] = [{ label: 'low', adapters: [at(0.3)], decisionModel: clef(8192) }, { label: 'mid', adapters: [at(0.5)], decisionModel: clef(8192) }, { label: 'high', adapters: [at(0.9)], decisionModel: clef(8192) }, { label: 'tight', adapters: [at(0.5)], decisionModel: clef(1) }];
+  const note = JSON.stringify(Object.fromEntries(['x', 'y', 'z'].map((k) => [k, { text: k }])));
+  const result = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note, gap: JSON.stringify({ g: { text: 'g' } }) } }], arms, repeat: 1, concurrency: 1, models, judgeModel, seed: 1, decisionOnly: true });
+  assert.deepEqual(asked, [], 'no judge-model request');
+  const of = (arm: string) => Object.fromEntries(result.rows.filter((r) => r.arm === arm).map((r) => [r.check, [r.verdict, r.esc, r.clef, r.items]]));
+  assert.deepEqual(of('mid'), {
+    helpful: ['open', 1, 2, { 'note x': 'pass', 'note y': 'unsure', 'note z': 'no' }],
+    strict: ['open', 1, 2, { 'note x': 'pass', 'note y': 'pass-only-no', 'note z': 'pass' }],
+    manual: ['open', 1, 0, { 'gap g': 'declared' }],
+  });
+  assert.deepEqual(result.rows.filter((r) => r.arm === 'tight').map((r) => [r.check, r.items]), [['helpful', { 'note x': 'over-window', 'note y': 'over-window', 'note z': 'over-window' }], ['strict', { 'note x': 'over-window', 'note y': 'over-window', 'note z': 'over-window' }], ['manual', { 'gap g': 'declared' }]]);
+  assert.deepEqual(arms.map((a) => result.rows.find((r) => r.arm === a.label)?.verdict), ['pass', 'open', 'fail', 'open']);
+  assert.deepEqual(result.rows.find((r) => r.arm === 'mid')?.requests, { clef: 3 }, 'one Clef request per unit, none from the bound rounds');
+  const out = table(result, ['mid'], ['helpful'], { a: { 'note x': { flag: false }, 'note y': { flag: true }, 'note z': { flag: true }, 'note w': { flag: true } } }).split('\n');
+  assert.match(out.find((l) => l.startsWith('- mid: requests'))!, /escalated 3, reused 0 \(declared 1, unsure 1, pass-only-no 1, over-window 0\); verdicts pass 0, fail 0, open 1; judge seconds/);
+  assert.ok(out.includes('- a: mid open'));
+  assert.deepEqual(out.slice(out.indexOf('labelled items (case unit: outcome per repeat by arm):') + 1, out.indexOf('labelled totals per arm:') + 2), [
+    '- a note x (false flag): mid false-flag-cleared', '- a note y (real): mid caught', '- a note z (real): mid caught', '- a note w (real): mid unjudged',
+    'labelled totals per arm:', '- mid: caught 2, passed-by-clef 0, false-flag-cleared 1, flagged 0, unjudged 0',
+  ]);
+});
+
+test('decision-only reads a packed request\'s answers back to their items', async (t) => {
+  const { models } = judgeBy(() => true);
+  models.setProvider(await clefBy(t, (text) => ({ x: 0.95, y: 0.5, z: 0.05 })[text]!));
+  const decl: Declaration = { scopes: { note: { split: { name: 'jsonItems', from: 'note' }, context: { doc: { name: 'whole', from: 'doc' } } } }, checks: { helpful: { scope: 'note', aggregate: { name: 'share' }, question: { type: 'bool', instructions: 'Is it helpful?' } } } };
+  const packed: EvalAdapter = { kind: 'acme.note', judge: { declaration: decl, inputs: async () => ({}), rubric: { name: 'acme', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'H', weight: 1 }] }] } } };
+  const note = JSON.stringify(Object.fromEntries(['x', 'y', 'z'].map((k) => [k, { text: k }])));
+  const { rows } = await replayJudge({ cases: [{ case: 'a', kind: 'acme.note', content: 'a', inputs: { note, doc: 'shared' } }], arms: [{ label: 'base', adapters: [packed], decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } }], repeat: 1, concurrency: 1, models, judgeModel, decisionOnly: true });
+  assert.deepEqual(rows.map((r) => [r.requests, r.items, r.verdict]), [[{ clef: 1 }, { 'note x': 'pass', 'note y': 'unsure', 'note z': 'no' }, 'open']], 'one packed request, its answers by item');
 });
