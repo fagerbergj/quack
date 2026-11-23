@@ -145,7 +145,7 @@ async function run(config: Parameters<typeof researchSessionExtensions>[0] & Jud
   return { done, seen, session, dir };
 }
 
-test('a run searches, fetches HTML and PDF, records each fetch, and a report citing an unfetched source is sent back', async () => {
+test('a run searches, fetches HTML and PDF, records each fetch, and a report with an uncited finding is sent back', async () => {
   const base = await web();
   const searches: any[] = [];
   process.env.QUACK_EXA_API_KEY = 'test-key';
@@ -154,7 +154,7 @@ test('a run searches, fetches HTML and PDF, records each fetch, and a report cit
     step(call('web_fetch', { urls: [`${base}/page`] })),
     step(call('web_fetch', { urls: [`${base}/paper.pdf`] })),
     step(call('web_fetch', { urls: [`${base}/nope`] })),
-    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s3]') })),
+    step(call('write', { path: 'artifacts/report.md', content: `${report('[s1]')}- Ducks migrate south.\n` })),
     step(call('submit_report', {})),
     step(call('write', { path: 'artifacts/report.md', content: report('[s1][s2]') })),
     step(call('submit_report', {})),
@@ -166,7 +166,7 @@ test('a run searches, fetches HTML and PDF, records each fetch, and a report cit
   assert.match(seen[1], /\[s1\] http:\/\/127.0.0.1:\d+\/page\\n\\nDucks\\n\\nDucks\\nDucks & geese fly\./);
   assert.match(seen[2], /\[s2\] .*paper\.pdf\\n\\nMallards migrate/);
   assert.match(seen[3], /answered 404/);
-  assert.match(seen[5], /gate claims_grounded\.cites_fetched_sources: cites s3, which this session never fetched/);
+  assert.match(seen[5], /gate claims_grounded\.findings_cited: The finding starting \\"Ducks migrate south\.\\" cites no source/);
 
   const sources = await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT);
   assert.deepEqual(sources!.sources.map((s) => s.id), ['s1', 's2'], 'the 404 left no record');
@@ -185,7 +185,8 @@ test('a recorded session rebuilds, for each sealed report, the inputs the live j
   const inputs: typeof builder = async (...a) => { const got = await builder(...a); live.push(got); return got; };
   const { session, dir } = await run({}, (step) => [
     call('web_fetch', { urls: [`${base}/page`] }),
-    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s2]') })),
+    // Version 1 fails on its bare finding, so the agent revises.
+    step(call('write', { path: 'artifacts/report.md', content: `${report('[s1][s2]')}- Ducks migrate south.\n` })),
     step(call('submit_report', {})),
     // s2 is fetched only after version 1 was judged, so its evidence must not count it.
     step(call('web_fetch', { urls: [`${base}/paper.pdf`] })),
@@ -200,8 +201,7 @@ test('a recorded session rebuilds, for each sealed report, the inputs the live j
   const adapter = manifest.evalAdapters![0].judge!;
   const replayed = await Promise.all(versions.map((v) => adapter.inputs!(record, v.content)));
   assert.deepEqual(replayed, live);
-  assert.deepEqual(live.map((i) => JSON.parse(i.fetched)), [['s1'], ['s1', 's2']]);
-  assert.equal(live[0].request, 'Do ducks fly?');
+  assert.deepEqual(live.map((i) => Object.keys(JSON.parse(i.sources))), [['s1'], ['s1', 's2']]);
   assert.match(live[1].sources, /Mallards migrate/, 'the kept text of each cited source is an input');
   await assert.rejects(adapter.inputs!(record, 'never sealed'), /not a version this session sealed/);
 });
@@ -342,7 +342,7 @@ test('a batch of searches reports each query, and one failing query does not fai
 const GOOD = '## Summary\nDucks fly.\n## Assumptions\nNone.\n## Findings\n- The page says "Ducks & geese fly." [s1]\n- Ducks are birds. [s1]\n';
 
 const PAGE_S1 = 'Ducks & geese fly. Ducks are birds.';
-const evidenceFor = async (report: string, texts: Record<string, string> = { s1: PAGE_S1 }, request?: string) => (await buildEvidence(reportDeclaration, inputsOf(report, request, new Map(Object.entries(texts)), Object.keys(texts)))).evidence;
+const evidenceFor = async (report: string, texts: Record<string, string> = { s1: PAGE_S1 }) => (await buildEvidence(reportDeclaration, inputsOf(report, new Map(Object.entries(texts))))).evidence;
 // A code gate over the report, judged on the evidence the declaration builds from it and its sources.
 const gate = async (id: string, report: string, texts?: Record<string, string>) => researchRubric.criteria[0].checks.find((c) => c.id === id)!.code!(report, await evidenceFor(report, texts));
 const findings = (...lines: string[]) => `## Summary\nx\n## Findings\n${lines.map((l) => `- ${l}`).join('\n')}\n`;
@@ -434,45 +434,15 @@ test('quotes_exist: a missing quote is met with the nearest passage on the cited
   assert.doesNotMatch(disjoint.detail!, /nearest on the cited page/);
 });
 
-test('the declaration asks each finding alone with its kept sources\' excerpts, each Summary sentence with every finding shared, the request whole, and each pair that may conflict with the Summary shared', async () => {
+test('the declaration asks each finding alone with its kept sources\' excerpts, and only the grounding checks remain', async () => {
   const report = '## Summary\nKestrel runs 38 electric buses in 2026. [s1]\n## Assumptions\nNone.\n## Findings\n- Kestrel operates 38 electric buses out of a fleet of 112. [s1]\n- All 28 electric buses are the Vantor E12. [s1][s2]\n- Depots are at Northside. [s9]\n';
-  const ev = await evidenceFor(report, { s1: 'Kestrel Transit operates 38 battery-electric buses.', s2: 'Vantor E12 page.' }, 'How many electric buses does Kestrel run?');
+  const ev = await evidenceFor(report, { s1: 'Kestrel Transit operates 38 battery-electric buses.', s2: 'Vantor E12 page.' });
   assert.deepEqual(ev.claim.map((u) => u.id), ['claim finding-1', 'claim finding-2'], 'a finding citing no kept source is not asked');
   assert.deepEqual(ev.claim[1].state.sources, [{ id: 's1', text: 'Kestrel Transit operates 38 battery-electric buses.' }, { id: 's2', text: 'Vantor E12 page.' }]);
   assert.deepEqual(ev.claim.map((u) => u.shared), [undefined, undefined], 'nothing is shared, so each finding goes alone');
-  assert.deepEqual(ev.summary.map((u) => u.state.sentence), ['Kestrel runs 38 electric buses in 2026.']);
-  assert.deepEqual(ev.summary[0].shared, { findings: '- Kestrel operates 38 electric buses out of a fleet of 112.\n- All 28 electric buses are the Vantor E12.\n- Depots are at Northside.' });
-  assert.deepEqual(ev.request.map((u) => [u.state.request, (u.shared as { report: string }).report]), [['How many electric buses does Kestrel run?', report]]);
-  assert.deepEqual(ev.pairs.map((u) => [u.id, u.state.pair, u.shared]), [['pairs 1|4', { first: { section: 'summary', sentence: 'Kestrel runs 38 electric buses in 2026. [s1]' }, second: { section: 'findings', sentence: 'All 28 electric buses are the Vantor E12. [s1][s2]', context: { before: 'Kestrel operates 38 electric buses out of a fleet of 112. [s1]' } } }, { summary: 'Kestrel runs 38 electric buses in 2026. [s1]' }]], 'only the Summary\'s 38 against a finding\'s 28 is asked');
-});
-
-test('claim pairs: a figure or a name the report gives two ways is one pair; a passage reporting both values, or the same value rounded, is none', async () => {
-  const pairsOf = async (report: string) => (await evidenceFor(report, {})).pairs.map((u) => u.id);
-  const hours = '## Summary\nMarlow Public Library is open Saturday 10am to 5pm and Sunday 1pm to 5pm in 2026.\n## Assumptions\nNone.\n## Findings\n- Hours effective 5 January 2026: Saturday 9am to 5pm and Sunday 1pm to 5pm. [s1]\n';
-  assert.deepEqual(await pairsOf(hours), ['pairs 1|3']);
-  const contractor = '## Summary\nThe contractor, Harbour Works, mobilises on 2 March 2026.\n## Assumptions\nNone.\n## Findings\n- The contractor, Tidewater Marine, mobilises on 2 March 2026 and expects to finish by October 2026. [s1]\n';
-  assert.deepEqual(await pairsOf(contractor), ['pairs 1|3']);
-  assert.deepEqual(await pairsOf('## Summary\nThe fan cord is 10 ft.\n## Assumptions\nNone.\n## Findings\n- The datasheet gives a 10 ft fan cord while Marketek lists a 6 ft fan cord. [s1]\n'), []);
-  assert.deepEqual(await pairsOf('## Summary\n24U is ~1,067 mm of mounting height.\n## Assumptions\nNone.\n## Analysis\n- 24U × 44.45 mm = 1,066.8 mm of mounting height.\n## Findings\n- x [s1]\n'), []);
-});
-
-test('claim pairs: a sentence that opens "It has…" is shown with its line and the sentence before it, kept apart from the sentence compared', async () => {
-  const report = [
-    '## Summary',
-    'The Tripp Lite is the better pick, though its load rating is only 1,000 lb.',
-    '## Assumptions',
-    'None.',
-    '## Findings',
-    '- The Tripp Lite carries a 1,000 lb load rating. [s1]',
-    '- The APC AR3104 is a standard IT enclosure with perforated doors [s2]. It has 14-gauge rails and a 3,000 lb load rating. [s2]',
-  ].join('\n');
-  const pairsOf = async (r: string) => (await evidenceFor(r, {})).pairs;
-  const [pair] = (await pairsOf(report)).filter((u) => JSON.stringify(u.state).includes('It has'));
-  assert.deepEqual((pair.state.pair as any).second, { section: 'findings', sentence: 'It has 14-gauge rails and a 3,000 lb load rating. [s2]', context: { line: 'The APC AR3104 is a standard IT enclosure with perforated doors [s2]. It has 14-gauge rails and a 3,000 lb load rating. [s2]' } });
-  assert.deepEqual((await pairsOf(report)).map((u) => u.id), (await pairsOf(report.replace('IT enclosure', 'IT cabinet'))).map((u) => u.id), 'context never adds or drops a pair');
-  const keyOf = async (r: string) => JSON.stringify((await pairsOf(r)).find((u) => u.id === pair.id));
-  assert.equal(await keyOf(report.replace('None.', 'No budget was given.')), await keyOf(report), 'an edit elsewhere leaves the pair\'s evidence, and so its reuse key, alone');
-  assert.notEqual(await keyOf(report.replace('IT enclosure', 'IT cabinet')), await keyOf(report), 'an edit to its context is a new question');
+  assert.deepEqual(Object.keys(ev), ['sources', 'claim']);
+  assert.deepEqual([researchRubric.version, researchRubric.threshold], [10, 0.8]);
+  assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [k.id, k.weight])), [['findings_cited', 'gate'], ['quotes_exist', 'gate'], ['supported_by_source', 1], ['contradicted_by_source', -1]]);
 });
 
 test('a finding citing many long pages keeps a full excerpt of each, and its claim checks go to the judge model, not Clef', async () => {
@@ -481,7 +451,7 @@ test('a finding citing many long pages keeps a full excerpt of each, and its cla
   const cites = Object.keys(many).map((id) => `[${id}]`).join('');
   const ev = await evidenceFor(findings(`The harbour budget covers dredging and repairs. ${cites}`), many);
   assert.ok((ev.claim[0].state.sources as Array<{ text: string }>).every((s) => s.text.length > 3500 && s.text.length <= 4000));
-  assert.deepEqual(['supported_by_source', 'contradicted_by_source', 'no_self_contradiction'].map((id) => reportDeclaration.checks[id].decisionModel), [false, false, 'pass-only'], 'a self-contradiction flag goes to the judge model for its reason');
+  assert.deepEqual(['supported_by_source', 'contradicted_by_source'].map((id) => reportDeclaration.checks[id].decisionModel), [false, false]);
 });
 
 const PAGE = 'I. Config. Store config in the environment. There is a tendency for config files to be scattered about in different places and different formats, making it hard to see where.';
@@ -583,7 +553,7 @@ test('a report with a real quote passes all gates; an invented quote and a bare 
   const good = await verdictOf(GOOD);
   assert.equal((good.verdict as any).passed, true);
   const units = Object.fromEntries((good.verdict as any).checks.map((c: any) => [c.id, c.units]));
-  assert.deepEqual([units.supported_by_source, units.answers_every_ask, units.summary_follows_findings, units.no_self_contradiction], [2, 1, 1, 0], 'claim, request and summary scopes reached the judge; no two sentences give different figures, so no pair did');
+  assert.deepEqual([units.supported_by_source, units.contradicted_by_source], [2, 2], 'each finding reached the judge');
 
   const badContent = GOOD.replace('Ducks are birds. [s1]', 'Ducks swim.').replace('"Ducks & geese fly."', '"Geese never fly south"');
   const bad = await verdictOf(badContent);
@@ -592,26 +562,6 @@ test('a report with a real quote passes all gates; an invented quote and a bare 
   const notes = (bad.verdict as any).checks.flatMap((c: any) => c.notes).join('\n');
   assert.match(notes, /The finding starting "Ducks swim\." cites no source/);
   assert.match(notes, /quotes "Geese never fly south", which isn't on the cited page/);
-});
-
-test('no_self_contradiction: findings that attribute different cord lengths to two sources pass; a Summary asserting one against a finding is flagged', async () => {
-  const selfCheck = async (content: string) => (await verdictOf(content)).verdict as any;
-  const pick = (v: any) => v.checks.find((c: any) => c.id === 'no_self_contradiction');
-  const attributed = '## Summary\nThe fan cord length is unverified: the sources disagree.\n## Assumptions\nNone.\n## Findings\n- The Tripp Lite datasheet gives a 10 ft fan cord. [s1]\n- Marketek\'s spec table lists a 6 ft fan cord. [s1]\n';
-  const clean = pick(await selfCheck(attributed));
-  assert.deepEqual([clean.units, clean.met], [0, null], 'two findings each say what their source says');
-  const asserted = await selfCheck('## Summary\nThe cabinet ships with a 6 ft fan cord.\n## Assumptions\nNone.\n## Findings\n- The Tripp Lite datasheet gives a 10 ft fan cord. [s1]\n');
-  assert.deepEqual([pick(asserted).units, pick(asserted).met, asserted.passed], [1, true, false]);
-  assert.match(pick(asserted).notes.join('\n'), /^pairs 1\|3: the cord is 10 ft and 6 ft/);
-});
-
-test('the derived checks are reported at weight 0: a Verdict figure no finding gives is named and costs nothing', async () => {
-  const plain = (await verdictOf(GOOD)).verdict as any;
-  const derived = (await verdictOf(`${GOOD}## Verdict\n- Ducks fly 300 km a day [s1].\n`)).verdict as any;
-  const traced = derived.checks.find((c: any) => c.id === 'derived_inputs_traced');
-  assert.deepEqual([traced.weight, traced.met], [0, 0]);
-  assert.match(traced.notes.join('\n'), /^300 in "Ducks fly 300 km a day/);
-  assert.deepEqual([derived.passed, derived.score], [plain.passed, plain.score]);
 });
 
 test('excerpt keeps the pieces that share the claim\'s figures and words, in page order, and short pages whole', () => {
