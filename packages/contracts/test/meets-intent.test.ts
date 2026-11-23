@@ -75,32 +75,18 @@ test('a grandfathered string guarantee keeps its key when another is inserted, a
   assert.equal((await keys([long])).length, 3);
 });
 
-test('each promising sentence of the purpose is one judge-model item; provenance is not; the two checks share the old weight of 4', async (t) => {
-  const s = spec();
-  s.intent.purpose = 'Show the Sleeper page the live week and when each job runs next. It only reads. Provenance: v2 was approved after the epoch change. Provenance: Derived from issue #123.';
-  const { evidence } = await builtOf(s);
-  assert.deepEqual(evidence.purpose.map((u) => u.state.sentence), ['Show the Sleeper page the live week and when each job runs next.', 'It only reads.']);
-  assert.ok(evidenceOf(evidence.purpose[0]).some((e) => e.part === OP));
-  const failed = await judged(t, s, ['delivers_purpose'], () => 'yes', { choice: 'no', reason: 'No part reports the live week.' });
-  assert.deepEqual([failed.check('delivers_purpose').met, failed.requests.length], [false, 0]);
-  assert.match(failed.check('delivers_purpose').notes[0], /^purpose .+: No part reports the live week\.$/);
-  const weights = contractRubric.criteria.flatMap((c) => c.checks).filter((k) => ['meets_intent', 'delivers_purpose'].includes(k.id)).map((k) => k.weight);
-  assert.deepEqual(weights, [3, 1]);
-});
-
-test('no choice is judged against the guide; the scored weights are 4 possible against 3 of pitfalls, so a pitfall alone keeps its pass line', () => {
+test('meets_intent is the one scored check, so a spec passes only when it holds; the unproven checks are gone', () => {
   const checks = contractRubric.criteria.flatMap((c) => c.checks);
-  assert.ok(!checks.some((k) => k.id === 'contradicts_guide') && !('contradicts_guide' in contractDeclaration.checks));
-  const scored = checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]);
-  assert.deepEqual(scored, [['meets_intent', 3], ['delivers_purpose', 1], ['adds_unasked', -2], ['implements_non_goal', -1]]);
-  assert.deepEqual([contractRubric.version, contractRubric.threshold], [12, 0.8]);
+  const cut = ['contradicts_guide', 'delivers_purpose', 'adds_unasked', 'implements_non_goal', 'comments_answered'];
+  assert.deepEqual(checks.filter((k) => cut.includes(k.id)).map((k) => k.id), []);
+  assert.deepEqual(Object.keys(contractDeclaration.checks), ['meets_intent']);
+  assert.deepEqual(checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]), [['meets_intent', 1]]);
+  assert.deepEqual([contractRubric.version, contractRubric.threshold], [13, 1]);
 });
 
-test('with no guarantees, meets_intent has no items and counts toward neither side while delivers_purpose still scores', async (t) => {
+test('with no guarantees, meets_intent has no items and counts toward neither side', async (t) => {
   const s = spec();
   s.intent.guarantees = [];
-  s.intent.purpose = 'Show the Sleeper page the live week. It only reads.';
-  const res = await judged(t, s, ['meets_intent', 'delivers_purpose'], () => 'no', { choice: 'yes', reason: 'Shown in GET.' });
+  const res = await judged(t, s, ['meets_intent'], () => 'no', { choice: 'yes', reason: 'Shown in GET.' });
   assert.deepEqual([res.check('meets_intent').met, res.check('meets_intent').units], [null, 0]);
-  assert.deepEqual([res.check('delivers_purpose').met, res.check('delivers_purpose').units], [true, 2]);
 });

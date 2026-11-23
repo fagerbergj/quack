@@ -378,16 +378,13 @@ test('a proposal whose rerun fails before its gate is withdrawn, and the newer a
   await s2.close();
 });
 
-test('a review in the rejection reaches the agent with how to answer it; a version that leaves a comment unanswered fails, and reply_comment answers it', async () => {
+test('a review in the rejection reaches the agent with how to answer it, and reply_comment answers a comment', async () => {
   const said: string[] = [];
   const v2 = () => ({ ...settingsSpec(), version: 2 });
   const s = await open([
     call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}),
-    (c) => ((said.push(text(c)), write(v2)(c))), call('submit_contract', {}),
     (c) => ((said.push(text(c)), call('reply_comment', { id: 'cmt_1', text: 'Kept closed: a typo must fail loudly.' })(c))),
-    // A reply counts for a version sealed after it, so the same spec is written again; any change makes a new seal.
-    (c) => ((said.push(text(c)), call('write', { path: 'artifacts/spec.json', content: JSON.stringify(v2()) })(c))),
-    call('submit_contract', {}),
+    (c) => ((said.push(text(c)), write(v2)(c))), call('submit_contract', {}),
     () => fauxAssistantMessage('Version 2 is approved.'),
   ]);
   const run = s.submit('Define the Sleeper settings file', 'r-1', true);
@@ -397,10 +394,8 @@ test('a review in the rejection reaches the agent with how to answer it; a versi
   await run;
   assert.match(said[0]!, /ends in a ```quack-review block of review comments: for each comment, name its id in the addresses/);
   assert.deepEqual(lastReviewBlock(said[0]!.replace(/^Rejected by [^:]*: /, ''))?.block.comments.map((c) => c.id), ['cmt_1'], 'the agent reads the block whole');
-  assert.match(said[1]!, /comment 'cmt_1' from the last Ask for changes is neither addressed nor answered/);
-  assert.match(said[2]!, /Replied to comment cmt_1\./);
-  const [first, second] = (await versions(s)).slice(1);
-  assert.deepEqual([(first!.verdict as { gatesFailed: string[] }).gatesFailed, (second!.verdict as { passed: boolean }).passed], [['sound.comments_answered'], true]);
+  assert.match(said[1]!, /Replied to comment cmt_1\./);
+  assert.equal(((await versions(s))[1]!.verdict as { passed: boolean }).passed, true, 'no gate counts the comments: the Contracts app decides what is addressed');
   assert.deepEqual((await kindOf(s, 'contract.reply')).map((r) => JSON.parse(r.content)), [{ comment: 'cmt_1', text: 'Kept closed: a typo must fail loudly.' }]);
   assert.deepEqual((await kindOf(s, 'contract.changes')).map((r) => r.summary), ['One thing. · 1 review comment']);
   await s.close();
