@@ -3,19 +3,21 @@ import { paneOf, visible, type Scenario } from '../scenario.ts';
 
 // The research agent through the judge extension, with the fake model as both writer and judge (no judgeModel: the agent's own).
 const SOURCE = 'https://example.com/';
-const report = (cites: string) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n- Example.com is reserved for examples in documents. ${cites}\n`;
+const GOOD = 'Example.com is reserved for examples in documents.';
+const BAD = 'Example.com is run by the moon.';
+const report = (finding: string) => `## Summary\nExample.com is a reserved example domain.\n## Assumptions\nNone.\n## Findings\n- ${finding} [s1]\n`;
 const text = (m: { content?: unknown }) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''));
 
 // The writer's next move from the flow its input names and the last tool result; a request without tools is the judge asking.
 const script: FakeScript = ({ messages = [], tools = [] }) => {
   const all = JSON.stringify(messages);
-  if (!tools.length) return { content: JSON.stringify({ choice: /contradict it\?|conflict with another passage/.test(all) ? 'no' : 'yes', confidence: 1, reason: 'qa' }) };
+  if (!tools.length) return { content: JSON.stringify({ choice: /contradict it\?|conflict with another passage/.test(all) || (all.includes(BAD) && /state what the finding claims/.test(all)) ? 'no' : 'yes', confidence: 1, reason: 'qa' }) };
   const flow = text(messages.find((m) => m.role === 'user') ?? {});
   const last = messages.at(-1)?.role === 'tool' ? text(messages.at(-1)!) : '';
   const written = messages.filter((m) => m.role === 'tool' && /passed|failed/.test(text(m))).length;
   if (!last) return { tool: { name: 'web_fetch', arguments: { urls: [SOURCE] } } };
   if (/passed\.|Stop: this run is over/.test(last) || (/revision limit is reached/.test(last) && !flow.includes('flow:past'))) return { content: 'Done.' };
-  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: report(written ? '[s1]' : '[s1][s2]') } } };
+  if (/\[s1\]/.test(last) || /failed|limit is reached/.test(last)) return { tool: { name: 'write', arguments: { path: 'artifacts/report.md', content: report(written ? GOOD : BAD) } } };
   return { tool: { name: 'submit_report', arguments: {} } };
 };
 
@@ -47,7 +49,7 @@ const scenario: Scenario = {
     await ctx.step('revise then pass: a failing version comes back, the revision passes', async () => {
       const { results, versions } = await runFlow(ctx.url, 'qa-judge-revise', 'qa-judge-2', 'revise');
       expect(JSON.stringify(versions.map((v) => v.verdict?.passed)) === '[false,true]', 'verdicts', versions);
-      expect(/cites s2, which this session never fetched/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
+      expect(/A finding isn't stated by its source/.test(results) && /Revise the file to address each point, then call submit_report again/.test(results), 'the failure fed back', results);
       expect(/research\.report v2: \d+% \(research\.report@\d+\), passed\. Version 2 is final for this run; finish without revising it\./.test(results), 'the pass note', results);
     });
     await ctx.step('limit release: a failing version at the limit goes out with its failures marked', async () => {
