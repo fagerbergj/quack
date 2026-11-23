@@ -1,5 +1,10 @@
 import { expect, test } from 'vitest';
-import { age, spendLabel } from './sessions.ts';
+import { age, duration, spendLabel } from './sessions.ts';
+
+test('duration reads seconds, then min and s, then h and min, dropping zero parts', () => {
+  const read = [0, 59, 60, 61, 756, 3599, 3600, 3660, 7200, 59.6].map(duration);
+  expect(read).toEqual(['0 s', '59 s', '1 min', '1 min 1 s', '12 min 36 s', '59 min 59 s', '1 h', '1 h 1 min', '2 h', '1 min']);
+});
 
 const NOW = Date.parse('2026-11-10T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
