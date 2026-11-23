@@ -136,6 +136,8 @@ const github = await listen(
 );
 
 const invocations: Array<{ path: string; body: any }> = [];
+// Every invocation body, refused ones too.
+const attempts: any[] = [];
 const watchers: string[] = [];
 const watcherWaiters: Array<() => void> = [];
 const holds: Record<string, Promise<void>> = {};
@@ -143,13 +145,15 @@ let busy = false;
 let busyStatus = 409;
 let busyDetail = 'session is mid-run as agent reviewer; implementer can start once it finishes';
 const outcomes: Record<string, unknown> = {};
-// Whether PR 7's session is mid-run as the reviewer, as its /ping through the distributor says.
-let reviewerRunning = false;
+// The agent PR 7's session is mid-run as, by its /ping through the distributor: another agent's ping answers 409.
+let runningAgent: string | undefined;
 const distributor = await listen(
   createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
-    if (req.method === 'GET' && req.url === '/sessions/github%3Aacme%2Fwidgets%237/ping?agent=reviewer') return res.writeHead(200).end(JSON.stringify({ status: reviewerRunning ? 'HealthyBusy' : 'Healthy' }));
+    const ping = req.method === 'GET' && /^\/sessions\/github%3Aacme%2Fwidgets%237\/ping\?agent=(\w+)$/.exec(req.url!);
+    if (ping && runningAgent && runningAgent !== ping[1]) return res.writeHead(409, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ status: 'HealthyBusy', detail: `session runs agent ${runningAgent}, not ${ping[1]}` }));
+    if (ping) return res.writeHead(200).end(JSON.stringify({ status: runningAgent ? 'HealthyBusy' : 'Healthy' }));
     if (req.url === '/agents') return res.writeHead(200).end(JSON.stringify({ agents: [{ name: 'reviewer', version: 1, status: 'promoted' }, { name: 'researcher', version: 1, status: 'draft' }] }));
     const body = JSON.parse(raw);
     if (body.wait) {
@@ -158,6 +162,7 @@ const distributor = await listen(
       await holds[body.requestId];
       return res.writeHead(200).end(JSON.stringify(outcomes[body.requestId] ?? {}));
     }
+    attempts.push(body);
     if (busy) return res.writeHead(busyStatus, { 'content-type': 'application/problem+json' }).end(JSON.stringify({ detail: busyDetail }));
     invocations.push({ path: decodeURIComponent(req.url!), body });
     res.writeHead(202).end('{}');
@@ -319,24 +324,29 @@ const pushed = (sha: string) => ({ action: 'synchronize', pull_request: { ...pr,
 
 test('a review that finds another agent in the session is queued, a newer push replaces it, and it starts once the session is free', async () => {
   invocations.length = 0;
+  attempts.length = 0;
   commented.length = 0;
   const { svc, url } = await queuedService();
   try {
     busy = true;
+    runningAgent = 'implementer';
     busyDetail = 'session is mid-run as agent implementer; reviewer can start once it finishes';
     assert.equal(await deliver('pull_request', labeled, { id: 'd-rq1', to: url }), 202, 'handled, so never redelivered');
     assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-rq2', to: url }), 202);
     assert.deepEqual(commented, [reviewQueued], 'said once, not once per push');
     await svc.sweep();
     assert.equal(invocations.length, 0);
+    assert.ok(attempts.every((a) => a.whenBusy === undefined), 'never steered into the implementer');
     busy = false;
+    runningAgent = undefined;
     await svc.sweep();
     await svc.sweep();
-    assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-rq2'], 'only the newest head is reviewed, once');
+    assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-rq2', undefined]], 'only the newest head is reviewed, once, as a plain run');
     assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=reviewer');
     assert.match(invocations[0].body.input, /Head: def456 on fix/);
   } finally {
     busy = false;
+    runningAgent = undefined;
     busyDetail = MID_RUN;
     svc.stop();
   }
@@ -346,21 +356,44 @@ test('a push while the reviewer runs is sent as a steer; once that run ends with
   invocations.length = 0;
   const { svc, url } = await queuedService();
   try {
-    reviewerRunning = true;
+    runningAgent = 'reviewer';
     assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st1', to: url }), 202);
     assert.equal(invocations.length, 0, 'no follow-up queued in the session');
     await svc.sweep();
     await svc.sweep();
     assert.deepEqual(invocations.map((i) => [i.body.requestId, i.body.whenBusy]), [['github-delivery:d-st1/steer', 'steer'], ['github-delivery:d-st1/steer', 'steer']], 'a resend is the same steer');
     assert.equal(invocations[0].body.input, steerInput({ owner: 'acme', repo: 'widgets', number: 7, pushedHead: 'def456' }));
-    reviewerRunning = false;
+    runningAgent = undefined;
     await svc.sweep();
     await svc.sweep();
     assert.equal(invocations.length, 3);
     assert.deepEqual([invocations[2].body.requestId, invocations[2].body.whenBusy], ['github-delivery:d-st1', undefined]);
     assert.match(invocations[2].body.input, /Review pull request acme\/widgets#7 .*\nTitle: Fix the cache\nHead: def456 on fix/);
   } finally {
-    reviewerRunning = false;
+    runningAgent = undefined;
+    svc.stop();
+  }
+});
+
+test('a steered run still going at the queue age limit is said on the PR and steered no more', async (t) => {
+  invocations.length = 0;
+  commented.length = 0;
+  const store = sqliteWaiting(':memory:');
+  const { svc, url } = await queuedService({ waiting: store });
+  try {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    runningAgent = 'reviewer';
+    assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st5', to: url }), 202);
+    await svc.sweep();
+    assert.equal(invocations.length, 1);
+    t.mock.timers.tick(6 * 3600_000);
+    await svc.sweep();
+    await svc.sweep();
+    assert.equal(invocations.length, 1, 'no steer after the limit');
+    assert.deepEqual(commented, [reviewRefused('the steered run did not finish in 6 hours')]);
+    assert.deepEqual(await store.list(), []);
+  } finally {
+    runningAgent = undefined;
     svc.stop();
   }
 });
@@ -382,7 +415,7 @@ test('two quick pushes while the reviewer runs make one steer for the newest hea
   const { svc, url } = await queuedService();
   let undo = () => {};
   try {
-    reviewerRunning = true;
+    runningAgent = 'reviewer';
     assert.equal(await deliver('pull_request', pushed('def456'), { id: 'd-st3', to: url }), 202);
     assert.equal(await deliver('pull_request', pushed('0ff1ce'), { id: 'd-st4', to: url }), 202);
     await svc.sweep();
@@ -390,12 +423,12 @@ test('two quick pushes while the reviewer runs make one steer for the newest hea
     assert.match(invocations[0].body.input, /head is now 0ff1ce/);
     assert.doesNotMatch(invocations[0].body.input, /def456/);
     undo = reviewedAt('0ff1ce');
-    reviewerRunning = false;
+    runningAgent = undefined;
     await svc.sweep();
     assert.equal(invocations.length, 1, 'the steered run reviewed the head');
   } finally {
     undo();
-    reviewerRunning = false;
+    runningAgent = undefined;
     svc.stop();
   }
 });

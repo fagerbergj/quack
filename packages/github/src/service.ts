@@ -95,6 +95,7 @@ type WorkQueue = ReturnType<typeof waitingQueue<Queued>>;
 
 // One waiting review per PR, so a newer push or /review replaces an older one; a /fix waits beside it under its own key.
 const queueKey = (q: Queued) => (q.role === 'reviewer' ? `${q.sessionKey} review` : q.sessionKey);
+const expired = (q: Queued) => Date.now() - q.at >= QUEUE_TTL_MS;
 const submissionOf = (q: Queued) => ({ key: q.sessionKey, agent: q.agent, input: q.input, requestId: q.requestId, title: q.title, ...(q.meta && { meta: q.meta }) });
 const unreachable = (err: unknown) => new Response(JSON.stringify({ detail: `the distributor is unreachable: ${String(err)}` }), { status: 503 });
 const submit = (config: ServiceConfig, q: Queued) => submitToSession(config.distributorUrl, submissionOf(q), config.fetch).catch(unreachable);
@@ -160,7 +161,7 @@ async function steering(config: ServiceConfig, q: Queued): Promise<boolean> {
   return ping.status === 'HealthyBusy' || ping.waitingOnHuman === true;
 }
 
-// Its own request id: a resend each sweep is the same steer, and the run that may follow it is not deduped against it.
+// Its own request id: the session dedupes a resend each sweep, and the run that may follow it is not deduped against it.
 async function steer(config: ServiceConfig, q: Queued) {
   const { url, body } = invocationRequest(config.distributorUrl, { key: q.sessionKey, agent: q.agent, input: steerInput(q), requestId: `${q.requestId}/steer` });
   const res = await (config.fetch ?? fetch)(url, { method: 'POST', body: JSON.stringify({ ...JSON.parse(body), whenBusy: 'steer' }) }).catch(unreachable);
@@ -171,14 +172,17 @@ async function steer(config: ServiceConfig, q: Queued) {
 // A push waits out a steered run too: once it ends, the head starts a run unless a review already covers it.
 async function startQueued(app: GithubApp, config: ServiceConfig, state: RunState, q: Queued): Promise<boolean> {
   if (await dropReason(app, q)) return true;
-  if (await steering(config, q)) return (await steer(config, q), false);
+  if (await steering(config, q)) {
+    if (expired(q)) return (await comment(app, q, refusedNote(q, 'the steered run did not finish in 6 hours')), true);
+    return (await steer(config, q), false);
+  }
   const before = postedCount(state, q);
   const upstream = await submit(config, q);
   if (upstream.ok && q.role === 'reviewer') watchRun(app, config, state, q, before);
   if (upstream.ok) return true;
   const reason = await problemOf(upstream);
   const waiting = waits(upstream.status, reason);
-  if (waiting && Date.now() - q.at < QUEUE_TTL_MS) return false;
+  if (waiting && !expired(q)) return false;
   await comment(app, q, refusedNote(q, waiting ? 'the running agent did not finish in 6 hours' : reason));
   return true;
 }
