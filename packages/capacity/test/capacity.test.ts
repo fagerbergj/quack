@@ -271,14 +271,53 @@ test('parallel calls in one session take one lease each and queue past the capac
   assert.equal(calls[2].granted, true, 'the call that ended hands its lease to the queued one of the same run');
 });
 
-// Four shared calls, as one judge round's escalation limit lets through at once.
-function judgeRound(g: CapacityGate) {
-  return [0, 1, 2, 3].map(() => {
-    const state = { granted: false };
-    void g.begin('swap', undefined, true).then(() => (state.granted = true));
-    return state;
-  });
+// Four shared calls begun at once, as a judge round's Clef and escalation calls can be.
+function ride(g: CapacityGate, signal?: AbortSignal) {
+  const state: { granted: boolean; call?: GatedCall; error?: unknown } = { granted: false };
+  void g.begin('swap', signal, true).then((call) => Object.assign(state, { granted: true, call }), (error) => (state.error = error));
+  return state;
 }
+const judgeRound = (g: CapacityGate) => [0, 1, 2, 3].map(() => ride(g));
+const firstOnly = [true, false, false, false];
+
+test('shared calls on one lease run one after the other, never together, in the order they began', async () => {
+  fresh(1);
+  const g = gate('s');
+  const round = judgeRound(g);
+  await clock.settle();
+  for (let i = 0; i < 4; i++) {
+    assert.deepEqual(round.map((c) => c.granted && !!c.call && !c.error), round.map((_, j) => j <= i), `ride ${i} alone in flight`);
+    g.end(round[i].call);
+    await clock.settle();
+  }
+  assert.deepEqual([heldBy(), table.endpoints()[0].waiting], [['s'], []]);
+});
+
+test('an abort while a shared call waits its turn rejects it, and the next one takes the turn', async () => {
+  fresh(1);
+  const g = gate('s');
+  const stop = new AbortController();
+  const first = ride(g);
+  await clock.settle();
+  const waiting = ride(g, stop.signal);
+  const next = ride(g);
+  stop.abort(new Error('stopped'));
+  await clock.settle();
+  assert.deepEqual([(waiting.error as Error).message, next.granted], ['stopped', false]);
+  g.end(first.call);
+  await clock.settle();
+  assert.deepEqual([waiting.granted, next.granted], [false, true]);
+});
+
+test('a run end lets a shared call still waiting its turn go, ungated, instead of hanging', async () => {
+  fresh(1);
+  const g = gate('s');
+  const round = judgeRound(g);
+  await clock.settle();
+  await g.release();
+  await clock.settle();
+  assert.deepEqual(round.map((c) => [c.granted, !!c.call?.lease]), [[true, true], [true, false], [true, false], [true, false]]);
+});
 
 test('with every slot held by other sessions, a judge round runs under the session\'s own lease without waiting', async () => {
   fresh(8);
@@ -288,11 +327,11 @@ test('with every slot held by other sessions, a judge round runs under the sessi
   for (let i = 0; i < 7; i++) table.acquire('swap', `o${i}`);
   const round = judgeRound(g);
   await clock.settle();
-  assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
+  assert.deepEqual(round.map((c) => c.granted), firstOnly, 'the rest wait their turn on the session\'s lease, not at the service');
   assert.deepEqual([heldBy().length, table.endpoints()[0].waiting], [8, []]);
 });
 
-test('a judge round started while the session holds no lease queues for exactly one, and every call rides it', async () => {
+test('a judge round started while the session holds no lease queues for exactly one, and its calls ride it in turn', async () => {
   fresh(1);
   table.acquire('swap', 'o');
   const g = gate('s');
@@ -301,8 +340,10 @@ test('a judge round started while the session holds no lease queues for exactly 
   assert.deepEqual(table.endpoints()[0].waiting, ['s']);
   table.release('swap', 'o');
   await clock.advance(1000);
-  assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
-  assert.deepEqual(heldBy(), ['s']);
+  assert.deepEqual(round.map((c) => c.granted), firstOnly);
+  g.end(round[0].call);
+  await clock.settle();
+  assert.deepEqual([round[1].granted, heldBy()], [true, ['s']]);
 });
 
 test('while a judge round rides the session\'s lease, a parallel call that is not the judge\'s still queues for its own', async () => {
@@ -312,7 +353,7 @@ test('while a judge round rides the session\'s lease, a parallel call that is no
   const round = judgeRound(g);
   const child = begin(g);
   await clock.advance(2000);
-  assert.deepEqual(round.map((c) => c.granted), [true, true, true, true]);
+  assert.deepEqual(round.map((c) => c.granted), firstOnly);
   assert.equal(child.granted, false);
   assert.deepEqual(table.endpoints()[0].waiting, ['s#1']);
 });
@@ -331,11 +372,10 @@ test('a non-judge call ending mid-round leaves the lease the round rides held un
   await clock.advance(1000);
   table.release('swap', 'o2');
   await clock.advance(1000);
-  const [first, second] = await Promise.all(round);
-  g.end(first);
+  g.end(await round[0]);
   g.end(await child);
-  assert.deepEqual(heldBy().sort(), ['s', 's#1'], 'one ride is still running under s#1');
-  g.end(second);
+  assert.deepEqual(heldBy().sort(), ['s', 's#1'], 'the second ride took its turn under s#1');
+  g.end(await round[1]);
   await clock.settle();
   assert.deepEqual(heldBy(), ['s']);
 });
@@ -349,7 +389,7 @@ test('a lease a judge round rides is not reused by a non-judge call, which queue
   g.end(own);
   const child = begin(g);
   await clock.advance(2000);
-  assert.deepEqual([round.every((c) => c.granted), child.granted], [true, false]);
+  assert.deepEqual([round.map((c) => c.granted), child.granted], [firstOnly, false]);
   assert.deepEqual(table.endpoints()[0].waiting, ['s#1']);
 });
 

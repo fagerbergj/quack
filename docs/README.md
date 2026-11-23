@@ -61,8 +61,6 @@ Every arm judges each case fresh unless it ends in `:reuse`: then, in each repea
 
 Without `--arm` it runs one arm, `current=.`.
 
-`--escalations` bounds each case's concurrent judge-model calls (4 by default, as in the live judge), so the judge model sees at most `--concurrency` times that at once.
-
 Arms run case by case, not as blocks: each repeat goes through the cases in order, and each case is judged under every arm in an order shuffled by `--seed` (random when unset, and printed first), so over cases and repeats every arm takes every place about equally and neither load nor the model server's prefix cache favours one arm.
 
 A `:reuse` arm's batch, one session's drafts in version order against one store, takes the place of its first draft and runs whole; the other arms' cases of that session come before or after it, or alongside it under `--concurrency`.

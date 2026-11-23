@@ -6,8 +6,8 @@ import { parseArgs } from 'node:util';
 import { buildModels, parseDeployment, resolveDeployment } from '@quack/session';
 import { armAt, replayJudge, table, type Arm, type Row } from './judge-replay.ts';
 
-const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model][:reuse]]... [--repeat N] [--concurrency N] [--escalations N] [--seed N] [--rows <rows.jsonl>] [--report-checks <id>...] | --table <rows.jsonl> [--report-checks <id>...]';
-const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, 'decision-model': { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' }, escalations: { type: 'string', default: '4' }, seed: { type: 'string' }, rows: { type: 'string' }, table: { type: 'string' }, 'report-checks': { type: 'string', multiple: true } } });
+const usage = 'usage: replay-judge.ts --cases <cases.json> --deployment <deployment.json> --judge <provider/model> [--decision-model <provider/model>] [--arm label=ref[:none|:provider/model][:reuse]]... [--repeat N] [--concurrency N] [--seed N] [--rows <rows.jsonl>] [--report-checks <id>...] | --table <rows.jsonl> [--report-checks <id>...]';
+const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment: { type: 'string' }, judge: { type: 'string' }, 'decision-model': { type: 'string' }, arm: { type: 'string', multiple: true }, repeat: { type: 'string', default: '3' }, concurrency: { type: 'string', default: '1' }, seed: { type: 'string' }, rows: { type: 'string' }, table: { type: 'string' }, 'report-checks': { type: 'string', multiple: true } } });
 const reportChecks = values['report-checks']?.flatMap((s) => s.split(',').filter(Boolean));
 
 // A rows file, from a finished run or one that was stopped, prints as the table it would have printed; the seed is not in it.
@@ -19,9 +19,8 @@ if (values.table) {
 if (!values.cases || !values.deployment || !values.judge?.includes('/')) throw new Error(usage);
 const repeat = Number(values.repeat);
 const concurrency = Number(values.concurrency);
-const escalations = Number(values.escalations);
 const seed = values.seed === undefined ? randomInt(2 ** 31) : Number(values.seed);
-if (![repeat, concurrency, escalations].every((n) => Number.isInteger(n) && n >= 1) || !Number.isInteger(seed)) throw new Error('--repeat, --concurrency and --escalations must be positive integers, and --seed an integer');
+if (![repeat, concurrency].every((n) => Number.isInteger(n) && n >= 1) || !Number.isInteger(seed)) throw new Error('--repeat and --concurrency must be positive integers, and --seed an integer');
 
 const deployment = await resolveDeployment(parseDeployment(JSON.parse(readFileSync(values.deployment, 'utf8'))));
 const ref = (s: string) => ({ provider: s.slice(0, s.indexOf('/')), modelId: s.slice(s.indexOf('/') + 1) });
@@ -45,5 +44,5 @@ for (const spec of values.arm ?? ['current=.']) {
 console.error(`arm order seed ${seed}`);
 const file = values.rows;
 const onRows = file ? (rows: Row[]) => appendFileSync(file, rows.map((r) => `${JSON.stringify(r)}\n`).join('')) : undefined;
-const result = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge), escalations, seed, onRows });
+const result = await replayJudge({ cases: JSON.parse(readFileSync(values.cases, 'utf8')), arms, repeat, concurrency, models: buildModels(deployment), judgeModel: ref(values.judge), seed, onRows });
 console.log(table(result, arms.map((a) => a.label), reportChecks));

@@ -30,8 +30,6 @@ export type JudgeOptions = {
   decisionModel?: DecisionModelRef;
   /** Where uncertain items escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
-  /** The most judge-model requests in flight at once; 4 by default. A packed group's sub-batch is one request. Decision-model requests stay one at a time. */
-  escalations?: number;
   /** Item reuse: an item whose question and evidence match one this session already decided takes that answer instead of asking; off when absent. */
   reuse?: boolean;
 };
@@ -211,12 +209,12 @@ function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => vo
   return { expect, heard, ready: (u, c) => groups.get(of(u, c))?.promise };
 }
 
-// Decision-model requests queue on their own limit (one at a time) and escalations on theirs.
+// Decision-model requests and escalations each go one at a time, as the session's slot carries one call; a queued escalation rechecks need() when its turn comes.
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: BuiltEvidence, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
   const plans = planChecks(opts.rubric, opts.declaration, built);
   const byKey = new Map(plans.map((p) => [p.key, p]));
   const publish = async () => report?.(progressOf(opts.rubric, [...code, ...settled(plans)]));
-  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(opts.escalations ?? 4), hold: holds(byKey) };
+  const settings = { ref: opts.decisionModel, judgeModel: opts.judgeModel, memo, clef: limiter(1), escalations: limiter(1), hold: holds(byKey) };
   const tally = async ({ unit, check, answer }: Answered) => {
     const p = byKey.get(check.id)!;
     p.left--;
@@ -233,7 +231,7 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: Bu
   const items = reuse ? reuseItems(itemsOf(plans), byKey, reuse) : itemsOf(plans);
   settings.hold.expect(items);
   await publish();
-  // The round's model calls ride the session's own capacity slot; the escalation limit bounds them.
+  // The round's model calls ride the session's own capacity slot.
   await inSessionSlot(() => Promise.all(pack(items, opts.decisionModel?.maxInputTokens).map((group) => answerItems(api, settings, group, ctx, tally, need))));
   return plans.map(finalize);
 }
