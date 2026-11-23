@@ -25,7 +25,7 @@ export function capacitySessionExtensions(config: CapacityConfig, gate?: Capacit
   const holder = config.holder ?? randomUUID();
   if (!gate && !(config.serviceUrl && config.serviceToken)) return [];
   const g = gate ?? new CapacityGate({ ...config, holder, client: httpClient(config.serviceUrl!, config.serviceToken!), setWait: modelWait.set });
-  onWaiting((n) => n > 0 && void g.idle());
+  onWaiting((n) => g.setWaiting(n > 0));
   // Direct completions (the judge, workflow model steps) bypass GenerationTask, so they take the same lease.
   gateGenerations({ before: (provider, signal, shared) => g.begin(provider, signal, shared), after: (call) => g.end(call as GatedCall) });
   // A generation's lease is paired with its task, so calls finishing out of order free their own.

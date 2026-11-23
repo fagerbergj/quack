@@ -19,9 +19,12 @@ type Entry = { list: string; at: string; raw: unknown; id?: string; text: string
 const entriesOf = (intent: Partial<Record<string, unknown>> | undefined): Entry[] =>
   LISTS.flatMap((list) => (Array.isArray(intent?.[list]) ? (intent[list] as unknown[]) : []).map((raw, i) => ({ list, at: `${list}[${i}]`, raw, id: idOf(raw), text: factText(raw) })));
 
-// The message template contract.spec v7 records in factEntry's $comment.
+// The message template contract.spec v13 records in factEntry's $comment.
 const fail = (at: string, reason: string) => `facts are not decomposed: ${at}: ${reason}`;
-const NO_ID = 'no id — give it one';
+const NO_ID = {
+  string: 'no id — write it as an object with an "id" key and a "text" key, e.g. {"id": "gate.names-only", "text": "..."} — a Label: text string has no id',
+  object: 'no id — add an "id" key, lowercase dotted or dashed, e.g. "gate.names-only"',
+};
 const reasons = {
   over: (n: number) => `over ${FACT_LIMIT} — the text is ${n} characters, so split it into one fact per entry`,
   bad: (id: string) => `bad id — '${id}' is not lowercase dotted or dashed, so rename it`,
@@ -32,9 +35,9 @@ const reasons = {
 };
 
 function shapeOf(e: Entry, needId: boolean): string[] {
-  if (typeof e.raw === 'string') return !e.raw ? [`intent.${e.at} must be a non-empty string or an {id, text} fact`] : needId ? [fail(e.at, NO_ID)] : [];
+  if (typeof e.raw === 'string') return !e.raw ? [`intent.${e.at} must be a non-empty string or an {id, text} fact`] : needId ? [fail(e.at, NO_ID.string)] : [];
   if (!isObj(e.raw)) return [`intent.${e.at} must be a non-empty string or an {id, text} fact`];
-  const out = e.id === undefined ? [fail(e.at, NO_ID)] : FACT_ID.test(e.id) ? [] : [fail(e.at, reasons.bad(e.id))];
+  const out = e.id === undefined ? [fail(e.at, NO_ID.object)] : FACT_ID.test(e.id) ? [] : [fail(e.at, reasons.bad(e.id))];
   if (typeof e.raw.text !== 'string' || !e.raw.text) out.push(`intent.${e.at}.text must be a non-empty string`);
   else if (points(e.raw.text) > FACT_LIMIT) out.push(fail(e.at, reasons.over(points(e.raw.text))));
   return out;
@@ -69,7 +72,7 @@ function touched(now: Entry[], was: Entry[]): Touched {
     const b = was.find((x) => !used.has(x) && x.list === e.list && x.text === e.text);
     if (b) used.add(b);
     if (!b && e.id !== undefined) t.required.set(e.id, e.at);
-    else if (!b) t.out.push(...(typeof e.raw === 'string' ? [fail(e.at, NO_ID)] : []));
+    else if (!b) t.out.push(...(typeof e.raw === 'string' ? [fail(e.at, NO_ID.string)] : []));
     else if (b.id !== undefined && e.id !== b.id) t.out.push(fail(e.at, reasons.renamed(b.id)));
     else if (b.id === undefined && e.id !== undefined) t.optional.add(e.id);
   }
@@ -78,7 +81,7 @@ function touched(now: Entry[], was: Entry[]): Touched {
   return t;
 }
 
-/** The facts_decomposed gate against the approved spec; with none, every entry must be an id'd fact. Messages follow the v7 template. */
+/** The facts_decomposed gate against the approved spec; with none, every entry must be an id'd fact. Messages follow the v13 template. */
 export function factProblems(spec: { intent?: Partial<Intent>; changes?: Change[] }, approved?: { intent?: Partial<Intent> }): string[] {
   const shape = factShapeProblems(spec.intent, !approved);
   if (!approved) return shape;
