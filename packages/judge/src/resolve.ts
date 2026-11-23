@@ -259,9 +259,9 @@ export async function answerItems(api: ToolExecutionApi, s: Settings, items: Ite
   for (const a of asked.filter((x) => sure(x.p, x.check))) await done(a, { met: a.p! >= act, resolver: s.ref!.modelId });
   // An unreachable decision model leaves its items undecided for the round to ask again, instead of loading the judge model.
   const stalled = probabilities === undefined ? asked.filter((x) => x.check.decisionModel !== false) : [];
-  for (const a of stalled) await done(a, { met: null, resolver: 'none', note: 'the decision model was unreachable' });
+  for (const a of stalled) await done(a, { met: null, resolver: 'none' });
   s.hold?.heard(asked);
-  const unsure = asked.filter((x) => !sure(x.p, x.check) && !stalled.includes(x));
+  const unsure = probabilities === undefined ? asked.filter((x) => x.check.decisionModel === false) : asked.filter((x) => !sure(x.p, x.check));
   // Count each escalated answer before releasing the slot, so the next waiter's need() sees a deciding pass.
   const go = (a: Pending) => (need(a.unit, a.check) ? s.escalations(async () => done(a, need(a.unit, a.check) ? await escalate(api, s, a.unit, a.check, ctx) : undefined)) : done(a, undefined));
   // A held item takes no escalation slot while it waits.

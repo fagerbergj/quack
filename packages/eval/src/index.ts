@@ -4,6 +4,7 @@ export { asJudged, readSession, type SessionRecord } from './record.ts';
 export { candidateAt, replay, type Candidate, type EvalService, type EvalServices, type ItemInput, type ReplayResult } from './replay.ts';
 export { publish, scoresOf, summarize, type Blocks } from './report.ts';
 export { adaptersOf, adapterScores, blocksOf, servicesOf } from './adapters.ts';
+export { countsOf } from './escalation-report.ts';
 export { armAt, budget, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from './judge-replay.ts';
 export { drive, driveTool, stopChild, untilSettled, type Answered, type Invocation, type Policy, type Settled, type Verdict } from './driver.ts';
 export { eachArm, eachItem, type Failure } from './pool.ts';

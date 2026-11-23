@@ -11,8 +11,7 @@ import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, faux
 import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
 import type { Declaration, Rubric } from '@quack/judge';
 import type { EvalAdapter } from '@quack/sdk';
-import { countsOf } from '../src/escalation-report.ts';
-import { armAt, budget, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
+import { armAt, budget, countsOf, loadArm, packagesTar, replayJudge, table, type Arm, type Case, type Row } from '../src/index.ts';
 
 const rubric: Rubric = {
   name: 'acme', version: 1, threshold: 0.5,
@@ -122,6 +121,15 @@ test('arms that differ only in decision model: the decision-model arm answers fr
   assert.match(out[5], /^- base: requests 1 \(j 1\); items decision model 0, escalated 1, reused 0;/);
   assert.match(out[6], /^- clef: requests 1 \(clef 1\); items decision model 1, escalated 0, reused 0;/, 'a decision-model request counts under its model');
   assert.equal(out[10], '- a helpful: base 1; clef 0');
+  assert.deepEqual(result.rows.map((r) => [r.rubric, r.criterion, r.declared]), [['acme@1', 'c', undefined], ['acme@1', 'c', undefined]], 'rows name their rubric and criterion, so same-named checks stay apart');
+});
+
+test('a row marks a check declared off the decision model', async () => {
+  const off = adapter('Is it helpful?');
+  const decl = off.judge!.declaration as Declaration;
+  const skip = { ...off, judge: { ...off.judge!, declaration: { ...decl, checks: { ...decl.checks, helpful: { ...decl.checks.helpful, decisionModel: false as const } } } } };
+  const result = await replayJudge({ cases: [cases[0]], arms: [{ label: 'base', adapters: [skip] }], repeat: 1, concurrency: 1, models: judgeModels([true]), judgeModel });
+  assert.deepEqual(result.rows.map((r) => [r.check, r.declared]), [['helpful', true]]);
 });
 
 test('an adapter that cannot rebuild a case declines it with its reason, and the other cases are still judged', async () => {
@@ -265,15 +273,18 @@ test('watch skips checks an arm lacks (erroring only if no arm has them) and tab
   await assert.rejects(replayJudge({ cases: [{ ...cases[0], checks: ['missing'] }], arms: pair, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /no check missing/);
 });
 
-test('the budget rates each key escalated over asked, highest first, marks those over 10% UNHEALTHY and skips keys nothing was asked of', () => {
-  const { lines, unhealthy } = budget([{ key: 'a x', clef: 9, esc: 1 }, { key: 'b y', clef: 5, esc: 0 }, { key: 'b y', clef: 3, esc: 2 }, { key: 'code', clef: 0, esc: 0 }]);
-  assert.deepEqual(lines, ['UNHEALTHY  20% 2/10 b y', 'ok         10% 1/10 a x']);
+test('the budget rates each key escalated over asked, highest first, fails only asked keys over 10% and lists declared and Clef-less keys apart', () => {
+  const { lines, unhealthy } = budget([
+    { key: 'a x', clef: 9, esc: 1 }, { key: 'b y', clef: 5, esc: 0 }, { key: 'b y', clef: 3, esc: 2 }, { key: 'code', clef: 0, esc: 0 },
+    { key: 'd skip', clef: 0, esc: 4, declared: true }, { key: 'n none', clef: 0, esc: 3 },
+  ]);
+  assert.deepEqual(lines, ['declared  100% 4/4 d skip', 'no-clef   100% 3/3 n none', 'UNHEALTHY  20% 2/10 b y', 'ok         10% 1/10 a x']);
   assert.equal(unhealthy, 1);
 });
 
 test('an export report counts each verdict check by rubric, the decision model\'s items apart from escalated ones and code, from the given time', () => {
   const check = (id: string, resolvers: Record<string, number>) => ({ criterion: 'c', id, label: id, weight: 1, met: true, units: 1, resolvers, notes: [] });
   const verdict = { passed: true, limitReached: false, score: 1, gatesFailed: [], rubric: 'acme@2', undecided: [], checks: [check('why', { clef: 3, 'qwen3.8-27b': 1, code: 2 }), check('how', { 'agent-model': 2 })] };
-  const exports = [{ artifacts: [{ sealedAt: 5, verdict }, { sealedAt: 1, verdict }, { sealedAt: 9, verdict: null }] }];
+  const exports = [{ artifacts: [{ sealedAt: 5, verdict }, { sealedAt: 1, verdict }, { sealedAt: 9, verdict: null }, { sealedAt: 9, verdict: {} as never }] }];
   assert.deepEqual(countsOf(exports, 'clef', 2), [{ key: 'acme@2 c.why', clef: 3, esc: 1 }, { key: 'acme@2 c.how', clef: 0, esc: 2 }]);
 });

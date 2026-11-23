@@ -69,8 +69,9 @@ A `:reuse` arm's batch, one session's drafts in version order against one store,
 
 `--rows` appends each case's rows to a JSON-lines file as the case finishes, so a stopped run keeps what it judged, and `replay-judge.ts --table rows.jsonl` prints the table from such a file.
 
-`--budget`, on a run or with `--table`, prints each arm's checks by escalation rate, escalated / (`clef` + `esc`), after the table, marks any check over 10% `UNHEALTHY`, and then exits non-zero.
-`node packages/eval/src/escalation-report.ts <dir> [--decision-model clef] [--since <epoch ms>]` prints the same rates per `rubric@version` and check from the prod verdicts in a directory of `quack export` files.
+`--budget`, on a run or with `--table`, prints each arm's checks (by rubric and criterion) by escalation rate, escalated / (`clef` + `esc`), after the table, marks any check over 10% `UNHEALTHY`, and then exits non-zero.
+A check declared `decisionModel: false` is marked `declared`, and one the decision model settled nothing for (a `:none` arm) `no-clef`; neither fails the command.
+`node packages/eval/src/escalation-report.ts <dir> [--decision-model clef] [--since <epoch ms>]` prints the same rates per `rubric@version` and check from the prod verdicts in a directory of `quack export` files, skipping files that are not exports, and fails when it finds no verdict; an export carries no declaration, so a declared check shows as `no-clef`.
 
 A row is one check of one case under one arm: `met`, its place (`pos`, 1 first), the items the decision model settled (`clef`), the items escalated (`esc`) and the items reused from an earlier draft (`reused`), and the case's judge milliseconds (`ms`) and model requests by model id (`requests`).
 

@@ -59,7 +59,8 @@ export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'reju
   return { adapters: adaptersOf(await loadManifests(specs)), rejudge: engine.rejudge };
 }
 /** One check of one job: `pos` is the arm's place in its case's order that repeat (1 first); `clef`, `esc` and `reused` count settled items; `ms` and `requests` (by model id) are the job's. */
-export type Row = { arm: string; rep: number; pos: number; case: string; check: string; met: number | null; clef: number; esc: number; reused: number; ms: number; requests: Record<string, number>; notes: string[] };
+/** `rubric` (name@version), `criterion` and `declared` (the check never asks the decision model) are absent in rows written before they were recorded. */
+export type Row = { arm: string; rep: number; pos: number; case: string; rubric?: string; criterion?: string; check: string; declared?: true; met: number | null; clef: number; esc: number; reused: number; ms: number; requests: Record<string, number>; notes: string[] };
 /** A case an arm could not judge, with what its recording lacks. */
 export type Declined = { arm: string; case: string; reason: string };
 export type Replayed = { rows: Row[]; declined: Declined[]; seed?: number };
@@ -143,7 +144,7 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const ms = Date.now() - t;
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
   const at = { arm: j.arm, rep: j.rep, pos: j.pos, case: j.c.case, ms, requests };
-  return v.checks.map((k) => ({ ...at, check: k.id, met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), reused: Object.keys(k.reused ?? {}).length, notes: k.notes }));
+  return v.checks.map((k) => ({ ...at, rubric: v.rubric, criterion: k.criterion, check: k.id, ...(j.judged.declaration.checks[k.id]?.decisionModel === false && { declared: true as const }), met: typeof k.met === 'boolean' ? Number(k.met) : k.met, clef: j.decisionModel ? k.resolvers[j.decisionModel.modelId] ?? 0 : 0, esc: escalated(k.resolvers, j.decisionModel?.modelId), reused: Object.keys(k.reused ?? {}).length, notes: k.notes }));
 }
 
 // mulberry32: a small seeded generator, so a seed replays the arm order exactly.
@@ -286,16 +287,21 @@ function disagreements(rows: Row[], arms: string[], keys: string[]): string[] {
 /** The share of a check's asked items it may escalate before it reads as unhealthy. */
 const ESCALATION_BUDGET = 0.1;
 
-/** Per key, escalated / (decision model + escalated), highest first, each over the budget marked UNHEALTHY; keys nothing was asked of are left out. */
-export function budget(counts: Array<{ key: string; clef: number; esc: number }>): { lines: string[]; unhealthy: number } {
-  const by = new Map<string, { clef: number; esc: number }>();
+type Count = { key: string; clef: number; esc: number; declared?: boolean };
+
+// A key the decision model settled nothing for (a declared check, a `:none` arm) cannot move by fixing the check, so it is listed apart and never fails.
+const markOf = (r: Count & { rate: number }) => (r.declared ? 'declared ' : !r.clef ? 'no-clef  ' : r.rate > ESCALATION_BUDGET ? 'UNHEALTHY' : 'ok       ');
+
+/** Per key, escalated / (decision model + escalated), highest first; asked keys over the budget are UNHEALTHY, and keys nothing was asked of are left out. */
+export function budget(counts: Count[]): { lines: string[]; unhealthy: number } {
+  const by = new Map<string, Count>();
   for (const c of counts) {
-    const t = by.get(c.key) ?? { clef: 0, esc: 0 };
-    by.set(c.key, { clef: t.clef + c.clef, esc: t.esc + c.esc });
+    const t = by.get(c.key) ?? { key: c.key, clef: 0, esc: 0 };
+    by.set(c.key, { key: c.key, clef: t.clef + c.clef, esc: t.esc + c.esc, declared: t.declared || c.declared });
   }
-  const rated = [...by].filter(([, t]) => t.clef + t.esc).map(([key, t]) => ({ key, ...t, rate: t.esc / (t.clef + t.esc) })).sort((a, b) => b.rate - a.rate || a.key.localeCompare(b.key));
-  const lines = rated.map((r) => `${r.rate > ESCALATION_BUDGET ? 'UNHEALTHY' : 'ok       '} ${`${Math.round(r.rate * 100)}%`.padStart(4)} ${r.esc}/${r.clef + r.esc} ${r.key}`);
-  return { lines, unhealthy: rated.filter((r) => r.rate > ESCALATION_BUDGET).length };
+  const rated = [...by.values()].filter((t) => t.clef + t.esc).map((t) => ({ ...t, rate: t.esc / (t.clef + t.esc) })).sort((a, b) => b.rate - a.rate || a.key.localeCompare(b.key));
+  const lines = rated.map((r) => `${markOf(r)} ${`${Math.round(r.rate * 100)}%`.padStart(4)} ${r.esc}/${r.clef + r.esc} ${r.key}`);
+  return { lines, unhealthy: lines.filter((l) => l.startsWith('UNHEALTHY')).length };
 }
 
 /** The replay table: per case and check, met per repeat and counts per arm; `reportChecks` filters displayed rows while keeping full-round per-arm timing and counts. */
