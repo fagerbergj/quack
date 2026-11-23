@@ -101,6 +101,9 @@ test('a review with one of two findings contradicted by its citation scores no h
   const after = score(reviewerRubric, base(0.5));
   assert.equal(before.passed, false);
   assert.ok(after.score <= before.score + 1e-9 && !after.passed, `${after.score} against ${before.score}`);
+  // A citation that fails to show the claim without contradicting it cost only the weight-3 share at v13; the owner chose to charge it the pitfall too (2026-11-23).
+  const weak = score(v13, [...base(0.5), result('claims_grounded', 'contradicted', -4, 0)]);
+  assert.ok(weak.passed && !after.passed, `${weak.score} at v13, ${after.score} now`);
 });
 
 test('each finding is an item with its cited code, sorted by label, all sharing the CI result; the description splits at its headings', async () => {

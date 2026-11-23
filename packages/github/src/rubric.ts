@@ -30,7 +30,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 }
 
 // v0's five code-reviewer criteria, kept to checks that caught a real fault in a prod review; reviewDeclaration says how each
-// model check is asked. `miss: 4` on matches_cited_code keeps the -4 the contradicted check carried in v13. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
+// model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
   version: 14,
