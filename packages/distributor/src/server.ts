@@ -466,7 +466,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const ownRoute = async (req: IncomingMessage, res: ServerResponse, who: Principal | undefined) =>
     (!!who && (await api?.(req, res, callerOf(who)))) || (await listing(req, res)) || (await agentRoutes(req, res, who)) || (await opts.routes?.(req, res)) || (await serveWeb(opts.webDir, req, res));
 
-  async function route(req: IncomingMessage, res: ServerResponse, who: Principal | undefined) {
+  // `service` forwards no principal: an app's in-process call is a service's to the session.
+  async function route(req: IncomingMessage, res: ServerResponse, who: Principal | undefined, service = false) {
     try {
       if (await ownRoute(req, res, who)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return sendProblem(res, 404, 'not found');
@@ -477,7 +478,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
       if (req.method === 'GET' && path === '/export') return await exportRoute(key, agent, res);
       await withSession(key, agent, `${req.method} ${path}`, async (url) => {
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-        await forward(url + path + search, req.method ?? 'GET', body, res, upstream(key, who));
+        await forward(url + path + search, req.method ?? 'GET', body, res, upstream(key, service ? undefined : who));
       });
     } catch (err) {
       sendProblem(res, errorStatus(err), err instanceof Error ? err.message : String(err));
@@ -511,7 +512,9 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   });
   const sessions = sessionListener(route, opts.sessions, api);
   server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); if (sessions.listening) sessions.close(); });
-  return Object.assign(server, { drain, sweep: () => maintain(sweepOnce), sessions });
+  /** The entry the in-process apps call: the tailnet's reach on the distributor's own routes, and no principal toward a session. */
+  const serveApp = (req: IncomingMessage, res: ServerResponse) => void route(req, res, { kind: 'tailnet' }, true);
+  return Object.assign(server, { drain, sweep: () => maintain(sweepOnce), sessions, serveApp });
 }
 
 /** The only listener a session's environment names: every request needs a current launch credential, identity headers count for nothing, and the credential reaches only what sessionRefusal allows. */

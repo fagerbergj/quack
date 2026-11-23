@@ -44,7 +44,7 @@ const pinnedDefinition = (key: string) => readFile(pinnedAgentPath(dataDir, key)
 const granted = async (key: string) => declaredApps(await pinnedDefinition(key), manifests);
 const stream = appStream(granted);
 // The extensions the deployment file lists run in this process, under /apps/<name>/*; their calls back here, and to each other, are in-process.
-const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.emit('request', req, res), stream });
+const mounted = await mountApps(deployment, manifests, { distributorUrl: 'http://distributor.local', distributor: (req, res) => server.serveApp(req, res), stream });
 const apps = appsGateway(mounted, broker.sessionOf, granted);
 // VAPID keys are made on first boot under the data dir; QUACK_VAPID_PUBLIC_KEY, QUACK_VAPID_PRIVATE_KEY and QUACK_VAPID_SUBJECT override them.
 const push = openNotifications({
