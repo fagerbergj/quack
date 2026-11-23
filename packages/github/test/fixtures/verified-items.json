@@ -41,7 +41,7 @@
  },
  {
   "item": "2232-v1 item-1",
-  "backed": false,
+  "backed": true,
   "text": "Read the full diff against `origin/main`, and the surrounding judge/contracts/eval source (declaration.ts, fold.ts, library.ts, resolve.ts, index.ts, rubric.ts, contracts rubric.ts/index.ts/manifest.ts, eval adapters.ts/judge-replay.ts, sdk manifest.ts)."
  },
  {
@@ -176,7 +176,7 @@
  },
  {
   "item": "2216-v1 item-6",
-  "backed": false,
+  "backed": true,
   "text": "The head-route, 410-linked-issue, and idempotent-post tests all pass at the head; the fake-service retry model in fixtures.ts mirrors the service's delivery-mark lookup."
  },
  {
@@ -251,7 +251,7 @@
  },
  {
   "item": "2211-v1 item-1",
-  "backed": false,
+  "backed": true,
   "text": "Read the full diff against origin/v1 (109 files): every deleted doc matches the description (docs/history, docs/design/judging.md, docs/v1 prd/srs/decisions/rfc/extensions/audits/proposals/mockups); the trimmed `docs/v1/README.md` and `docs/v1/cli.md` keep the evidence sections and drop planning prose; the two log-string ID drops are at v1/packages/session/src/definition.ts (maxTurns) and v1/packages/eval/src/main.ts (promotion note)."
  },
  {
