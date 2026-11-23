@@ -273,6 +273,16 @@ test('the review kind reads its outcome from the verdict, as the review is poste
   assert.equal(reviewKind.outcome?.('# Review\nfine\n'), undefined);
 });
 
+test('an excerpt is sent once when the full path a finding cites and the short path it mentions resolve to the same file', async () => {
+  const full = 'packages/github/src/review.ts';
+  const exec = async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o.onOutput?.(`${full}\n`), { ok: true, value: { exitCode: 0 } });
+  const readTextFile = async (p: string) => (p === `repo/${full}` ? { ok: true, value: 'a\nb\nc\nd\ne\n' } : { ok: false });
+  const api = { conversationId: 'c', snapshot: async () => undefined, env: { exec, readTextFile } };
+  const content = `## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- nit: ${full}:5 — same line as review.ts:5\n`;
+  const built = await buildEvidence(reviewDeclaration, await reviewInputs()(api as never, { content } as never, {} as never));
+  assert.deepEqual(built.evidence.citation.map((u) => (u.state.excerpt as { cite: string }).cite), [`${full}:5`]);
+});
+
 test('a Verified item names its source when it shows a command, file:line, CI check, commit or URL; an absence claim needs its search', async () => {
   // The 77 Verified items of the replay set (14 recorded reviews and a re-review), each label checked by hand; a bare
   // "ran"/"read" names no source for code, so those items are asked of Clef.
@@ -284,11 +294,9 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual([...ran, ...read].map((t) => namedSources(t) > 0), [true, true, true, false, true, false, false], 'a command line or the code read counts; a statement, a bare claim or an unsearched absence does not');
   const loose = ['the retry model in fixtures.ts mirrors the service.'];
   assert.deepEqual(loose.map((t) => namedSources(t) > 0), [true], 'a file without a line counts');
-  assert.deepEqual(['Ran the targeted suites: 46/46 pass.', 'Read the full 62-file diff.', 'Nobody ran the tests for this path.'].map((t) => namedSources(t) > 0), [false, false, false], 'a bare verb names no source, so Clef reads it, negation included');
+  assert.deepEqual(['Ran the targeted suites: 46/46 pass.', 'Read the full 62-file diff.', 'Nobody ran the tests for this path.', 'I have not read the diff, only the summary.', 'did not read the vendored files'].map((t) => namedSources(t) > 0), [false, false, false, false, false], 'a bare verb names no source, so Clef reads it, negation included');
   // #2470 v2 Verified item 9 claimed a result and named nothing; the judge flagged it, and it is still asked.
   assert.equal(namedSources('Quote pairing itself is sound: on a line with two quoted phrases both read as mentions, and a real claim after a closed quote on the same line is still checked.'), 0);
-  const undone = ['Nobody ran the tests for this path.', 'I have not read the diff, only the summary.', 'did not read the vendored files'];
-  assert.deepEqual(undone.map((t) => namedSources(t) > 0), [false, false, false], 'a negated verb is no source');
   const checks = ['build', 'e2e'];
   assert.deepEqual(['`e2e` passed on this head.', 'build=success.', 'The build passed.'].map((t) => namedSources(t, checks) > 0), [true, true, false], "the PR's own checks count when cited, not as bare words");
   const absent = ['Nothing imports `legacy` any more.', 'No callers of `x` are left.', '`rg legacy` finds nothing; no imports remain.', 'Searched the tree: nothing references `x`.'];
