@@ -116,7 +116,13 @@ test('every model check is declared; a pitfall is asked as the defect and costs 
   }
   assert.ok(checks.some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
-  assert.equal(possible, 24);
+  assert.equal(possible, 20);
+});
+
+test('checks that cost escalations and flagged nothing worth a point are gone, and the threshold keeps the slack their points gave', () => {
+  const ids = reviewerRubric.criteria.flatMap((c) => c.checks).map((k) => k.id);
+  for (const id of ['answerable', 'no_reason_given', 'contradicted', 'says_why']) assert.ok(!ids.includes(id) && !(id in reviewDeclaration.checks), id);
+  assert.deepEqual([reviewerRubric.version, reviewerRubric.threshold], [14, 0.74]);
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {

@@ -38,8 +38,9 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks; reviewDeclaration says how each model check is asked.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 10,
-  threshold: 0.8,
+  version: 14,
+  // A review with findings weighs 12 to 17 points; 0.74 lets it fall 3.1 to 4.4 short, the slack 0.8 gave over 4 more points every review earned.
+  threshold: 0.74,
   criteria: [
     { id: 'catches_real_issues', checks: [
       { id: 'approval_grounded', label: 'Approves without saying why it is safe', weight: 3 },
@@ -51,13 +52,9 @@ export const reviewerRubric: Rubric = {
       { id: 'matches_cited_code', label: "Cited code doesn't show the claim", weight: 3 },
       { id: 'shows_how', label: "Blocking issue doesn't show how it fails", weight: 2 },
       { id: 'verified_names_evidence', label: 'Says verified without saying what was run', weight: 2 },
-      { id: 'contradicted', label: 'Cited code contradicts the finding', weight: -4 },
     ] },
     { id: 'constructive_actionable', checks: [
-      { id: 'says_why', label: "Doesn't say why a finding matters", weight: 3 },
       { id: 'shows_proposed_change', label: 'Proposes a change without showing the code', weight: 2 },
-      { id: 'answerable', label: 'Finding is too vague to act on', weight: 1 },
-      { id: 'no_reason_given', label: "Says it's wrong with no reason", weight: -2 },
     ] },
     { id: 'severity_grounded', checks: [
       { id: 'blocking_names_anchor', label: 'Blocking issue names no concrete cause', weight: 'gate', code: blockingNamesAnchor },
@@ -154,13 +151,7 @@ export const reviewDeclaration: Declaration = {
     shows_how: { scope: 'blocking', aggregate: SHARE, question: yes('Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?') },
     // Clef reads a loosely named source (a file without a line, a described search) as none, so the judge model answers.
     verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, decisionModel: false, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
-    // Clef answers this without tracing the cited code, so it goes to the judge model.
-    contradicted: { scope: 'finding', aggregate: SHARE, decisionModel: false, question: defect('Does the cited code contradict this finding?') },
-    // Clef answers this without weighing the consequence a finding states, so it goes to the judge model.
-    says_why: { scope: 'finding', aggregate: SHARE, decisionModel: false, question: yes('Does this finding say why it matters: the risk, the principle or the benefit, not only that something is wrong?') },
     shows_proposed_change: { scope: 'finding', aggregate: SHARE, question: yes('If this finding proposes a specific code change, does it show the whole change in a fenced block with a language tag, or in inline backticks when it fits on one line (or does it propose no specific change)?') },
-    answerable: { scope: 'finding', aggregate: SHARE, question: yes('Could the author act on or answer this finding without guessing what is meant?') },
-    no_reason_given: { scope: 'finding', aggregate: SHARE, question: defect('Does this finding only assert that something is wrong, with no reason at all?') },
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
     preference_only: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding rest only on preference, so the author could decline it at no objective cost?') },
     blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?') },
