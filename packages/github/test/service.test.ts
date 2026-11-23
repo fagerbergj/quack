@@ -1138,6 +1138,14 @@ test('a repeat of a posted requestId answers 200 even when its commitId is stale
   }
 });
 
+test('a commitId naming a pull request that cannot be read is a 404 problem, and nothing posts', async () => {
+  const before = reviewPosts();
+  const gone = await postTo({ target: 'acme/widgets/29', commitId: STALE, event: 'APPROVE', body: '## Verdict\napprove' });
+  problemShape(gone.body, 404);
+  assert.equal(gone.body.detail, 'no such pull request');
+  assert.equal(reviewPosts(), before, 'GitHub got no review');
+});
+
 test("GitHub's own 409 on the post passes through as a plain problem with no liveHead", async () => {
   const refused = await postTo({ target: 'acme/widgets/28', commitId: 'abc1230000000000000000000000000000000000', event: 'COMMENT', body: 'x' });
   assert.equal(refused.status, 409, 'the commitId is the live head, so the guard lets it through to GitHub');
