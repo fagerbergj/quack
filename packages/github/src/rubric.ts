@@ -71,13 +71,13 @@ const findings = (where?: 'truthy' | 'falsy'): Scope => ({
   context: { ci: { name: 'json', from: 'facts', pointer: '/ci' } },
 });
 
-// A PR description splits at its own ## and ### headings, its opening first: each part makes its own promises. A part whose
-// heading is a short label for verification ("Tests", "Smoke test (…)", "Evidence") lists what was run and promises nothing.
-const VERIFYING = /^(?:[\w-]+\s+){0,2}?(?:verif\w*|validat\w*|tests?|testing|checks?|checked|checklist|evidence|commands?|proof|qa)\s*(?:\(.*\))?$/i;
-function descriptionParts(inputs: Inputs, o: SplitDecl): Chunk[] {
-  const parts = [o.from].flat().flatMap((name) => inputs[name].split(/^(?=#{2,3} )/m));
-  return parts.map((text) => ({ id: /^#{2,3} (.+)/.exec(text)?.[1].trim() ?? 'opening', text: text.trim() })).filter((c) => c.text && !(c.id !== 'opening' && VERIFYING.test(c.id)));
-}
+// A section that reports what was run, measured or left out ("Tests", "QA rig", "Replays", "Not in this PR") promises
+// nothing, nor does a sentence that opens that way or whose main clause says a thing is unchanged; a ### goes with its ##.
+const REPORTING = /^\**(?:[\w-]+\s+){0,2}?(?:verif\w*|validat\w*|tests?|testing|checks?|checked|checklist|evidence|commands?|proof|qa|replays?|measured|numbers|rulings?)\b|^\**not\b/i;
+const UNCHANGED = /\b(?:unchanged|untouched|not changed|identical|alone)\b/i;
+const promising = (section: string) => !REPORTING.test(/^#{2,3} (.+)/.exec(section)?.[1] ?? '');
+const promiseParts = (inputs: Inputs, o: SplitDecl) => [o.from].flat().flatMap((name) => inputs[name].split(/^(?=## )/m)).filter(promising)
+  .flatMap((s) => s.split(/^(?=### )/m)).filter(promising);
 
 // A part's sentences outside code blocks, tables, headings and the generated-by footer.
 const FENCED = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$/gm;
@@ -87,10 +87,11 @@ const sentencesOf = (part: string) => part.replace(FENCED, '').split('\n').map((
 
 // What a diff can show: a backticked token without spaces, or a file path (one with a slash, or a source file's name).
 const PATH = /(?:[\w.@-]+\/)+[\w@-]+\.[a-z][a-z0-9]{1,4}\b|\b[\w-]+\.(?:ts|tsx|js|mjs|json|md|ya?ml|go|py|sh|sql|css|html)\b/g;
+// A path outside the repo (a home or /tmp file, a URL) is no name: no diff shows it.
 const namesOf = (s: string) => [...new Set([
   ...[...s.matchAll(/`([^`\s]{2,80})`/g)].map((m) => m[1].replace(/(?:\(\)|:\d+(?:-\d+)?)$/, '')),
   ...(s.replace(/`[^`]*`|https?:\/\/\S+/g, ' ').match(PATH) ?? []),
-])];
+])].filter((n) => !/^(?:~|\/tmp\/|https?:)/.test(n));
 
 type Hunk = { file: string; text: string };
 const hunksOf = (diff: string): Hunk[] => diff.split(/^(?=diff --git )/m).flatMap((f) => {
@@ -112,13 +113,14 @@ function hunkText(names: string[], hunks: Hunk[]): string {
   return text || (found.length ? `${found[0].file}\n${found[0].text}`.slice(0, HUNK_BUDGET / 2) : '');
 }
 
-/** One item per description sentence that names code or a file, with the hunks containing those names. A sentence that names
- *  nothing makes no item, nor does one whose names a blocking finding repeats, since the review reported it. */
+/** One item per promising description sentence that names code or a file, with the hunks containing those names. A sentence
+ *  that names nothing makes no item, nor does one whose names a blocking finding repeats, since the review reported it. */
 function promiseItems(inputs: Inputs, o: SplitDecl): Chunk[] {
   const hunks = hunksOf(inputs.diff);
   const blocking = (JSON.parse(inputs.findings) as Array<{ blocking: boolean; text: string }>).filter((f) => f.blocking).map((f) => f.text).join('\n');
   const files = [...new Set(hunks.map((h) => h.file))].join(', ').slice(0, 1000);
-  return descriptionParts(inputs, o).flatMap((p) => sentencesOf(p.text)).flatMap((sentence, n) => {
+  return promiseParts(inputs, o).flatMap(sentencesOf).flatMap((sentence, n) => {
+    if (REPORTING.test(sentence) || UNCHANGED.test(sentence.split(/;|, so /)[0])) return [];
     const names = namesOf(sentence);
     if (!names.length || names.some((x) => blocking.includes(x))) return [];
     const diff = hunkText(names, hunks) || `no hunk contains ${names.map((x) => `\`${x}\``).join(' or ')}; the diff changes ${files || 'nothing'}`;

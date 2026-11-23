@@ -152,6 +152,13 @@ test('promises_handled asks only sentences that name code or a file, each with t
   assert.deepEqual(reported.map((u) => u.id), ['promise s2', 'promise s5'], 'a promise a blocking finding names was reported, so it is not asked');
 });
 
+test('promises_handled asks nothing of a sentence that reports a run, says a named thing is unchanged, or names only paths outside the repo', async () => {
+  // Pass-only, each of these went to the judge model in the #2528 replay: Clef said no, since no diff shows them.
+  const body = 'Adds a `--verbose` flag; `colour` is unchanged.\n\nThe `colour` output is unchanged.\n\nSeeding `seedArtifacts` alone works.\n\nTests: `flag.test.ts` covers `--verbose`.\n\nRan against `~/lab/cases.json` and `/tmp/out.json`.\n\n## QA rig\nThe `cli-flags` scenario passes.\n\n## Replays\n### `verbose` on 3 cases\n`verbose` matched base.\n\n## Not in this PR\n`--quiet` waits for #12.';
+  const units = await promiseUnits(body, PROMISE_DIFF);
+  assert.deepEqual(units.map((u) => promiseOf(u).sentence), ['Adds a `--verbose` flag; `colour` is unchanged.'], 'an unchanged clause after the main one keeps the sentence');
+});
+
 const P2422 = JSON.parse(readFileSync(new URL('./fixtures/promises-2422-v1.json', import.meta.url), 'utf8')) as { description: string; diff: string };
 
 test('#2422 v1: the promised `contract.guaranteeChunks` splitter the diff lacks is an item that says no hunk contains it', async () => {
@@ -160,7 +167,7 @@ test('#2422 v1: the promised `contract.guaranteeChunks` splitter the diff lacks 
   const miss = units.find((u) => promiseOf(u).sentence.includes('`contract.guaranteeChunks`'));
   assert.ok(miss, 'the sentence makes an item');
   assert.match(promiseOf(miss).diff, /^no hunk contains `contract\.guaranteeChunks`; the diff changes packages\/contracts\/src\/rubric\.ts/);
-  assert.equal(units.length, 32, 'only the sentences that name code or a file are asked');
+  assert.equal(units.length, 12, 'only the sentences that name code or a file outside the replay, ruling and not-covered sections are asked');
   assert.equal(reviewDeclaration.checks.promises_handled.decisionModel, PASS_ONLY, 'Clef cannot fail it, so it reaches the judge model');
 });
 
