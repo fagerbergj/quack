@@ -257,7 +257,10 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   }
 
   async function sweepOnce() {
-    for (const key of driver.running()) {
+    const running = driver.running();
+    // A process that exited without stopSession leaves its entry; a rerun of the key must not inherit it.
+    for (const key of waits.keys()) if (!running.includes(key)) waits.delete(key);
+    for (const key of running) {
       try {
         const { status, wake, waitingOnHuman, waiting } = await ping(key);
         if (waiting) waits.set(key, waiting);
@@ -269,7 +272,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
         if (status !== 'Healthy' || !idle(key)) continue;
         await stopSession(key, wake?.at);
       } catch {
-        // a session that cannot answer /ping is left for the next sweep
+        // A session that cannot answer /ping is left for the next sweep, and its stale wait is not shown meanwhile.
+        waits.delete(key);
       }
     }
     rewakeLost();
