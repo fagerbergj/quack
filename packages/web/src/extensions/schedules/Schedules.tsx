@@ -17,11 +17,11 @@ const ICON_BTN = 'relative grid h-11 w-11 flex-none cursor-pointer place-items-c
 const ITEM = 'flex min-h-11 w-full cursor-pointer items-center border-0 bg-transparent px-3 text-left text-[14px] no-underline hover:bg-soft focus-visible:bg-soft focus-visible:outline-none';
 
 // The common cron shapes in words: `short` goes on screen, `full` (with the time and zone) in the tooltip; anything else shows its expression there.
-function cadence(cron: string, zone = 'UTC'): { short: string; full: string } {
+function cadence(cron: string, zone = 'UTC'): { short: string; full: string; named: boolean } {
   const [m = '', h = '', dom, mon, dow = ''] = cron.split(/\s+/);
   const daily = /^\d+$/.test(m) && /^\d+$/.test(h) && dom === '*' && mon === '*';
   const short = !daily ? undefined : dow === '*' ? 'Every day' : dow === '1-5' ? 'Weekdays' : /^\d$/.test(dow) ? `Every ${DAYS[+dow % 7]}` : undefined;
-  return short ? { short, full: `${short} at ${h}:${m.padStart(2, '0')} ${zone}` } : { short: 'Repeats', full: `${cron} (${zone})` };
+  return short ? { short, full: `${short} at ${h}:${m.padStart(2, '0')} ${zone}`, named: true } : { short: 'Repeats', full: `${cron} (${zone})`, named: false };
 }
 
 // A key with {time} opens a new session per run, so there is no single one to link or name.
@@ -74,16 +74,22 @@ function RowMenu({ title, href, remove }: { title: string; href?: string; remove
   );
 }
 
+// A shape with no words has only its expression, and a tooltip needs a hover, so on touch its one word opens the expression in place.
+function Reveal({ short, full }: { short: string; full: string }) {
+  const [open, setOpen] = useState(false);
+  return <button type="button" aria-hidden="true" tabIndex={-1} onClick={() => setOpen(!open)} className="relative z-10 cursor-pointer border-0 bg-transparent p-0 text-inherit [font:inherit]">{open ? full : short}</button>;
+}
+
 function Detail({ s }: { s: ScheduleItem }) {
   const who = sessionOf(s) ? s.agent : 'New session each run';
   // One set time is the default and says nothing; several say how many are coming.
   if (!s.cron) return <span className="text-[12.5px] text-muted">{(s.times?.length ?? 0) > 1 ? `${who} · ${s.times!.length} set times` : who}</span>;
-  const { short, full } = cadence(s.cron, s.tz);
+  const { short, full, named } = cadence(s.cron, s.tz);
   return (
     <span className="truncate text-[12.5px] text-muted">
       {who} · <span title={full} className="text-accent-ink">
         <svg width="12" height="12" className="mr-1 inline align-[-1px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={REPEAT} /></svg>
-        <span aria-hidden="true">{short}</span><span className="sr-only">{full}</span>
+        {named ? <span aria-hidden="true">{short}</span> : <Reveal short={short} full={full} />}<span className="sr-only">{full}</span>
       </span>
       {s.lastRun && <span> · last ran {WHEN.format(new Date(s.lastRun))}</span>}
     </span>
@@ -155,7 +161,8 @@ function useUndoDelete(items: ScheduleItem[] | undefined, reload: () => void, se
     const carried = takeLost();
     if (carried) setError(carried);
     const flush = () => ((leaving.current = true), settle(true));
-    const back = () => void (leaving.current = false);
+    // A page restored from the back-forward cache has shown the failure live, so its carry is spent.
+    const back = () => void ((leaving.current = false), (lost = undefined));
     addEventListener('pagehide', flush);
     addEventListener('pageshow', back);
     return () => {

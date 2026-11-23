@@ -264,3 +264,28 @@ test('a schedule the list shows again after its delete is a row again', async ()
   vi.useRealTimers();
   expect(await screen.findByRole('link', { name: 'daily' })).toBeInTheDocument();
 });
+
+test('a failure the page showed before a back-forward cache restore is not named again on the next visit', async () => {
+  server([s('weekly')], () => new Response('{"error":"db down"}', { status: 503 }));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  deleteVia('weekly');
+  dispatchEvent(new Event('pagehide'));
+  await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('db down'));
+  dispatchEvent(new Event('pageshow'));
+  view.unmount();
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('a cron shape with no words opens its expression on a tap, since a tooltip needs a hover', async () => {
+  server([s('odd', { cron: '*/15 * * * *', times: undefined })]);
+  render(<Schedules rows={undefined} />);
+  const row = (await screen.findByRole('link', { name: 'odd' })).closest('li')!;
+  const word = within(row).getByText('Repeats');
+  expect(word.tagName).toBe('BUTTON');
+  fireEvent.click(word);
+  expect(word).toHaveTextContent('*/15 * * * * (UTC)');
+  expect(location.hash).not.toBe('#/s/odd');
+});
