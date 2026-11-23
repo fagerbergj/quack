@@ -360,6 +360,22 @@ test('while a judge round rides the session\'s lease, a parallel call that is no
   assert.deepEqual([round.map((c) => c.granted), child.granted], [firstOnly, false], 'the lease goes to the round, not the queued call');
 });
 
+test('a bare end() ends the call in flight, not a ride still waiting its turn, which then runs and frees the lease', async () => {
+  fresh(1);
+  const g = gate('s');
+  await g.begin('swap');
+  const waiting = ride(g);
+  await clock.settle();
+  g.end();
+  await clock.settle();
+  assert.equal(waiting.granted, true, 'the bare end took the call in flight');
+  g.end();
+  await clock.settle();
+  const later = ride(g);
+  await clock.settle();
+  assert.equal(later.granted, true, 'the lease is free again, not wedged by an untracked ride');
+});
+
 test('a shared call begun while a child\'s non-shared call is in flight on the lease runs only after that call ends', async () => {
   fresh(2);
   const g = gate('s');
@@ -476,7 +492,7 @@ test('a non-judge call ending mid-round leaves the lease the round rides held un
   await clock.advance(1000);
   g.end(await round[0]);
   g.end(await child);
-  assert.deepEqual(heldBy().sort(), ['s', 's#1'], 'the second ride took its turn under s#1');
+  assert.deepEqual(heldBy().sort(), ['s', 's#1'], 'the second ride took s back as the first ended; s#1 is the child\'s');
   g.end(await round[1]);
   await clock.settle();
   assert.deepEqual(heldBy(), ['s']);
@@ -554,13 +570,22 @@ test('a completion inside inSessionSlot reaches the gate as shared, and one outs
   assert.deepEqual(seen.slice(-2), [false, true]);
 });
 
-test('a shared call riding the run\'s held lease never reports a wait; a call queued for its own lease does', async () => {
+test('a shared call riding a free held lease reports no wait; one waiting its turn does until the turn comes; a call queued for its own lease does', async () => {
   fresh(2);
   const g = gate('s');
   g.end(await g.begin('swap'));
   const shared = await g.begin('swap', undefined, true);
   assert.equal(notes.s ?? null, null, 'riding takes no lease of its own, so nothing queues');
+  const [next, last] = [ride(g), ride(g)];
+  await clock.advance(10);
+  assert.deepEqual(notes.s, { since: clock.now() - 10, ahead: 0, provider: 'swap' }, 'the oldest ride waiting its turn, first in line');
   g.end(shared);
+  await clock.settle();
+  assert.deepEqual(notes.s, { since: clock.now() - 10, ahead: 0, provider: 'swap' }, 'the last ride moved up to first in line');
+  g.end(next.call);
+  await clock.settle();
+  assert.equal(notes.s, null);
+  g.end(last.call);
   // Capacity 2 is full with s, busy again, and a second holder, so the run's next own call queues and reports.
   await g.begin('swap');
   await gate('o').begin('swap');

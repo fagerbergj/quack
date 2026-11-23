@@ -61,7 +61,8 @@ export class CapacityGate {
   #releasing = Promise.resolve();
   #downUntil = 0;
   #warned = false;
-  #queued = new Map<Held, ModelWait>();
+  // Keyed by a lease queued at the service, or by a ride waiting its turn on a held lease.
+  #queued = new Map<object, ModelWait>();
 
   constructor(options: GateOptions) {
     this.#o = { pollMs: 1000, downMs: 30_000, log: console.error, setWait: () => {}, ...options, clock: options.clock ?? realClock };
@@ -85,9 +86,9 @@ export class CapacityGate {
     return call;
   }
 
-  /** A model response ended. Without `call`, the newest open one ends. */
+  /** A model response ended. Without `call`, the newest open one that holds a lease ends, so a ride still waiting its turn is never taken for it. */
   end(call?: GatedCall): void {
-    const done = call ?? [...this.#calls].at(-1);
+    const done = call ?? [...this.#calls].findLast((c) => c.lease) ?? [...this.#calls].at(-1);
     if (!done || !this.#calls.delete(done) || !done.lease) return;
     const lease = done.lease;
     if (done.ride) lease.rides = 0;
@@ -141,11 +142,19 @@ export class CapacityGate {
     if (free(lease)) return Object.assign(lease, { rides: 1 });
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
-      const stop = () => (lease.riders.splice(lease.riders.indexOf(go), 1), reject(signal!.reason));
-      const go = () => (signal?.removeEventListener('abort', stop), resolve(this.#leases.includes(lease) ? lease : undefined));
+      const leave = () => (this.#queued.delete(go), this.#listRiders(lease));
+      const stop = () => (lease.riders.splice(lease.riders.indexOf(go), 1), leave(), reject(signal!.reason));
+      const go = () => (signal?.removeEventListener('abort', stop), leave(), resolve(this.#leases.includes(lease) ? lease : undefined));
       lease.riders.push(go);
+      this.#listRiders(lease);
       signal?.addEventListener('abort', stop, { once: true });
     });
+  }
+
+  // A ride waiting its turn reports as a call queued at the service does: since it began, and the rides ahead of it.
+  #listRiders(lease: Held) {
+    lease.riders.forEach((go, ahead) => this.#queued.set(go, { since: this.#queued.get(go)?.since ?? this.#o.clock.now(), ahead, provider: lease.endpoint }));
+    this.#publish();
   }
 
   // A call's end hands the lease straight to the next queued rider, so a non-shared call never finds it free in between.

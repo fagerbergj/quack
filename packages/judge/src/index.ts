@@ -209,7 +209,8 @@ function holds(byKey: Map<string, Plan>): Hold & { expect: (items: Item[]) => vo
   return { expect, heard, ready: (u, c) => groups.get(of(u, c))?.promise };
 }
 
-// Decision-model requests and escalations each go one at a time, as the session's slot carries one call; a queued escalation rechecks need() when its turn comes.
+// Escalations go one at a time, as the session's slot carries one call, so a queued one rechecks need() when its turn comes.
+// Decision-model requests are not gated by the slot; they keep their own limit of one.
 async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, built: BuiltEvidence, memo: string, ctx: Context, code: CheckResult[], reuse?: Reuse, report?: Report): Promise<CheckResult[]> {
   const plans = planChecks(opts.rubric, opts.declaration, built);
   const byKey = new Map(plans.map((p) => [p.key, p]));
