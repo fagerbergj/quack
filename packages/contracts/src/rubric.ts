@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
+import { PASS_ONLY, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
 import { Approvals, Artifacts, type Approval, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
@@ -64,8 +64,8 @@ const termsOf = (s: string) => new Set([...(s.toLowerCase().match(termRe) ?? [])
 // A guarantee's group key: its fact id, or for a grandfathered string its first words and a hash of its text, which an insert does not move.
 const guaranteeKey = (e: Entry) => e.label ?? `${e.text.split(/\s+/).slice(0, 6).join(' ')} #${createHash('sha256').update(e.text).digest('hex').slice(0, 6)}`;
 
-/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. `text` is what it is ranked by. */
-type Part = { id: string; name?: string; text: string; evidence: unknown; root?: true };
+/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. `stems` are what it is ranked by, computed once per split. */
+type Part = { id: string; name?: string; stems: Set<string>; evidence: unknown; root?: true };
 
 // "loader" meets "load" and "checked" meets "check".
 const stemsOf = (s: string) => new Set([...termsOf(s)].map((t) => t.replace(/(?<=[a-z0-9]{4})(?:ing|ers?|ed)$/, '')));
@@ -89,7 +89,7 @@ function namedIn(text: string, p: Part): boolean {
 // and none clear the bar), and the root, whose spec-wide rules (additionalProperties, security, scope) any may hold in.
 function partsFor(text: string, parts: Part[], top: number, minShared: number): Part[] {
   const terms = stemsOf(text);
-  const scored = parts.map((p, i) => ({ p, i, named: namedIn(text, p), s: [...stemsOf(p.text)].filter((t) => terms.has(t)).length }));
+  const scored = parts.map((p, i) => ({ p, i, named: namedIn(text, p), s: [...p.stems].filter((t) => terms.has(t)).length }));
   const named = scored.filter((x) => x.named || x.p.root);
   const rest = scored.filter((x) => !named.includes(x)).sort((a, b) => b.s - a.s || a.i - b.i);
   const kept = rest.filter((x) => x.s >= minShared);
@@ -102,10 +102,10 @@ function partsFor(text: string, parts: Part[], top: number, minShared: number): 
 function partsOf(spec: Pick<ContractSpec, 'document' | 'choices'>, kind: ContractSpec['kind']): Part[] {
   const defs = kinds[kind].definitions(spec.document).filter((d) => /[\p{L}\p{N}]/u.test(textOf(d)));
   // A choice ranks by its decision alone: its whys quote the guide, and a quote many choices share would outrank the definitions.
-  const choices = (spec.choices ?? []).map((c): Part => ({ id: `choice ${c.id}`, text: c.decision, evidence: { decision: c.decision, why: c.why.map((w) => w.text) } }));
+  const choices = (spec.choices ?? []).map((c): Part => ({ id: `choice ${c.id}`, stems: stemsOf(c.decision), evidence: { decision: c.decision, why: c.why.map((w) => w.text) } }));
   // The root is paired with every guarantee, so its examples, which make nothing hold, stay out of it.
   const shown = (d: Definition) => (d.rest && typeof d.definition === 'object' && d.definition !== null ? { ...d.definition, examples: undefined } : d.definition);
-  return [...defs.map((d): Part => ({ id: d.id, name: d.name, text: textOf(d), evidence: shown(d), ...(d.rest && { root: true as const }) })), ...choices];
+  return [...defs.map((d): Part => ({ id: d.id, name: d.name, stems: stemsOf(textOf(d)), evidence: shown(d), ...(d.rest && { root: true as const }) })), ...choices];
 }
 
 // One item per (guarantee, part) pair, grouped by the guarantee, which is the pairs' shared context: the decision model reads one part
@@ -148,12 +148,13 @@ export const contractDeclaration: Declaration = {
     guarantee: { split: { name: 'contract.guaranteePairs', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'part' },
   },
   checks: {
-    // A guarantee holds when any part defines it, and the spec when every guarantee does. Once one part holds, the guarantee's other
-    // pairs are not escalated; a guarantee no part holds fails with a note code writes, so no judge-model reason is needed.
+    // A guarantee holds when any part defines it, and the spec when every guarantee does. Clef only passes a pair, so a guarantee
+    // fails only on the judge model's answers, with its reason; once one pair holds, the guarantee's others are not escalated.
     meets_intent: {
       scope: 'guarantee',
-      aggregate: { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'no part of the spec defines a mechanism for it' },
-      question: yesNo('Does this part of the spec define a mechanism for the guarantee: a field, type, operation, header, status code or schema rule that makes it hold, or a behaviour its own text states?'),
+      decisionModel: PASS_ONLY,
+      aggregate: { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'none of the {n} parts checked against this guarantee defines a mechanism for it' },
+      question: yesNo('Does this part of the spec define a mechanism for the guarantee: a field, type, operation, header, status code or schema rule that makes it hold, or a behaviour the part\'s own text states?'),
     },
   },
 };
@@ -213,7 +214,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 15,
+  version: 16,
   // meets_intent is the one scored check and folds to a boolean, so the score is 0 or 1: any threshold above 0 means it must hold.
   threshold: 1,
   criteria: [

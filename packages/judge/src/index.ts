@@ -99,15 +99,18 @@ const whyOf = (p: Plan, u: Unit) => {
 };
 const noteOf = (p: Plan, u: Unit) => (u.whole ? whyOf(p, u) : `${u.id}: ${whyOf(p, u)}`);
 
-// One note per failing group: the fold's own `none`, else its first failing item and why; the failing groups' keys are the marks.
+// One note per failing group: its first failing item with a reason and why, else the fold's own `none`; the failing groups' keys are the marks.
 function groupedFinal(p: Plan, r: CheckResult): CheckResult {
   const keys = p.units.map((u) => p.groupOf![u.id]);
   const tris = trisOf(p);
   const groups = groupsOf(p);
   const failing = [...groups].filter(([, t]) => t === false).map(([k]) => k);
   r.notes = failing.map((k) => {
-    if (p.aggregate.none) return `${k}: ${p.aggregate.none}`;
-    const u = p.units[keys.findIndex((g, i) => g === k && tris[i] === false)];
+    const failed = p.units.filter((u, i) => keys[i] === k && tris[i] === false);
+    const reasoned = failed.find((u) => p.answers.get(u.id)?.note);
+    // A judge model's reason says what is missing; the code note stands in only where no failing item gave one.
+    if (p.aggregate.none && !reasoned) return `${k}: ${p.aggregate.none.replace('{n}', String(failed.length))}`;
+    const u = reasoned ?? failed[0];
     return `${k}: ${u.id}: ${whyOf(p, u)}`;
   });
   if (groups.size) r.groups = groups.size;

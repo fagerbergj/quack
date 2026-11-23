@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { decisionModelTokens, type Unit } from '@quack/judge';
+import { decisionModelTokens, PASS_ONLY, type Unit } from '@quack/judge';
 import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 import { builtOf, judged } from './judging.ts';
@@ -102,11 +102,15 @@ test('one part holding passes its guarantee and the rest of its pairs are not es
   assert.ok(res.requests.length > 0 && res.requests.length <= 2, 'one packed decision-model request per guarantee');
 });
 
-test('a guarantee no part defines fails with a note code writes; the judge model is not asked', async (t) => {
+test("Clef's no fails nothing: the guarantee's pairs go to the judge model, and its no and reason are the note", async (t) => {
   const s = spec();
-  const res = await judged(t, s, ['meets_intent'], (q) => (q.includes('(guarantee read-only ~') ? 'no' : holdsIn(ROOT)(q)));
-  const check = res.check('meets_intent');
-  assert.deepEqual([check.met, check.notes, check.marks, check.resolvers.j], [false, ['read-only: no part of the spec defines a mechanism for it'], ['read-only'], undefined]);
+  const pick = (q: string) => (q.includes('(guarantee read-only ~') ? 'no' : holdsIn(ROOT)(q));
+  const failed = (await judged(t, s, ['meets_intent'], pick, { choice: 'no', reason: 'Nothing here marks the schedule read-only.' })).check('meets_intent');
+  const pairs = (await builtOf(s)).evidence.guarantee.filter((u) => u.id.startsWith('guarantee read-only ~ ')).length;
+  assert.deepEqual([failed.met, failed.marks, failed.resolvers.j], [false, ['read-only'], pairs], 'every pair of the failing guarantee, and none of the one Clef passed');
+  assert.match(failed.notes[0], /^read-only: guarantee read-only ~ .+: Nothing here marks the schedule read-only\.$/);
+  const held = (await judged(t, s, ['meets_intent'], pick, { choice: 'yes', reason: 'GET is the only method.' })).check('meets_intent');
+  assert.deepEqual([held.met, held.resolvers.j > 0], [true, true], "the judge model's yes on a pair Clef said no to holds the guarantee");
 });
 
 test('a grandfathered string guarantee keeps its key when another is inserted, and one over the fact limit is split by sentence', async () => {
@@ -141,9 +145,9 @@ test('every pair of the fixture specs fits the decision model', async () => {
 test('meets_intent is the one scored check, asked of the decision model, and a spec passes only when every guarantee holds', () => {
   const checks = contractRubric.criteria.flatMap((c) => c.checks);
   assert.deepEqual(checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]), [['meets_intent', 1]]);
-  assert.deepEqual(Object.values(contractDeclaration.checks).filter((c) => c.decisionModel !== undefined), [], 'no check skips the decision model');
-  assert.deepEqual(contractDeclaration.checks.meets_intent.aggregate, { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'no part of the spec defines a mechanism for it' });
-  assert.deepEqual([contractRubric.version, contractRubric.threshold], [15, 1]);
+  assert.deepEqual(Object.values(contractDeclaration.checks).map((c) => c.decisionModel), [PASS_ONLY], 'the decision model passes pairs; only the judge model fails one');
+  assert.deepEqual(contractDeclaration.checks.meets_intent.aggregate, { name: 'grouped', groupBy: 'key', inner: 'any', outer: 'all', pass: ['yes'], none: 'none of the {n} parts checked against this guarantee defines a mechanism for it' });
+  assert.deepEqual([contractRubric.version, contractRubric.threshold], [16, 1]);
 });
 
 test('with no guarantees, meets_intent has no items and counts toward neither side', async (t) => {

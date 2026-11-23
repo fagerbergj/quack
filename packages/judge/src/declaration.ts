@@ -73,7 +73,7 @@ export type AggregateDecl = {
   inner?: 'any' | 'all';
   /** `grouped` only, required: the fold over the groups' three-valued results. */
   outer?: 'share' | 'all' | 'any';
-  /** `grouped` with `inner: 'any'` only: a failing group's note, written by code, since every item in it failed. */
+  /** `grouped` with `inner: 'any'` only: a failing group's note when no failing item gave a reason; `{n}` is how many items it had. */
   none?: string;
   pass?: string[];
 };

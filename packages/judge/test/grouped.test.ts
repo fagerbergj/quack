@@ -61,9 +61,15 @@ test("a failing group's note names the group once, with the reason of its first 
   assert.deepEqual((await round(api, opts, 2)).checks[0].notes, ['C: rows c1f: flagged by clef (no reason given); re-verify it against the cited source before rewording it (judged on v1)']);
 });
 
-test("an inner any fold with `none` notes a failing group in code's words, with no item's reason", async () => {
-  const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all', { none: 'no row delivers it' })), abc));
-  assert.deepEqual([v.checks[0].met, v.checks[0].notes, v.checks[0].marks], [false, ['C: no row delivers it'], ['C']]);
+test("an inner any fold with `none` notes a group no item gave a reason for in code's words, counting its items", async () => {
+  const v = await round(sessionApi(clef, () => said('no')).api, optsOf(declOf(grouped('any', 'all', { none: 'none of its {n} rows delivers it' })), abc));
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes, v.checks[0].marks], [false, ['C: none of its 2 rows delivers it'], ['C']]);
+});
+
+test("a failing group's escalated item keeps the judge model's reason over `none`", async () => {
+  // Clef is unsure of both items of C, so both escalate and the judge model's reason is the note.
+  const v = await round(sessionApi(clef, () => said('no', 'nothing here delivers C')).api, optsOf(declOf(grouped('any', 'all', { none: 'none of its {n} rows delivers it' })), [['a1t', 'A'], ['c1u', 'C'], ['c2u', 'C']]));
+  assert.deepEqual([v.checks[0].met, v.checks[0].notes], [false, ['C: rows c1u: nothing here delivers C']]);
 });
 
 test('a group of one item takes that item\'s answer, and a group whose every item dropped is no group at all', async () => {
