@@ -1,24 +1,21 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { isAbsolute, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { registerSelector, registerSplitter, type Chunk, type CodeResult, type Declaration, type Evidence, type Inputs, type Question as Asked, type SplitDecl, type Rubric } from '@quack/judge';
-import { Approvals, Artifacts, Questions, type Approval, type Question, type RecordedSession, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, type Approval, type RecordedSession, type SealedArtifact } from '@quack/sdk';
 import { approvedSpec } from './approval.ts';
 import type { Definition } from './definitions.ts';
 import { kinds } from './kinds.ts';
-import type { Finding } from './rest-rules.ts';
 import { exportsOf } from './typescript-rules.ts';
 import { safeClaims, unnamedBreaks } from './breaks.ts';
-import { FACT_LIMIT, factProblems, type Fact } from './facts.ts';
-import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent, type Why } from './spec.ts';
+import { FACT_LIMIT, type Fact } from './facts.ts';
+import { CONTRACT_KIND, parseSpec, type ContractSpec, type Intent } from './spec.ts';
 
 const slug = (heading: string) => heading.trim().toLowerCase();
 /** Each guide rule's text by its anchor (a ### heading), up to the next heading. */
 export const guideRules = (skill: string) => new Map([...skill.matchAll(/^###\s+(.+)\n([\s\S]*?)(?=^##|(?![\s\S]))/gm)].map((m) => [slug(m[1]), m[2].trim()]));
 export const guideAnchors = (skill: string) => new Set(guideRules(skill).keys());
-const anchorOf = (ref: string) => ref.replace(/^(rest|json-schema|typescript)#|^#/, '');
 
 // A JSON pointer resolves when every segment names a key or index on the way down.
 function pointerResolves(doc: unknown, pointer: string): boolean {
@@ -34,79 +31,14 @@ function pointerResolves(doc: unknown, pointer: string): boolean {
   return true;
 }
 
-type Reader = (path: string) => Promise<string | undefined>;
+// A choice's pointer names the part of the document it decides; one into nothing decides nothing. Its whys are the writer's own account.
+const strayPointers = (spec: ContractSpec) => spec.choices.filter((c) => !pointerResolves(spec.document, c.pointer)).map((c) => `${c.id}: pointer \`${c.pointer}\` is not in the document`);
 
-// A misplaced ref has a clone or packages/ prefix too many or too few; dropping more could match an unrelated src/index.ts.
-const MAX_DROPPED = 2;
-
-// Where the file a wrong ref means is: its trailing segments at the workspace root or under a directory one or two levels down.
-async function locate(read: Reader, roots: string[], path: string): Promise<string | undefined> {
-  const parts = path.split('/').filter((p) => p && p !== '.' && p !== '..');
-  for (let drop = 0; drop <= Math.min(MAX_DROPPED, parts.length - 2); drop++) {
-    for (const root of ['', ...roots]) {
-      const at = [root, ...parts.slice(drop)].filter(Boolean).join('/');
-      if (at !== path && (await read(at)) !== undefined) return at;
-    }
-  }
-  return undefined;
-}
-
-const CLONE = 'git clone --depth 1 -b <branch> <url> repo';
-// The exact ref to write, taken from where the file is, else from the session's own clone directory.
-async function missingFile(read: Reader, roots: string[], path: string, line: string): Promise<string> {
-  const clone = roots[0];
-  if (isAbsolute(path)) return `is an absolute path; refs are paths from the workspace root, as "${clone ?? 'repo'}/<path in the clone>:${line}"`;
-  const at = await locate(read, roots, path);
-  // app/ was the session image's own tree, which refs carried from older versions still cite; only the workspace resolves now.
-  if (path.startsWith('app/')) return `cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "${at ?? `${clone ?? 'repo'}/${path.slice(4)}`}:${line}"${clone ? '' : `, once the repository is cloned into repo/ (${CLONE})`}`;
-  if (at) return `names no file in the workspace; the file is at ${at}, so cite it as "${at}:${line}"`;
-  if (!clone) return `names no file in the workspace, which holds no clone: clone the repository into repo/ (${CLONE}) and cite a file at ${path} in it as "repo/${path}:${line}"`;
-  const rel = path.startsWith(`${clone}/`) ? path.slice(clone.length + 1) : path;
-  return `names no file in the workspace. Refs are paths from the workspace root and your clone is ${clone}/, so a file at ${rel} in the clone is cited as "${clone}/${rel}:${line}"; read the clone to find where the file is`;
-}
-
-// Why a code ref fails, or undefined when it resolves.
-async function codeRefProblem(read: Reader | undefined, roots: string[], ref: string): Promise<string | undefined> {
-  const m = /^(.+?):(\d+)$/.exec(ref);
-  if (!m || !read) return 'is not path:line';
-  const text = await read(m[1]);
-  if (text === undefined) return missingFile(read, roots, m[1], m[2]);
-  const lines = text.split('\n').length;
-  return Number(m[2]) >= 1 && Number(m[2]) <= lines ? undefined : `is past the end of ${m[1]} (${lines} lines)`;
-}
-
-// A guide ref names any ## or ### heading, matched without case and with a dash read as a space, as agents write anchors.
-const headingKey = (s: string) => s.trim().toLowerCase().replace(/[\s-]+/g, ' ');
-const guideHeadings = (skill: string) => [...skill.matchAll(/^#{2,3}\s+(.+)$/gm)].map((m) => m[1].trim());
-
-async function whyProblem(w: Why, headings: string[], answered: Set<string>, world: World): Promise<string | undefined> {
-  const ref = anchorOf(w.ref);
-  // An answer's ref is the question as asked or its ask_question id; "request" is the person's first description, which is not a question.
-  if (w.source === 'answer') return ref === 'request' || answered.has(w.ref) ? undefined : 'does not resolve';
-  if (w.source === 'guide') return headings.some((h) => headingKey(h) === headingKey(ref)) ? undefined : `does not resolve; the guide's headings are ${headings.map((h) => `"${h}"`).join(', ')}`;
-  return codeRefProblem(world.read, world.roots, w.ref);
-}
-
-async function unresolvedLinks(spec: ContractSpec, skill: string, answered: Set<string>, world: World): Promise<string[]> {
-  const headings = guideHeadings(skill);
-  const out: string[] = [];
-  for (const c of spec.choices) {
-    // A JSON pointer's ~1 escapes read as strikethrough in Markdown, so the note quotes it as code.
-    if (!pointerResolves(spec.document, c.pointer)) out.push(`${c.id}: pointer \`${c.pointer}\` is not in the document`);
-    for (const w of c.why) {
-      const problem = await whyProblem(w, headings, answered, world);
-      if (problem) out.push(`${c.id}: ${w.source} ref "${w.ref}" ${problem}`);
-    }
-  }
-  return out;
-}
-
-type SpecState = { findings: Finding[]; unresolved: string[]; undecomposed?: string[]; breaking: Array<{ id: string; text: string; operation?: string; path?: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
+type SpecState = { unresolved: string[]; breaking: Array<{ id: string; text: string; operation?: string; path?: string }>; expected: number; version: number; compatibility?: ContractSpec['compatibility']; baseline?: ContractSpec['baseline']; approved?: number };
 const state = (ev: Evidence) => ev.facts[0].state.facts as unknown as SpecState;
 
-/** What the judge reads beside the spec: the session's artifacts and approvals, the questions answered, its workspace's files, and the
- * directories a ref's file may sit under, the clone first. */
-type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval>; answered: Set<string>; read: Reader | undefined; roots: string[] };
+/** What the judge reads beside the spec: the session's artifacts and approvals. */
+type World = { kinds: Record<string, { versions: SealedArtifact[] }>; approvals: Record<string, Approval> };
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentions = (name: string) => new RegExp(`(?<![\\w$])${escRe(name)}(?![\\w$])`);
@@ -191,13 +123,9 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   // Breaks are against the approved spec only: a rejected draft is not a baseline, and shipped code has no earlier spec to diff.
   const base = approvedSpec(w.kinds, w.approvals, sealed.version);
   const prev = base && (parseSpec(base.content) as ContractSpec);
-  const [findings, unresolved, breaking] = await Promise.all([
-    kind.check(spec.document),
-    unresolvedLinks(spec, kind.skill, w.answered, w),
-    prev ? kind.diff(prev.document, spec.document) : [],
-  ]);
+  const breaking = prev ? await kind.diff(prev.document, spec.document) : [];
   const { intent, choices, document, version, compatibility, baseline } = spec;
-  const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), breaking: breaking.map(({ id, text, operation, path }) => ({ id, text, operation, path })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
+  const facts = { unresolved: strayPointers(spec), breaking: breaking.map(({ id, text, operation, path }) => ({ id, text, operation, path })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
   return {
     facts: JSON.stringify(facts),
     spec: JSON.stringify({ intent, choices, document }),
@@ -220,63 +148,27 @@ export const contractDeclaration: Declaration = {
   },
 };
 
-// A question's record is keyed "<task>:<ask_question id>", so an answer can be cited by its text or its id.
-const answeredIn = (items: Record<string, Question>, by = Infinity) =>
-  new Set(Object.entries(items).filter(([, q]) => q.answer && q.answer.at <= by).flatMap(([key, q]) => [q.question, key.slice(key.indexOf(':') + 1)]));
-
-/** What the checks read: the mechanical findings, the links that do not resolve, the breaking changes since the previous version, and the spec. */
+/** What the checks read: the pointers that do not resolve, the breaking changes since the approved version, and the spec. */
 export function specInputs() {
   return async (api: ToolExecutionApi, sealed: SealedArtifact, ctx: Context): Promise<Inputs> => {
     return inputsIn(sealed, {
       kinds: (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds ?? {},
       approvals: (await api.snapshot(Approvals, api.conversationId, ctx))?.items ?? {},
-      answered: answeredIn((await api.snapshot(Questions, api.conversationId, ctx))?.items ?? {}),
-      ...(api.env ? await workspaceOf(api.env, ctx) : { read: undefined, roots: [] }),
     });
   };
 }
 
-const within = (root: string, path: string) => { const rel = relative(root, path); return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
-
-// Reads only inside the workspace, as a recording's reader does: an absolute path, a .. or a symlink out of it names no file there.
-async function workspaceOf(env: NonNullable<ToolExecutionApi['env']>, ctx: Context): Promise<Pick<World, 'read' | 'roots'>> {
-  const root = await env.canonicalPath(env.cwd, ctx);
-  const read = async (path: string) => {
-    if (isAbsolute(path)) return undefined;
-    const real = await env.canonicalPath(path, ctx);
-    if (!root.ok || !real.ok || !within(root.value, real.value)) return undefined;
-    const r = await env.readTextFile(real.value, ctx);
-    return r.ok ? r.value : undefined;
-  };
-  const entries = async (path: string) => { const listed = await env.listDir(path, ctx); return listed.ok ? listed.value : []; };
-  const dirs = async (path: string) => (await entries(path)).filter((f) => f.kind === 'directory' && !f.name.startsWith('.')).map((f) => f.name).sort();
-  // A clone is a git repository at the root, never a stray __pycache__ or artifacts/; its subdirectories (repo/packages) are where a ref may have lost a level.
-  const top = await dirs('.');
-  const isRepo = await Promise.all(top.map(async (d) => (await entries(d)).some((f) => f.name === '.git')));
-  const clones = top.filter((_, i) => isRepo[i]);
-  const inner = await Promise.all(clones.map(async (c) => (await dirs(c)).map((d) => `${c}/${d}`)));
-  return { read, roots: [...clones, ...inner.flat()] };
-}
-
-/** The same inputs from a recording, as the session stood when the spec was sealed: later versions, approvals and answers did not exist yet. */
+/** The same inputs from a recording, as the session stood when the spec was sealed: later versions and approvals did not exist yet. */
 export async function recordedSpecInputs(session: RecordedSession, content: string): Promise<Inputs> {
   const sealed = session.artifacts[CONTRACT_KIND]?.findLast((v) => v.content === content);
   if (!sealed) throw new Error('the spec is not a version this session sealed, so what stood when it was judged is unknown');
-  if (!session.readFile) throw new Error('the recording keeps no workspace to resolve code refs in');
   const kinds = Object.fromEntries(Object.entries(session.artifacts).map(([k, vs]) => [k, { versions: vs.filter((v) => v.sealedAt <= sealed.sealedAt) }]));
   const all = (session.docs['quack.approvals']?.items ?? {}) as unknown as Record<string, Approval>;
   const approvals = Object.fromEntries(Object.entries(all).filter(([, a]) => !a.verdict || a.verdict.at <= sealed.sealedAt));
-  const questions = (session.docs['quack.questions']?.items ?? {}) as unknown as Record<string, Question>;
-  // shortcut: a recording reads files but cannot list them, so its clone is taken to be repo/ as the prompt says; list it if replays need others.
-  return inputsIn(sealed, { kinds, approvals, answered: answeredIn(questions, sealed.sealedAt), read: session.readFile, roots: ['repo', 'repo/packages'] });
+  return inputsIn(sealed, { kinds, approvals });
 }
 
 const list = (items: string[]) => items.slice(0, 6).join('; ');
-
-function documentSound(_a: string, ev: Evidence): CodeResult {
-  const { findings } = state(ev);
-  return { met: findings.length ? 0 : 1, detail: findings.length ? `the document breaks the guide: ${list(findings.map((f) => `${f.message} (${f.path})`))}` : undefined };
-}
 
 function versionMatches(_a: string, ev: Evidence): CodeResult {
   const { version, expected } = state(ev);
@@ -291,14 +183,9 @@ function baselineMatches(_a: string, ev: Evidence): CodeResult {
   return { met: 0, detail: `baseline is ${baseline}, but no version of this contract is approved: set it to "shipped" if the surface is already in use, else leave baseline, changes and compatibility out` };
 }
 
-function factsDecomposed(_a: string, ev: Evidence): CodeResult {
-  const { undecomposed = [] } = state(ev);
-  return { met: undecomposed.length ? 0 : 1, detail: undecomposed.length ? `${list(undecomposed)}.` : undefined };
-}
-
-function linksResolve(_a: string, ev: Evidence): CodeResult {
+function pointersResolve(_a: string, ev: Evidence): CodeResult {
   const { unresolved } = state(ev);
-  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Cite an answered question by its ask_question id or its text exactly as asked, a guide heading, or an existing path:line.` : undefined };
+  return { met: unresolved.length ? 0 : 1, detail: unresolved.length ? `${list(unresolved)}. Point each choice at the part of the document it decides.` : undefined };
 }
 
 // Break by break: an entry must name each place the kind's diff found, and a safe note that names an unnamed one is reported with it.
@@ -321,13 +208,11 @@ export const contractRubric: Rubric = {
   threshold: 1,
   criteria: [
     { id: 'sound', checks: [
-      { id: 'document_clean', label: 'The document breaks a guide rule', weight: 'gate', code: documentSound },
       { id: 'version_matches', label: 'The version number is wrong', weight: 'gate', code: versionMatches },
       { id: 'baseline_matches', label: 'The baseline is not the approved version', weight: 'gate', code: baselineMatches },
-      { id: 'facts_decomposed', label: 'A guarantee or non-goal is not one checkable fact', weight: 'gate', code: factsDecomposed },
     ] },
     { id: 'justified', checks: [
-      { id: 'links_resolve', label: "A choice's link doesn't resolve", weight: 'gate', code: linksResolve },
+      { id: 'pointers_resolve', label: "A choice's pointer isn't in the document", weight: 'gate', code: pointersResolve },
     ] },
     { id: 'compatible', checks: [
       { id: 'breaking_named', label: 'A breaking change names no caller', weight: 'gate', code: breakingNamed },

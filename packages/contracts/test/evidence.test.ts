@@ -1,23 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { test, type TestContext } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { test } from 'node:test';
 import ts from 'typescript';
-import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { replayJudge } from '@quack/eval';
 import { buildEvidence, type Evidence } from '@quack/judge';
 import type { RecordedSession } from '@quack/sdk';
-import { contractDeclaration, kinds, manifest, recordedSpecInputs, specInputs, type ContractSpec } from '../src/index.ts';
+import { contractDeclaration, kinds, manifest, recordedSpecInputs, type ContractSpec } from '../src/index.ts';
 import { fakeClef } from './clef.ts';
 import { scheduleSpecV1 } from './fixtures.ts';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 // Approved contracts as they were sealed: two whole specs, and two documents whose specs are not kept here.
 const fixture = (name: string) => readFileSync(new URL(`fixtures-specs/${name}`, import.meta.url), 'utf8');
@@ -67,95 +59,13 @@ test('typescript: one definition per declaration with its TSDoc, and together wi
   assert.match(money, /^\/\*\*[\s\S]*export type Money = /, 'the TSDoc goes with its declaration');
 });
 
-test('an answer is cited by the question as asked or by its ask_question id, once answered before the seal', async () => {
-  const asked = 'Keep the existing unversioned route, or add /v1?';
-  const answered = (at: number) => ({ question: asked, options: [], evidence: null, askedAt: 1, answer: { choice: 'Keep it', by: 'jf', at }, closed: false });
-  const unresolved = async (ref: string, at: number) => {
-    const docs = { 'quack.questions': { items: { '7:versioning': answered(at) } } } as never;
-    const { facts } = await inputsOf(scheduleSpecV1({ versioning: ref, time: 'request' }), { docs });
-    return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => / answer ref /.test(u));
-  };
-  assert.deepEqual(await unresolved(asked, 5), []);
-  assert.deepEqual(await unresolved('versioning', 5), []);
-  assert.deepEqual(await unresolved('versioning', 11), ['versioning: answer ref "versioning" does not resolve'], 'answered after the seal');
-  assert.deepEqual(await unresolved('7', 5), ['versioning: answer ref "7" does not resolve'], 'the task part of the key is not an id');
-});
-
-// The refs prod sessions 14053ed0, 608df011 and b66206df cited in rounds the gate failed.
-test('a guide ref names any guide heading, whatever its case or dashes, and a miss is told the headings', async () => {
-  const unresolved = async (ref: string) => {
-    const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
-    spec.choices[0].why[1].ref = ref;
-    const { facts } = await inputsOf(spec);
-    return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => / guide ref /.test(u));
-  };
-  for (const ref of ['rest#one-fact-per-entry', 'rest#One fact per entry', 'rest#intent-first', 'rest#Intent first', 'status-codes']) assert.deepEqual(await unresolved(ref), [], ref);
-  const [miss] = await unresolved('rest#intent-first/one-fact-per-entry');
-  assert.match(miss, /^versioning: guide ref "rest#intent-first\/one-fact-per-entry" does not resolve; the guide's headings are "Intent first", "One fact per entry", "document", /);
-});
-
-test('a recorded code ref under a directory too many names the file where the recording has it', async () => {
-  const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
-  spec.choices[1].why[1].ref = 'repo/v1/packages/sleeper/src/service.ts:85';
-  const readFile = async (p: string) => (p === 'repo/packages/sleeper/src/service.ts' ? 'x\n'.repeat(90) : undefined);
-  const { facts } = await inputsOf(spec, { readFile });
-  const [note] = (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.includes('repo/v1/packages/sleeper'));
-  assert.equal(note, 'time-format: code ref "repo/v1/packages/sleeper/src/service.ts:85" names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:85"');
-});
-
-// The refs of prod session contracts:1811f4ba, judged live against a workspace laid out as a git clone, as that session's copy of packages/, or empty.
-// A layout entry copies a file of this repo there, or with '' makes an empty directory (a clone's .git, a stray __pycache__).
-const SERVICE = 'packages/sleeper/src/service.ts';
-const GIT = { 'repo/.git': '' };
-async function liveNotes(t: TestContext, layout: Record<string, string>, refs: string[]): Promise<string[]> {
-  const dir = await mkdtemp(join(tmpdir(), 'contracts-ws-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  await mkdir(join(dir, 'artifacts'));
-  for (const [at, from] of Object.entries(layout)) await mkdir(dirname(join(dir, at)), { recursive: true }).then(() => (from ? cp(join(repoRoot, from), join(dir, at)) : mkdir(join(dir, at))));
-  const spec = scheduleSpecV1({ versioning: 'request', time: 'request' });
-  spec.choices[1].why = refs.map((ref) => ({ source: 'code', text: 'upcomingRuns', ref }));
-  const content = JSON.stringify(spec);
-  const api = { env: new NodeExecutionEnv({ cwd: dir }), conversationId: 'c', snapshot: async () => undefined } as unknown as ToolExecutionApi;
-  const { facts } = await specInputs()(api, { kind: 'contract.spec', version: 1, hash: '', content, sealedAt: 1, verdict: null }, BACKGROUND_CONTEXT);
-  return (JSON.parse(facts) as { unresolved: string[] }).unresolved.filter((u) => u.startsWith('time-format: code ref '));
-}
-
-test('a live code ref resolves only to a file in the workspace, and a wrong one is told the exact ref', async (t) => {
-  const notes = await liveNotes(t, { ...GIT, [`repo/${SERVICE}`]: SERVICE }, [`repo/${SERVICE}:64`, 'repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `${join(repoRoot, SERVICE)}:64`]);
-  const exact = 'names no file in the workspace; the file is at repo/packages/sleeper/src/service.ts, so cite it as "repo/packages/sleeper/src/service.ts:64"';
-  assert.deepEqual(notes, [
-    `time-format: code ref "repo/sleeper/src/service.ts:64" ${exact}`,
-    `time-format: code ref "${SERVICE}:64" ${exact}`,
-    `time-format: code ref "${join(repoRoot, SERVICE)}:64" is an absolute path; refs are paths from the workspace root, as "repo/<path in the clone>:64"`,
-  ], 'an absolute path to the file outside the workspace does not resolve');
-});
-
-test('a ref resolves in the layout the session made: its packages/ copied to repo/ puts sleeper at repo/sleeper', async (t) => {
-  const notes = await liveNotes(t, { ...GIT, 'repo/sleeper/src/service.ts': SERVICE }, ['repo/sleeper/src/service.ts:64', `${SERVICE}:64`, `repo/${SERVICE}:64`]);
-  const exact = 'names no file in the workspace; the file is at repo/sleeper/src/service.ts, so cite it as "repo/sleeper/src/service.ts:64"';
-  assert.deepEqual(notes, [`time-format: code ref "${SERVICE}:64" ${exact}`, `time-format: code ref "repo/${SERVICE}:64" ${exact}`]);
-});
-
-test('a ref to no file gives the exact form from the clone directory, or says to clone when there is none', async (t) => {
-  const [inClone] = await liveNotes(t, { ...GIT, [`repo/${SERVICE}`]: SERVICE }, ['repo/packages/sleeper/src/missing.ts:3']);
-  assert.equal(inClone, 'time-format: code ref "repo/packages/sleeper/src/missing.ts:3" names no file in the workspace. Refs are paths from the workspace root and your clone is repo/, so a file at packages/sleeper/src/missing.ts in the clone is cited as "repo/packages/sleeper/src/missing.ts:3"; read the clone to find where the file is');
-  const [empty] = await liveNotes(t, {}, [`${SERVICE}:64`]);
-  assert.equal(empty, `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`);
-});
-
-// #2380: the session's python left a __pycache__/ in a workspace with no clone, and 38 refs carried from an older version cited app/.
-test('only a git repository is the clone: a stray directory gets the no-clone hint, and an app/ ref is re-anchored to repo/', async (t) => {
-  const APP = 'app/packages/sleeper/src/service.ts:64';
-  const stray = await liveNotes(t, { __pycache__: '', 'node_modules/x/index.js': SERVICE }, [`${SERVICE}:64`, APP]);
-  assert.deepEqual(stray, [
-    `time-format: code ref "${SERVICE}:64" names no file in the workspace, which holds no clone: clone the repository into repo/ (git clone --depth 1 -b <branch> <url> repo) and cite a file at ${SERVICE} in it as "repo/${SERVICE}:64"`,
-    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}:64", once the repository is cloned into repo/ (git clone --depth 1 -b <branch> <url> repo)`,
-  ]);
-  const cloned = await liveNotes(t, { __pycache__: '', ...GIT, [`repo/${SERVICE}`]: SERVICE }, [APP, 'app/packages/sleeper/src/gone.ts:3']);
-  assert.deepEqual(cloned, [
-    `time-format: code ref "${APP}" cites app/, the old session image's tree, which no longer resolves: re-anchor it to the clone, as "repo/${SERVICE}:64"`,
-    'time-format: code ref "app/packages/sleeper/src/gone.ts:3" cites app/, the old session image\'s tree, which no longer resolves: re-anchor it to the clone, as "repo/packages/sleeper/src/gone.ts:3"',
-  ]);
+test("a choice's whys are the writer's account: an unanswered question, a missing file or a moved line fails nothing; a pointer into nothing does", async () => {
+  const unresolved = async (spec: ContractSpec) => (JSON.parse((await inputsOf(spec)).facts) as { unresolved: string[] }).unresolved;
+  const s = scheduleSpecV1({ versioning: 'never asked', time: 'rest#no-such-heading' });
+  s.choices[2].why.push({ source: 'code', text: 'gone', ref: 'repo/packages/sleeper/src/missing.ts:3' }, { source: 'code', text: 'moved', ref: 'repo/packages/contracts/src/rubric.ts:99999' });
+  assert.deepEqual(await unresolved(s), []);
+  s.choices[0].pointer = '/info/nowhere';
+  assert.deepEqual(await unresolved(s), ['versioning: pointer `/info/nowhere` is not in the document']);
 });
 
 test('the lifecycle spec asks the judge model each guarantee and the decision model nothing', async (t) => {
