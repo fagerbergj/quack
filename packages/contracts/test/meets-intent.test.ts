@@ -88,6 +88,14 @@ test('each promising sentence of the purpose is one judge-model item; provenance
   assert.deepEqual(weights, [3, 1]);
 });
 
+test('no choice is judged against the guide; the scored weights are 4 possible against 3 of pitfalls, so a pitfall alone keeps its pass line', () => {
+  const checks = contractRubric.criteria.flatMap((c) => c.checks);
+  assert.ok(!checks.some((k) => k.id === 'contradicts_guide') && !('contradicts_guide' in contractDeclaration.checks));
+  const scored = checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]);
+  assert.deepEqual(scored, [['meets_intent', 3], ['delivers_purpose', 1], ['adds_unasked', -2], ['implements_non_goal', -1]]);
+  assert.deepEqual([contractRubric.version, contractRubric.threshold], [12, 0.8]);
+});
+
 test('with no guarantees, meets_intent has no items and counts toward neither side while delivers_purpose still scores', async (t) => {
   const s = spec();
   s.intent.guarantees = [];

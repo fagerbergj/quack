@@ -247,7 +247,7 @@ const purposeSentences = (intent: { purpose: string }): Entry[] =>
   (intent.purpose ?? '').split(/(?<=[.;])\s+(?=[A-Z(`"]|v\d+\b)/).filter((s) => s.trim() && !PROVENANCE.test(s)).map((text) => ({ at: 'purpose', text }));
 registerSplitter('contract.purposeSentences', (inputs, o) => promiseItems(inputs, o, purposeSentences));
 
-// The named texts the judge reads: the facts code found, the spec, its choices with the guide rules each cites, and the kind's guide.
+// The named texts the judge reads: the facts code found, the spec and its kind.
 async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   const spec = parseSpec(sealed.content) as ContractSpec;
   const kind = kinds[spec.kind];
@@ -263,29 +263,24 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
   ]);
   const { intent, choices, document, version, compatibility, baseline } = spec;
   const facts = { findings, unresolved, undecomposed: factProblems(spec, prev), unanswered: commentProblems(spec.changes, sealed.sealedAt, w.approvals, w.kinds), breaking: breaking.map(({ id, text, operation, path }) => ({ id, text, operation, path })), expected: cleared.length + 1, version, compatibility, baseline, approved: prev?.version };
-  const cites = (c: ContractSpec['choices'][number]) => [...new Set(c.why.filter((x) => x.source === 'guide').map((x) => anchorOf(x.ref)))];
   return {
     facts: JSON.stringify(facts),
     spec: JSON.stringify({ intent, choices, document }),
     kind: spec.kind,
-    choices: JSON.stringify(choices.map((c) => ({ ...c, cites: cites(c) }))),
-    guide: JSON.stringify(Object.fromEntries(guideRules(kind.skill))),
   };
 }
 
-// A pitfall asks about the departure and holds on "no": worded as the claim cost Clef confidence (61% of choices, 74% of definitions at 0.8; 97%, 98% this way).
+// A pitfall asks about the departure and holds on "no": worded as the claim cost Clef confidence (74% of definitions at 0.8, 98% this way).
 // adds_unasked is the owner's exception, worded as the claim and holding on "yes"; the replay's clef and esc columns track its cost.
 const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
-// Every choice is judged as a design decision against the whole guide, sent once per request; most cite only answers and code,
-// and a departure nobody cited is what the check is for. Promises read at most four parts plus the root via meets_intent and delivers_purpose.
+// Promises read at most four parts plus the root via meets_intent and delivers_purpose.
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },
     // One item per guarantee, and one per promising sentence of the purpose; the evidence is the parts each may hold in.
     guarantee: { split: { name: 'contract.guarantees', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'guarantee', context: { evidence: { name: 'contract.evidence' } } },
     purpose: { split: { name: 'contract.purposeSentences', from: ['spec', 'kind'], top: 4, minShared: 2 }, piece: 'sentence', context: { evidence: { name: 'contract.evidence' } } },
-    choice: { split: { name: 'jsonItems', from: 'choices' }, piece: 'choice', context: { guide: { name: 'json', from: 'guide' } } },
     // The kind is the one context every definition and pair shares, so the decision model takes them packed, a request per cap's worth.
     definition: {
       split: { name: 'contract.definitions', from: ['spec', 'kind'] },
@@ -304,7 +299,6 @@ export const contractDeclaration: Declaration = {
     // Known misses: a promised operation may pass on prose alone (caught on break), and broad purpose wording can flake
     // (2/5 false positive on 0c200fa8-v5 in the #2422 replay).
     delivers_purpose: { scope: 'purpose', aggregate: { name: 'all', pass: ['yes'] }, decisionModel: false, question: yesNo('Does the evidence shown make this sentence of the intent\'s purpose hold, through a field, type, operation, header, status code or schema rule it defines, or a behaviour its own text states?') },
-    contradicts_guide: { scope: 'choice', aggregate: { name: 'share', pass: ['no'] }, question: yesNo('Does this choice contradict a guide rule without its why giving a reason from the person or the code? A planned change to current code is not a contradiction.') },
     adds_unasked: { scope: 'definition', aggregate: { name: 'share', by: 'either', pass: ['yes'] }, question: yesNo('Is this definition named or implied by the purpose, or by one of the consumers or guarantees shown with it, or does one of them need it in order to work?') },
     implements_non_goal: { scope: 'nonGoal', aggregate: { name: 'share', by: 'either', pass: ['no'] }, question: yesNo('Does this definition implement the non-goal shown with it?') },
   },
@@ -411,7 +405,7 @@ function breakingNamed(_a: string, ev: Evidence): CodeResult {
 
 export const contractRubric: Rubric = {
   name: 'contract.spec',
-  version: 10,
+  version: 12,
   threshold: 0.8,
   criteria: [
     { id: 'sound', checks: [
@@ -431,7 +425,6 @@ export const contractRubric: Rubric = {
       // The old meets_intent's weight, split: each miss alone still fails a spec; the purpose, one broad statement, counts least.
       { id: 'meets_intent', label: 'A guarantee has no mechanism in the document', weight: 3 },
       { id: 'delivers_purpose', label: "The document doesn't deliver the intent's purpose", weight: 1 },
-      { id: 'contradicts_guide', label: 'A choice contradicts the guide', weight: -3 },
       // The two halves of "unasked" share the weight it had alone.
       { id: 'adds_unasked', label: 'The spec adds what nobody asked for', weight: -2 },
       { id: 'implements_non_goal', label: 'The spec implements a non-goal', weight: -1 },
