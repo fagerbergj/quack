@@ -1,42 +1,180 @@
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import { Schedules } from './Schedules.tsx';
+import type { Row } from '../../sessions.ts';
+import { Schedules, takeLost } from './Schedules.tsx';
 
-const s = (id: string, over: object = {}) => ({ id, agent: 'sleeper', sessionKey: 'weekly', input: 'go', cron: '0 9 * * 1', tz: 'America/New_York', lastRun: null, nextRun: '2026-11-09T14:00:00Z', missedRuns: [], ...over });
+// Local wall times, so the day labels hold in any test-runner zone.
+const at = (day: number, h: number, m: number) => new Date(2026, 10, day, h, m).toISOString();
+const s = (id: string, over: object = {}) => ({ id, agent: 'sleeper-digest', sessionKey: id, input: 'go', times: [at(24, 9, 0)], lastRun: null, nextRun: at(24, 9, 0), missedRuns: [], ...over });
 const stub = (res: () => Response) => vi.stubGlobal('fetch', vi.fn(async () => res()));
-afterEach(() => vi.unstubAllGlobals());
-
-test('each schedule reads in plain words with its session link and last run', async () => {
-  stub(() => new Response(JSON.stringify({ schedules: [s('sleeper/weekly', { lastRun: '2026-11-02T14:00:00Z', missedRuns: ['a', 'b'] }), s('daily', { sessionKey: 'd-{time}', cron: '30 6 * * *' })] })));
-  render(<Schedules rows={undefined} />);
-  expect(await screen.findByText('Every Monday at 9:00 America/New_York')).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'weekly' })).toHaveAttribute('href', '#/s/weekly');
-  expect(screen.getByText(/last ran Nov 2/)).toBeInTheDocument();
-  expect(screen.getByText('2 missed')).toBeInTheDocument();
-  expect(screen.getByText('Every day at 6:30 America/New_York')).toBeInTheDocument();
-  expect(screen.getByText(/in a new session each time/)).toBeInTheDocument();
-  expect(screen.getByText(/has not run yet/)).toBeInTheDocument();
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  // A failure carried to the next visit must not reach the next test.
+  takeLost();
 });
 
-test('every schedule offers Delete; a 204 reloads the list, and the list follows its pages', async () => {
+// A list served from `list`; a DELETE answers `deleted` and drops the schedule from later reads.
+function server(list: ReturnType<typeof s>[], deleted = () => new Response(null, { status: 204 })) {
   const calls: string[] = [];
-  let list = [s('sleeper/weekly'), s('daily')];
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     calls.push(`${init?.method ?? 'GET'} ${url}`);
-    if (init?.method === 'DELETE') {
-      list = list.filter((x) => x.id !== 'daily');
-      return new Response(null, { status: 204 });
-    }
+    if (init?.method !== 'DELETE') return new Response(JSON.stringify({ schedules: list }));
+    const res = deleted();
+    if (res.ok) list = list.filter((x) => `apps/schedules/${encodeURIComponent(x.id)}` !== url);
+    return res;
+  }));
+  return { deletes: () => calls.filter((c) => c.startsWith('DELETE')) };
+}
+
+const deleteVia = (title: string) => {
+  fireEvent.click(screen.getByRole('button', { name: `More for ${title}` }));
+  fireEvent.click(within(screen.getByRole('menu', { name: `More for ${title}` })).getByRole('menuitem', { name: 'Delete schedule' }));
+};
+
+test('rows group under their local day, soonest first, and a run in the same minute shows its time once', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 10, 22, 12, 0));
+  stub(() => new Response(JSON.stringify({ schedules: [
+    s('late', { nextRun: at(24, 15, 0) }), s('none', { nextRun: null }), s('b', { nextRun: at(24, 1, 15) }), s('a', { nextRun: at(23, 4, 30) }), s('c', { nextRun: at(24, 1, 15) }),
+  ] })));
+  render(<Schedules rows={undefined} />);
+  const tomorrow = await screen.findByRole('region', { name: 'Mon, Nov 23, Tomorrow' });
+  expect(within(tomorrow).getByText('Tomorrow')).toBeInTheDocument();
+  expect(within(tomorrow).getByText('4:30 AM')).toBeVisible();
+  const tue = screen.getByRole('region', { name: 'Tue, Nov 24' });
+  expect(within(tue).getAllByRole('link').map((l) => l.textContent)).toEqual(['b', 'c', 'late']);
+  expect(within(tue).getAllByText('1:15 AM').map((t) => t.className)).toEqual(['', 'sr-only']);
+  expect(within(screen.getByRole('region', { name: 'No upcoming run' })).getByRole('link')).toHaveTextContent('none');
+});
+
+test('a schedule is titled by its session, falls back to the agent for a new session each run, and repeats only for cron', async () => {
+  const rows = [{ key: 'weekly', agent: 'sleeper-digest', title: 'Weekly plan', failures: [] }] as unknown as Row[];
+  stub(() => new Response(JSON.stringify({ schedules: [
+    s('sleeper/digest/recap', { sessionKey: 'sleeper:L1:11:digest' }),
+    s('weekly', { cron: '0 9 * * 1', tz: 'America/New_York', times: undefined, lastRun: '2026-11-02T14:00:00Z', missedRuns: ['x', 'y'] }),
+    s('daily', { agent: 'morning-note', sessionKey: 'd-{time}', cron: '30 6 * * *', times: undefined }),
+  ] })));
+  render(<Schedules rows={rows} />);
+  expect(await screen.findByRole('link', { name: 'Week 11 recap' })).toHaveAttribute('href', '#/s/sleeper%3AL1%3A11%3Adigest');
+  expect(screen.queryByText('sleeper/digest/recap')).toBeNull();
+  expect(screen.getByRole('link', { name: 'Weekly plan' })).toHaveAttribute('href', '#/s/weekly');
+  expect(screen.getByText('Every Monday')).toBeInTheDocument();
+  expect(screen.getByText(/last ran Nov 2/)).toBeInTheDocument();
+  expect(screen.getByText('2 missed')).toBeInTheDocument();
+  expect(screen.getByText('morning-note')).toBeInTheDocument();
+  expect(screen.getByText(/New session each run/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'More for morning-note' })).toBeInTheDocument();
+  expect(screen.getAllByText(/^Every (day|Monday)$/)).toHaveLength(2);
+  expect(screen.queryByText(/Once/)).toBeNull();
+  expect(screen.queryByText(/has not run yet/)).toBeNull();
+});
+
+test('Delete sits in the row menu beside Open session; a run with no single session has no Open session', async () => {
+  server([s('weekly'), s('daily', { sessionKey: 'd-{time}', agent: 'morning-note' })]);
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  expect(screen.queryByRole('button', { name: /Delete/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'More for weekly' }));
+  const items = within(screen.getByRole('menu', { name: 'More for weekly' })).getAllByRole('menuitem');
+  expect(items.map((i) => i.textContent)).toEqual(['Open session', 'Delete schedule']);
+  expect(items[0]).toHaveAttribute('href', '#/s/weekly');
+  fireEvent.click(screen.getByRole('button', { name: 'More for morning-note' }));
+  expect(within(screen.getByRole('menu', { name: 'More for morning-note' })).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Delete schedule']);
+});
+
+test('Delete hides the row at once, Undo brings it back with nothing sent, and a lapsed Undo sends one DELETE', async () => {
+  const api = server([s('weekly'), s('daily')]);
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'daily' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('daily');
+  expect(screen.queryByRole('link', { name: 'daily' })).toBeNull();
+  expect(screen.getByRole('status')).toHaveTextContent('Deleted daily');
+  fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+  expect(screen.getByRole('link', { name: 'daily' })).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+  expect(api.deletes()).toEqual([]);
+
+  deleteVia('daily');
+  await act(() => vi.advanceTimersByTimeAsync(4_999));
+  expect(api.deletes()).toEqual([]);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/daily']);
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+  expect(api.deletes()).toHaveLength(1);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.queryByRole('link', { name: 'daily' })).toBeNull();
+  expect(screen.getByRole('link', { name: 'weekly' })).toBeInTheDocument();
+});
+
+test('leaving the page sends the pending DELETE, and a failed one brings the row back with its cause', async () => {
+  const api = server([s('weekly')], () => new Response('{"error":"db down"}', { status: 503 }));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('weekly');
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('db down'));
+  expect(screen.getByRole('link', { name: 'weekly' })).toBeInTheDocument();
+
+  deleteVia('weekly');
+  view.unmount();
+  expect(api.deletes()).toHaveLength(2);
+  // That failure landed after the page went away, so the next visit names it beside the row it left.
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  vi.useRealTimers();
+  render(<Schedules rows={undefined} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete weekly: db down');
+  expect(await screen.findByRole('link', { name: 'weekly' })).toBeInTheDocument();
+});
+
+test('a second delete inside the Undo window sends the first at once and holds the second', async () => {
+  const api = server([s('weekly'), s('daily')]);
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'daily' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('daily');
+  deleteVia('weekly');
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/daily']);
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/daily', 'DELETE apps/schedules/weekly']);
+});
+
+test('closing or reloading the tab mid-countdown sends the DELETE once, as a request that outlives the page', async () => {
+  const inits: Array<RequestInit | undefined> = [];
+  const api = server([s('weekly')]);
+  const served = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => (init?.method === 'DELETE' && inits.push(init), served(url, init))));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('weekly');
+  dispatchEvent(new Event('pagehide'));
+  expect(api.deletes()).toEqual(['DELETE apps/schedules/weekly']);
+  expect(inits[0]?.keepalive).toBe(true);
+  await act(() => vi.advanceTimersByTimeAsync(10_000));
+  view.unmount();
+  expect(api.deletes()).toHaveLength(1);
+});
+
+test('a delete moves focus to Undo, since the row that held the menu is gone', async () => {
+  server([s('weekly')]);
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  deleteVia('weekly');
+  expect(screen.getByRole('button', { name: 'Undo' })).toHaveFocus();
+});
+
+test('the list follows its pages', async () => {
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    calls.push(url);
     const token = new URL(url, 'http://x').searchParams.get('pageToken');
-    return new Response(JSON.stringify(token ? { schedules: list.slice(1) } : { schedules: list.slice(0, 1), ...(list.length > 1 && { nextPageToken: 'p2' }) }));
+    return new Response(JSON.stringify(token ? { schedules: [s('daily')] } : { schedules: [s('weekly')], nextPageToken: 'p2' }));
   }));
   render(<Schedules rows={undefined} />);
-  await screen.findByText('daily');
-  expect(screen.getAllByRole('button')).toHaveLength(2);
-  await userEvent.click(screen.getByRole('button', { name: 'Delete daily' }));
-  await vi.waitFor(() => expect(screen.queryByText('daily')).toBeNull());
-  expect(calls).toContain('DELETE apps/schedules/daily');
+  expect(await screen.findByRole('link', { name: 'daily' })).toBeInTheDocument();
   expect(calls.some((c) => c.includes('pageToken=p2'))).toBe(true);
 });
 
@@ -62,4 +200,92 @@ test('a network failure names the cause', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
   render(<Schedules rows={undefined} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('Schedules is unavailable: Failed to fetch');
+});
+
+test('one set time says nothing more, several say how many are coming', async () => {
+  server([s('once'), s('thrice', { times: [at(24, 9, 0), at(25, 9, 0), at(26, 9, 0)] })]);
+  render(<Schedules rows={undefined} />);
+  const thrice = (await screen.findByRole('link', { name: 'thrice' })).closest('li')!;
+  expect(thrice).toHaveTextContent('sleeper-digest · 3 set times');
+  expect(screen.getByRole('link', { name: 'once' }).closest('li')).not.toHaveTextContent(/set time|Once/);
+});
+
+test('a cron schedule says its cadence in a word or two; the time and zone are in its tooltip and accessible text', async () => {
+  server([
+    s('weekly', { cron: '0 9 * * 1', tz: 'America/New_York', times: undefined }),
+    s('weekdays', { cron: '30 7 * * 1-5', tz: 'America/New_York', times: undefined }),
+    s('daily', { cron: '0 8 * * *', times: undefined }),
+    s('odd', { cron: '*/15 * * * *', times: undefined }),
+  ]);
+  render(<Schedules rows={undefined} />);
+  const row = async (name: string) => (await screen.findByRole('link', { name })).closest('li')!;
+  const cadence = async (name: string, short: string, full: string) => {
+    const shown = within(await row(name)).getByText(short);
+    expect(shown).toHaveAttribute('aria-hidden', 'true');
+    expect(shown.parentElement).toHaveAttribute('title', full);
+    expect(within(await row(name)).getByText(full)).toHaveClass('sr-only');
+  };
+  await cadence('weekly', 'Every Monday', 'Every Monday at 9:00 America/New_York');
+  await cadence('weekdays', 'Weekdays', 'Weekdays at 7:30 America/New_York');
+  await cadence('daily', 'Every day', 'Every day at 8:00 UTC');
+  await cadence('odd', 'Repeats', '*/15 * * * * (UTC)');
+});
+
+test('a DELETE that fails during the tab-close flush is named on the next visit', async () => {
+  server([s('weekly')], () => new Response('{"error":"db down"}', { status: 503 }));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  deleteVia('weekly');
+  dispatchEvent(new Event('pagehide'));
+  await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('db down'));
+  view.unmount();
+  render(<Schedules rows={undefined} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete weekly: db down');
+});
+
+test('a schedule the list shows again after its delete is a row again', async () => {
+  let read = 0;
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    read += 1;
+    const list = read === 1 ? [s('weekly'), s('daily')] : read === 2 ? [s('weekly')] : [s('weekly'), s('daily')];
+    return new Response(JSON.stringify({ schedules: list }));
+  }));
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'daily' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('daily');
+  // The lapse sends the DELETE and the reload no longer lists daily, so its hide is dropped.
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  await vi.waitFor(() => expect(read).toBe(2));
+  // A second delete's reload lists daily again (registered anew); it shows, not stays hidden.
+  deleteVia('weekly');
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  vi.useRealTimers();
+  expect(await screen.findByRole('link', { name: 'daily' })).toBeInTheDocument();
+});
+
+test('a failure the page showed before a back-forward cache restore is not named again on the next visit', async () => {
+  server([s('weekly')], () => new Response('{"error":"db down"}', { status: 503 }));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  deleteVia('weekly');
+  dispatchEvent(new Event('pagehide'));
+  await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('db down'));
+  dispatchEvent(new Event('pageshow'));
+  view.unmount();
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('a cron shape with no words opens its expression on a tap, since a tooltip needs a hover', async () => {
+  server([s('odd', { cron: '*/15 * * * *', times: undefined })]);
+  render(<Schedules rows={undefined} />);
+  const row = (await screen.findByRole('link', { name: 'odd' })).closest('li')!;
+  const word = within(row).getByText('Repeats');
+  expect(word.tagName).toBe('BUTTON');
+  fireEvent.click(word);
+  expect(word).toHaveTextContent('*/15 * * * * (UTC)');
+  expect(location.hash).not.toBe('#/s/odd');
 });
