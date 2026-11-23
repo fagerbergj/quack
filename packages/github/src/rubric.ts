@@ -41,7 +41,7 @@ export const reviewerRubric: Rubric = {
   version: 14,
   // With findings (12-17 points) 0.74 keeps the 3.1-4.4 slack 0.8 gave over 4 more earned points; without findings it loosens:
   // a bare approve (10 points) may fall 2.60 short, was 2.00, and a comment with none (7 points) 1.82, was 1.40.
-  threshold: 0.74,
+  threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
       { id: 'approval_grounded', label: 'Approves without saying why it is safe', weight: 3 },
