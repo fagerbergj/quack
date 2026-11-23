@@ -10,7 +10,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { obj, str } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { Approvals, gated, withdrawApprovals, type Approval } from '@quack/sdk';
+import { Approvals, gated, resolveApproval, withdrawApprovals, type Approval } from '@quack/sdk';
 import { childPort, createSessionServer, currentEvents, openSession, PRINCIPAL_HEADER, principalHeader } from '../src/index.ts';
 import { nextFrame } from './ws-helpers.ts';
 
@@ -28,7 +28,7 @@ const post = gated(defineTool({
   },
 }));
 // What the tool checks before its gate and adds to the gate's arguments; a test changes them between boots, as a deploy changes code.
-const code = { refuse: '', suffix: '' };
+const code: { refuse: string; suffix: string; before?: () => Promise<void> } = { refuse: '', suffix: '' };
 const extension = defineExtension({
   name: 'test-github',
   tools: [defineTool({
@@ -36,7 +36,7 @@ const extension = defineExtension({
     description: 'Post a comment to the pull request',
     parameters: obj({ body: str() }, { open: true }),
     replay: 'safe',
-    execute: async (args, api, ctx) => (code.refuse ? { output: [{ type: 'text', text: code.refuse }], isError: true } : post.execute({ body: `${args.body}${code.suffix}` }, api, ctx)),
+    execute: async (args, api, ctx) => (await code.before?.(), code.refuse ? { output: [{ type: 'text', text: code.refuse }], isError: true } : post.execute({ body: `${args.body}${code.suffix}` }, api, ctx)),
   })],
 });
 
@@ -302,6 +302,91 @@ test('the sweep leaves old and consumed rows alone, and a verdict on an ended ca
   assert.deepEqual([items.approved!.verdict, items.approved!.withdrawn?.reason], [old.approved.verdict, 'task_ended']);
   const late = await http.json('/approvals/approved', { decision: 'reject' });
   assert.deepEqual([late.status, late.body.detail, late.body.withdrawn], [409, 'unknown or already decided', undefined], 'withdrawn after a verdict, it reads as decided');
+  await http.stop();
+  await session.close();
+});
+
+const STEERED = /post_comment was not run: the request was withdrawn: a person's message reached the run while it waited\. Answer the message, then call post_comment again to ask\./;
+type WhenBusy = 'steer' | 'followUp';
+const messageOf = (http: Awaited<ReturnType<typeof serve>>, input: string, whenBusy: WhenBusy = 'steer') => http.json('/invocations', { input, whenBusy });
+
+for (const whenBusy of ['steer', 'followUp'] as const) test(`a message (${whenBusy}) withdraws a waiting approval before it is accepted, the agent answers it, and its next call asks afresh`, async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  let told = '';
+  const session = await openSession({ dir, ...agentWith(callPost(), (context) => ((told = JSON.stringify(context.messages.slice(-2))), callPost()), fauxAssistantMessage('Posted.')) });
+  const http = await serve(session);
+  await session.submit('Approve this PR', 'run-s1');
+  const old = await firstAsk(session);
+  assert.equal((await messageOf(http, 'why LGTM?', whenBusy)).status, 202);
+  const row = await rowOf(session, old.id);
+  assert.deepEqual([row.verdict, row.withdrawn?.reason, row.withdrawn?.supersededBy], [null, 'steered', null], 'withdrawn by the time the steer is accepted');
+  const late = await http.json(`/approvals/${old.id}`, { decision: 'approve' });
+  assert.deepEqual([late.status, late.body.withdrawn], [409, { reason: 'steered', supersededBy: null }]);
+  const fresh = await firstAsk(session, [old.id]);
+  assert.match(told, STEERED);
+  assert.match(told, /why LGTM\?/, 'the message reached the turn after the not-run result');
+  assert.equal((await http.json(`/approvals/${fresh.id}`, { decision: 'approve' })).status, 200);
+  assert.equal((await session.submit('Approve this PR', 'run-s1', true)).status, 'done');
+  assert.deepEqual(posted, ['LGTM'], 'only the fresh ask ran');
+  await http.stop();
+  await session.close();
+});
+
+// Studio sends a follow-up while a judge runs inside submit_contract, before the approval opens; `racing` sends it as the gate opens.
+const EARLY: Array<[WhenBusy, boolean]> = [['steer', false], ['followUp', false], ['followUp', true]];
+for (const [whenBusy, racing] of EARLY) test(`a message (${whenBusy}) ${racing ? 'racing the gate' : 'queued while the run is still producing the gated call'} withdraws its approval the moment it opens`, async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  let started!: () => void;
+  const running = new Promise<void>((r) => (started = r));
+  code.before = () => (started(), held);
+  try {
+    let told = '';
+    const session = await openSession({ dir, ...agentWith(callPost(), (context) => ((told = JSON.stringify(context.messages.slice(-2))), fauxAssistantMessage('Answered.'))) });
+    const http = await serve(session);
+    await session.submit('Approve this PR', 'run-s2');
+    await running;
+    // Racing, the gate's commit and the one queueing the message land in either order: the open-row read or the sweep sees the other.
+    const [sent] = await Promise.all([racing ? messageOf(http, 'wait, which PR?', whenBusy) : messageOf(http, 'wait, which PR?', whenBusy).finally(release), racing && release()]);
+    assert.equal(sent.status, 202);
+    assert.equal((await session.submit('Approve this PR', 'run-s2', true)).status, 'done');
+    const rows = Object.entries((await session.harness.snapshot(Approvals, session.root.id, ctx))!.items);
+    assert.deepEqual(rows.map(([, a]) => [a.verdict, a.withdrawn?.reason]), [[null, 'steered']]);
+    assert.match(told, STEERED);
+    assert.match(told, /wait, which PR\?/);
+    assert.deepEqual((await http.json(`/approvals/${rows[0]![0]}`, { decision: 'approve' })).body.withdrawn, { reason: 'steered', supersededBy: null });
+    assert.deepEqual(posted, []);
+    await http.stop();
+    await session.close();
+  } finally {
+    code.before = undefined;
+  }
+});
+
+test('in one tool round, a verdict committed before a steer wins and its call runs, while the call still waiting is withdrawn', async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  let told = '';
+  const both = fauxAssistantMessage([fauxToolCall('post_comment', { body: 'A' }), fauxToolCall('post_comment', { body: 'B' })], { stopReason: 'toolUse' });
+  const session = await openSession({ dir, ...agentWith(both, (context) => ((told = JSON.stringify(context.messages.slice(-3))), fauxAssistantMessage('Done.'))) });
+  const http = await serve(session);
+  await session.submit('Approve this PR', 'run-s3');
+  const first = await firstAsk(session);
+  const second = await firstAsk(session, [first.id]);
+  const [a, b] = (first.args as { body: string }).body === 'A' ? [first, second] : [second, first];
+  // Not through HTTP, so no sweep or other request runs between the verdict and the steer.
+  assert.equal(await resolveApproval(session.root, a.id, { decision: 'approve', by: { kind: 'person', name: 'jf' } }, ctx), true);
+  assert.equal((await messageOf(http, 'thanks')).status, 202);
+  assert.deepEqual([(await rowOf(session, a.id)).withdrawn, (await rowOf(session, b.id)).withdrawn?.reason], [undefined, 'steered']);
+  assert.equal((await session.submit('Approve this PR', 'run-s3', true)).status, 'done');
+  assert.deepEqual(posted, ['A']);
+  assert.match(told, /thanks/, 'the steer was read when the round ended');
   await http.stop();
   await session.close();
 });

@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
+import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForMessages, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -166,6 +166,17 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     if (gone.length) note('withdraw-approvals', { reason: 'task_ended', approvals: gone });
   }
 
+  // A message queued behind a waiting approval withdraws it in the commit that queues it, so a verdict after its answer is refused.
+  async function admit(content: UserInput, requestId?: string, whenBusy?: 'steer' | 'followUp') {
+    const at = +(opts.now?.() ?? Date.now());
+    const [id, gone] = await root.commit(async (tx) => {
+      const sid = await root.submit(tx, { type: 'input', content, requestId, whenBusy });
+      return [sid, withdrawForMessages(await tx.doc(InboxDoc, root.id), await tx.doc(Approvals, root.id), at)] as const;
+    }, ctx);
+    if (gone.length) note('withdraw-approvals', { reason: 'steered', approvals: gone });
+    return id;
+  }
+
   // True when every task that can run is a gated tool waiting for a verdict; a verdict wakes the process through the normal request path.
   async function onlyAwaitingHumans(): Promise<boolean> {
     const live = (await harness.inspect(ctx)).tasks.filter((t) => t.state.kind === 'running' || t.state.kind === 'pending');
@@ -269,7 +280,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     async submitContent(content: UserInput, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       const taken = typeof content === 'string' ? await dispatch?.({ harness, root }, content, requestId, wait) : undefined;
       if (taken) return taken;
-      const submission = await root.submit({ type: 'input', content, requestId, whenBusy }, ctx);
+      const submission = (await harness.submission(await admit(content, requestId, whenBusy), ctx))!;
       const record = wait ? await submission.wait(ctx) : await submission.status(ctx);
       const submissionId = String(record.id);
       if (record.status === 'done') return { submissionId, status: 'done', answer: await answerText(record.answer) };

@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { JsonValue } from '@earendil-works/chord';
+import type { Draft, JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
 import { principalName, type Principal } from './principal.ts';
 import { whileWaiting } from './signals.ts';
 import { approvalOpenedData, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
-import { defineDoc, type Conversation, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
+import { defineDoc, InboxDoc, type Conversation, type InboxState, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
 // `by` is a bare string in verdicts recorded before principals were typed.
@@ -22,8 +22,8 @@ export type Approval = {
   withdrawn?: Withdrawal | null;
 };
 
-/** Why the call that asked can no longer act on its approval; core writes task_ended and arguments_changed, an extension superseded. */
-export type Withdrawal = { at: number; reason: 'task_ended' | 'superseded' | 'arguments_changed'; supersededBy: string | null };
+/** Why the call that asked can no longer act on its approval; core writes task_ended, arguments_changed and steered, an extension superseded. */
+export type Withdrawal = { at: number; reason: 'task_ended' | 'superseded' | 'arguments_changed' | 'steered'; supersededBy: string | null };
 
 type ApprovalsDoc = { items: Record<string, Approval> };
 
@@ -49,13 +49,22 @@ export function withdrawApprovals(doc: ApprovalsDoc, pick: (id: string, a: Appro
   return ids;
 }
 
-const WHY: Record<Withdrawal['reason'], string> = { task_ended: "the call's task ended without acting on it", superseded: 'it was superseded by a newer request', arguments_changed: "the call's arguments changed" };
+/** A person's message queued in the root's inbox withdraws each approval `pick` names that still waits on a verdict, and turns
+ * into a steer so the run reads it at its next tool boundary; returns the withdrawn ids. The caller commits both documents. */
+export function withdrawForMessages(inbox: Draft<InboxState>, doc: ApprovalsDoc, at: number, pick = (_id: string) => true): string[] {
+  if (!inbox.items.some((i) => i.mode !== 'write')) return [];
+  const ids = withdrawApprovals(doc, (id, a) => !a.verdict && pick(id), { at, reason: 'steered', supersededBy: null });
+  if (ids.length) for (const i of inbox.items) if (i.mode === 'followUp') i.mode = 'steer';
+  return ids;
+}
+
+const WHY: Record<Withdrawal['reason'], string> = { task_ended: "the call's task ended without acting on it", superseded: 'it was superseded by a newer request', arguments_changed: "the call's arguments changed", steered: "a person's message reached the run while it waited" };
 
 /** What a late answer to a withdrawn approval is told; without a reason, the session's is unknown. */
 export const withdrawnText = (reason?: Withdrawal['reason']) => `the request was withdrawn: ${reason ? WHY[reason] : 'the session is no longer waiting for it'}`;
 
 function notRun(tool: string, w: Withdrawal): ToolExecutionResult {
-  const again = w.reason === 'arguments_changed' ? ` Call ${tool} again to ask about these arguments.` : '';
+  const again = ({ arguments_changed: ` Call ${tool} again to ask about these arguments.`, steered: ` Answer the message, then call ${tool} again to ask.` } as Partial<Record<Withdrawal['reason'], string>>)[w.reason] ?? '';
   return errorResult(`${tool} was not run: ${withdrawnText(w.reason)}${w.supersededBy ? ` (${w.supersededBy})` : ''}.${again}`);
 }
 
@@ -90,10 +99,13 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
       const size = eventBytes(`ask:open:${id}`, 'ask.opened', approvalOpenedData(id, tool.name, plain(args) as JsonValue, api.now()));
       if (size > EVENT_MAX_BYTES) return errorResult(`${tool.name} was not run: its arguments are ${size} bytes as an approval, over the ${EVENT_MAX_BYTES}-byte cap; send less.`);
       const item = await api.commit(async (tx) => {
+        const conversation = await tx.conversation(api.conversationId);
         const doc = await tx.doc(Approvals, api.conversationId);
         const fresh = plain(args) as JsonValue;
         withdrawApprovals(doc, (k, a) => k === id && !isDeepStrictEqual(a.args, fresh), { at: api.now(), reason: 'arguments_changed', supersededBy: null });
         doc.items[id] ??= { tool: tool.name, args: fresh, requestedAt: api.now(), verdict: null, executing: false, done: false };
+        // A message queued before the row opened (or before a restart reran this call) withdraws it at once; a child's rows are left alone.
+        if (conversation && !conversation.owner && !conversation.parent) withdrawForMessages(await tx.doc(InboxDoc, api.conversationId), doc, api.now(), (k) => k === id);
         return plain(doc.items[id]);
       }, ctx);
       if (item.executing && !item.done) return errorResult(`${tool.name} was interrupted after approval and was not re-run.`);

@@ -9,6 +9,9 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createSessionServer, openSession } from '@quack/session';
 import { CapacityGate, capacitySessionExtensions, LeaseLedger, type LeaseClient } from '@quack/capacity';
 import { FakeClock } from '../../capacity/test/fake-clock.ts';
+import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import { obj } from '@earendil-works/pi-schema';
+import { Approvals, gated, onWaiting, resolveApproval } from '@quack/sdk';
 import { MAX_CHILDREN, subagentExtension } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-subagent-'));
@@ -149,4 +152,36 @@ test('parallel children each take a lease on the model endpoint, so a session ne
   await session.close();
   await gate.release();
   table.close();
+});
+
+test('a steer leaves a subagent child\'s approval waiting, and reaches the parent once the subagent call returns', async () => {
+  const post = gated(defineTool({ name: 'post_comment', description: 'post', parameters: obj({}, { open: true }), execute: async () => ({ output: [{ type: 'text' as const, text: 'posted' }] }) }));
+  let told = '';
+  const step = (c: { messages: Array<{ role: string; content: unknown }> }) => {
+    const last = c.messages.at(-1)!;
+    const text = contentText(last.content as never);
+    if (text === 'parent') return fauxAssistantMessage(fauxToolCall('subagent', { task: 'child' }), { stopReason: 'toolUse' });
+    if (text === 'child') return fauxAssistantMessage(fauxToolCall('post_comment', {}), { stopReason: 'toolUse' });
+    if (text === 'posted') return fauxAssistantMessage('child posted');
+    told = JSON.stringify(c.messages.slice(-2));
+    return fauxAssistantMessage('parent done');
+  };
+  const faux = fauxProvider({ models: [{ id: 'm' }] });
+  faux.setResponses(Array.from({ length: 6 }, () => step as never));
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: join(root, `s${n++}`), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [subagentExtension(), defineExtension({ name: 'post', tools: [post] })] } });
+  // The parent waits on its subagent call and the child on its gate: two waits open.
+  const parked = new Promise<void>((resolve) => { const off = onWaiting((w) => w >= 2 && (off(), resolve())); });
+  await session.submit('parent', 'r1', false);
+  await parked;
+  const steer = await session.submit('why?', undefined, false, 'steer');
+  const child = await session.root.commit(async (tx) => (await tx.scanConversations({ ownerConversationId: session.root.id }, 1)).items[0]!.id, BACKGROUND_CONTEXT);
+  const [[id, row]] = Object.entries((await session.harness.snapshot(Approvals, child, BACKGROUND_CONTEXT))!.items);
+  assert.equal(row!.withdrawn, undefined, 'the child\'s approval still waits');
+  assert.equal(await resolveApproval((await session.harness.conversation(child, BACKGROUND_CONTEXT))!, id!, { decision: 'approve', by: { kind: 'tailnet' } }, BACKGROUND_CONTEXT), true);
+  assert.equal((await (await session.harness.submission(steer.submissionId as never, BACKGROUND_CONTEXT))!.wait(BACKGROUND_CONTEXT)).status, 'done');
+  assert.match(told, /child posted.*why\?/, 'the steer follows the subagent\'s answer');
+  await session.close();
 });

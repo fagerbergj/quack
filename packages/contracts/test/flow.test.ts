@@ -235,47 +235,47 @@ test('a version that passes is put up for approval in the same submit, and appro
   await s.close();
 });
 
-test('a message sent while a version waits declines it and reaches the agent in the same turn; an answer without a change puts the same version up again', async () => {
+const WITHDRAWN = /propose_contract was not run: the request was withdrawn: a person's message reached the run while it waited\. Answer the message, then call propose_contract again to ask\./;
+
+test('a message sent while a version waits withdraws it and reaches the agent in the same turn; an answer without a change puts the same version up again', async () => {
   let turn: Msgs | undefined;
   const s = await open([...v1Script.slice(0, -1), (c) => ((turn = c), fauxAssistantMessage('ISO strings read well in logs.')), call('submit_contract', {}), () => fauxAssistantMessage('Version 1 is approved.')]);
   const { run } = await defineV1(s);
   const waiting = await nextProposal(s);
   await s.submit('Why ISO and not epoch seconds?', 'r-2', false, 'steer');
-  assert.equal(await resolveApproval(s.root, waiting.id, { decision: 'reject', reason: 'Sent a message instead', by: jf }, ctx), true);
+  assert.equal(await resolveApproval(s.root, waiting.id, { decision: 'approve', by: jf }, ctx), false, 'the message withdrew it');
   // The agent answers without submitting; the run may not end there, so it puts version 1 up again.
   const again = await approve(s, [waiting.id]);
   assert.equal(again.args.artifact, 1);
   await run;
   const said = turn!.messages.map((m) => JSON.stringify(m.content)).join('\n');
-  assert.match(said, /Rejected by jf: Sent a message instead/);
+  assert.match(said, WITHDRAWN);
   assert.match(said, /Why ISO and not epoch seconds\?/);
   assert.equal((await versions(s)).length, 1, 'nothing new was sealed');
-  assert.deepEqual((await kindOf(s, 'contract.changes')).map((r) => r.summary), ['Sent a message instead']);
+  assert.deepEqual(await kindOf(s, 'contract.changes'), [], 'a withdrawn proposal records no decision');
   assert.equal((await kindOf(s, 'contract.approved')).length, 1);
   await s.close();
 });
 
-for (const decision of ['approve', 'reject'] as const) {
-  test(`a follow-up queued while submit_contract waits reaches the agent once the person decides (${decision})`, async () => {
-    const turns: string[] = [];
-    const seen = (next: Step): Step => (c) => ((turns.push(JSON.stringify(c.messages)), next(c)));
-    // Rejected, the passed version is not approved, so the agent puts it up again and the person approves it.
-    const after = decision === 'approve' ? [seen(() => fauxAssistantMessage('ok'))] : [seen(call('submit_contract', {})), seen(() => fauxAssistantMessage('ok'))];
-    const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), ...after, seen(() => fauxAssistantMessage('ok'))]);
-    const run = s.submit('Define the Sleeper settings file', 'r-1');
-    const waiting = await nextProposal(s);
-    const queued = await s.submit('Also cover the timezone field', 'r-2', false, 'followUp');
-    assert.equal(queued.status, 'queued');
-    await resolveApproval(s.root, waiting.id, { decision, by: jf }, ctx);
-    if (decision === 'reject') await approve(s, [waiting.id]);
-    await run;
-    assert.equal((await (await s.harness.submission(queued.submissionId as never, ctx))!.wait(ctx)).status, 'done');
-    const took = turns.filter((t) => t.includes('Also cover the timezone field'));
-    assert.ok(took.length && took.every((t) => t.split('Also cover the timezone field').length === 2), 'the follow-up reached the model, once');
-    assert.deepEqual(await s.queued(), []);
-    await s.close();
-  });
-}
+// Studio sends a follow-up while its run is busy and no proposal is shown yet; it withdraws the proposal as a steer would.
+test('a follow-up queued while submit_contract waits withdraws the proposal and reaches the agent once, in the same run', async () => {
+  const turns: string[] = [];
+  const seen = (next: Step): Step => (c) => ((turns.push(JSON.stringify(c.messages)), next(c)));
+  const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), seen(call('submit_contract', {})), seen(() => fauxAssistantMessage('ok')), seen(() => fauxAssistantMessage('ok'))]);
+  const run = s.submit('Define the Sleeper settings file', 'r-1');
+  const waiting = await nextProposal(s);
+  const queued = await s.submit('Also cover the timezone field', 'r-2', false, 'followUp');
+  assert.equal(queued.status, 'queued');
+  assert.equal(await resolveApproval(s.root, waiting.id, { decision: 'approve', by: jf }, ctx), false, 'the follow-up withdrew it');
+  await approve(s, [waiting.id]);
+  await run;
+  assert.equal((await (await s.harness.submission(queued.submissionId as never, ctx))!.wait(ctx)).status, 'done');
+  const took = turns.filter((t) => t.includes('Also cover the timezone field'));
+  assert.ok(took.length && took.every((t) => t.split('Also cover the timezone field').length === 2), 'the follow-up reached the model, once');
+  assert.match(took[0]!, WITHDRAWN);
+  assert.deepEqual(await s.queued(), []);
+  await s.close();
+});
 
 test('after a rejection, an agent that keeps answering without putting the version up again is asked once, then the run ends', async () => {
   const asked: string[] = [];

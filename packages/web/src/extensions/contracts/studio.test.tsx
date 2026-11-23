@@ -4,7 +4,6 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from '../../App.tsx';
-import { SUPERSEDED } from '../../SessionView.tsx';
 import type { Approval, SealedArtifact, Verdict } from '../../api.ts';
 import { byVersion, entry, Fail, FakeSocket, fetchMock, live, routes, snapshot, stubViewport, useHarness } from '../../test-harness.ts';
 import { diffUnits, units } from './diff.ts';
@@ -250,15 +249,17 @@ test('each sealed draft replaces the shown one live: approved and idle, then che
   expect(posts()).toEqual([]);
 });
 
-test('a message sent while a version waits is steered into the run and declines the proposal', async () => {
-  routes[`PATCH /sessions/${KEY}/asks/p%2F1`] = { resolved: true };
+test('a message sent while a version waits is steered into the run, which withdraws the proposal; the page declines nothing', async () => {
   const { ws } = open([spec(1, v1), spec(2, v2)], [proposal(2, 2)]);
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'Why oldest first?');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   const input = ws.sent.find((f) => (f as { type: string }).type === 'input') as { requestId: string; whenBusy: string; input: string };
   expect([input.input, input.whenBusy]).toEqual(['Why oldest first?', 'steer']);
   ws.frame({ type: 'accepted', requestId: input.requestId });
-  await waitFor(() => expect(posts()).toEqual([[`sessions/${KEY}/asks/p%2F1`, { resolution: { choice: 'reject', reason: SUPERSEDED } }]]));
+  ws.frame({ type: 'standing', questions: [], failures: [], approvals: [] });
+  await waitFor(() => expect(within(bar()).queryByRole('button', { name: 'Approve' })).toBeNull());
+  expect(posts()).toEqual([]);
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 test('an approval another tab already decided says so instead of failing silently', async () => {
