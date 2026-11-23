@@ -112,8 +112,20 @@ function Item({ e, remove }: { e: Entry; remove: () => void }) {
   );
 }
 
-// A DELETE that failed after the page went away; the next visit says so, since the row is back.
+// A failed DELETE no live page can show (it unmounted, or the tab was closing); the next visit says so, since the row is back.
 let lost: string | undefined;
+/** Reads and clears the carried failure. */
+export const takeLost = () => {
+  const carried = lost;
+  lost = undefined;
+  return carried;
+};
+
+// Ids the server no longer lists need hiding no more; the same set comes back when nothing dropped, so a read costs no render.
+const prune = (h: ReadonlySet<string>, items: ScheduleItem[]) => {
+  const kept = [...h].filter((id) => items.some((s) => s.id === id));
+  return kept.length === h.size ? h : new Set(kept);
+};
 
 // Deleting hides the row at once; the DELETE goes out once, when the Undo window lapses, another delete starts, the page unmounts or the tab closes.
 function useUndoDelete(items: ScheduleItem[] | undefined, reload: () => void, setError: (e: string) => void) {
@@ -121,8 +133,12 @@ function useUndoDelete(items: ScheduleItem[] | undefined, reload: () => void, se
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const held = useRef<{ e: Entry; timer: ReturnType<typeof setTimeout> }>(undefined);
   const alive = useRef(true);
+  const leaving = useRef(false);
   const show = (id: string, on: boolean) => setHidden((h) => new Set([...h].filter((x) => x !== id).concat(on ? [] : [id])));
-  const failed = (e: Entry, err: Error) => (alive.current ? (show(e.s.id, true), setError(err.message)) : (lost = `Could not delete ${e.title}: ${err.message}`));
+  const failed = (e: Entry, err: Error) => {
+    if (!alive.current || leaving.current) lost = `Could not delete ${e.title}: ${err.message}`;
+    if (alive.current) (show(e.s.id, true), setError(err.message));
+  };
   const settle = (send: boolean) => {
     const p = held.current;
     if (!p) return;
@@ -132,21 +148,24 @@ function useUndoDelete(items: ScheduleItem[] | undefined, reload: () => void, se
     if (!send) return show(p.e.s.id, true);
     deleteSchedule(p.e.s.id).then(() => (setError(''), reload()), (err: Error) => failed(p.e, err));
   };
-  // A tab close or reload never unmounts React, so pagehide settles the window too.
+  // A tab close or reload never unmounts React, so pagehide settles the window too; a page restored from the back-forward cache is live again.
   useEffect(() => {
     alive.current = true;
-    if (lost) setError(lost);
-    lost = undefined;
-    const flush = () => settle(true);
+    leaving.current = false;
+    const carried = takeLost();
+    if (carried) setError(carried);
+    const flush = () => ((leaving.current = true), settle(true));
+    const back = () => void (leaving.current = false);
     addEventListener('pagehide', flush);
+    addEventListener('pageshow', back);
     return () => {
       removeEventListener('pagehide', flush);
+      removeEventListener('pageshow', back);
       alive.current = false;
       settle(true);
     };
   }, []);
-  // A row the server no longer lists needs hiding no more.
-  useEffect(() => void (items && setHidden((h) => new Set([...h].filter((id) => items.some((s) => s.id === id))))), [items]);
+  useEffect(() => void (items && setHidden((h) => prune(h, items))), [items]);
   const remove = (e: Entry) => {
     settle(true);
     show(e.s.id, false);

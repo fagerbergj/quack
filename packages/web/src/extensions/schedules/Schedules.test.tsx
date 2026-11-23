@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Row } from '../../sessions.ts';
-import { Schedules } from './Schedules.tsx';
+import { Schedules, takeLost } from './Schedules.tsx';
 
 // Local wall times, so the day labels hold in any test-runner zone.
 const at = (day: number, h: number, m: number) => new Date(2026, 10, day, h, m).toISOString();
@@ -10,6 +10,8 @@ const stub = (res: () => Response) => vi.stubGlobal('fetch', vi.fn(async () => r
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  // A failure carried to the next visit must not reach the next test.
+  takeLost();
 });
 
 // A list served from `list`; a DELETE answers `deleted` and drops the schedule from later reads.
@@ -227,4 +229,38 @@ test('a cron schedule says its cadence in a word or two; the time and zone are i
   await cadence('weekdays', 'Weekdays', 'Weekdays at 7:30 America/New_York');
   await cadence('daily', 'Every day', 'Every day at 8:00 UTC');
   await cadence('odd', 'Repeats', '*/15 * * * * (UTC)');
+});
+
+test('a DELETE that fails during the tab-close flush is named on the next visit', async () => {
+  server([s('weekly')], () => new Response('{"error":"db down"}', { status: 503 }));
+  const view = render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'weekly' });
+  deleteVia('weekly');
+  dispatchEvent(new Event('pagehide'));
+  await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('db down'));
+  view.unmount();
+  render(<Schedules rows={undefined} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete weekly: db down');
+});
+
+test('a schedule the list shows again after its delete is a row again', async () => {
+  let read = 0;
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    read += 1;
+    const list = read === 1 ? [s('weekly'), s('daily')] : read === 2 ? [s('weekly')] : [s('weekly'), s('daily')];
+    return new Response(JSON.stringify({ schedules: list }));
+  }));
+  render(<Schedules rows={undefined} />);
+  await screen.findByRole('link', { name: 'daily' });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  deleteVia('daily');
+  // The lapse sends the DELETE and the reload no longer lists daily, so its hide is dropped.
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  await vi.waitFor(() => expect(read).toBe(2));
+  // A second delete's reload lists daily again (registered anew); it shows, not stays hidden.
+  deleteVia('weekly');
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  vi.useRealTimers();
+  expect(await screen.findByRole('link', { name: 'daily' })).toBeInTheDocument();
 });
