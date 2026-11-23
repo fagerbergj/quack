@@ -81,7 +81,7 @@ test('meets_intent is the one scored check, so a spec passes only when it holds;
   assert.deepEqual(checks.filter((k) => cut.includes(k.id)).map((k) => k.id), []);
   assert.deepEqual(Object.keys(contractDeclaration.checks), ['meets_intent']);
   assert.deepEqual(checks.filter((k) => typeof k.weight === 'number').map((k) => [k.id, k.weight]), [['meets_intent', 1]]);
-  assert.deepEqual([contractRubric.version, contractRubric.threshold], [13, 1]);
+  assert.deepEqual([contractRubric.version, contractRubric.threshold], [14, 1]);
 });
 
 test('with no guarantees, meets_intent has no items and counts toward neither side', async (t) => {
