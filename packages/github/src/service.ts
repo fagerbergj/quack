@@ -162,7 +162,8 @@ async function steering(config: ServiceConfig, q: Queued): Promise<boolean> {
 // Its own request id, per role: the session dedupes a resend, and neither the run that may follow nor the other role's steer of one push is deduped against it.
 async function steer(config: ServiceConfig, q: Queued, input: string): Promise<boolean> {
   const { url, body } = invocationRequest(config.distributorUrl, { key: q.sessionKey, agent: q.agent, input, requestId: `${q.requestId}/steer/${q.role}` });
-  const res = await (config.fetch ?? fetch)(url, { method: 'POST', body: JSON.stringify({ ...JSON.parse(body), whenBusy: 'steer' }) }).catch(unreachable);
+  // A /fix or a person's push acts for that person; a review's push steer is the app's own.
+  const res = await (config.fetch ?? fetch)(url, { method: 'POST', body: JSON.stringify({ ...JSON.parse(body), whenBusy: 'steer', ...(q.role === 'implementer' && { origin: 'person' }) }) }).catch(unreachable);
   if (!res.ok) console.warn(`github: steer for ${q.sessionKey} refused (${res.status}): ${await problemOf(res)}`);
   return res.ok;
 }

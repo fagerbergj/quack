@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForMessages, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
+import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForPeople, type DispatchingExtension, type Origin, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -166,12 +166,12 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     if (gone.length) note('withdraw-approvals', { reason: 'task_ended', approvals: gone });
   }
 
-  // A message queued behind a waiting approval withdraws it in the commit that queues it, so a verdict after its answer is refused.
-  async function admit(content: UserInput, requestId?: string, whenBusy?: 'steer' | 'followUp') {
+  // A person's input queued behind a waiting approval withdraws it in the commit that queues it, so a verdict after its answer is refused.
+  async function admit(content: UserInput, requestId?: string, whenBusy?: 'steer' | 'followUp', origin?: Origin) {
     const at = +(opts.now?.() ?? Date.now());
     const [id, gone] = await root.commit(async (tx) => {
       const sid = await root.submit(tx, { type: 'input', content, requestId, whenBusy });
-      return [sid, withdrawForMessages(await tx.doc(InboxDoc, root.id), await tx.doc(Approvals, root.id), at)] as const;
+      return [sid, await withdrawForPeople(tx, root.id, await tx.doc(Approvals, root.id), at, { person: origin === 'person' ? String(sid) : undefined })] as const;
     }, ctx);
     if (gone.length) note('withdraw-approvals', { reason: 'steered', approvals: gone });
     return id;
@@ -267,20 +267,21 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       const item = (await this.queuedItems()).find((q) => q.id === id);
       const submission = item && (await harness.submission(id as never, ctx));
       const removed = !!item && (await submission!.abort(ctx)) === 'aborted';
-      const steered = removed && steer ? (await this.submitContent(item.content, undefined, false, 'steer')).submissionId : undefined;
+      const steered = removed && steer ? (await this.submitContent(item.content, undefined, false, 'steer', caller === 'service' || caller === 'run-ceiling' ? undefined : 'person')).submissionId : undefined;
       note(steer ? 'steer' : 'withdraw', { caller, submission: id, queue: removed ? 'removed' : 'not queued', ...(steered && { steered }) });
       return removed;
     },
     // Images ride in the user message, so the transcript shows them after a reload; a model without image input is refused.
-    async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp', images: ImageContent[] = []): Promise<SubmitResult> {
-      if (!images.length) return this.submitContent(input, requestId, wait, whenBusy);
+    // `origin` unset is a service's input, which never withdraws an approval.
+    async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp', images: ImageContent[] = [], origin?: Origin): Promise<SubmitResult> {
+      if (!images.length) return this.submitContent(input, requestId, wait, whenBusy, origin);
       if (!sees) throw new Error(CANNOT_SEE_IMAGES);
-      return this.submitContent([...(input ? [{ type: 'text' as const, text: input }] : []), ...images], requestId, wait, whenBusy);
+      return this.submitContent([...(input ? [{ type: 'text' as const, text: input }] : []), ...images], requestId, wait, whenBusy, origin);
     },
-    async submitContent(content: UserInput, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
+    async submitContent(content: UserInput, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp', origin?: Origin): Promise<SubmitResult> {
       const taken = typeof content === 'string' ? await dispatch?.({ harness, root }, content, requestId, wait) : undefined;
       if (taken) return taken;
-      const submission = (await harness.submission(await admit(content, requestId, whenBusy), ctx))!;
+      const submission = (await harness.submission(await admit(content, requestId, whenBusy, origin), ctx))!;
       const record = wait ? await submission.wait(ctx) : await submission.status(ctx);
       const submissionId = String(record.id);
       if (record.status === 'done') return { submissionId, status: 'done', answer: await answerText(record.answer) };

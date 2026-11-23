@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { Draft, JsonValue } from '@earendil-works/chord';
+import type { JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
 import { principalName, type Principal } from './principal.ts';
 import { whileWaiting } from './signals.ts';
 import { approvalOpenedData, eventBytes, EVENT_MAX_BYTES } from './channel.ts';
-import { defineDoc, InboxDoc, type Conversation, type InboxState, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
+import { defineDoc, InboxDoc, type Conversation, type ConversationId, type Tx, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
 // `by` is a bare string in verdicts recorded before principals were typed.
@@ -49,13 +49,27 @@ export function withdrawApprovals(doc: ApprovalsDoc, pick: (id: string, a: Appro
   return ids;
 }
 
-/** A person's message queued in the root's inbox withdraws each approval `pick` names that still waits on a verdict, and turns
- * into a steer so the run reads it at its next tool boundary; returns the withdrawn ids. The caller commits both documents. */
-export function withdrawForMessages(inbox: Draft<InboxState>, doc: ApprovalsDoc, at: number, pick = (_id: string) => true): string[] {
-  if (!inbox.items.some((i) => i.mode !== 'write')) return [];
-  const ids = withdrawApprovals(doc, (id, a) => !a.verdict && pick(id), { at, reason: 'steered', supersededBy: null });
-  if (ids.length) for (const i of inbox.items) if (i.mode === 'followUp') i.mode = 'steer';
-  return ids;
+/** Who sent an input: a person (the UI, the CLI, a GitHub /fix or push), or a service, which never withdraws an approval. */
+export type Origin = 'person' | 'service';
+
+/** The ids of a person's inputs still queued in a conversation's inbox, which carries no origin of its own. */
+const PersonInputs = defineDoc<{ ids: string[] }>({
+  kind: 'quack.person-inputs', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ ids: [] }), checkpointWhen: () => false,
+});
+
+/** A person's input queued in the root's inbox withdraws each approval `pick` names that still waits on a verdict, and turns into a steer
+ * so the run reads it at its next tool boundary; returns the withdrawn ids. `person` records a submission admitted in this commit. */
+export async function withdrawForPeople(tx: Tx, conversationId: ConversationId, doc: ApprovalsDoc, at: number, o: { pick?: (id: string) => boolean; person?: string } = {}): Promise<string[]> {
+  const inbox = await tx.doc(InboxDoc, conversationId);
+  const people = await tx.doc(PersonInputs, conversationId);
+  const queued = new Set(inbox.items.map((i) => String(i.id)));
+  const ids = [...people.ids, ...(o.person ? [o.person] : [])].filter((id) => queued.has(id));
+  if (!isDeepStrictEqual(ids, people.ids)) people.ids = ids;
+  if (!ids.length) return [];
+  const gone = withdrawApprovals(doc, (id, a) => !a.verdict && (o.pick?.(id) ?? true), { at, reason: 'steered', supersededBy: null });
+  // shortcut: pi-durable promotes a follow-up only by abort and resubmit (two commits, a new id), so this edits pi.inbox; use an in-commit API once it has one.
+  if (gone.length) for (const i of inbox.items) if (i.mode === 'followUp' && ids.includes(String(i.id))) i.mode = 'steer';
+  return gone;
 }
 
 const WHY: Record<Withdrawal['reason'], string> = { task_ended: "the call's task ended without acting on it", superseded: 'it was superseded by a newer request', arguments_changed: "the call's arguments changed", steered: "a person's message reached the run while it waited" };
@@ -104,8 +118,8 @@ export function gated<P extends object>(tool: ToolRegistration<P>): ToolRegistra
         const fresh = plain(args) as JsonValue;
         withdrawApprovals(doc, (k, a) => k === id && !isDeepStrictEqual(a.args, fresh), { at: api.now(), reason: 'arguments_changed', supersededBy: null });
         doc.items[id] ??= { tool: tool.name, args: fresh, requestedAt: api.now(), verdict: null, executing: false, done: false };
-        // A message queued before the row opened (or before a restart reran this call) withdraws it at once; a child's rows are left alone.
-        if (conversation && !conversation.owner && !conversation.parent) withdrawForMessages(await tx.doc(InboxDoc, api.conversationId), doc, api.now(), (k) => k === id);
+        // A person's input queued before the row opened (or before a restart reran this call) withdraws it at once; a child's rows are left alone.
+        if (conversation && !conversation.owner && !conversation.parent) await withdrawForPeople(tx, api.conversationId, doc, api.now(), { pick: (k) => k === id });
         return plain(doc.items[id]);
       }, ctx);
       if (item.executing && !item.done) return errorResult(`${tool.name} was interrupted after approval and was not re-run.`);

@@ -32,20 +32,21 @@ function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?:
   return { decision, reason };
 }
 
-type Invocation = { input: string; requestId?: string; wait?: boolean; whenBusy?: 'followUp' | 'steer'; title?: string; meta?: Record<string, unknown> };
+type Invocation = { input: string; requestId?: string; wait?: boolean; whenBusy?: 'followUp' | 'steer'; title?: string; meta?: Record<string, unknown>; origin?: 'person' | 'service' };
 
 const isMeta = (m: unknown): m is Record<string, unknown> => typeof m === 'object' && m !== null && !Array.isArray(m) && typeof (m as { id?: unknown }).id === 'string';
 
 function parseInvocation(body: unknown): Invocation | string {
   if (typeof body !== 'object' || body === null) return 'body must be a JSON object';
-  const { input, requestId, wait, whenBusy, title, meta } = body as Record<string, unknown>;
+  const { input, requestId, wait, whenBusy, title, meta, origin } = body as Record<string, unknown>;
   if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
   if (wait !== undefined && typeof wait !== 'boolean') return 'wait must be a boolean';
   if (![undefined, 'followUp', 'steer'].includes(whenBusy as string)) return 'whenBusy must be followUp or steer';
   if (title !== undefined && typeof title !== 'string') return 'title must be a string';
   if (meta !== undefined && !isMeta(meta)) return 'meta must be an object with a string id';
-  return { input, requestId, wait, whenBusy: whenBusy as Invocation['whenBusy'], title, meta };
+  if (![undefined, 'person', 'service'].includes(origin as string)) return 'origin must be person or service';
+  return { input, requestId, wait, whenBusy: whenBusy as Invocation['whenBusy'], title, meta, origin: origin as Invocation['origin'] };
 }
 
 // `who` is the principal the distributor named, or undefined when it named none.
@@ -72,12 +73,13 @@ async function answer(session: Session, req: IncomingMessage, match: RegExpExecA
 
 const ctx = BACKGROUND_CONTEXT;
 
-async function invoke(session: Session, req: IncomingMessage): Promise<[number, unknown]> {
+async function invoke(session: Session, req: IncomingMessage, _match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {
   const inv = parseInvocation(await readJson(req));
   if (typeof inv === 'string') return [400, { error: inv }];
   if (inv.title) await session.recordTitle(inv.title);
   if (inv.meta) await session.recordMeta(inv.meta);
-  return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait, inv.whenBusy)];
+  // A person's origin counts only beside a principal the distributor named, so another session's call cannot claim one.
+  return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait, inv.whenBusy, [], who && inv.origin === 'person' ? 'person' : undefined)];
 }
 
 async function decide(session: Session, req: IncomingMessage, match: RegExpExecArray, who: Principal | undefined): Promise<[number, unknown]> {

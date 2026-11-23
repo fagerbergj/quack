@@ -242,7 +242,7 @@ test('a message sent while a version waits withdraws it and reaches the agent in
   const s = await open([...v1Script.slice(0, -1), (c) => ((turn = c), fauxAssistantMessage('ISO strings read well in logs.')), call('submit_contract', {}), () => fauxAssistantMessage('Version 1 is approved.')]);
   const { run } = await defineV1(s);
   const waiting = await nextProposal(s);
-  await s.submit('Why ISO and not epoch seconds?', 'r-2', false, 'steer');
+  await s.submit('Why ISO and not epoch seconds?', 'r-2', false, 'steer', [], 'person');
   assert.equal(await resolveApproval(s.root, waiting.id, { decision: 'approve', by: jf }, ctx), false, 'the message withdrew it');
   // The agent answers without submitting; the run may not end there, so it puts version 1 up again.
   const again = await approve(s, [waiting.id]);
@@ -264,7 +264,7 @@ test('a follow-up queued while submit_contract waits withdraws the proposal and 
   const s = await open([call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}), seen(call('submit_contract', {})), seen(() => fauxAssistantMessage('ok')), seen(() => fauxAssistantMessage('ok'))]);
   const run = s.submit('Define the Sleeper settings file', 'r-1');
   const waiting = await nextProposal(s);
-  const queued = await s.submit('Also cover the timezone field', 'r-2', false, 'followUp');
+  const queued = await s.submit('Also cover the timezone field', 'r-2', false, 'followUp', [], 'person');
   assert.equal(queued.status, 'queued');
   assert.equal(await resolveApproval(s.root, waiting.id, { decision: 'approve', by: jf }, ctx), false, 'the follow-up withdrew it');
   await approve(s, [waiting.id]);

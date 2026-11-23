@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { InboxDoc } from '@earendil-works/pi-durable';
 import { gated, type Approval } from '../src/index.ts';
 
 function setup(existing: Approval) {
@@ -23,7 +22,7 @@ function setup(existing: Approval) {
     taskId: 1,
     now: () => 100,
     conversationId: 'c',
-    commit: async <T>(fn: (tx: { conversation: () => Promise<object>; doc: (token: unknown) => Promise<unknown> }) => Promise<T>) => fn({ conversation: async () => ({}), doc: async (token) => (token === InboxDoc ? { items: [] } : doc) }),
+    commit: async <T>(fn: (tx: { conversation: () => Promise<undefined>; doc: () => Promise<typeof doc> }) => Promise<T>) => fn({ conversation: async () => undefined, doc: async () => doc }),
     watchDoc: async () => {
       watched++;
       return { value: doc, start: () => {}, stop: async () => { stopped++; } };

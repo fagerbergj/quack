@@ -94,7 +94,7 @@ export function client(root: string, adminToken?: string, socketMs = SOCKET_MS) 
     invoke: async (key: string, input: string, o: { agent?: string; wait?: boolean } = {}): Promise<{ status: string; answer?: string; reason?: string; detail?: string }> => {
       const route = `${path(key)}/invocations${o.agent ? `?agent=${encodeURIComponent(o.agent)}` : ''}`;
       // One id per logical request: a retry after a dropped connection joins the run the first attempt started.
-      const body = { input, requestId: `cli:${randomUUID()}`, wait: o.wait };
+      const body = { input, requestId: `cli:${randomUUID()}`, wait: o.wait, origin: 'person' };
       for (let attempt = 1; ; attempt++) {
         try {
           return await call(route, 'POST', body);

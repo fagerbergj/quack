@@ -7,13 +7,13 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { obj } from '@earendil-works/pi-schema';
 import { defineExtension, defineTool, GenerationTask, hook } from '@earendil-works/pi-durable';
-import { Approvals, gated, onWaiting, pendingApprovals } from '@quack/sdk';
+import { Approvals, gated, onWaiting, pendingApprovals, resolveApproval } from '@quack/sdk';
 import { openSession } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
 
-type Case = { yieldContinue?: boolean; legacy?: boolean };
+type Case = { yieldContinue?: boolean };
 
 const tool = gated(defineTool({
   name: 'submit_contract', description: 'put a version up for approval', parameters: obj({}, { open: true }),
@@ -47,32 +47,21 @@ const TEXT = 'also cover pagination';
 const CASES: Array<[string, Case]> = [
   ['the model answers after the not-run result', {}],
   ['a yield hook asks the run to continue', { yieldContinue: true }],
-  // A row and a follow-up queued behind it, as code before #2397 left them: the rerun's gate applies the rule to its existing row.
-  ['queued before an upgrade, the rerun after the restart withdraws its existing row', { legacy: true }],
 ];
 
 for (const [label, c] of CASES) {
-  test(`a follow-up queued behind a gated tool withdraws it and reaches the model exactly once, in the same run: ${label}`, async () => {
+  test(`a person's follow-up queued behind a gated tool withdraws it and reaches the model exactly once, in the same run: ${label}`, async () => {
     const dir = await mkdtemp(join(tmpdir(), 'quack-queued-gate-'));
     dirs.push(dir);
     const calls: string[][] = [];
-    let session = await openSession({ dir, ...agentFor(c, calls) });
+    const session = await openSession({ dir, ...agentFor(c, calls) });
     const waiting = parked();
     await session.submit('write the contract');
     await waiting;
     const [{ id }] = await pendingApprovals(session.root, ctx);
-    let submissionId: string;
-    if (c.legacy) {
-      submissionId = String((await session.root.submit({ type: 'input', content: TEXT, whenBusy: 'followUp' }, ctx)).id);
-      assert.equal((await pendingApprovals(session.root, ctx)).length, 1);
-      await session.close();
-      session = await openSession({ dir, ...agentFor(c, calls) });
-    } else {
-      const queued = await session.submit(TEXT, undefined, false, 'followUp');
-      submissionId = queued.submissionId;
-      assert.deepEqual(await pendingApprovals(session.root, ctx), [], 'withdrawn in the commit that queued the follow-up');
-    }
-    const settled = await (await session.harness.submission(submissionId as never, ctx))!.wait(ctx);
+    const queued = await session.submit(TEXT, undefined, false, 'followUp', [], 'person');
+    assert.deepEqual(await pendingApprovals(session.root, ctx), [], 'withdrawn in the commit that queued the follow-up');
+    const settled = await (await session.harness.submission(queued.submissionId as never, ctx))!.wait(ctx);
     assert.equal(settled.status, 'done', `the follow-up was answered, not dropped: ${JSON.stringify(settled)}`);
     const took = calls.filter((texts) => texts.some((t) => t.includes(TEXT)));
     assert.ok(took.length > 0 && took.every((texts) => texts.filter((t) => t.includes(TEXT)).length === 1), `exactly once: ${JSON.stringify(calls)}`);
@@ -82,3 +71,25 @@ for (const [label, c] of CASES) {
     await session.close();
   });
 }
+
+// Fail closed: input with no stated origin, a service's or one queued before origins existed, never withdraws, even by a rerun's gate.
+test('a follow-up with no origin queues behind a gated tool, and its row stays pending across a restart until the person decides', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-queued-gate-'));
+  dirs.push(dir);
+  const calls: string[][] = [];
+  let session = await openSession({ dir, ...agentFor({}, calls) });
+  const waiting = parked();
+  await session.submit('write the contract');
+  await waiting;
+  const queued = await session.submit(TEXT, undefined, false, 'followUp');
+  assert.equal(queued.status, 'queued');
+  await session.close();
+  const again = parked();
+  session = await openSession({ dir, ...agentFor({}, calls) });
+  await again;
+  const [{ id }] = await pendingApprovals(session.root, ctx);
+  assert.ok(await resolveApproval(session.root, id, { decision: 'approve', by: { kind: 'tailnet' } }, ctx), 'still pending after the rerun reached its gate');
+  assert.equal((await (await session.harness.submission(queued.submissionId as never, ctx))!.wait(ctx)).status, 'done');
+  assert.ok(calls.every((texts) => !texts.some((t) => t.includes('not run'))), 'the call was never withdrawn');
+  await session.close();
+});

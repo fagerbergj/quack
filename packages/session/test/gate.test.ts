@@ -308,7 +308,8 @@ test('the sweep leaves old and consumed rows alone, and a verdict on an ended ca
 
 const STEERED = /post_comment was not run: the request was withdrawn: a person's message reached the run while it waited\. Answer the message, then call post_comment again to ask\./;
 type WhenBusy = 'steer' | 'followUp';
-const messageOf = (http: Awaited<ReturnType<typeof serve>>, input: string, whenBusy: WhenBusy = 'steer') => http.json('/invocations', { input, whenBusy });
+// A person's message, as the UI, the CLI and GitHub's /fix send it.
+const messageOf = (http: Awaited<ReturnType<typeof serve>>, input: string, whenBusy: WhenBusy = 'steer') => http.json('/invocations', { input, whenBusy, origin: 'person' });
 
 for (const whenBusy of ['steer', 'followUp'] as const) test(`a message (${whenBusy}) withdraws a waiting approval before it is accepted, the agent answers it, and its next call asks afresh`, async () => {
   posted.length = 0;
@@ -366,6 +367,28 @@ for (const [whenBusy, racing] of EARLY) test(`a message (${whenBusy}) ${racing ?
   } finally {
     code.before = undefined;
   }
+});
+
+test('a service input (a schedule\'s run, no origin) queues behind a waiting approval and leaves it pending, as does a person origin no principal vouches for', async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  const answer = () => fauxAssistantMessage('Done.');
+  const session = await openSession({ dir, ...agentWith(callPost(), answer, answer) });
+  const http = await serve(session);
+  await session.submit('Approve this PR', 'run-s4');
+  const { id } = await firstAsk(session);
+  const scheduled = await http.json('/invocations', { input: 'nightly digest', whenBusy: 'followUp' });
+  // Another session's call reaches the process with the launch token and no principal.
+  const unvouched = await http.json('/invocations', { input: 'claims a person', whenBusy: 'followUp', origin: 'person' }, BEARER);
+  assert.deepEqual([scheduled.status, scheduled.body.status, unvouched.body.status], [202, 'queued', 'queued']);
+  const row = await rowOf(session, id);
+  assert.deepEqual([row.verdict, row.withdrawn], [null, undefined], 'still waiting on the person');
+  assert.equal((await http.json(`/approvals/${id}`, { decision: 'approve' })).status, 200);
+  assert.equal((await (await session.harness.submission(scheduled.body.submissionId, ctx))!.wait(ctx)).status, 'done');
+  assert.deepEqual(posted, ['LGTM']);
+  await http.stop();
+  await session.close();
 });
 
 test('in one tool round, a verdict committed before a steer wins and its call runs, while the call still waiting is withdrawn', async () => {
