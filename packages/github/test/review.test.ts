@@ -274,21 +274,21 @@ test('the review kind reads its outcome from the verdict, as the review is poste
 });
 
 test('a Verified item names its source when it shows a command, file:line, CI check, commit or URL; an absence claim needs its search', async () => {
-  // The 77 Verified items of the replay set (14 recorded reviews and a re-review), each label checked by hand; a suite run,
-  // the diff or files read, or a file without a line backs an item.
+  // The 77 Verified items of the replay set (14 recorded reviews and a re-review), each label checked by hand; a bare
+  // "ran"/"read" names no source for code, so those items are asked of Clef.
   const items: Array<{ item: string; backed: boolean; text: string }> = JSON.parse(readFileSync(new URL('./fixtures/verified-items.json', import.meta.url), 'utf8'));
   assert.equal(items.length, 77);
   assert.deepEqual(items.filter((it) => (namedSources(it.text) > 0) !== it.backed).map((it) => it.item), []);
   const ran = ['Ran `cargo test -p judge --release`: 41 pass.', 'Ran `FOO=1 make check` clean.', "`pnpm -r exec 'tsc --noEmit'` is clean."];
   const read = ['`const a = 2;` is unchanged.', 'Read `onEvent` and its callers.', 'The logic is correct and the tests pass.', 'Confirmed `legacy` is referenced nowhere.'];
   assert.deepEqual([...ran, ...read].map((t) => namedSources(t) > 0), [true, true, true, false, true, false, false], 'a command line or the code read counts; a statement, a bare claim or an unsearched absence does not');
-  const loose = ['Read the full 62-file diff against origin/v1.', 'Ran the targeted suites (boundary, cli): 46/46 pass.', 'the retry model in fixtures.ts mirrors the service.'];
-  assert.deepEqual(loose.map((t) => namedSources(t) > 0), [true, true, true], 'the diff or files read, a suite run, and a file without a line count');
+  const loose = ['the retry model in fixtures.ts mirrors the service.'];
+  assert.deepEqual(loose.map((t) => namedSources(t) > 0), [true], 'a file without a line counts');
+  assert.deepEqual(['Ran the targeted suites: 46/46 pass.', 'Read the full 62-file diff.', 'Nobody ran the tests for this path.'].map((t) => namedSources(t) > 0), [false, false, false], 'a bare verb names no source, so Clef reads it, negation included');
   // #2470 v2 Verified item 9 claimed a result and named nothing; the judge flagged it, and it is still asked.
   assert.equal(namedSources('Quote pairing itself is sound: on a line with two quoted phrases both read as mentions, and a real claim after a closed quote on the same line is still checked.'), 0);
   const undone = ['Nobody ran the tests for this path.', 'I have not read the diff, only the summary.', 'did not read the vendored files'];
-  assert.deepEqual(undone.map((t) => namedSources(t) > 0), [false, false, false], 'a verb source after a negation is a disclosed gap, not a source');
-  assert.ok(namedSources('Ran the tests; nothing is broken.') > 0 && namedSources('Read the diff and found no issues.') > 0);
+  assert.deepEqual(undone.map((t) => namedSources(t) > 0), [false, false, false], 'a negated verb is no source');
   const checks = ['build', 'e2e'];
   assert.deepEqual(['`e2e` passed on this head.', 'build=success.', 'The build passed.'].map((t) => namedSources(t, checks) > 0), [true, true, false], "the PR's own checks count when cited, not as bare words");
   const absent = ['Nothing imports `legacy` any more.', 'No callers of `x` are left.', '`rg legacy` finds nothing; no imports remain.', 'Searched the tree: nothing references `x`.'];

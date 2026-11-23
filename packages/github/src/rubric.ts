@@ -88,12 +88,11 @@ registerSplitter('github.citations', citationItems);
 const ARG = String.raw`(?:'[^'\`]*'|"[^"\`]*"|-{1,2}[\w-]*(?:=[^\s\`]+)?|[\w./:@*=+-]+)`;
 const COMMAND = new RegExp(String.raw`\`(?:[A-Z_]+=[^\s\`]+\s+)*[a-z][a-z0-9._-]*(?:\s+${ARG})+\``, 'g');
 // The sources a Verified item can name, found in code so Clef is asked only about items naming none: a command or code it
-// read, a file with or without a line, a commit, a URL, CI or the PR's checks, a suite it ran, the diff or files it read, a search.
+// read, a file with or without a line, a commit, a URL, CI or the PR's checks, a search.
 const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/, /https?:\/\/\S+/, /\bCI\b/, /`[A-Za-z_$][\w$.]*(?:\(\))?`/,
-  /\b[\w-]+(?:\/[\w.-]+)*\.(?:[cm]?[jt]sx?|json|md|go|py|rs|kt|java|ya?ml|toml|sql|sh|css|html)\b/, /\b(?:ran|re-?ran)\b(?:\s+\S+){0,4}?\s+(?:suites?|tests?|typecheck|lint|build)\b/i, /\b(?:read|re-?read)\b(?:\s+\S+){0,3}?\s+(?:diff|files?)\b/i];
+  /\b[\w-]+(?:\/[\w.-]+)*\.(?:[cm]?[jt]sx?|json|md|go|py|rs|kt|java|ya?ml|toml|sql|sh|css|html)\b/];
 // A claim that something is absent (a negation, then a reference, import, use or caller) is backed only by a named search.
 const ABSENCE = /\b(?:no|not|nothing|none|nowhere|zero)\b\W+(?:\w+\W+){0,3}?(?:referenc\w*|import\w*|us(?:e|es|ed|age)|call(?:s|ed|ers?)?|remain\w*|left)\b|\b(?:referenc\w*|import\w*|used|called)\s+nowhere\b/i;
-const NOT_DONE = /\b(?:not|never|nobody|no one|cannot|couldn[t']|didn[t']|unable to|without)\b[^\n]{0,30}?\b(?:ran|read)\b/i;
 const SEARCH_TOOL = /\b(?:grep|rg|ag|ack|find|search)\b/;
 const SEARCH_VERB = /\b(?:searched|grepped)\b/i;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -103,10 +102,8 @@ export function namedSources(text: string, checks: string[] = []): number {
   const commands = text.match(COMMAND) ?? [];
   if (ABSENCE.test(text) && !SEARCH_VERB.test(text) && !commands.some((c) => SEARCH_TOOL.test(c))) return 0;
   // A check is named in backticks or as name=conclusion: a bare word like "check" is not a citation of the job.
-  // A verb source named after a negation is a disclosed gap, not a source: only the two verb alternatives are dropped.
-  const verbs = NOT_DONE.test(text) ? 2 : 0;
   const ci = checks.some((name) => new RegExp(String.raw`\`${escape(name)}\`|\b${escape(name)}=\w+`).test(text));
-  return SOURCES.filter((rx, i) => rx.test(text) && (!verbs || i < SOURCES.length - verbs)).length + (commands.length ? 1 : 0) + (ci ? 1 : 0) + (SEARCH_VERB.test(text) ? 1 : 0);
+  return SOURCES.filter((rx) => rx.test(text)).length + (commands.length ? 1 : 0) + (ci ? 1 : 0) + (SEARCH_VERB.test(text) ? 1 : 0);
 }
 // The PR's check names come from its CI facts ("name=conclusion, ..."). The value stays empty so an item Clef is asked
 // about reads as it did before the pre-check.
