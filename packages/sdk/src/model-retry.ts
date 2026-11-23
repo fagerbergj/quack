@@ -32,6 +32,7 @@ type Reply = { stopReason: string; errorMessage?: string };
 export const inputTooLarge = (reply: Reply) => reply.stopReason === 'error' && /too large|exceeds? the (?:available )?context|context (?:length|size|window)/i.test(reply.errorMessage ?? '');
 
 // Strata refuses these while its pool is full or its engine restarts (about 2 min); both clear on their own, unlike a prompt over the pool.
+// Both halves are the engine's words: the pool refusal is its log line for a full lane (#2487), the other what server.py returns to a request waiting through a restart.
 const ENGINE_BUSY = /K\/V pool is full \(\d+ positions on this lane, \d+ more pages wanted, \d+ free\)|the engine stopped while this request waited; it was not sent/;
 
 /** Wraps a provider so an engine-busy reply reads as `server_busy`: pi-ai's retry (pi-durable runs and `retryModelCall` alike) matches text only. */
@@ -40,17 +41,15 @@ export function retryEngineBusy<P extends Provider>(provider: P): P {
   const wrap = (stream: unknown) => (...args: unknown[]) => {
     const source = (stream as (...a: unknown[]) => AssistantMessageEventStream).apply(provider, args);
     const out = createAssistantMessageEventStream();
-    let last: AssistantMessage | undefined;
     void (async () => {
       try {
         for await (const e of source) {
           const event = e.type === 'error' ? { ...e, error: busy(e.error) } : e;
-          if (event.type === 'done') last = event.message;
-          if (event.type === 'error') last = event.error;
           out.push(event);
         }
       } finally {
-        out.end(last); // end() with no message leaves result() pending forever
+        // The wrapped provider must end its stream with a done or error event; lazyApi guarantees that, a hand-written provider must too.
+        out.end();
       }
     })();
     return out;

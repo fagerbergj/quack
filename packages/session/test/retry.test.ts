@@ -33,7 +33,7 @@ test('two 502s then success completes the run', async () => {
   await session.close();
 });
 
-test('a full K/V pool is retried like a 503', async () => {
+test('a full K/V pool is retried like a transient refusal', async () => {
   const { session, faux } = await open('pool-full', [fail('prompt read (BGEN slot 1): the K/V pool is full (153729 positions on this lane, 801 more pages wanted, 761 free)'), fauxAssistantMessage('Paris')]);
   const r = await session.submit('Capital of France?', 'q', true);
   assert.deepEqual([r.status, faux.state.callCount], ['done', 2]);

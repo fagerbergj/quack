@@ -344,6 +344,7 @@ export function buildModels(deployment: DeploymentConfig): MutableModels {
   for (const [id, p] of Object.entries(deployment.providers)) {
     const entries = Object.entries(p.models ?? {}).filter(([, l]) => l.contextWindow);
     const auth = { apiKey: envApiKeyAuth(id, [providerEnv({ providers: { [id]: p } })[0]]) };
+    // Clef answers on another upstream, so it never returns these refusals: retryEngineBusy wraps the openai-completions providers only.
     if (p.api === 'systemone') {
       const list = entries.map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost: priced(l), contextWindow: l.contextWindow }));
       models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
