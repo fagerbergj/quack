@@ -28,7 +28,7 @@ const inlined = `The change does what issue #3 asks; approve.
 </details>`;
 const unanchored = inlined.replace('1 nit inline.', 'Not anchored to a diff line:\n- nit: app.ts:1 — a named constant would say why the value is 2.');
 // The questions asked as the defect, which a good review answers "no", by their text: a check id never reaches Clef.
-const PITFALLS = /contradict this finding|fail to name something that goes wrong|though not labelled blocking|claim a result/;
+const PITFALLS = /contradict this finding|fail to name something that goes wrong|a wrong result|claim a result/;
 const clefUnits: string[] = [];
 async function fakeClef() {
   return `${await listen(
@@ -111,7 +111,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@13\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@15\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);

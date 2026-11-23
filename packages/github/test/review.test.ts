@@ -236,3 +236,11 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
   assert.deepEqual(reviewDeclaration.checks.verified_names_evidence.aggregate, { name: 'share', by: 'either' }, 'a named source settles the item; the rest go to Clef');
 });
 
+test('a non-blocking finding flags as a serious bug on one plain question, with scope, fold and weight unchanged', () => {
+  const check = reviewDeclaration.checks.wrong_output_below_blocking;
+  assert.deepEqual(check.question, { type: 'bool', instructions: 'Will someone get a wrong result from this once the change merges?', pass: ['no'] });
+  assert.deepEqual([check.scope, check.aggregate, check.decisionModel], ['nonblocking', { name: 'share' }, undefined]);
+  const weight = reviewerRubric.criteria.flatMap((c) => c.checks).find((c) => c.id === 'wrong_output_below_blocking')?.weight;
+  assert.equal(weight, -2);
+});
+
