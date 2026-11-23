@@ -229,9 +229,9 @@ test('a Verified item names its source when it shows a command, file:line, CI ch
 });
 
 
-test('a nit flags as a serious bug only when it goes wrong once merged as it stands, not when latent or cosmetic', () => {
+test('a nit flags as a serious bug only when it goes wrong once merged as it stands, not when latent or harmless wording', () => {
   const d = reviewDeclaration.checks.wrong_output_below_blocking;
   assert.deepEqual([d.scope, d.aggregate, d.question.type === 'bool' && d.question.pass], ['nonblocking', { name: 'share' }, ['no']]);
   assert.match(d.question.instructions, /wrong output, a crash or data loss that happens once this change is merged as it stands\?/);
-  assert.match(d.question.instructions, /A latent bug that needs a possible future change, or cosmetic or accessibility wording, does not count\.$/);
+  assert.match(d.question.instructions, /A latent bug that needs a possible future change, or a word choice or layout that misleads no one, does not count; text a user receives wrong is wrong output\.$/);
 });
