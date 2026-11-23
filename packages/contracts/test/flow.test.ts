@@ -147,20 +147,16 @@ test('a json-schema spec reads its own guide, submits and passes', async () => {
   await s.close();
 });
 
-test('a spec citing a question nobody answered, or code that is not there, is sent back and never put up for approval', async () => {
-  const bad = (): ContractSpec => { const v = scheduleSpecV1({ versioning: 'nope:1', time: 'nope:2' }); v.choices[2].why[1].ref = 'packages/sleeper/src/missing.ts:3'; return v; };
+test('a spec whose choice points at nothing in the document is sent back and never put up for approval', async () => {
+  const bad = (): ContractSpec => { const v = scheduleSpecV1({ versioning: 'request', time: 'request' }); v.choices[2].pointer = '/paths/~1nowhere'; return v; };
   let seen = '';
   const s = await open([write(bad), call('submit_contract', {}), (c) => ((seen = text(c)), fauxAssistantMessage('stopped'))], 0);
   const done = await s.submit('Define it', 'r-1', true);
   assert.equal(done.status, 'done');
   const [v] = await versions(s);
   const verdict = v.verdict as { passed: boolean; gatesFailed: string[]; checks: Array<{ notes: string[] }> };
-  assert.equal(verdict.passed, false);
-  assert.deepEqual(verdict.gatesFailed, ['justified.links_resolve']);
-  const notes = verdict.checks.flatMap((k) => k.notes).join(' ');
-  assert.match(notes, /answer ref "nope:1" does not resolve/);
-  // A missing file says refs are read from the workspace root; packages/ here is a copy, not a git clone, so the hint is to clone into repo/.
-  assert.match(notes, /code ref "packages\/sleeper\/src\/missing.ts:3" names no file in the workspace, which holds no clone: clone the repository into repo\/ \(git clone --depth 1 -b <branch> <url> repo\) and cite a file at packages\/sleeper\/src\/missing.ts in it as "repo\/packages\/sleeper\/src\/missing.ts:3"/);
+  assert.deepEqual([verdict.passed, verdict.gatesFailed], [false, ['justified.pointers_resolve']]);
+  assert.match(verdict.checks.flatMap((k) => k.notes).join(' '), /errors: pointer `\/paths\/~1nowhere` is not in the document/);
   assert.match(seen, /cannot be put to the person for approval/);
   assert.deepEqual(await pendingApprovals(s.root, ctx), []);
   assert.equal(await sessionTitle(s), undefined, 'a failed version names nothing');
@@ -208,11 +204,6 @@ test('end to end: version 1, then a version 2 that names the Sleeper page, each 
   const adapter = manifest.evalAdapters![0].judge!;
   assert.deepEqual(await Promise.all(all.map((v) => adapter.inputs!(record, v.content))), live);
   assert.deepEqual(live.map((got) => (JSON.parse(got.facts) as { breaking: unknown[] }).breaking.length > 0), [false, true, true]);
-  // Had the answers come after version 1 was sealed, its answer refs could not have resolved when it was judged.
-  const items = JSON.parse(JSON.stringify(record.docs['quack.questions'].items)) as Record<string, { answer: { at: number } }>;
-  for (const q of Object.values(items)) q.answer.at = all[0].sealedAt + 1;
-  const late = await adapter.inputs!({ ...record, docs: { ...record.docs, 'quack.questions': { items } as never } }, all[0].content);
-  assert.match((JSON.parse(late.facts) as { unresolved: string[] }).unresolved.join(' '), /answer ref .* does not resolve/);
 });
 
 test('a version that passes is put up for approval in the same submit, and approving records that exact artifact', async () => {
@@ -335,13 +326,14 @@ test('a change request after a pass gets a fresh check budget; a failed newest v
 });
 
 test('a later run gets a fresh revision limit, and a version released at the limit is not counted as delivered', async () => {
-  const attempt = (n: number) => [write(() => ({ ...scheduleSpecV1({ versioning: 'nope:1', time: 'nope:2' }), title: `Attempt ${n}` })), call('submit_contract', {})];
+  const stray = (n: number): ContractSpec => { const v = { ...scheduleSpecV1({ versioning: 'request', time: 'request' }), title: `Attempt ${n}` }; v.choices[2].pointer = '/paths/~1nowhere'; return v; };
+  const attempt = (n: number) => [write(() => stray(n)), call('submit_contract', {})];
   const s = await open([...attempt(1), ...attempt(2), () => fauxAssistantMessage('stopped'), ...attempt(3), ...attempt(4), () => fauxAssistantMessage('stopped')], 1);
   await s.submit('Define it', 'r-1', true);
   await s.submit('Try again', 'r-2', true);
   const verdicts = (await versions(s)).map((v) => v.verdict as { limitReached: boolean; gatesFailed: string[] });
   assert.deepEqual(verdicts.map((v) => v.limitReached), [false, true, false, true]);
-  assert.deepEqual(verdicts[2].gatesFailed, ['justified.links_resolve'], 'still spec version 1');
+  assert.deepEqual(verdicts[2].gatesFailed, ['justified.pointers_resolve'], 'still spec version 1');
   await s.close();
 });
 
@@ -378,16 +370,13 @@ test('a proposal whose rerun fails before its gate is withdrawn, and the newer a
   await s2.close();
 });
 
-test('a review in the rejection reaches the agent with how to answer it; a version that leaves a comment unanswered fails, and reply_comment answers it', async () => {
+test('a review in the rejection reaches the agent with how to answer it, and reply_comment answers a comment', async () => {
   const said: string[] = [];
   const v2 = () => ({ ...settingsSpec(), version: 2 });
   const s = await open([
     call('read_guide', { kind: 'json-schema' }), write(settingsSpec), call('submit_contract', {}),
-    (c) => ((said.push(text(c)), write(v2)(c))), call('submit_contract', {}),
     (c) => ((said.push(text(c)), call('reply_comment', { id: 'cmt_1', text: 'Kept closed: a typo must fail loudly.' })(c))),
-    // A reply counts for a version sealed after it, so the same spec is written again; any change makes a new seal.
-    (c) => ((said.push(text(c)), call('write', { path: 'artifacts/spec.json', content: JSON.stringify(v2()) })(c))),
-    call('submit_contract', {}),
+    (c) => ((said.push(text(c)), write(v2)(c))), call('submit_contract', {}),
     () => fauxAssistantMessage('Version 2 is approved.'),
   ]);
   const run = s.submit('Define the Sleeper settings file', 'r-1', true);
@@ -397,10 +386,8 @@ test('a review in the rejection reaches the agent with how to answer it; a versi
   await run;
   assert.match(said[0]!, /ends in a ```quack-review block of review comments: for each comment, name its id in the addresses/);
   assert.deepEqual(lastReviewBlock(said[0]!.replace(/^Rejected by [^:]*: /, ''))?.block.comments.map((c) => c.id), ['cmt_1'], 'the agent reads the block whole');
-  assert.match(said[1]!, /comment 'cmt_1' from the last Ask for changes is neither addressed nor answered/);
-  assert.match(said[2]!, /Replied to comment cmt_1\./);
-  const [first, second] = (await versions(s)).slice(1);
-  assert.deepEqual([(first!.verdict as { gatesFailed: string[] }).gatesFailed, (second!.verdict as { passed: boolean }).passed], [['sound.comments_answered'], true]);
+  assert.match(said[1]!, /Replied to comment cmt_1\./);
+  assert.equal(((await versions(s))[1]!.verdict as { passed: boolean }).passed, true, 'no gate counts the comments: the Contracts app decides what is addressed');
   assert.deepEqual((await kindOf(s, 'contract.reply')).map((r) => JSON.parse(r.content)), [{ comment: 'cmt_1', text: 'Kept closed: a typo must fail loudly.' }]);
   assert.deepEqual((await kindOf(s, 'contract.changes')).map((r) => r.summary), ['One thing. · 1 review comment']);
   await s.close();

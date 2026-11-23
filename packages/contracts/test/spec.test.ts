@@ -144,15 +144,11 @@ test('a revision of an approved contract must name that version as its baseline'
   }
 });
 
-test('facts_decomposed compares a revision\'s facts with the approved spec\'s and names each offender', async () => {
-  const decomposed = async (spec: unknown, approved = [approvedRecord(1, 1, 20)]) => (await judgedFacts([sealed(1, v1, 10), sealed(2, spec, 30, null)], approved)).results.find((r) => r.id === 'facts_decomposed')!;
-  assert.equal((await decomposed(revision)).met, 1);
-  const edited = withFacts(revision, [fact('Read-only, always', 'read-only'), v1.intent.guarantees[1]]);
-  assert.deepEqual([(await decomposed(edited)).met, (await decomposed(edited)).notes], [0, ["facts are not decomposed: guarantees[0]: id named in no changes row's facts — 'read-only' was added with new text, changed or removed, so name it in the row that touches the list."]]);
-  assert.equal((await decomposed({ ...edited, changes: [{ ...revision.changes![0], facts: ['read-only'] }] })).met, 1);
-  const stringsOnly = withFacts(revision, ['Read-only']);
-  assert.equal((await decomposed(stringsOnly, [])).notes[0], `facts are not decomposed: guarantees[0]: ${STR_ID}.`, 'with nothing approved every entry needs an id');
-  assert.equal(contractRubric.criteria.find((c) => c.id === 'sound')!.checks.find((c) => c.id === 'facts_decomposed')!.weight, 'gate');
+test('a revision whose facts no changes row names, or that has no ids, fails no gate: that bookkeeping is not judged', async () => {
+  const gates = async (spec: unknown, approved = [approvedRecord(1, 1, 20)]) => (await judgedFacts([sealed(1, v1, 10), sealed(2, spec, 30, null)], approved)).results.filter((r) => r.weight === 'gate' && r.met !== 1).map((r) => r.id);
+  assert.deepEqual(await gates(withFacts(revision, [fact('Read-only, always', 'read-only'), v1.intent.guarantees[1]])), []);
+  assert.deepEqual(await gates(withFacts(revision, ['Read-only'])), []);
+  assert.deepEqual(contractRubric.criteria.flatMap((c) => c.checks).filter((k) => k.weight === 'gate').map((k) => k.id), ['version_matches', 'baseline_matches', 'pointers_resolve', 'breaking_named']);
 });
 
 // #2391: contract.spec numbers by gate-passed versions and "approval does not affect numbering", so a withdrawn proposal's number stays used.
