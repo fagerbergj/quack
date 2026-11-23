@@ -1,10 +1,10 @@
 import type { Context } from '@earendil-works/chord/context';
 import { LiveDoc, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { Artifacts, attachVerdict, inSessionSlot, type SealedArtifact } from '@quack/sdk';
-import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type Declaration, type Inputs } from './declaration.ts';
+import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type CheckDecl, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
-import { answerItems, pack, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
+import { answerItems, pack, passing, type Answer, type Answered, type Ask, type DecisionModelRef, type Hold, type Item, type ModelRef, type Pending } from './resolve.ts';
 import { sessionReuse, type Kept, type Reuse } from './reuse.ts';
 import { feedback, score, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
@@ -15,6 +15,9 @@ export { decisionModelTokens, type DecisionModelRef, type ModelRef } from './res
 export { limiter } from './limit.ts';
 export { judged, type JudgeConfig, type Judged } from './extension.ts';
 export { manifest } from './manifest.ts';
+
+/** The options that pass a declared check's item, as the judge reads an answer to it. */
+export const passingOptions = (d: CheckDecl): string[] => passing({ id: '', question: d.question, pass: d.aggregate.pass });
 
 export type JudgeOptions = {
   /** The artifact kind judged, by name. */

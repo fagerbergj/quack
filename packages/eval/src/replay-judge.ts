@@ -11,7 +11,7 @@ const { values } = parseArgs({ options: { cases: { type: 'string' }, deployment:
 const reportChecks = values['report-checks']?.flatMap((s) => s.split(',').filter(Boolean));
 // Labels per item: { case: { unit id: { flag } } }; only decision-only rows carry the item outcomes they are read against.
 const expect = values.expect ? (JSON.parse(readFileSync(values.expect, 'utf8')) as Expect) : undefined;
-if (expect && !values.table && !values['decision-only']) throw new Error('--expect needs --decision-only');
+if (expect && !values.table && !values['decision-only']) throw new Error('--expect needs --decision-only or --table');
 
 // A rows file, from a finished run or one that was stopped, prints as the table it would have printed; the seed is not in it.
 if (values.table) {

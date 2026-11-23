@@ -63,8 +63,8 @@ export async function loadArm(dir: string): Promise<Pick<Arm, 'adapters' | 'reju
 export type Row = { arm: string; rep: number; pos: number; case: string; check: string; met: number | null; clef: number; esc: number; reused: number; ms: number; requests: Record<string, number>; notes: string[] } & Partial<DecisionOnlyRow>;
 /** A decision-only round's verdict if escalated items answered: `pass` even when all fail, `fail` even when all pass, else `open`. */
 export type Range = 'pass' | 'fail' | 'open';
-/** A decision-only row: escalated items are unanswered and counted in `esc`; `items` holds each item's outcome by unit id. */
-type DecisionOnlyRow = { mode: 'decision-only'; verdict: Range; items: Record<string, Outcome> };
+/** A decision-only row: escalated items are unanswered and counted in `esc`; `items` holds each item's outcome by unit id; `outage` counts the round's units Clef never answered. */
+type DecisionOnlyRow = { mode: 'decision-only'; verdict: Range; items: Record<string, Outcome>; outage: number };
 /** A case an arm could not judge, with what its recording lacks. */
 export type Declined = { arm: string; case: string; reason: string };
 export type Replayed = { rows: Row[]; declined: Declined[]; seed?: number };
@@ -152,7 +152,9 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const ms = Date.now() - t;
   // Rejudged with every escalated item failing, then passing; Clef's answers come from the first round's memo, so neither asks a model.
   const as = async (pass: boolean) => (await j.rejudge(decisionOnly(on, memo, (ask) => choiceOf(declsOf(j).get(ask)!, pass)).api, opts, sealed, memo, ctx)).passed;
-  const verdict: Range | undefined = only && ((await as(false)) ? 'pass' : (await as(true)) ? 'open' : 'fail');
+  // An outage round is left open: rebounding it would only run Clef's retries twice more, and the run fails on it anyway.
+  const outage = only?.down().size ?? 0;
+  const verdict: Range | undefined = only && (outage ? 'open' : (await as(false)) ? 'pass' : (await as(true)) ? 'open' : 'fail');
   // An undecided check is already met null; a decided fold reads as 1 or 0 beside the shares of undeclared rubrics.
   const at = { arm: j.arm, rep: j.rep, pos: j.pos, case: j.c.case, ms, requests };
   return v.checks.map((k) => {
@@ -160,7 +162,7 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
     if (!only || !verdict) return row;
     const ask = `${k.criterion}.${k.id}`;
     const items = outcomes(only, ask, declsOf(j).get(ask), j.decisionModel?.act ?? 0.8);
-    return { ...row, mode: 'decision-only', verdict, items, esc: Object.values(items).filter((x) => (CAUSES as string[]).includes(x)).length };
+    return { ...row, mode: 'decision-only', verdict, items, outage, esc: Object.values(items).filter((x) => (CAUSES as string[]).includes(x)).length };
   });
 }
 
@@ -246,6 +248,8 @@ export async function replayJudge(o: Options): Promise<Replayed> {
               const done = await judgeJob(on, ctx, o, j);
               rows.push(...done);
               o.onRows?.(done);
+              // A decision-only round Clef did not answer measures nothing; its rows are kept, and the run stops on it.
+              if (done.some((r) => r.outage)) failure ??= new Error(`${j.arm} ${j.c.case}: the decision model answered no request for ${done[0].outage} units (an outage); rerun once it is up`);
             }
           } catch (err) {
             failure ??= err;
@@ -307,24 +311,31 @@ function labelOf(flag: boolean, o: Outcome | undefined): string {
   return flag ? 'caught' : 'flagged';
 }
 
-/** Each labelled item's outcome per repeat by arm, then each arm's totals; labels name items by unit id, on every check of their case. */
+/** A labelled item's rows per check: the checks that judged it under any arm, or none when none did. */
+const checksOf = (rows: Row[], c: string, unit: string) => [...new Set(rows.filter((r) => r.case === c && r.items?.[unit]).map((r) => r.check))].sort();
+
+/** Each labelled item's outcome per check and repeat by arm, then each arm's totals per check, so an item counts once per check and repeat. */
 function labelled(rows: Row[], arms: string[], expect: Expect): string[] {
-  const per = Object.entries(expect).flatMap(([c, units]) => Object.entries(units).flatMap(([unit, { flag }]) => arms.map((arm) => ({ key: `${c} ${unit} (${flag ? 'real' : 'false flag'})`, arm,
-    labels: rows.filter((r) => r.arm === arm && r.case === c && r.items?.[unit]).sort((a, b) => a.rep - b.rep).map((r) => labelOf(flag, r.items![unit])) }))));
-  const lines = [...new Set(per.map((p) => p.key))].map((key) => `- ${key}: ${per.filter((p) => p.key === key).map((p) => `${p.arm} ${p.labels.join(' ') || 'unjudged'}`).join('; ')}`);
-  const totals = arms.map((arm) => {
-    const all = per.filter((p) => p.arm === arm).flatMap((p) => p.labels);
-    return `- ${arm}: ${['caught', 'passed-by-clef', 'false-flag-cleared', 'flagged', 'unjudged'].map((l) => `${l} ${all.filter((x) => x === l).length}`).join(', ')}`;
-  });
-  return ['', 'labelled items (case unit: outcome per repeat by arm):', ...lines, 'labelled totals per arm:', ...totals];
+  const per = Object.entries(expect).flatMap(([c, units]) => Object.entries(units).flatMap(([unit, { flag }]) => {
+    const checks = checksOf(rows, c, unit);
+    return (checks.length ? checks : ['-']).map((check) => ({ key: `${c} ${unit} ${check} (${flag ? 'real' : 'false flag'})`, check, arms: arms.map((arm) => ({ arm,
+      labels: rows.filter((r) => r.arm === arm && r.case === c && r.check === check && r.items?.[unit]).sort((a, b) => a.rep - b.rep).map((r) => labelOf(flag, r.items![unit])) })) }));
+  }));
+  const lines = per.map((p) => `- ${p.key}: ${p.arms.map((a) => `${a.arm} ${a.labels.join(' ') || 'unjudged'}`).join('; ')}`);
+  const checks = [...new Set(per.map((p) => p.check))].filter((k) => k !== '-');
+  const totals = arms.flatMap((arm) => checks.map((check) => {
+    const all = per.filter((p) => p.check === check).flatMap((p) => p.arms.find((a) => a.arm === arm)!.labels);
+    return `- ${arm} ${check}: ${['caught', 'passed-by-clef', 'false-flag-cleared', 'flagged', 'unjudged'].map((l) => `${l} ${all.filter((x) => x === l).length}`).join(', ')}`;
+  }));
+  return ['', 'labelled items (case unit check: outcome per repeat by arm; "-" when no check judged it):', ...lines, 'labelled totals per arm and check:', ...totals];
 }
 
 /** Each case's verdict range per repeat by arm, when the run was decision-only. */
 function ranges(rows: Row[], arms: string[]): string[] {
   if (!rows.some((r) => r.mode === 'decision-only')) return [];
   const cases = [...new Set(rows.map((r) => r.case))].sort();
-  const of = (arm: string, c: string) => [...new Map(rows.filter((r) => r.arm === arm && r.case === c).sort((a, b) => a.rep - b.rep).map((r) => [r.rep, r.verdict])).values()].join(' ');
-  return ['', 'verdict ranges with escalated items unanswered (case: per repeat by arm):', ...cases.map((c) => `- ${c}: ${arms.map((a) => `${a} ${of(a, c)}`).join('; ')}`)];
+  const verdicts = (arm: string, c: string) => [...new Map(rows.filter((r) => r.arm === arm && r.case === c).sort((a, b) => a.rep - b.rep).map((r) => [r.rep, r.verdict])).values()].join(' ');
+  return ['', 'verdict ranges with escalated items unanswered (case: per repeat by arm):', ...cases.map((c) => `- ${c}: ${arms.map((a) => `${a} ${verdicts(a, c)}`).join('; ')}`)];
 }
 
 /** Per arm, the counts load and prefix caching cannot bias come before the seconds they can. */

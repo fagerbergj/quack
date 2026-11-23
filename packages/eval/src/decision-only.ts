@@ -1,14 +1,14 @@
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { PASS_ONLY, type CheckDecl } from '@quack/judge';
+import { PASS_ONLY, passingOptions, type CheckDecl } from '@quack/judge';
 
-/** Why the decision model left an item to the judge model. */
-export type Cause = 'declared' | 'unsure' | 'pass-only-no' | 'over-window';
-export const CAUSES: Cause[] = ['declared', 'unsure', 'pass-only-no', 'over-window'];
+/** Why the decision model left an item to the judge model; `outage` is a request it was sent and never answered. */
+export type Cause = 'declared' | 'unsure' | 'pass-only-no' | 'over-window' | 'outage';
+export const CAUSES: Cause[] = ['declared', 'unsure', 'pass-only-no', 'over-window', 'outage'];
 /** An item under decision-only: the decision model's pass or standing no, an escalation (unanswered) by cause, or `unasked` once its check had decided. */
 export type Outcome = 'pass' | 'no' | Cause | 'unasked';
 
-/** The api a decision-only round judges on, and what it heard: decision-model probabilities and escalated items, by unit and check key. */
-export type DecisionOnly = { api: ToolExecutionApi; probabilities: Map<string, number>; escalated: Set<string> };
+/** The api a decision-only round judges on, and what it heard: decision-model probabilities and escalated items, by unit and check key; `down` gives the units of requests never answered. */
+export type DecisionOnly = { api: ToolExecutionApi; probabilities: Map<string, number>; escalated: Set<string>; down: () => Set<string> };
 
 const itemKey = (unit: string, ask: string) => `${unit}\t${ask}`;
 
@@ -45,15 +45,29 @@ export function decisionOnly(api: ToolExecutionApi, memo: string, answer?: (ask:
   });
   const decision = `decision:${memo}:`;
   const suffix = ':classifier';
+  // The judge reads a group's classifier memo, asks, then stores the answer or a deterministic miss; an outage stores nothing.
+  const unanswered = new Set<string>();
+  const real = (key: string, rest: unknown[]) => (api.memo as (...a: unknown[]) => Promise<unknown>)(key, ...rest);
+  const classifier = (name: string, key: string, rest: unknown[]) => {
+    if (rest.length === 2) {
+      unanswered.delete(name);
+      heard(name, rest[0] as Record<string, number> | null);
+      return real(key, rest);
+    }
+    return real(key, rest).then((v) => {
+      if (v === undefined) unanswered.add(name);
+      return v;
+    });
+  };
   const memoOf = (key: string, ...rest: unknown[]) => {
+    if (key.startsWith(`${memo}:`) && key.endsWith(suffix)) return classifier(key.slice(memo.length + 1, -suffix.length), key, rest);
     if (key.startsWith(decision)) {
       const name = key.slice(decision.length);
       const ask = name.slice(name.lastIndexOf(':') + 1);
       escalated.add(itemKey(name.slice(0, -ask.length - 1), ask));
       return Promise.resolve(answer && { choice: answer(ask), confidence: 1, reason: 'decision-only', resolver: 'decision-only' });
     }
-    if (rest.length === 2 && key.startsWith(`${memo}:`) && key.endsWith(suffix)) heard(key.slice(memo.length + 1, -suffix.length), rest[0] as Record<string, number> | null);
-    return (api.memo as (...a: unknown[]) => Promise<unknown>)(key, ...rest);
+    return real(key, rest);
   };
   const stub = new Proxy(api, { get: (t, k) => {
     if (k === 'models') return models;
@@ -61,21 +75,22 @@ export function decisionOnly(api: ToolExecutionApi, memo: string, answer?: (ask:
     const v: unknown = Reflect.get(t, k);
     return typeof v === 'function' ? v.bind(t) : v;
   } });
-  return { api: stub, probabilities, escalated };
+  return { api: stub, probabilities, escalated, down: () => new Set([...unanswered].flatMap((n) => packed.get(n) ?? [n])) };
 }
 
-/** The option a check's item takes when it passes (or fails), as the judge reads a choice or bool answer. */
+/** The option a check's item takes when it passes (or fails), by the judge's own pass rule. */
 export function choiceOf(d: CheckDecl, pass: boolean): string {
   const options = d.question.type === 'choice' ? Object.keys(d.question.options) : ['yes', 'no'];
-  const passing = d.question.type === 'choice' ? d.aggregate.pass ?? options.slice(0, 1) : d.question.pass ?? ['yes'];
+  const passing = passingOptions(d);
   return options.find((o) => passing.includes(o) === pass) ?? options[0];
 }
 
-function outcomeOf(s: DecisionOnly, key: string, d: CheckDecl | undefined, act: number): Outcome {
+function outcomeOf(s: DecisionOnly, unit: string, key: string, d: CheckDecl | undefined, act: number): Outcome {
   const p = s.probabilities.get(key);
   const passOnly = d?.decisionModel === PASS_ONLY;
+  if (s.escalated.has(key) && d?.decisionModel === false) return 'declared';
+  if (s.down().has(unit)) return 'outage';
   if (s.escalated.has(key)) {
-    if (d?.decisionModel === false) return 'declared';
     if (p === undefined) return 'over-window';
     return passOnly && 1 - p >= act ? 'pass-only-no' : 'unsure';
   }
@@ -86,5 +101,5 @@ function outcomeOf(s: DecisionOnly, key: string, d: CheckDecl | undefined, act: 
 /** Each item of one check (by its criterion.check key) the round heard of, by unit id. */
 export function outcomes(s: DecisionOnly, ask: string, d: CheckDecl | undefined, act: number): Record<string, Outcome> {
   const units = [...s.probabilities.keys(), ...s.escalated].filter((k) => k.endsWith(`\t${ask}`)).map((k) => k.slice(0, -ask.length - 1));
-  return Object.fromEntries([...new Set(units)].sort().map((u) => [u, outcomeOf(s, itemKey(u, ask), d, act)]));
+  return Object.fromEntries([...new Set(units)].sort().map((u) => [u, outcomeOf(s, u, itemKey(u, ask), d, act)]));
 }
