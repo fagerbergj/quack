@@ -205,3 +205,19 @@ test('every kind guide and the contracts prompt carry the one-fact rule word for
   const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
   assert.ok(prompt.includes(`\n${rule}\n`) && prompt.includes(`\n${object}\n`));
 });
+
+// Line cites went stale with every merge on 33777f8a and 0e13c5c3 and cost whole rounds of re-anchoring.
+test('the contracts prompt and every kind guide ask for a file, never a path:line', () => {
+  const prompt = readFileSync(new URL('../../../agents/contracts/prompt.md', import.meta.url), 'utf8');
+  for (const text of [prompt, ...Object.values(kinds).map((k) => k.skill)]) assert.doesNotMatch(text, /path:line|\.ts:\d+/);
+  assert.match(prompt, /`ref` is the file's path relative to your workspace/);
+});
+
+// Guards against bringing back line resolution: a file ref is the form the prompt asks for, and no gate may refuse it.
+test('a code why that names a file with no line passes every contract.spec gate', async () => {
+  const why = [{ source: 'code', ref: 'repo/packages/x/src/server.ts', text: 'serve answers each route' }];
+  const spec = { ...v1, choices: [{ ...v1.choices[0], why }, ...v1.choices.slice(1)] };
+  assert.deepEqual(problems(spec), []);
+  const { results } = await judgedFacts([sealed(1, spec, 10, null)]);
+  assert.deepEqual(results.filter((r) => r.weight === 'gate' && r.met !== 1).map((r) => r.id), []);
+});

@@ -1,7 +1,7 @@
 // No node: imports, so the web bundle imports the artifact's type and parser from here.
 import { factShapeProblems, type Fact } from './facts.ts';
 
-export type Why = { source: 'answer' | 'guide' | 'code'; text: string; /** A question id, a guide rule anchor, or path:line. */ ref: string };
+export type Why = { source: 'answer' | 'guide' | 'code'; text: string; /** A question id, a guide rule anchor, or a file path; older specs cite path:line. */ ref: string };
 export type Choice = { id: string; /** JSON pointer into `document` the choice governs; empty when spec-wide. */ pointer: string; decision: string; why: Why[] };
 /** `facts` names the fact ids the row adds, changes or removes; `addresses` the review comment ids the row addresses. */
 export type Change = { choice: string; was: string; now: string; why: string; facts?: string[]; addresses?: string[] };
