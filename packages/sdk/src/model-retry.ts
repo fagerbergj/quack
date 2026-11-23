@@ -1,4 +1,4 @@
-import { isRetryableAssistantError, retryDelayMs, type AssistantMessage } from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream, isRetryableAssistantError, retryDelayMs, type AssistantMessage, type AssistantMessageEventStream, type Provider } from '@earendil-works/pi-ai';
 
 // pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
@@ -30,6 +30,32 @@ type Reply = { stopReason: string; errorMessage?: string };
 
 // An input over the model's context fails the same way every time, whatever status the host gives it (llama.cpp: 500).
 export const inputTooLarge = (reply: Reply) => reply.stopReason === 'error' && /too large|exceeds? the (?:available )?context|context (?:length|size|window)/i.test(reply.errorMessage ?? '');
+
+// Strata refuses these while its pool is full or its engine restarts (about 2 min); both clear on their own, unlike a prompt over the pool.
+// Both halves are the engine's words: the pool refusal is its log line for a full lane (#2487), the other what server.py returns to a request waiting through a restart.
+const ENGINE_BUSY = /K\/V pool is full \(\d+ positions on this lane, \d+ more pages wanted, \d+ free\)|the engine stopped while this request waited; it was not sent/;
+
+/** Wraps a provider so an engine-busy reply reads as `server_busy`: pi-ai's retry (pi-durable runs and `retryModelCall` alike) matches text only. */
+export function retryEngineBusy<P extends Provider>(provider: P): P {
+  const busy = (m: AssistantMessage) => (m.stopReason === 'error' && ENGINE_BUSY.test(m.errorMessage ?? '') ? { ...m, errorMessage: `server_busy ${m.errorMessage}` } : m);
+  const wrap = (stream: unknown) => (...args: unknown[]) => {
+    const source = (stream as (...a: unknown[]) => AssistantMessageEventStream).apply(provider, args);
+    const out = createAssistantMessageEventStream();
+    void (async () => {
+      try {
+        for await (const e of source) {
+          const event = e.type === 'error' ? { ...e, error: busy(e.error) } : e;
+          out.push(event);
+        }
+      } finally {
+        // The wrapped provider must end its stream with a done or error event; lazyApi guarantees that, a hand-written provider must too.
+        out.end();
+      }
+    })();
+    return out;
+  };
+  return new Proxy(provider, { get: (t, k) => (k === 'stream' || k === 'streamSimple' ? wrap(t[k]) : Reflect.get(t, k, t)) });
+}
 
 /** Retries a model call's transient failures (429, 5xx, connection, timeout) on MODEL_RETRY; a 4xx or any model answer returns at once. */
 // `call` must hand the provider the `fetch` it gets, or Retry-After is never seen; an abort during the backoff rejects.
