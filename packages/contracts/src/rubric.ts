@@ -201,24 +201,51 @@ registerSelector('contract.held', (_i, c) => ({ value: '', matches: Number(c.met
 // A guarantee's group key: its fact id, or for a grandfathered string its first words and a hash of its text, which an insert does not move.
 const guaranteeKey = (e: Entry) => e.label ?? `${e.text.split(/\s+/).slice(0, 6).join(' ')} #${createHash('sha256').update(e.text).digest('hex').slice(0, 6)}`;
 
-/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. */
+/** A part of the spec a guarantee may hold in: a definition, the rest of the document, or a decided choice. `text` is what it is ranked by. */
 type Part = { id: string; name?: string; text: string; evidence: unknown; root?: true };
 
-// The parts a guarantee is checked against, best first: one it names, then by shared terms; with none above the bar, the best few anyway,
-// so every guarantee is asked. The root holds spec-wide rules (additionalProperties, security, the stated scope), so it is always asked.
+// "loader" meets "load" and "checked" meets "check"; promise ranking only, so the definition checks' evidence stays as it was.
+const stemsOf = (s: string) => new Set([...termsOf(s)].map((t) => t.replace(/(?<=[a-z0-9]{4})(?:ing|ers?|ed)$/, '')));
+const VERB_BEFORE = /\b(GET|PUT|POST|DELETE|OPTIONS|HEAD|PATCH|TRACE)\s+$/;
+// A path, pointer, camelCase or dashed name cannot be an English word by chance; a plain word names a part only in backticks.
+const codeLike = (name: string) => /[^A-Za-z]|.[A-Z]/.test(name);
+// Path characters end a mention, so /sessions does not name /sessions/{key}.
+const exactly = (name: string) => new RegExp(`(?<![\\w$/.{}-])${escRe(name)}(?![\\w$/{}-])`, 'g');
+
+// A part the text names exactly: an operation by its path, with no verb before it or its own; any other by its pointer, its name or
+// a choice's id, written as code.
+function namedIn(text: string, p: Part): boolean {
+  const op = /^([A-Z]+) (\/\S*)$/.exec(p.id);
+  if (op) return [...text.matchAll(exactly(op[2]))].some((m) => [undefined, op[1]].includes(VERB_BEFORE.exec(text.slice(0, m.index))?.[1]));
+  const names = [p.id.replace(/^choice /, ''), p.name ?? ''].filter(Boolean);
+  return names.some((n) => text.includes(`\`${n}\``) || (codeLike(n) && exactly(n).test(text)));
+}
+
+// About 20k tokens at 3 characters a token: a tenth of the judge model's input window (262k less a 32k reply), over twice the
+// largest evidence a recorded item had, so a promise naming many operations is shown them all.
+const MAX_EVIDENCE_CHARS = 60_000;
+const sizeOf = (p: Part) => JSON.stringify(p.evidence).length;
+
+// Every part the promise names exactly, the `top` best (named, then by shared terms, or the best few when none clear the bar), every
+// other part it names as a word, and the root with its spec-wide rules; over the ceiling, the lowest-ranked go first.
 function partsFor(text: string, parts: Part[], top: number, minShared: number): Part[] {
-  const terms = termsOf(text);
+  const terms = stemsOf(text);
   const scored = parts.map((p, i) => {
-    const shared = [...termsOf(p.text)].filter((t) => terms.has(t)).length;
-    return { p, i, shared, s: (p.name && mentions(p.name).test(text) ? 1000 : 0) + shared };
+    const shared = [...stemsOf(p.text)].filter((t) => terms.has(t)).length;
+    const exact = namedIn(text, p);
+    // A path is named exactly or not at all: as a word, /sessions would name every path under it.
+    const word = !!p.name && !p.name.startsWith('/') && mentions(p.name).test(text);
+    return { p, i, shared, exact, s: (exact || word ? 1000 : 0) + shared };
   });
   const ranked = [...scored].sort((a, b) => b.s - a.s || a.i - b.i);
   const kept = ranked.filter((x) => x.s >= minShared);
-  const best = (kept.length ? kept : ranked).slice(0, top);
-  const root = scored.find((x) => x.p.root);
+  const chosen = new Set([...ranked.filter((x) => x.exact), ...(kept.length ? kept : ranked).slice(0, top), ...ranked.filter((x) => x.s >= 1000)]);
+  const root = scored.filter((x) => x.p.root);
+  let used = root.reduce((n, x) => n + sizeOf(x.p), 0);
+  const shown = [...chosen].filter((x) => !x.p.root && (used += sizeOf(x.p)) <= MAX_EVIDENCE_CHARS);
   // Order evidence by shared terms so the most relevant part comes first: a name the guarantee only
   // happens to use as a word ("session's") keeps a part in, not first.
-  return (root && !best.includes(root) ? [...best, root] : best).sort((a, b) => b.shared - a.shared).map((x) => x.p);
+  return [...shown, ...root].sort((a, b) => b.shared - a.shared).map((x) => x.p);
 }
 
 // The definitions, the rest of the document and the decided choices: a guarantee the code cannot show, such as layering or a
@@ -226,8 +253,9 @@ function partsFor(text: string, parts: Part[], top: number, minShared: number): 
 function partsOf(spec: Pick<ContractSpec, 'document' | 'choices'>, kind: ContractSpec['kind']): Part[] {
   const defs = kinds[kind].definitions(spec.document).filter((d) => /[\p{L}\p{N}]/u.test(textOf(d)));
   const choices = (spec.choices ?? []).map((c): Part => {
-    const evidence = { decision: c.decision, why: c.why.map((w) => w.text) };
-    return { id: `choice ${c.id}`, text: JSON.stringify(evidence), evidence };
+    // Ranked by its decision alone: its whys quote the guide and the request, and a guide quote many choices share would outrank
+    // the definitions a promise holds in.
+    return { id: `choice ${c.id}`, text: c.decision, evidence: { decision: c.decision, why: c.why.map((w) => w.text) } };
   });
   // The root goes with every promise, so its examples, which make nothing hold, stay out of the evidence.
   const shown = (d: Definition) => (d.rest && typeof d.definition === 'object' && d.definition !== null ? { ...d.definition, examples: undefined } : d.definition);
@@ -285,7 +313,7 @@ async function inputsIn(sealed: SealedArtifact, w: World): Promise<Inputs> {
 // adds_unasked is the owner's exception, worded as the claim and holding on "yes"; the replay's clef and esc columns track its cost.
 const yesNo = (instructions: string): Asked => ({ type: 'choice', instructions, options: { yes: 'Yes, this holds.', no: 'No, it does not hold.' } });
 
-// Promises read at most four parts plus the root via meets_intent and delivers_purpose.
+// Promises (meets_intent, delivers_purpose) read every part they name, the four best besides, and the root.
 export const contractDeclaration: Declaration = {
   scopes: {
     facts: { split: { name: 'whole', from: 'facts' }, piece: 'facts' },

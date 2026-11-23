@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import type { Unit } from '@quack/judge';
 import { contractDeclaration, contractRubric, type ContractSpec } from '../src/index.ts';
@@ -47,6 +48,50 @@ test('a decided choice is evidence, the root always is (without its examples), a
   assert.equal(cards.at(-1)!.part, '(rest of the document)');
   assert.ok(!JSON.stringify(cards.at(-1)!.text).includes('an example makes nothing hold'));
   assert.equal(shown('live-week')[0].part, OP);
+});
+
+const fixture = (name: string) => JSON.parse(readFileSync(new URL(`fixtures-specs/${name}`, import.meta.url), 'utf8')) as ContractSpec;
+const partsIn = (units: Unit[], prefix: string) => evidenceOf(units.find((u) => u.id.startsWith(prefix))!).map((e) => e.part);
+
+// contracts:eda8542f sealed v28: the judge failed this sentence for not showing GET or DELETE /sessions/{key}, which it defines.
+test('a promise gets every operation it names by path, past the four best', async () => {
+  const parts = partsIn((await builtOf(fixture('sessions-api-v20.json'))).evidence.purpose, 'purpose One session catalog');
+  for (const op of ['GET /sessions', 'GET /sessions/{key}', 'PATCH /sessions/{key}', 'DELETE /sessions/{key}', 'GET /sessions/{key}/artifacts', 'GET /artifacts']) assert.ok(parts.includes(op), `${op} in ${parts.join(', ')}`);
+});
+
+// contracts:608df011 v26 and v28: the catalog and extension store descriptions say "the loader checks the reference", but choices
+// sharing a guide quote ("a typo should fail loudly") took the four places.
+test('a choice ranks by its decision, not its whys, and "loader" meets "load"', async () => {
+  const parts = partsIn((await builtOf(fixture('deployment-v17.json'))).evidence.guarantee, 'guarantee store-ref-checked');
+  assert.ok(parts.includes('/properties/catalog') && parts.includes('/$defs/extension'), parts.join(', '));
+  assert.ok(!parts.includes('choice top-level-open'), parts.join(', '));
+});
+
+// Three operations on one path and five shelves that share more terms with each guarantee than any operation does.
+function shelves(guarantees: ContractSpec['intent']['guarantees'], shelf = 'Cached for every reader of the shelf'): ContractSpec {
+  const s = spec();
+  const op = (description: string) => ({ description, responses: { 204: { description: 'Done' } } });
+  s.document = { openapi: '3.1.0', info: { title: 'Cache', version: '1' }, paths: { '/items/{id}': { get: op('One item'), put: op('Store an item'), delete: op('Drop an item') } }, components: { schemas: Object.fromEntries(['A', 'B', 'C', 'D', 'E'].map((n) => [`Shelf${n}`, { type: 'object', description: shelf }])) } };
+  s.choices = [];
+  s.intent.guarantees = guarantees;
+  return s;
+}
+
+test('a verb before a path names that operation alone; a bare path names each; a promise naming nothing gets the best four and the root', async () => {
+  const { evidence } = await builtOf(shelves([
+    { id: 'verb', text: 'GET /items/{id} is cached for every reader' },
+    { id: 'bare', text: '/items/{id} is cached for every reader' },
+    { id: 'none', text: 'Everything is cached for every reader' },
+  ]));
+  const ops = (id: string) => partsIn(evidence.guarantee, `guarantee ${id}`).filter((p) => p.includes('/items'));
+  assert.deepEqual(ops('verb'), ['GET /items/{id}']);
+  assert.deepEqual(ops('bare').sort(), ['DELETE /items/{id}', 'GET /items/{id}', 'PUT /items/{id}']);
+  assert.deepEqual(partsIn(evidence.guarantee, 'guarantee none'), ['/components/schemas/ShelfA', '/components/schemas/ShelfB', '/components/schemas/ShelfC', '/components/schemas/ShelfD', '(rest of the document)']);
+});
+
+test('over the evidence ceiling the lowest-ranked parts go, never one the promise names', async () => {
+  const { evidence } = await builtOf(shelves([{ id: 'verb', text: 'GET /items/{id} is cached for every reader' }], `Cached for every reader of the shelf. ${'x'.repeat(20_000)}`));
+  assert.deepEqual(partsIn(evidence.guarantee, 'guarantee verb'), ['/components/schemas/ShelfA', '/components/schemas/ShelfB', 'GET /items/{id}', '(rest of the document)']);
 });
 
 test('the judge model answers every promise and nothing reaches the decision model; a failing one carries its reason', async (t) => {

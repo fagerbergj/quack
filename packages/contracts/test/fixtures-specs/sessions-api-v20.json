@@ -1,0 +1,2770 @@
+{
+  "kind": "rest",
+  "title": "Quack Sessions API",
+  "version": 20,
+  "intent": {
+    "purpose": "One session catalog, owned by the distributor, serving everything lists, Home and the session pages read: a searched, paged session list (GET /sessions); one session read (GET /sessions/{key}, 404 for a key the catalog does not hold); rename, and archive and unarchive as a state write on PATCH /sessions/{key}; delete (DELETE /sessions/{key}, refused 409 while work is in flight); the ask resource (approvals and questions as one type) with resolution as a PATCH on the ask; and sealed artifacts, per session and across sessions, at /sessions/{key}/artifacts and /artifacts. The catalog is written through the core when a session's state changes — created, run started or ended, ask opened, answered or cancelled, artifact sealed, spend, archived, renamed, deleted — and recovers by replaying each session's own log. No read ever starts a session's process, and every list costs a page.",
+    "nonGoals": [
+      "Session transcripts, messages, sockets, invocations, ping, abort, resume and export: those routes boot or drive the session's process by design and are named here only so callers keep using them.",
+      "The lifecycle reporting channel itself: sessions report state changes to the distributor over a per-session authenticated, idempotent channel specified separately; this contract records what the catalog stores as a result.",
+      {
+        "id": "export-invocations-routes",
+        "text": "Export and invocations are routes of the distributor HTTP API contract (contracts:5175ad9d-6484-4aa7-8607-c33a1bc6e9c4)."
+      },
+      {
+        "id": "export-never-boots",
+        "text": "Named here so callers know which does what: invocations starts a session; export never does."
+      },
+      "index.push (web push): a separate contract, unchanged by v2.",
+      "The rebuild from session logs: an internal recovery operation of the distributor, not an API.",
+      "Full-text search over the transcript: bare q terms match only the fields each list documents (title, key, last message; ask prompts; artifact summaries).",
+      "Custom methods (AIP-136) and the AIP-159 `-` parent: deliberately not used — plain resources and verbs; the state moves on PATCH, and cross-session reads are the top-level /asks and /artifacts collections."
+    ],
+    "audience": "Internal to one quack deployment: the deployment's web app, the tailnet CLI, and the home agent's own tools.",
+    "consumers": [
+      "packages/web — Workspace/Home poll one GET /sessions every 15 s; Needs polls GET /asks?q=state:pending; the Artifacts page reads GET /artifacts; per-session rails read /sessions/{key}/asks and /sessions/{key}/artifacts without booting a process",
+      "packages/web extensions/sleeper — one league via q=key:sleeper\\<league\\>:*, sealed cards from GET /sessions/{key}/artifacts",
+      "packages/cli — quack sessions [--state ...] [--agent A] [--keys], reading state, cost and pendingAsks straight off the row",
+      "packages/home — standing() is one paged query: GET /asks?q=state:pending, oldest first"
+    ],
+    "guarantees": [
+      {
+        "id": "safe-reads",
+        "text": "every GET in this contract reads the catalog only — the one exception is a running row's waiting overlay — and never starts a session's process."
+      },
+      "A page costs a page: every list runs as one store query (SQLite FTS5 or Postgres, by deployment config) bounded by pageSize; nothing returns an unbounded array; the distributor never scans session directories on a request.",
+      "A row carries what lists and Home need: key, agent, title, state, createdAt, lastActivity, cost and tokens, pendingAsks and oldestAskAt, and lastRun — written on lifecycle events and at most one event stale. 'Needs you' is one query: q=pendingAsks:>0, or GET /asks?q=state:pending.",
+      {
+        "id": "waiting-sweep",
+        "text": "a running row's { since, ahead, provider } comes from each sweep that reaches the process, about 30 s after the last ends; never stored, absent otherwise."
+      },
+      "Money is never a float: cost is { currencyCode, amountMicros } with amountMicros an int64 count of millionths encoded as a decimal string; unpriced is \"0\"; q compares it in micros and sums happen in integers.",
+      "Keyset pagination: pageToken is opaque, bound to (q, orderBy); a page never re-reads earlier rows.",
+      "Pending counts cannot leak: an ask is cancelled when the run that raised it ends or aborts, so pendingAsks reflects only live asks.",
+      "No read is trusted by network position: a request through the proxy is trusted on the proxy's identity header plus the proxy's shared-secret header, else it is the tailnet itself; a session credential on the separate listener reaches only its own key — 404 on a foreign key — unless the deployment grants more, and among those only the home agent's is granted cross-session reads; a missing or invalid credential is 401; resolution.by is a Principal (person or tailnet) filled from the credential, never from a body.",
+      "DELETE is idempotent and, once it returns 200, a subsequent GET /sessions/{key} answers 404.",
+      "Every error is application/problem+json in one shared Problem shape; no stack traces leave the process; a bad q answers 400 with the parser's own diagnostic; a written state value other than archived or stopped answers 422."
+    ]
+  },
+  "document": {
+    "openapi": "3.1.0",
+    "info": {
+      "title": "Quack Sessions API",
+      "version": "20.0.0",
+      "description": "quack v2 sessions. The distributor owns one session catalog (SQLite by default, Postgres when the deployment configures it), written on session lifecycle events — created, run started or ended, ask opened, answered or cancelled, artifact sealed, spend, archived, renamed, deleted — with recovery by replaying each session's own log. Every read in this API is served from the catalog — one overlay excepted: a running row's `waiting`, refreshed at the distributor's sweep and never stored — and no read request starts a session's process — export is a read, too: a stopped session's export is built by the distributor from a read-only snapshot of the session's store, byte-identical to the body the session's own /export returns, and a running session answers through its process; only POST /sessions/{key}/invocations starts a session — and every list costs a page.\n\nEvery list shares one pattern — `q`, `orderBy`, `pageSize`, `pageToken` — and documents its own field set: GET /sessions, GET /sessions/{key}/asks, GET /asks, GET /sessions/{key}/artifacts and GET /artifacts. `q` is Lucene syntax parsed by a maintained Lucene parser (field terms, ranges, AND/OR/NOT, grouping, quoted phrases, `*`/`?` wildcards; bare terms are full-text searched, SQLite FTS5), deliberately not AIP-160's `filter`. Cross-session reads are top-level collections: GET /asks?q=state:pending answers 'needs you' oldest first, and GET /artifacts lists sealed versions across sessions; every row carries its session's key, and `session` is a queryable field, and the row carries core's record only — kind, version, hash, content, sealedAt, summary and deliveries: verdicts are the judge's and outcomes the kind's own, and the judge serves its results through its own API. `pageSize` defaults to 100, capped at 1000; `pageToken` is opaque and bound to (q, orderBy).\n\nApprovals and questions are one resource, Ask (type approval|question), with one lifecycle pending|resolved|cancelled — cancelled when the run that raised it ends or aborts, or when the session withdraws an approval whose call can no longer act on it (the call's task ended without acting on it, a newer request replaced it, a rerun reached the gate with different arguments, or a person's message reached the run while the call waited — the reason is approved where it lives; its writer is Planned, #2397) — and resolving is PATCH /sessions/{key}/asks/{id} with { resolution: { choice, text?, reason? } }: the server sets the ask's state to resolved and fills resolution.by from the request's credential, never from the body. Resolved asks keep their tool arguments: the record of what was approved is the audit trail. Resolution and every other server-set actor field is a Principal: { kind: person|tailnet, id } — a person is the username the proxy's identity header carries, a tailnet a request that arrived without a trusted identity, and id is present only when kind is person.\n\n`state` is the one vocabulary the sdk, the Sessions API and the lifecycle channel share: running, idle, stopped or archived — run.started sets running; every run end (succeeded, denied, failed, aborted) sets idle, unless queued input starts the next run, which keeps it running; stopped means the session's process stopped (the stop operation, retention, a crash), never an abort; archived is set only by the archive operation; waiting on a person is not a state — the session is running with a pending ask. The state moves on the PATCH /sessions/{key} body: `state: \"archived\"` archives (409 while the session is running), `state: \"stopped\"` unarchives (back to stopped), and any other written state value is 422; a write that changes nothing is a 200 no-op; invoking an archived session reactivates it (state → running). There are no custom methods and no `-` parent: plain resources and verbs.\n\nNo read is trusted by network position, and every request carries a credential (401 without one the distributor accepts). #2220's model: a request arriving through the reverse proxy carries the proxy's identity header (x-authentik-username), which the distributor trusts only when the proxy's shared-secret header is present too — a request without it is the tailnet itself; session credentials arrive on a separate credentialed listener and reach only their own session's key unless the deployment grants it more, and among those only the home agent's is granted cross-session reads (the top-level /asks and /artifacts, and the session list). The credential is what the server fills resolution.by with; no body in this contract carries an identity.\n\nMoney is { currencyCode, amountMicros } (ISO 4217; int64 millionths as a decimal string), never a float; unpriced is \"0\"; q compares it in micros (cost.amountMicros:>=1000000).\n\nThis v2 retires the index's read routes, which scanned every fact row in memory: GET /index/sessions → GET /sessions (spend is on the row); GET /index/approvals?state=pending and GET /index/questions?state=pending → GET /asks?q=state:pending (one session: GET /sessions/{key}/asks); GET /index/failures → q=lastRun.outcome:failed plus lastRun on the row; GET /index/artifacts → GET /artifacts and GET /sessions/{key}/artifacts. POST /index/facts is retired with them: the distributor writes the catalog directly. index.push (web push) is a separate contract and stays.\n\nMigration (one hard cutover, all consumers in the same release; no filter alias): the web's 15-second tick becomes one GET /sessions call, Needs becomes GET /asks?q=state:pending, and the Artifacts page becomes GET /artifacts; the CLI's --state filters map to q=state:running (running), q=pendingAsks:>0 (needs_you), q=lastRun.outcome:failed (failed), q=(state:idle OR state:stopped) AND pendingAsks:0 (done: no run going and nothing pending — a finished session is idle, and stopped means its process is gone); the sleeper's league filter becomes q=key:sleeper\\:platinum\\:*; home's standing() becomes GET /asks?q=state:pending. Valid v1 filter expressions carry over 1:1 (key:X*, agent:A; running:true → state:running; -archived:true → -state:archived) while the row's running, active, archived, note, approvalsPending, questionsPending and failuresPending fields are replaced by state, pendingAsks, oldestAskAt, lastRun and cost as Money. The routes are unversioned and are mounted at the deployment's root (locally) or under /v1/ behind the reverse proxy, exactly as today."
+    },
+    "tags": [
+      {
+        "name": "sessions"
+      }
+    ],
+    "paths": {
+      "/sessions": {
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "listSessions",
+          "summary": "List sessions",
+          "description": "One keyset page of the session catalog; a page costs a page and never starts a session's process. This list's q field set: key, agent, title, state, createdAt, lastActivity, cost.currencyCode, cost.amountMicros (integer micros), tokens.input, tokens.output, tokens.cacheRead, tokens.cacheWrite, pendingAsks, oldestAskAt, lastRun.outcome — wildcards apply to key, agent, title and bare terms only, and bare terms are full-text searched over title, key and the session's last message. Example: q=key:sleeper\\:platinum\\:* AND -state:archived lists one league's live sessions; q=pendingAsks:>0 finds who needs a person. A person through the proxy, or a session credential granted cross-session reads (the home agent's), may call this; a session credential outside its grant answers 404.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/q"
+            },
+            {
+              "$ref": "#/components/parameters/orderBySession"
+            },
+            {
+              "$ref": "#/components/parameters/pageSize"
+            },
+            {
+              "$ref": "#/components/parameters/pageToken"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "One page of sessions in the requested order.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/SessionList"
+                  },
+                  "example": {
+                    "sessions": [
+                      {
+                        "key": "sleeper:platinum:2:lineup",
+                        "agent": "quack",
+                        "title": "Lineup check, matchday 2",
+                        "state": "running",
+                        "createdAt": "2026-10-28T14:03:11Z",
+                        "lastActivity": "2026-11-06T09:12:47Z",
+                        "cost": {
+                          "currencyCode": "USD",
+                          "amountMicros": "1250000"
+                        },
+                        "tokens": {
+                          "input": 84120,
+                          "output": 12930,
+                          "cacheRead": 204800,
+                          "cacheWrite": 5120
+                        },
+                        "pendingAsks": 1,
+                        "oldestAskAt": "2026-11-06T09:02:30Z",
+                        "lastRun": {
+                          "outcome": "failed",
+                          "endedAt": "2026-11-06T09:12:47Z",
+                          "failedSteps": [
+                            {
+                              "step": "submit-lineup",
+                              "error": "deadline passed 18:00"
+                            }
+                          ]
+                        },
+                        "waiting": {
+                          "since": 1793956367000,
+                          "ahead": 2,
+                          "provider": "local"
+                        }
+                      },
+                      {
+                        "key": "sleeper:platinum:2:recap",
+                        "agent": "quack",
+                        "state": "archived",
+                        "createdAt": "2026-10-28T14:03:09Z",
+                        "lastActivity": "2026-11-01T19:40:02Z",
+                        "cost": {
+                          "currencyCode": "USD",
+                          "amountMicros": "0"
+                        },
+                        "tokens": {
+                          "input": 0,
+                          "output": 0,
+                          "cacheRead": 0,
+                          "cacheWrite": 0
+                        },
+                        "pendingAsks": 0,
+                        "lastRun": {
+                          "outcome": "succeeded",
+                          "endedAt": "2026-11-01T19:40:02Z",
+                          "failedSteps": []
+                        }
+                      }
+                    ],
+                    "nextPageToken": "2_1762417967000_sleeper:platinum:2:lineup"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "A q the parser rejects — including an unescaped reserved character in an unquoted value and a `/regex/` term; the problem detail says to escape the character or quote the value — or that names a field outside this list's field set; a pageSize outside 1..1000; an orderBy outside this list's allowed set; or a pageToken not issued by this deployment or bound to a different q or orderBy.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/sessions/{key}": {
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/sessionKey"
+          }
+        ],
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "getSession",
+          "summary": "Get one session",
+          "description": "One session's catalog row, or 404 when the deployment knows no such key; it creates nothing and never starts the session's process. A person through the proxy, or the owning session's own credential (404 on a foreign key), may call this.",
+          "responses": {
+            "200": {
+              "description": "The session.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Session"
+                  },
+                  "example": {
+                    "key": "sleeper:platinum:2:lineup",
+                    "agent": "quack",
+                    "title": "Lineup check, matchday 2",
+                    "state": "running",
+                    "createdAt": "2026-10-28T14:03:11Z",
+                    "lastActivity": "2026-11-06T09:12:47Z",
+                    "cost": {
+                      "currencyCode": "USD",
+                      "amountMicros": "1250000"
+                    },
+                    "tokens": {
+                      "input": 84120,
+                      "output": 12930,
+                      "cacheRead": 204800,
+                      "cacheWrite": 5120
+                    },
+                    "pendingAsks": 1,
+                    "oldestAskAt": "2026-11-06T09:02:30Z",
+                    "lastRun": {
+                      "outcome": "failed",
+                      "endedAt": "2026-11-06T09:12:47Z",
+                      "failedSteps": [
+                        {
+                          "step": "submit-lineup",
+                          "error": "deadline passed 18:00"
+                        }
+                      ]
+                    },
+                    "waiting": {
+                      "since": 1793956367000,
+                      "ahead": 2,
+                      "provider": "local"
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "The key is not a valid session key.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No session with this key exists on this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "patch": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "patchSession",
+          "summary": "Rename a session, or archive or unarchive it",
+          "description": "Writes `title` (at most 120 characters; an empty or whitespace-only string restores the default title from the session's first message) and/or `state`. `state` accepts exactly two values: `archived` (archive) and `stopped` (unarchive, back to stopped) — any other written state value is 422. Archiving a running or person-waiting session is 409. A write that changes nothing — `archived` on an already-archived session, `stopped` on a session that is not archived — is a 200 no-op returning the unchanged row. Invoking an archived session reactivates it (state → running); no unarchive-first is needed. Person-only through the proxy — a session credential, own-key or home, cannot write.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatchSession"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "The session after the change — the unchanged row when the write is a no-op.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Session"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "A `title` longer than 120 characters.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No session with this key exists on this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "409": {
+              "description": "The session is running or waiting on a person and cannot be archived.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "415": {
+              "description": "The body is not application/json.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "422": {
+              "description": "`state` is present but is not `archived` or `stopped`.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be written.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          },
+          "security": [
+            {
+              "proxy": []
+            }
+          ]
+        },
+        "delete": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "deleteSession",
+          "summary": "Delete a session",
+          "description": "Deletes the session's directory (log, workspace, snapshot) and its catalog rows; idempotent in effect, so once it returns 200 the key 404s. Refused with 409 while the session is running, sleeping until a wake time, or waiting on a person. Person-only through the proxy — a session credential, own-key or home, cannot write.",
+          "responses": {
+            "200": {
+              "description": "The session was deleted.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/DeleteResult"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "The key is not a valid session key.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No session with this key exists on this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "409": {
+              "description": "The session is running, sleeping until its wake time, or waiting on a person.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be written.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          },
+          "security": [
+            {
+              "proxy": []
+            }
+          ]
+        }
+      },
+      "/sessions/{key}/asks": {
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/sessionKey"
+          }
+        ],
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "listSessionAsks",
+          "summary": "List a session's asks",
+          "description": "One keyset page of the session's asks — approvals and questions as one resource — served from the catalog, so a stopped session answers its stored pending asks instead of an empty list and the read never starts the session's process. This list's q field set: type, state, createdAt, resolvedAt and tool (the gated tool, approval asks) — bare terms are full-text searched over the prompt question and the tool name. Example: q=state:pending AND type:approval. A person through the proxy, or the owning session's own credential (404 on a foreign key), may call this.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/q"
+            },
+            {
+              "$ref": "#/components/parameters/orderByAsk"
+            },
+            {
+              "$ref": "#/components/parameters/pageSize"
+            },
+            {
+              "$ref": "#/components/parameters/pageToken"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "One page of the session's asks, newest first by default.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/AskList"
+                  },
+                  "example": {
+                    "asks": [
+                      {
+                        "id": "a-104",
+                        "type": "approval",
+                        "state": "pending",
+                        "createdAt": "2026-11-06T09:02:30Z",
+                        "toolCall": {
+                          "tool": "submit-lineup",
+                          "args": {
+                            "league": "platinum",
+                            "round": 2,
+                            "form": "4-3-3"
+                          }
+                        },
+                        "session": "sleeper:platinum:2:lineup"
+                      },
+                      {
+                        "id": "q-097",
+                        "type": "question",
+                        "state": "resolved",
+                        "createdAt": "2026-11-05T21:04:12Z",
+                        "resolvedAt": "2026-11-05T21:10:03Z",
+                        "resolution": {
+                          "by": {
+                            "kind": "person",
+                            "id": "jasonfagerberg"
+                          },
+                          "choice": "keep the starter",
+                          "reason": "contract week, no changes"
+                        },
+                        "prompt": {
+                          "question": "Swap the tired starter for matchday?",
+                          "options": [
+                            "keep the starter",
+                            "rotate in the bench"
+                          ],
+                          "freeText": false,
+                          "header": "Lineup"
+                        },
+                        "session": "sleeper:platinum:2:lineup"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "A q the parser rejects — including an unescaped reserved character in an unquoted value and a `/regex/` term; the problem detail says to escape the character or quote the value — or that names a field outside this list's field set; a pageSize outside 1..1000; an orderBy outside this list's allowed set; or a bad pageToken.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No session with this key exists on this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/sessions/{key}/asks/{askId}": {
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/sessionKey"
+          },
+          {
+            "$ref": "#/components/parameters/askId"
+          }
+        ],
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "getAsk",
+          "summary": "Get one ask",
+          "description": "One ask of the session — pending, resolved or cancelled — served from the catalog without starting the session's process. A person through the proxy, or the owning session's own credential (404 on a foreign key), may call this.",
+          "responses": {
+            "200": {
+              "description": "The ask.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Ask"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "The key or ask id is not valid.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No such session or ask exists on this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "patch": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "resolveAsk",
+          "summary": "Resolve a pending ask",
+          "description": "Answers a pending ask: the server sets the ask's state to resolved, stamps resolvedAt, and fills resolution.by from the request's credential — the body never carries an identity. A resolved approval keeps its toolCall: the record of what was approved is the audit trail. This is a write on the session's own routes, so it may drive the session's process (it may wake it); the read routes never do. Person-only through the proxy — a session credential, own-key or home, cannot write.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveAsk"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "The ask, now resolved.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Ask"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "The body is not a resolution, or it has no `choice`.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No session with this key exists, or the session has no ask with this id.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "409": {
+              "description": "The ask is not pending. An ask a person already answered keeps its two v13 texts — `the ask is resolved` when the catalog holds it as resolved, `the ask is already answered` when the session has already decided a catalog-pending ask. A withdrawn approval — one whose call can no longer act on it — says the request was withdrawn and why: while the catalog still holds the ask pending, the session's own reason (the call's task ended, superseded by the newer request, the arguments changed, or a person's message reached the run while the call waited, a reason approved where it lives and Planned for its writer, #2397); any ask the catalog holds as cancelled gets the generic text, that the session is no longer waiting for it.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "415": {
+              "description": "The body is not application/json.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be written.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          },
+          "security": [
+            {
+              "proxy": []
+            }
+          ]
+        }
+      },
+      "/sessions/{key}/artifacts": {
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/sessionKey"
+          }
+        ],
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "listSessionArtifacts",
+          "summary": "List a session's sealed artifacts",
+          "description": "One keyset page of the session's sealed artifact versions, full content included, served from the catalog without starting the session's process. This list's q field set: kind, version (integer), sealedAt — bare terms are full-text searched over the row's summary; verdicts and outcomes are not fields of this list. Example: q=kind:sleeper.cards. A person through the proxy, or the owning session's own credential (404 on a foreign key), may call this.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/q"
+            },
+            {
+              "$ref": "#/components/parameters/orderByArtifact"
+            },
+            {
+              "$ref": "#/components/parameters/pageSize"
+            },
+            {
+              "$ref": "#/components/parameters/pageToken"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "One page of the session's sealed artifact versions, newest first by default.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ArtifactList"
+                  },
+                  "example": {
+                    "artifacts": [
+                      {
+                        "kind": "sleeper.cards",
+                        "version": 4,
+                        "hash": "9f2c81e04a7d",
+                        "content": "lineup: vassao(C) 4; kobe 9; ...",
+                        "sealedAt": "2026-11-05T21:18:09Z",
+                        "summary": "Matchday-2 starter lineup with substitutions.",
+                        "deliveries": [
+                          {
+                            "where": "sleeper.board",
+                            "link": "https://sleeper.app/leagues/8421/cards",
+                            "at": "2026-11-05T21:19:02Z"
+                          }
+                        ],
+                        "session": "sleeper:platinum:2:lineup"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "A q the parser rejects — including an unescaped reserved character in an unquoted value and a `/regex/` term; the problem detail says to escape the character or quote the value — or that names a field outside this list's field set; a pageSize outside 1..1000; an orderBy outside this list's allowed set; or a bad pageToken.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "404": {
+              "description": "No session with this key exists on this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/asks": {
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "listAsks",
+          "summary": "List asks across sessions",
+          "description": "One keyset page of the asks of every session; every row carries its session's key, and `session` is a queryable field. It answers 'needs you' in one paged query — q=state:pending, oldest first — which is what Home and the CLI poll instead of the index. This list's q field set: session (the session key), type, state, createdAt, resolvedAt and tool — bare terms are full-text searched over the prompt question and the tool name. Example: q=state:pending&orderBy=createdAt, or q=state:pending AND session:sleeper\\:*. A person through the proxy, or a session credential granted cross-session reads (the home agent's), may call this; a session credential outside its grant answers 404.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/q"
+            },
+            {
+              "$ref": "#/components/parameters/orderByAsk"
+            },
+            {
+              "$ref": "#/components/parameters/pageSize"
+            },
+            {
+              "$ref": "#/components/parameters/pageToken"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "One page of asks across sessions, oldest first by default (oldest wait first for a needs-you queue).",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/AskList"
+                  },
+                  "example": {
+                    "asks": [
+                      {
+                        "session": "sleeper:platinum:2:lineup",
+                        "id": "a-104",
+                        "type": "approval",
+                        "state": "pending",
+                        "createdAt": "2026-11-06T09:02:30Z",
+                        "toolCall": {
+                          "tool": "submit-lineup",
+                          "args": {
+                            "league": "platinum",
+                            "round": 2,
+                            "form": "4-3-3"
+                          }
+                        }
+                      },
+                      {
+                        "session": "review:monorepo",
+                        "id": "q-31",
+                        "type": "question",
+                        "state": "pending",
+                        "createdAt": "2026-11-06T08:12:44Z",
+                        "prompt": {
+                          "question": "Rebase onto main or merge main in?",
+                          "options": [
+                            "rebase onto main",
+                            "merge main in"
+                          ],
+                          "suggested": 0,
+                          "freeText": false,
+                          "header": "Merge"
+                        }
+                      }
+                    ],
+                    "nextPageToken": "2_1762422150000_sleeper:platinum:2:lineup_a-104"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "A q the parser rejects — including an unescaped reserved character in an unquoted value and a `/regex/` term; the problem detail says to escape the character or quote the value — or that names a field outside this list's field set; a pageSize outside 1..1000; an orderBy outside this list's allowed set; or a bad pageToken.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/artifacts": {
+        "get": {
+          "tags": [
+            "sessions"
+          ],
+          "operationId": "listArtifacts",
+          "summary": "List sealed artifacts across sessions",
+          "description": "One keyset page of the sealed artifact versions of every session; every row carries its session's key, and `session` is a queryable field; rows are metadata — the per-session list carries full content. This list's q field set: session (the session key), kind, version (integer), sealedAt — bare terms are full-text searched over the row's summary; verdicts and outcomes are not fields of this list — the judge serves its own results through its own API. Example: q=kind:sleeper.cards AND session:sleeper\\:*. A person through the proxy, or a session credential granted cross-session reads (the home agent's), may call this; a session credential outside its grant answers 404.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/q"
+            },
+            {
+              "$ref": "#/components/parameters/orderByArtifact"
+            },
+            {
+              "$ref": "#/components/parameters/pageSize"
+            },
+            {
+              "$ref": "#/components/parameters/pageToken"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "One page of sealed artifact versions across sessions, newest first by default.",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ArtifactList"
+                  },
+                  "example": {
+                    "artifacts": [
+                      {
+                        "session": "sleeper:platinum:2:lineup",
+                        "kind": "sleeper.cards",
+                        "version": 4,
+                        "hash": "9f2c81e04a7d",
+                        "sealedAt": "2026-11-05T21:18:09Z",
+                        "summary": "Matchday-2 starter lineup with substitutions.",
+                        "deliveries": [
+                          {
+                            "where": "sleeper.board",
+                            "link": "https://sleeper.app/leagues/8421/cards",
+                            "at": "2026-11-05T21:19:02Z"
+                          }
+                        ]
+                      },
+                      {
+                        "session": "review:monorepo",
+                        "kind": "review.report",
+                        "version": 1,
+                        "hash": "3bd0aa11c2e9",
+                        "sealedAt": "2026-11-06T07:55:12Z",
+                        "summary": "Merge-safe: no conflicts, checks green."
+                      }
+                    ],
+                    "nextPageToken": "2_1762422150000_review:monorepo_1"
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "A q the parser rejects — including an unescaped reserved character in an unquoted value and a `/regex/` term; the problem detail says to escape the character or quote the value — or that names a field outside this list's field set; a pageSize outside 1..1000; an orderBy outside this list's allowed set; or a bad pageToken.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "401": {
+              "description": "The request carries no credential, or the credential is not valid for this deployment.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            },
+            "default": {
+              "description": "500 or 503 when the catalog cannot be read.",
+              "content": {
+                "application/problem+json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/Problem"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "parameters": {
+        "q": {
+          "name": "q",
+          "in": "query",
+          "description": "A Lucene query selecting the list's rows, parsed by a maintained Lucene parser — never hand-rolled, the same grammar and parser on every list. The default operator between terms is AND; AND, OR and NOT join terms, a leading `-` negates, `()` groups, double quotes hold phrases, `*` and `?` wildcard inside a term. A reserved character in an unquoted value (including `:` and `/`) is escaped with a backslash — `key:sleeper\\:platinum\\:*` for a key prefix, `session:review\\:monorepo` for an exact key — and a quoted value is an exact literal: `session:\"review:monorepo\"`. A term is `field:value`, `field:value*` (prefix) or `field:>=a`, `field:[a TO b]`, over the field set the list's description documents. A bare term or bare quoted phrase — no field — is a full-text search (SQLite FTS5) over the list's documented text fields. Money compares in micros as an integer — cost.amountMicros:>=1000000 is a dollar — never as a float. Anything the parser rejects — including an unescaped reserved character in an unquoted value and a `/regex/` term — or that names a field the list does not have, is a 400 whose problem detail carries the parser's diagnostic, which in those cases says to escape the character or quote the value. Absent or empty q selects every row.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "pageSize": {
+          "name": "pageSize",
+          "in": "query",
+          "description": "Maximum rows in the page; the server caps it at 1000. A page never reads more than pageSize rows plus its position, so nothing returns an unbounded array.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 100
+          }
+        },
+        "pageToken": {
+          "name": "pageToken",
+          "in": "query",
+          "description": "Opaque keyset token from a previous page's `nextPageToken`, bound to the (q, orderBy) pair that issued it; presenting it with a different query or order, or a token not issued by this deployment, is a 400.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "sessionKey": {
+          "name": "key",
+          "in": "path",
+          "required": true,
+          "description": "A session key, validated as the distributor validates it: ^[A-Za-z0-9:/#._@-]{1,200}$, 400 outside it. No value is reserved: there is no `-` parent to keep out of the pattern.",
+          "schema": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9:/#._@-]{1,200}$",
+            "example": "sleeper:platinum:2:lineup"
+          }
+        },
+        "askId": {
+          "name": "askId",
+          "in": "path",
+          "required": true,
+          "description": "The ask's id within its session.",
+          "schema": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{1,100}$"
+          }
+        },
+        "orderBySession": {
+          "name": "orderBy",
+          "in": "query",
+          "description": "The session list's order: lastActivity (the default, newest first), createdAt (newest first) and oldestAskAt (oldest wait first). The list's key is always the final tiebreak, so pages are a stable keyset, and the order choice is part of what a pageToken is bound to. An orderBy value the list does not accept is a 400 problem.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "lastActivity",
+              "createdAt",
+              "oldestAskAt"
+            ],
+            "default": "lastActivity"
+          }
+        },
+        "orderByAsk": {
+          "name": "orderBy",
+          "in": "query",
+          "description": "The ask lists' order: createdAt (newest first on the per-session list, oldest first on the cross-session list). The list's key is always the final tiebreak, so pages are a stable keyset, and the order choice is part of what a pageToken is bound to. An orderBy value the list does not accept is a 400 problem.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "createdAt"
+            ]
+          }
+        },
+        "orderByArtifact": {
+          "name": "orderBy",
+          "in": "query",
+          "description": "The artifact lists' order: sealedAt (newest first, the default there). The list's key is always the final tiebreak, so pages are a stable keyset, and the order choice is part of what a pageToken is bound to. An orderBy value the list does not accept is a 400 problem.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sealedAt"
+            ],
+            "default": "sealedAt"
+          }
+        }
+      },
+      "securitySchemes": {
+        "proxy": {
+          "type": "apiKey",
+          "in": "header",
+          "name": "x-authentik-username",
+          "description": "The proxy's identity header, the person the deployment knows. The distributor trusts it only when the proxy's shared-secret header is present too; a request without the shared-secret header is the tailnet itself, and the tailnet is its own auth boundary, as for v1's page routes. A person through the proxy keeps v1's full read and write access."
+        },
+        "session": {
+          "type": "http",
+          "scheme": "bearer",
+          "description": "The session's own credential, on the separate credentialed listener #2220 introduces. It reaches only its own session's key — the row and the per-session sub-collections — answering 404 on a foreign key, unless the deployment grants it more; among those credentials only the home agent's is granted cross-session reads (the top-level /asks and /artifacts, and the session list). A session credential never writes through this API: the write routes are person-only."
+        }
+      },
+      "schemas": {
+        "Session": {
+          "type": "object",
+          "description": "One session's catalog row: what lists and Home need, written on lifecycle events and at most one event stale. `waiting` is the one exception: an overlay on running rows, refreshed per sweep. Objects are open: readers ignore unknown fields.",
+          "required": [
+            "key",
+            "agent",
+            "state",
+            "createdAt",
+            "lastActivity",
+            "cost",
+            "tokens",
+            "pendingAsks"
+          ],
+          "properties": {
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:/#._@-]{1,200}$",
+              "description": "The session key: the address of one agent's durable conversation.",
+              "example": "sleeper:platinum:2:lineup"
+            },
+            "agent": {
+              "type": "string",
+              "description": "The agent bound to the session."
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 120,
+              "description": "The session's title; absent when it has none beyond the default."
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "running",
+                "idle",
+                "stopped",
+                "archived"
+              ],
+              "description": "The session's lifecycle state — the one vocabulary the sdk, the Sessions API and the lifecycle channel share: `running` when its process has an active run (waiting on a person is not a state — it is running with a pending ask), `idle` when its process is up with no active work — every run end (succeeded, denied, failed, aborted) sets idle unless queued input starts the next run, `stopped` when the session's process stopped (the stop operation, retention, a crash — never an abort), `archived` when hidden — set only by writing state:archived on PATCH /sessions/{key} (409 while running), left by writing state:stopped (back to stopped), and re-entered by invoking it (an invocation of an archived session reactivates it to running). A session in any state has its stored rows served by this API."
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the session was created (RFC 3339)."
+            },
+            "lastActivity": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the session last did work (RFC 3339): written at every turn end and when a run ends, so a long-running session stays current in lastActivity order."
+            },
+            "cost": {
+              "$ref": "#/components/schemas/Money"
+            },
+            "tokens": {
+              "type": "object",
+              "description": "Tokens by kind; always present.",
+              "required": [
+                "input",
+                "output",
+                "cacheRead",
+                "cacheWrite"
+              ],
+              "properties": {
+                "input": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "output": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cacheRead": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cacheWrite": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "pendingAsks": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Asks still pending — approvals and questions alike; 0 when none. Written on the ask-opened, answered and cancelled events; cancelled when the raising run ends or aborts, so counts cannot leak."
+            },
+            "oldestAskAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The createdAt of the session's oldest pending ask, present while pendingAsks > 0; orderable so Home can sort by wait time (orderBy=oldestAskAt)."
+            },
+            "lastRun": {
+              "type": "object",
+              "description": "The session's latest run state, present once a run has ended; failures live here, not as pending work.",
+              "required": [
+                "outcome",
+                "endedAt",
+                "failedSteps"
+              ],
+              "properties": {
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "succeeded",
+                    "denied",
+                    "failed",
+                    "aborted"
+                  ],
+                  "description": "How the run ended: succeeded, denied (a gate's deny), failed or aborted — the same four outcomes the run-end rule shares."
+                },
+                "endedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "When the run ended (RFC 3339)."
+                },
+                "failedSteps": {
+                  "type": "array",
+                  "description": "The run's steps that ended failed, with their error text; empty on a clean run.",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "step",
+                      "error"
+                    ],
+                    "properties": {
+                      "step": {
+                        "type": "string",
+                        "description": "The run step that failed."
+                      },
+                      "error": {
+                        "type": "string",
+                        "description": "The error's text."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "waiting": {
+              "type": "object",
+              "description": "Present while the session is running and queued for a slot on its model endpoint: `since` is when it began waiting and `ahead` how many are queued before it; `provider` is the deployment's provider name whose capacity the session is queued for. When several of the session's calls are queued, it reports the one waiting longest; since, ahead and provider all come from that call. Not written to the catalog: the value is read from the session process and refreshed by each sweep that reaches it. The next sweep starts about 30 s after the previous one finishes, a sweep pings sessions one at a time with a 2 s timeout each, and a sweep waits behind the wakes queued ahead of it, so the value can be older than 30 s. A session the sweep cannot reach shows no waiting.",
+              "required": [
+                "since",
+                "ahead",
+                "provider"
+              ],
+              "properties": {
+                "since": {
+                  "type": "integer",
+                  "description": "When the session began waiting for a slot, in epoch milliseconds — the sweep copies the process's own count and stores nothing, so it is not an RFC 3339 date like the row's own dates."
+                },
+                "ahead": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "How many calls are queued ahead of it on that provider; a session with parallel calls counts once per call. 0 when it is next."
+                },
+                "provider": {
+                  "type": "string",
+                  "description": "The deployment's provider name whose capacity the session is queued for."
+                }
+              },
+              "example": {
+                "since": 1793956367000,
+                "ahead": 2,
+                "provider": "local"
+              }
+            }
+          }
+        },
+        "Money": {
+          "type": "object",
+          "description": "A money amount, google.type.Money style: never a float, so nothing loses precision in JavaScript. Unpriced spend is amountMicros \"0\" with the deployment's currency, never null. BigInt in code; a decimal string on the wire.",
+          "required": [
+            "currencyCode",
+            "amountMicros"
+          ],
+          "properties": {
+            "currencyCode": {
+              "type": "string",
+              "pattern": "^[A-Z]{3}$",
+              "description": "ISO 4217 currency code — the deployment's currency.",
+              "example": "USD"
+            },
+            "amountMicros": {
+              "type": "string",
+              "pattern": "^\\d+$",
+              "description": "An int64 count of millionths of the currency unit, encoded as a decimal string so values past 2^53 survive JavaScript clients (the proto3 JSON rule for int64); \"1250000\" is 1.25 of the unit. Compared in q as an integer (cost.amountMicros:>=1000000) and summed across sessions in integers.",
+              "example": "1250000"
+            }
+          }
+        },
+        "Principal": {
+          "type": "object",
+          "description": "The server-set actor field: who the request's credential stands for. The distributor fills it from the credential — never from a body — and there is no client-sent identity field in any request of this contract.",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "person",
+                "tailnet"
+              ],
+              "description": "`person` when the request carries a trusted identity (the proxy's identity header with the proxy's shared-secret header); `tailnet` when it arrives without one."
+            },
+            "id": {
+              "type": "string",
+              "description": "The person's username; present when kind is person, absent when kind is tailnet."
+            }
+          }
+        },
+        "Ask": {
+          "type": "object",
+          "description": "One ask of a session — the unified approval and question. Resolved asks keep their tool arguments: the record of what was approved is the audit trail. Objects are open: readers ignore unknown fields.",
+          "required": [
+            "id",
+            "type",
+            "state",
+            "createdAt",
+            "session"
+          ],
+          "properties": {
+            "session": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:/#._@-]{1,200}$",
+              "description": "The session key the ask belongs to; present on every row, and queryable as `session` in GET /asks."
+            },
+            "id": {
+              "type": "string",
+              "description": "The ask's id within its session."
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "approval",
+                "question"
+              ],
+              "description": "What kind of ask: a gated tool call, or a prompt to a person."
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "resolved",
+                "cancelled"
+              ],
+              "description": "The ask's lifecycle: `pending` until answered, `resolved` by PATCH /sessions/{key}/asks/{id}, `cancelled` when the run that raised it ends or aborts, or when the session withdraws an approval whose call can no longer act on it (the call's task ended without acting on it, a newer request replaced it, a rerun reached the gate with different arguments, or a person's message reached the run while the call waited — the reason is approved where it lives; its writer is Planned, #2397) — which is what keeps pending counts from leaking. A withdrawal is not a resolution: `resolution` means a person answered, and its `by` stays a Principal. An approval answered just before its task ended stays `resolved` in the catalog even though its answer never acts — cancelAsk moves only a pending ask to cancelled (packages/catalog/src/sql-store.ts:251)."
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the ask was raised (RFC 3339)."
+            },
+            "resolvedAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the ask was resolved (RFC 3339); present once resolved."
+            },
+            "resolution": {
+              "type": "object",
+              "description": "The answer; present once resolved.",
+              "required": [
+                "by",
+                "choice"
+              ],
+              "properties": {
+                "by": {
+                  "$ref": "#/components/schemas/Principal"
+                },
+                "choice": {
+                  "type": "string",
+                  "description": "The chosen option's label, or approve/reject for an approval ask."
+                },
+                "text": {
+                  "type": "string",
+                  "description": "A free-text answer; present when the prompt offered freeText."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "The resolver's reason."
+                }
+              }
+            },
+            "toolCall": {
+              "type": "object",
+              "description": "The gated tool call; present for type approval, and kept after resolution — the record of what was approved.",
+              "required": [
+                "tool",
+                "args"
+              ],
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "The tool that was gated."
+                },
+                "args": {
+                  "description": "The gated arguments, retained on resolution.",
+                  "type": [
+                    "object",
+                    "array",
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ],
+                  "items": {}
+                }
+              }
+            },
+            "prompt": {
+              "type": "object",
+              "description": "The prompt; present for type question.",
+              "required": [
+                "question",
+                "options",
+                "freeText"
+              ],
+              "properties": {
+                "question": {
+                  "type": "string",
+                  "description": "The question text."
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The option labels."
+                },
+                "optionDescriptions": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "A per-option description, keyed by the option's label."
+                },
+                "suggested": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "The suggested option's index."
+                },
+                "freeText": {
+                  "type": "boolean",
+                  "description": "Whether a free-text answer was allowed."
+                },
+                "evidence": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Evidence the question stands on."
+                },
+                "header": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "A short chip naming the topic."
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The question as a headline."
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Context for the question."
+                }
+              }
+            }
+          }
+        },
+        "ResolveAsk": {
+          "type": "object",
+          "description": "The part of the ask a PATCH sends: its resolution, mirroring the Ask's own resolution field. The server sets the ask's state to resolved and fills resolution.by from the request's credential; a body that sets resolution.by is rejected (400), and the body never carries an identity.",
+          "required": [
+            "resolution"
+          ],
+          "properties": {
+            "resolution": {
+              "type": "object",
+              "required": [
+                "choice"
+              ],
+              "properties": {
+                "choice": {
+                  "type": "string",
+                  "description": "The chosen option's label, or approve/reject for an approval ask."
+                },
+                "text": {
+                  "type": "string",
+                  "description": "A free-text answer; present when the prompt offered freeText."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "The resolver's reason."
+                }
+              }
+            }
+          }
+        },
+        "SessionList": {
+          "type": "object",
+          "required": [
+            "sessions"
+          ],
+          "properties": {
+            "sessions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Session"
+              }
+            },
+            "nextPageToken": {
+              "type": "string",
+              "description": "Present while more rows remain after this page; bound to the (q, orderBy) pair that produced it."
+            }
+          }
+        },
+        "AskList": {
+          "type": "object",
+          "required": [
+            "asks"
+          ],
+          "properties": {
+            "asks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Ask"
+              }
+            },
+            "nextPageToken": {
+              "type": "string",
+              "description": "Present while more rows remain after this page; bound to the (q, orderBy) pair that produced it."
+            }
+          }
+        },
+        "Artifact": {
+          "type": "object",
+          "description": "One sealed artifact version. Core holds one lifecycle for every kind — declared, sealed, checked, delivered — and the row carries only core's record: kind, version, hash, content, sealedAt, summary and deliveries. Check results are the checking extension's — the judge's verdict, scores and failed gates live in the judge's state and its events — never on the artifact; verdict, basis, carriedFrom, outcome and links are not here. `content` is present in the per-session list only; the top-level GET /artifacts list carries metadata, and the page opens a version through GET /sessions/{key}/artifacts. `summary` is absent for versions sealed before the kind gained summarize; `deliveries` is absent for rows sealed before deliveries existed and reads as empty. Objects are open: readers ignore unknown fields.",
+          "required": [
+            "kind",
+            "version",
+            "hash",
+            "sealedAt",
+            "session"
+          ],
+          "properties": {
+            "session": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9:/#._@-]{1,200}$",
+              "description": "The session key the artifact belongs to; present on every row, and queryable as `session` in GET /artifacts."
+            },
+            "kind": {
+              "type": "string",
+              "description": "The artifact kind, e.g. `sleeper.cards`."
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "hash": {
+              "type": "string",
+              "description": "The content's hash."
+            },
+            "content": {
+              "type": "string",
+              "description": "The sealed content; present in the per-session list only."
+            },
+            "sealedAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the version was sealed (RFC 3339)."
+            },
+            "summary": {
+              "type": "string",
+              "description": "A one-line summary of the content; absent for versions sealed before the kind gained summarize."
+            },
+            "deliveries": {
+              "type": "array",
+              "description": "Core's record of where the version has been delivered; rows sealed before deliveries existed lack the field and read as empty.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "where",
+                  "link",
+                  "at"
+                ],
+                "properties": {
+                  "where": {
+                    "type": "string",
+                    "description": "Where it went — the delivering extension's channel (github posts a review, sleeper posts a card).",
+                    "example": "github"
+                  },
+                  "link": {
+                    "type": "string",
+                    "description": "The link to it.",
+                    "example": "https://github.com/acme/monorepo/pull/482#pullrequestreview-1"
+                  },
+                  "at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When it was delivered (RFC 3339)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "ArtifactList": {
+          "type": "object",
+          "required": [
+            "artifacts"
+          ],
+          "properties": {
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Artifact"
+              }
+            },
+            "nextPageToken": {
+              "type": "string",
+              "description": "Present while more rows remain after this page; bound to the (q, orderBy) pair that produced it."
+            }
+          }
+        },
+        "DeleteResult": {
+          "type": "object",
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "key": {
+              "type": "string",
+              "description": "The key of the session that was deleted."
+            }
+          }
+        },
+        "Problem": {
+          "type": "object",
+          "description": "An RFC 9457 problem; `error` repeats `detail` for readers that predate problem+json. For a bad q, `title` is `Bad Request` and `detail` carries the parser's diagnostic.",
+          "required": [
+            "type",
+            "title",
+            "status",
+            "detail"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "example": "about:blank"
+            },
+            "title": {
+              "type": "string"
+            },
+            "status": {
+              "type": "integer"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            }
+          }
+        },
+        "PatchSession": {
+          "type": "object",
+          "description": "What PATCH /sessions/{key} writes. Both fields are optional; a body that writes neither is a 200 no-op.",
+          "properties": {
+            "title": {
+              "type": "string",
+              "maxLength": 120,
+              "description": "The new title; empty or whitespace-only restores the default title from the session's first message."
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "archived",
+                "stopped"
+              ],
+              "description": "The lifecycle transition: `archived` archives the session, `stopped` unarchives it. Any other written state value is 422."
+            }
+          }
+        }
+      }
+    },
+    "security": [
+      {
+        "proxy": []
+      },
+      {
+        "session": []
+      }
+    ]
+  },
+  "choices": [
+    {
+      "id": "catalog",
+      "pointer": "/paths/~1sessions/get",
+      "decision": "GET /sessions and every other read in this API are served from the distributor's session catalog — SQLite by default, Postgres when the deployment configures it — written through the core on lifecycle events (created, run started or ended, ask opened/answered/cancelled, artifact sealed, spend, archived, renamed, deleted), recovering by replaying each session's own log; no read scans session directories or starts a process. The same catalog answers the one-session read GET /sessions/{key} (an unknown key is 404, nothing is created) and, for a person through the proxy, DELETE /sessions/{key}, whose catalog rows go with the session. The one overlay excepted: a running row's `waiting`, refreshed at the distributor's sweep from the session process and never stored, so a read request still neither pings nor boots a session.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "One session catalog owned by the distributor: SQLite by default, Postgres when the deployment configures it. Written on session lifecycle events... Rebuild from the session logs stays as the recovery path."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/sql-store.ts:145",
+          "text": "Catalog rows are written per event — insert into catalog_sessions (key, incarnation, agent, state, created_at, last_activity, ...) — the per-request scan of the session directories that the v1 page cost is gone from the tree."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:449",
+          "text": "GET /sessions is served from the catalog — sessionsApi(opts.catalog, { deleteSession, answer, waiting }) — not from a per-request scan of the session directories."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:141",
+          "text": "The one-session read: the credential is checked for this key, the catalog row is fetched, an unknown key throws 404, and the wired row answers — no process starts."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:143",
+          "text": "DELETE on the same path dispatches to deleteSession: 404 for an unknown key, 409 refused while a run, a sleep or a person's pending decision holds work, and the catalog rows are removed with the session."
+        }
+      ]
+    },
+    {
+      "id": "list-pattern",
+      "pointer": "/components/parameters/q",
+      "decision": "Every list — GET /sessions, GET /sessions/{key}/asks, GET /asks, GET /sessions/{key}/artifacts and GET /artifacts — takes the same four parameters: q, pageSize and pageToken defined once in components and referenced, and an orderBy whose allowed set the list's own parameter component documents, because the lists order over different fields; each list documents its own field set, and nothing returns an unbounded array.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "One consistent list pattern everywhere: every collection route takes the same q, orderBy, pageSize and pageToken, and each list documents its own field set. Per-session lists are paged too; nothing returns an unbounded array. Define these parameters once in components and reference them."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#paging",
+          "text": "Guide: cursor or offset decided up front for any list that can grow; a keyset cursor is stable under inserts."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:135",
+          "text": "The lists order over different fields — the session row's createdAt, the ask's createdAt, the artifact's sealedAt — so one shared enum advertised values on lists that never had them."
+        }
+      ]
+    },
+    {
+      "id": "query-param",
+      "pointer": "/components/parameters/q",
+      "decision": "Filtering is one `q` parameter in Lucene syntax — field terms, ranges, AND/OR/NOT, grouping, quoted phrases, `*`/`?` wildcards, one maintained parser on every list, a 400 carrying the parser's diagnostic — deliberately not AIP-160's `filter`, as the owner chose.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "GET /sessions takes q: Lucene query syntax, parsed by a maintained parser, never hand-rolled... The owner explicitly wants Lucene syntax in q rather than AIP-160 filter."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#errors",
+          "text": "Guide: errors are application/problem+json; a bad query is a 400 with the parser's own diagnostic, never a stack trace."
+        }
+      ]
+    },
+    {
+      "id": "q-escaping",
+      "pointer": "/components/parameters/q",
+      "decision": "q follows standard Lucene escaping: a reserved character in an unquoted value (including `:` and `/`) is escaped with a backslash — `key:sleeper\\:platinum\\:*` for a key prefix, `session:review\\:monorepo` for an exact key — and a quoted value is an exact literal (`session:\"review:monorepo\"`); an unescaped reserved character in a value, and a `/regex/` term, are 400 problem+json whose problem detail says to escape the character or quote the value. Every q example in this document uses the escaped form.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Confirming the finding's fix, word for word: standard Lucene escaping — a reserved character in an unquoted value (including ':' and '/') is escaped with a backslash, e.g. key:sleeper\\:platinum\\:* for a key prefix and session:review\\:monorepo for an exact key, and a quoted value is an exact literal (session:\"review:monorepo\"); an unescaped reserved character in a value, and a /regex/ term, are 400 problem+json with a message that says to escape or quote; and every example in the document moves to the escaped form, with nothing else changing.",
+          "text": "Yes, that is the whole fix"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Lucene syntax parsed by a maintained Lucene parser — the parser this contract commits to does not accept a reserved character unescaped in a value."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#errors",
+          "text": "Guide: a 400 in application/problem+json, with the parser diagnostic in the detail."
+        }
+      ]
+    },
+    {
+      "id": "session-q-fields",
+      "pointer": "/paths/~1sessions/get",
+      "decision": "The session list's q field set is key, agent, title, state, createdAt, lastActivity, cost.currencyCode, cost.amountMicros (integer micros), tokens.input/output/cacheRead/cacheWrite, pendingAsks, oldestAskAt, lastRun.outcome; wildcards apply to key, agent, title and bare terms only; unknown fields are 400.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "It supports field terms over every row field, ranges on dates, spend and counts, AND/OR/NOT, grouping, quoted phrases, prefix wildcards."
+        }
+      ]
+    },
+    {
+      "id": "ask-q-fields",
+      "pointer": "/paths/~1asks/get",
+      "decision": "Both ask lists — the per-session list and the top-level GET /asks — share one q field set: session (the session key), type, state, createdAt, resolvedAt and tool — with bare terms full-text searched over the prompt question and the tool name; q=state:pending is the needs-you query.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "GET /sessions/-/asks?q=state:pending&orderBy=createdAt answers Home's 'needs you' in one paged query, oldest first."
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        }
+      ]
+    },
+    {
+      "id": "artifact-q-fields",
+      "pointer": "/paths/~1artifacts/get",
+      "decision": "Both artifact lists — the per-session list and the top-level GET /artifacts — are searched with the same q over a shared field set: session, kind, version, sealedAt — with bare terms full-text searched over summary, replacing the ad-hoc kind and session query parameters: q=kind:sleeper.cards AND session:sleeper\\:* — and no verdict or outcome field: verdicts and outcomes are extension data, not on the artifact, and the judge serves its own results through its own API.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Artifacts use q. Replace the kind and session parameters on the artifact list with the same Lucene q the session list takes (e.g. q=kind:sleeper.cards AND session:sleeper:*), alongside the same orderBy, pageSize and pageToken. Document the artifact field set q can query."
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:124",
+          "text": "What is not here: verdict (the judge's), basis and carriedFrom (github's), outcome (the kind's own reading), and links — those belong to the owning extension's state and events."
+        }
+      ]
+    },
+    {
+      "id": "free-text",
+      "pointer": "/components/parameters/q",
+      "decision": "A bare term or bare quoted phrase (no field prefix) is a full-text search (SQLite FTS5) over the list's documented text fields — title, key and the session's last message on the session list; the prompt question and tool name on the ask lists; summary on the artifact lists — and nothing else.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Free-text terms matched through full-text search (SQLite FTS5) over title, key and the last message."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:124",
+          "text": "outcome is the kind's own reading of its content — not on the artifact, so not a full-text field of the artifact lists."
+        }
+      ]
+    },
+    {
+      "id": "state-values",
+      "pointer": "/components/schemas/Session/properties/state",
+      "decision": "The row's state is one of running, idle, stopped or archived — the one vocabulary the sdk, the Sessions API and the lifecycle channel share — replacing v1's running and active booleans: run.started sets running; every run end (succeeded, denied, failed, aborted) sets idle, unless queued input starts the next run, which keeps it running; stopped means the session's process stopped (the stop operation, retention, a crash), never an abort; archived is set only by the archive operation, and is a lifecycle state value, not a separate field. Waiting on a person is not a state: the session is running with a pending ask.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "What values should the row's state field take, replacing v1's separate running (boolean) and active (boolean)?",
+          "text": "Three values: running, idle, stopped"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Archived is a session state. Remove the archived boolean; state gains archived. Lists filter with q=state:archived or -state:archived."
+        },
+        {
+          "source": "code",
+          "ref": "packages/cli/src/main.ts:27",
+          "text": "The CLI's --state map speaks in exactly these four states: done = (state:idle OR state:stopped) AND pendingAsks:0."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:236",
+          "text": "state.changed: the one vocabulary the sdk, the Sessions API and the channel share — running, idle, stopped, archived, with exactly these transitions."
+        }
+      ]
+    },
+    {
+      "id": "archived-transitions",
+      "pointer": "/paths/~1sessions~1{key}/patch",
+      "decision": "Archiving is a state write on the session, not a custom method: PATCH /sessions/{key} { state: 'archived' } archives (409 while the session is running — waiting on a person is a running session with a pending ask), { state: 'stopped' } unarchives (back to stopped), and any other written state value is 422; a write that changes nothing is a 200 no-op; invoking an archived session reactivates it (state → running); archived is set only by this write.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Archived is a session state... Define what happens when a running session is archived, when an archived session is invoked, and what state unarchiving returns to. Refuse archiving a running or person-waiting session with 409; unarchiving returns the session to stopped. PATCH sets state through an explicit field or AIP-136 custom methods (:archive / :unarchive); pick one and say why."
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "answer",
+          "ref": "When PATCH /sessions/{key} writes state, the two accepted values are archived (archive) and stopped (unarchive). What should happen on the idempotent edge cases — writing archived when the session is already archived, or writing stopped when it is not currently archived?",
+          "text": "200 no-op, unchanged row"
+        },
+        {
+          "source": "answer",
+          "ref": "What should a new invocation to an archived session do?",
+          "text": "Reactivates: invocation unarchives, run starts as usual (state → running)."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:111",
+          "text": "The catalog refuses to archive a running session with 409 — a running session cannot be archived — and waiting on a person is running, so that is covered too."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#idempotency",
+          "text": "Guide: for PATCH callers retry, prefer a design the retry cannot corrupt — the 200 no-op on an already-applied transition is that design here."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:241",
+          "text": "archived is set only by the archive operation; waiting on a person is not a state: the session is running with a pending ask."
+        }
+      ]
+    },
+    {
+      "id": "row-fields",
+      "pointer": "/components/schemas/Session",
+      "decision": "A row carries key, agent, title?, state, createdAt, lastActivity, cost (Money) and tokens, pendingAsks and oldestAskAt (present while pending), lastRun { outcome (succeeded | denied | failed | aborted — the four run-end outcomes, a gate's deny included), endedAt, failedSteps }, and waiting? on a running row — failures are run state, not pending work; 'needs you' is one query, q=pendingAsks:>0, and v1's note field is dropped: it came from a sweep ping, not a stored value, and the capacity wait it showed is now the structured waiting overlay.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Session row: replace approvalsPending/questionsPending with pendingAsks (count) and oldestAskAt (orderable), so q=pendingAsks:>0 filters and Home can sort by wait time. Failures are not asks: move them to run state, e.g. lastRun { outcome, endedAt, failedSteps }, and drop failuresPending."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/failures.ts:19",
+          "text": "failedRows maps a run's failures to { step, error }, which lastRun.failedSteps keeps."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:252",
+          "text": "run.ended: outcome: 'succeeded' | 'denied' | 'failed' | 'aborted' — a gate's deny reports denied."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/sql-store.ts:145",
+          "text": "The catalog is keyed by the session key — insert into catalog_sessions (key, incarnation, agent, state, created_at, last_activity, ...) — the house convention the row keeps where the guide suggests id for generated identifiers; the key naming itself is settled by the key-pattern choice."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:162",
+          "text": "#2479 removed the notes Map — v1's note answered from the sweep ping, not a stored value, so it had no place in an event-written catalog row — and where it stood the distributor now keeps each running session's wait for a model slot, overlaid as waiting."
+        }
+      ]
+    },
+    {
+      "id": "ask-resource",
+      "pointer": "/paths/~1sessions~1{key}~1asks/get",
+      "decision": "Approvals and questions are one resource, Ask, at /sessions/{key}/asks (and /sessions/{key}/asks/{id}): type approval|question, one lifecycle pending|resolved|cancelled — cancelled when the run that raised it ends or aborts, so pending counts cannot leak — with createdAt/resolvedAt, resolution { by, choice, text?, reason? } filled by the server, type-specific payloads toolCall { tool, args } and prompt { question, options, optionDescriptions?, suggested?, freeText, evidence?, header?, title?, detail? }; resolving is a PATCH on the ask, and resolved asks keep their tool arguments as the audit trail, replacing the v1 approvals, questions and failures lists.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Unify approvals and questions into one resource, e.g. Ask at /sessions/{key}/asks/{id}: type approval|question, one lifecycle pending|resolved|cancelled, cancelled when the run that raised the ask ends or aborts, so pending counts cannot leak; resolved asks keep their tool arguments: the record of what was approved is the audit trail."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/questions.ts:8",
+          "text": "The SDK's Question (question, options, evidence, header, title, detail, optionDescriptions, suggested, freeText, askedAt, answer) and the gate's Approval (tool, args, requestedAt, verdict) merge into Ask's prompt and toolCall."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/sql-store.ts:251",
+          "text": "The catalog already moves only a pending ask to cancelled: update catalog_asks set state='cancelled' where state='pending'."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/gate.ts:52",
+          "text": "The reasons a withdrawn approval carries on main are task_ended, superseded and arguments_changed (this line). steered — a person's message reached the run while the call waited — is in the durable session documents contract (contracts:6fc57e77-dd2f-4458-9802-ded98054f946) already, added there (approved); the writer is Planned, #2397. This API only repeats the session's reason, so it names the fourth with the others, and the map gaining steered lands with that issue."
+        }
+      ]
+    },
+    {
+      "id": "resolve-method",
+      "pointer": "/paths/~1sessions~1{key}~1asks~1{askId}/patch",
+      "decision": "Resolving an ask is PATCH /sessions/{key}/asks/{id} — a write on the session's own routes, so it may drive the process the read routes may not — with { resolution: { choice, text?, reason? } }; the server sets the ask's state to resolved and fills resolution.by from the request's credential, never from the body; an ask that is not pending is 409: an ask a person already answered keeps its two v13 texts — `the ask is resolved` when the catalog holds it as resolved, `the ask is already answered` when the session has already decided a catalog-pending ask; an ask the session refuses as withdrawn while the catalog still holds it pending says the request was withdrawn and why, with the session's own reason (the call's task ended, superseded by the newer request, the arguments changed, or a person's message reached the run while the call waited, a reason approved where it lives and Planned for its writer, #2397); any ask the catalog holds as cancelled, or that the session gives no reason for, gets the generic text — that the session is no longer waiting for it. A withdrawal is not a resolution — resolution means a person answered, and resolution.by stays a Principal. The body mirrors the Ask's own resolution field — the part the PATCH sends — and a body that sets resolution.by is a 400.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:332",
+          "text": "Write routes go through withSession → driver.ensure, so a write route may wake a stopped session while a read route may not."
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the fix: the body of PATCH /sessions/{key}/asks/{id} becomes { resolution: { choice, text?, reason? } }, mirroring the Ask's own resolution field — a PATCH sends part of the resource — the server still fills resolution.by from the credential and rejects a body that sets resolution.by (400), and nothing else changes.",
+          "text": "Yes, that is the fix"
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:136",
+          "text": "The answered texts stand: `the ask is ${ask.state === 'pending' ? 'already answered' : ask.state}` — resolved for a catalog-resolved ask, already answered for a catalog-pending ask its session has decided."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:445",
+          "text": "The distributor now passes the withdrawal through: out = res.ok || (res.status === 400 ? reply.error ?? ... : reply.withdrawn ? { withdrawn: reply.withdrawn.reason } : false), so the 409 carries the session's reason instead of the generic detail."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:135",
+          "text": "A withdrawn ask takes its own 409: throw new Problem(409, withdrawnText(...)) — the wording this contract adopted in v16 is implemented on main."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/gate.ts:52",
+          "text": "The reasons a withdrawn approval carries on main are task_ended, superseded and arguments_changed (this line). steered — a person's message reached the run while the call waited — is in the durable session documents contract (contracts:6fc57e77-dd2f-4458-9802-ded98054f946) already, added there (approved); the writer is Planned, #2397. This API only repeats the session's reason, so it names the fourth with the others, and the map gaining steered lands with that issue."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/gate.ts:55",
+          "text": "withdrawnText = (reason) => `the request was withdrawn: ${reason ? WHY[reason] : 'the session is no longer waiting for it'}` — the session's reason when the map has one, else the generic line; a reason the map lacks (steered, until issue #2397 adds it) renders undefined."
+        }
+      ]
+    },
+    {
+      "id": "principal",
+      "pointer": "/components/schemas/Principal",
+      "decision": "resolution.by and every server-set actor field in this contract is the Principal #2220 introduces: { kind: person|tailnet, id } — a person is the username the proxy's identity header carries, a tailnet a request that arrived without a trusted identity, and id is present only when kind is person; it is filled from the request's credential, never from a body, and no request in this contract carries an identity field.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "For a tailnet resolution, what does the Principal from #2220 look like — { kind: \"tailnet\" } with no id, or does the tailnet carry an id? (Person is { kind: \"person\", id: <username> }; v1's decider records the literal string \"tailnet\" with nothing else to identify the caller.)",
+          "text": "{ kind: \"tailnet\" }, no id"
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "code",
+          "ref": "packages/session/src/server.ts:17",
+          "text": "parsePrincipal reads the identity the distributor vouches from x-quack-principal and checks p.name (session/src/server.ts:21) — the session side carries { kind: 'person'; name } (the SDK Principal, sdk/src/principal.ts:2); the distributor maps the wire id to that name before the call (distributor/src/server.ts:429). This API's wire shape { kind, id } is the catalog's (catalog/src/port.ts:11)."
+        },
+        {
+          "source": "code",
+          "ref": "packages/session/src/server.ts:150",
+          "text": "who = (req) => (opts.token === undefined ? { kind: 'tailnet' } : parsePrincipal(req.headers[PRINCIPAL_HEADER])) — every request is a person or the tailnet; no token in a body, no agent identity."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/principal.ts:2",
+          "text": "export type Principal = { kind: 'person'; name: string } | { kind: 'tailnet'} — the session side carries name, not id."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:434",
+          "text": "const who: Principal = r.by.kind === 'person' ? { kind: 'person', name: r.by.id } : r.by — the wire id becomes the session-side name."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/port.ts:11",
+          "text": "This API's wire Principal — { kind: 'person'; id: string } | { kind: 'tailnet'} — is the shape the contract names."
+        }
+      ]
+    },
+    {
+      "id": "cross-parent",
+      "pointer": "/paths/~1asks/get",
+      "decision": "Cross-session reads are top-level collections — GET /asks and GET /artifacts — each taking the same q, orderBy, pageSize and pageToken, with session as a queryable field and every row carrying its session's key; the per-session sub-collections stay. There is no AIP-159 `-` parent: no reserved pseudo-key, and nothing kept out of the key pattern.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "code",
+          "ref": "packages/web/src/Workspace.tsx:28",
+          "text": "The consumer of a cross-session ask read polls its list once per tick — the top-level collection is that poll with no pseudo-key."
+        }
+      ]
+    },
+    {
+      "id": "money",
+      "pointer": "/components/schemas/Money",
+      "decision": "Cost is Money — { currencyCode (ISO 4217), amountMicros (int64 count of millionths, encoded as a decimal string) } — never a float, so nothing loses precision in JavaScript; unpriced is amountMicros \"0\" with the deployment's currency, never null; q compares it in micros (cost.amountMicros:>=1000000); summing across sessions happens in integers. BigInt in code; a decimal string on the wire.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Cost is a big integer plus a currency, never a float: cost: { currencyCode, amountMicros }. currencyCode is ISO 4217. amountMicros is an int64 count of millionths, encoded as a decimal string in JSON. Unpriced spend is \"0\". Show how q compares it."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/channel.ts:38",
+          "text": "Spend arrives as a decimal string of int64 micros checked and parsed to BigInt — the precision loss this replaces on v1's float Spend.cost."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:89",
+          "text": "Money = { currencyCode: string; amountMicros: bigint } — settled by the extension SDK, which the REST contract encodes as a decimal string."
+        }
+      ]
+    },
+    {
+      "id": "paging",
+      "pointer": "/components/parameters/pageToken",
+      "decision": "Pagination is real keyset in the store on every list: pageSize (default 100, capped at 1000) and an opaque pageToken bound to (q, orderBy); a page never reads more than a page, and reusing a token with a changed query or order is a 400.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Real keyset pagination in the store: pageSize with a default and a max, an opaque pageToken bound to the query and order... A page must cost a page."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/keyset.ts:4",
+          "text": "A cursor this store would not issue for the (where, orderBy) it came with: the REST surface's 400 — and pageSize must be an integer from 1 to 1000 (http.ts:53)."
+        }
+      ]
+    },
+    {
+      "id": "ordering",
+      "pointer": "/components/parameters/orderBySession",
+      "decision": "orderBy is a small allowed set per list, each list carrying its own parameter component so a value valid on one list is not advertised on another: the session list offers lastActivity (the default, newest first), createdAt (newest first) and oldestAskAt (oldest wait first); the ask lists offer createdAt (newest first on the per-session list, oldest first on the cross-session list); the artifact lists offer sealedAt (newest first, the default there). Each has the list's key as final tiebreak, and the order choice is part of what a pageToken is bound to; an orderBy value the list does not accept is a 400 problem.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Besides lastActivity (the default), which orderings should the allowed set include?",
+          "text": "lastActivity and createdAt"
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "oldestAskAt (orderable), so Home can sort by wait time; GET /sessions/-/asks?q=state:pending&orderBy=createdAt answers Home's 'needs you' in one paged query, oldest first."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/keyset.ts:10",
+          "text": "Every order ends on the list's key, so a page boundary is one exact position; lastActivity:newest is the default order."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:135",
+          "text": "sealedAt: number; — the sealed version's field on the artifact row (it has no createdAt), so only sealedAt orders the artifact lists."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:250",
+          "text": "session.created carries Session & { createdAt: number } — the session list's createdAt."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#compatibility",
+          "text": "Narrowing an enum breaks callers, and a breaking change names its callers — which is why the per-list enums list their breaks."
+        }
+      ]
+    },
+    {
+      "id": "no-boot-reads",
+      "pointer": "/paths/~1sessions~1{key}~1asks/get",
+      "decision": "Every GET in this contract — the session list, one session, GET /asks, GET /artifacts, and the per-session ask and artifact lists — is served from the catalog, so no read, including a stopped session's, starts a process; export is no longer an exception: a stopped session's export is built by the distributor from a read-only snapshot of the session's store, byte-identical to the body the session's own /export returns, and a running session answers through its process. POST /sessions/{key}/invocations is the route that starts a session.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "No read ever starts a session process. That includes per-session lists of approvals, questions, failures and sealed artifacts, which must be served from the catalog, so the Sleeper page and others stop booting sessions."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:478",
+          "text": "The withSession fallback still boots a process for whatever is not named otherwise — which is why the catalog reads are handled by the catalog API before reaching it."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:302",
+          "text": "peekApprovals reads pending items through driver.ensure — the legacy rail the catalog ask list replaces."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:344",
+          "text": "Current main, after PR #2261 (issue #2242): exportRoute carries the comment \"A read never starts a process: a running session answers from its process, a stopped one from its store\" — withSession for a running session, driver.exported(key) from the store for a stopped one; the route is registered at :471."
+        }
+      ]
+    },
+    {
+      "id": "per-session-artifacts",
+      "pointer": "/paths/~1sessions~1{key}~1artifacts/get",
+      "decision": "GET /sessions/{key}/artifacts returns the session's sealed versions with full content, paged like every other list (nothing returns an unbounded array), served from the catalog without booting the process; a row carries core's record only — kind, version, hash, content, sealedAt, summary and deliveries.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/web/src/api.ts:72",
+          "text": "The web reads the per-session sealed-artifact list with content: listAll(...).map((a) => ({ kind, version, hash, content: a.content ?? '', sealedAt, summary }))."
+        },
+        {
+          "source": "code",
+          "ref": "packages/web/src/extensions/sleeper/week.ts:31",
+          "text": "The sleeper parses artifact.content per session (JSON.parse(artifact.content)), so content must come back in this read without booting the process."
+        },
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Per-session lists are paged too; nothing returns an unbounded array."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:130",
+          "text": "Artifact = { kind, version, hash, content, sealedAt, summary?, deliveries? } — the sealed version's core record."
+        }
+      ]
+    },
+    {
+      "id": "retired-index-routes",
+      "pointer": "",
+      "decision": "v2 retires the index's read routes and POST /index/facts: GET /index/sessions → GET /sessions (spend is on the row); GET /index/approvals?state=pending and GET /index/questions?state=pending → GET /asks?q=state:pending (one session: GET /sessions/{key}/asks); GET /index/failures → q=lastRun.outcome:failed plus lastRun on the row; GET /index/artifacts → GET /artifacts and GET /sessions/{key}/artifacts. index.push (web push) is a separate contract and stays.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Say which index.http routes this retires, and what replaces each one. index.push (web push) is a separate contract and stays."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:56",
+          "text": "The v2 reads q, orderBy, pageSize and pageToken straight off the list URL — the in-memory index aggregation the contract retires is gone from the tree."
+        },
+        {
+          "source": "code",
+          "ref": "packages/web/src/Workspace.tsx:8",
+          "text": "REFRESH_MS = 15_000 — the web's refresh tick is one list refresh per interval; after v2 it is one GET /sessions call plus, for Needs, the ask list."
+        }
+      ]
+    },
+    {
+      "id": "cutover",
+      "pointer": "/components/parameters/q",
+      "decision": "The migration is one hard cutover: v2 ships with q only, v1's filter parameter is removed (no deprecated alias), and all consumers — web, CLI, home, sleeper — move in the same release along the mapping in the description: key/agent expressions carry over 1:1, -archived:true reads -state:archived, running:true becomes state:running, and the index polls become ask-list and count queries. The CLI's 'done' maps to q=(state:idle OR state:stopped) AND pendingAsks:0 — no run going and nothing pending: under the state rule a finished session is idle, and stopped means its process is gone, never a finished run.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "For the one migration: does v2 ship as a hard cutover (filter removed, q only, all consumers updated in the same release), or with filter kept as a deprecated alias that v2 accepts during a transition window?",
+          "text": "Hard cutover, no filter alias"
+        },
+        {
+          "source": "code",
+          "ref": "packages/cli/src/main.ts:321",
+          "text": "The CLI's sessions surface already takes a positional q alongside --state, --agent, --order-by, --page-size and --page-token — the mapping is small enough for one release; home reads the same lists (home/src/notices.ts:33)."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:238",
+          "text": "Every run end (succeeded, denied, failed, aborted) sets idle, unless queued input starts the next run; stopped means the session's process stopped (the stop operation, retention, a crash), never an abort."
+        }
+      ]
+    },
+    {
+      "id": "list-envelope",
+      "pointer": "/components/schemas/SessionList",
+      "decision": "Every list answers a top-level object with the plural resource name — { sessions }, { asks }, { artifacts } — plus an opaque nextPageToken while more rows remain.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/web/src/api.ts:53",
+          "text": "The web reads a list as { <field>: [...], nextPageToken } — listAll fetches Record<string, T[] | undefined> & { nextPageToken }."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#payload",
+          "text": "Guide: a JSON object at the top level, never a bare array; objects open for extension."
+        }
+      ]
+    },
+    {
+      "id": "get-one",
+      "pointer": "/paths/~1sessions~1{key}/get",
+      "decision": "GET /sessions/{key} stays a single-row catalog read, 404 when the deployment knows no such key, creating nothing and starting no process; it returns the v2 row (state including archived, cost as Money, pendingAsks, oldestAskAt, lastRun).",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/home/src/notices.ts:48",
+          "text": "Home checks a key against the list (GET /sessions?q=...) before per-session reads; reads of an unknown key must 404 and create nothing."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:141",
+          "text": "GET /sessions/{key} is served here: the credential must be allowed this key, the catalog row is fetched, and an unknown key throws 404 \"no such session\" — nothing is created and no process starts."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:147",
+          "text": "The read answers the wired row, or 404: the only other outcome for a key the catalog does not hold."
+        }
+      ]
+    },
+    {
+      "id": "get-one-ask",
+      "pointer": "/paths/~1sessions~1{key}~1asks~1{askId}/get",
+      "decision": "GET /sessions/{key}/asks/{id} reads one ask from the catalog — pending, resolved or cancelled — without starting the session's process.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "request",
+          "text": "Unify approvals and questions into one resource, e.g. Ask at /sessions/{key}/asks/{id}."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:302",
+          "text": "peekApprovals shows the rail reads one session's pending items repeatedly; the by-id read is that rail's per-item source."
+        }
+      ]
+    },
+    {
+      "id": "patch-body",
+      "pointer": "/paths/~1sessions~1{key}/patch",
+      "decision": "PATCH /sessions/{key} writes { title?, state? }: title at most 120 characters (empty or whitespace restores the default), and state exactly archived or stopped — any other written state value is 422, archiving a running or person-waiting session is 409, a no-op write is 200; the 200 returns the updated Session.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "answer",
+          "ref": "When PATCH /sessions/{key} writes state, the two accepted values are archived (archive) and stopped (unarchive). What should happen on the idempotent edge cases — writing archived when the session is already archived, or writing stopped when it is not currently archived?",
+          "text": "200 no-op, unchanged row"
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:85",
+          "text": "patchOf accepts {title?, state?} with title at most TITLE_MAX = 120 characters — the shape the contract's PATCH keeps."
+        }
+      ]
+    },
+    {
+      "id": "delete-verb",
+      "pointer": "/paths/~1sessions~1{key}/delete",
+      "decision": "Deletion stays AIP-135 DELETE /sessions/{key}, idempotent, refusing 409 while the session is running, sleeping until its wake time, or waiting on a person; the deleted session's catalog rows go with it.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:399",
+          "text": "Only work refuses a delete: a run in flight, a sleep with a wake time, a person's pending decision — 409 the session ${refused}; an idle process, or a page watching it, is stopped first."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:143",
+          "text": "DELETE /sessions/{key} dispatches here to deleteSession (http.ts:119): an unknown key is 404, a session at work is refused 409 with its reason, and on success the catalog rows go with it and { key } comes back."
+        }
+      ]
+    },
+    {
+      "id": "delete-deprecated-removed",
+      "pointer": "/paths/~1sessions~1{key}/delete",
+      "decision": "The deprecated v1 legacy route POST /sessions/{key}/delete is removed in v2: v1 already pointed its callers to DELETE /sessions/{key}, and the cutover release moves the rest.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "For the one migration: does v2 ship as a hard cutover (filter removed, q only, all consumers updated in the same release), or with filter kept as a deprecated alias that v2 accepts during a transition window?",
+          "text": "Hard cutover, no filter alias"
+        },
+        {
+          "source": "code",
+          "ref": "packages/web/src/api.ts:97",
+          "text": "The web's deleteSession is DELETE on the session route — the cutover the contract mandates."
+        }
+      ]
+    },
+    {
+      "id": "errors",
+      "pointer": "/components/schemas/Problem",
+      "decision": "Every error is application/problem+json (RFC 9457) in one shared Problem shape { type, title, status, detail, error }; endpoint-specific errors — 400 bad query, 401 missing or invalid credential, 404 unknown key or ask, 409 conflict, 415 wrong body, 422 invalid written state — are declared per operation, and 500/503 fall to default.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/http.ts:16",
+          "text": "An RFC 9457 problem reply; error repeats detail so readers that predate problem+json keep working."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#errors",
+          "text": "Guide: errors are application/problem+json; declare endpoint-specific errors per operation, let generic ones fall to default."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#validation-errors",
+          "text": "Guide: 422 or 400 for validation failures — pick one; this contract picks 422 for the state value, as the owner set it."
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/http.ts:19",
+          "text": "Kept on purpose — these three cites are the evidence for the intent guarantee \"no stack traces leave the process\", which the check asked for; the Problem wording itself is unchanged from v16. The one writer of an error reply builds the body from a status and a detail string — { type, title, status, detail, error, ...extra } with extra members unable to replace the standard ones — so nothing but those members can leave the process."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:194",
+          "text": "The one exit for anything thrown inside a catalog route: a Problem answers with its own status and message, a QueryError or CursorError answers 400 with the parser message, and anything else answers 503 with detail \"the catalog is unavailable: <message>\" (http.ts:189) — the message, never a stack."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:483",
+          "text": "The distributor route wrapper answers sendProblem(res, errorStatus(err), err.message): an AgentError keeps its status, a body too large is 400, and anything unforeseen is 502 (server.ts:130-133) — the error message as detail, never a stack."
+        }
+      ]
+    },
+    {
+      "id": "key-pattern",
+      "pointer": "/components/parameters/sessionKey",
+      "decision": "A session key matches ^[A-Za-z0-9:/#._@-]{1,200}$ and is 400 outside it, exactly as the distributor validates today; no value is reserved, because there is no `-` parent to keep out of the pattern.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/session-key.ts:2",
+          "text": "SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/ — the key pattern the catalog 400s outside (catalog/src/http.ts:60)."
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        }
+      ]
+    },
+    {
+      "id": "no-version-segment",
+      "pointer": "",
+      "decision": "The routes keep their unversioned /sessions paths (and the new top-level /asks and /artifacts collections): the existing routes are deployed at the deployment root (locally) or under /v1/ behind the proxy, and an existing unversioned route keeps its shape.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/web/src/api.ts:45",
+          "text": "Paths are relative to the page so the bundle works under any prefix (/ locally, /v1/ behind the proxy); the routes stay unversioned."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#versioning",
+          "text": "Guide: an existing unversioned route keeps its shape."
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "pointer": "/components/securitySchemes",
+      "decision": "No read is trusted by network position. #2220's two credential paths: the proxy — the identity header (x-authentik-username) is trusted only with the proxy's shared-secret header, else the request is the tailnet itself, and a person keeps v1's full read and write access; and the separate credentialed session listener — a session credential reaches only its own session's key (404 on a foreign key) unless the deployment grants more, and among those only the home agent's is granted cross-session reads; writes are person-only through the proxy; a missing or invalid credential is 401. The credential is what the server fills resolution.by with.",
+      "why": [
+        {
+          "source": "answer",
+          "ref": "Confirming how to record #2220's security model in the contract: requests that arrive through the reverse proxy carry the proxy's identity header, which the distributor trusts only when the proxy's shared-secret header is present too (a request without it is the tailnet itself); session credentials arrive on a separate credentialed listener and reach only their own session's key unless the deployment grants more; and among those session credentials, only the home agent's is granted cross-session reads (the top-level /asks and /artifacts, and the session list). Person reads and writes through the proxy keep today's access, and the API's write routes (rename, state, delete, resolve) stay person-only.",
+          "text": "Yes, that is the model"
+        },
+        {
+          "source": "answer",
+          "ref": "Confirming the plain-REST shape of the revision: archive and unarchive become state values on PATCH /sessions/{key} (archived / stopped, 422 for any other written value), resolving an ask becomes PATCH /sessions/{key}/asks/{id} with resolution.by filled from the request's credential, cross-session reads become the top-level collections GET /asks and GET /artifacts, and every request — reads included — carries a credential, with a session's own credential scoped to its own key unless the deployment grants more?",
+          "text": "Yes, that is the shape"
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:102",
+          "text": "PROXY_PROOF = 'x-quack-proxy-secret' — the proxy's shared-secret header the identity rides on; #2220 gates the identity header on it."
+        },
+        {
+          "source": "code",
+          "ref": "packages/session/src/server.ts:146",
+          "text": "With a token (every launch has one), each request must carry it as a bearer, so only the distributor reaches the session and the principal it names decides; without one (tests), every decision is the tailnet's."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#security",
+          "text": "Guide: document auth with a security block, and per operation note who may call and which object boundary applies."
+        }
+      ]
+    },
+    {
+      "id": "artifact-core-only",
+      "pointer": "/components/schemas/Artifact",
+      "decision": "An artifact row carries core's record only: kind, version, hash, content, sealedAt (renamed from createdAt), summary and deliveries [{ where, link, at }] — the settled extension SDK's core fields. verdict, basis, carriedFrom, outcome and links are removed: verdicts are the judge's (its own state, events and API), basis and carriedFrom github's, and outcome the kind's own reading — extension data is out of core. summary and deliveries are absent for rows sealed before they existed and read as empty.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:124",
+          "text": "What is not here: verdict (the judge's), basis and carriedFrom (github's), outcome (the kind's own reading, e.g. the reviewer's approve or request-changes), and links — those belong to the owning extension's state and events."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:109",
+          "text": "ArtifactDelivery = { where: string; link: string; at: number } — one delivery of a sealed version: where it went and the link to it."
+        },
+        {
+          "source": "code",
+          "ref": "sdk/contract.d.ts:137",
+          "text": "summary? — a one-line summary of the content; absent for versions sealed before the kind gained summarize; deliveries? — rows sealed before deliveries existed lack the field and read as empty."
+        }
+      ]
+    },
+    {
+      "id": "waiting-overlay",
+      "pointer": "/components/schemas/Session/properties/waiting",
+      "decision": "A running row carries an optional `waiting` { since, ahead, provider } while the session is queued for a model slot: read from the session process and overlaid on running rows only, refreshed by each sweep that reaches the process, never written to the catalog, and absent when the sweep cannot reach the session — the next sweep starts about 30 s after the previous one finishes, pings run one at a time with a 2 s timeout each, and a sweep waits behind wakes queued ahead of it, so the gap is a floor, not a promise. Several queued calls report as the one that has waited longest, and ahead counts calls on that provider, not sessions. It is not a catalog column, so no list's `q` field set or `orderBy` names it, and its absence is normal — a running session that is generating, or any session in another state, has no waiting object.",
+      "why": [
+        {
+          "source": "guide",
+          "ref": "rest#compatibility",
+          "text": "Adding optional response fields is safe, and objects are open for extension — readers that ignore unknown fields keep working."
+        },
+        {
+          "source": "guide",
+          "ref": "rest#payload",
+          "text": "Dates are RFC 3339, so RFC 3339 was the first choice for `since` — and it is rejected here on purpose: the sweep copies the process's own Date.now() count (packages/sdk/src/signals.ts:8) and stores nothing, so an RFC 3339 string would be a re-encoding the overlay does not own, the web compares it against the same count over its socket, and no stored row date changes format. The deviation is stated on the field."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/query.ts:16",
+          "text": "The sessions queryable field set — key, agent, title, state, createdAt, lastActivity, cost.*, tokens.*, pendingAsks, oldestAskAt, lastRun.outcome — has no waiting term and none is added: the overlay cannot be filtered or ordered on."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:101",
+          "text": "The overlay is applied where the row leaves the catalog: running rows only, and absent otherwise."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:20",
+          "text": "The Sessions API's dependency: waiting?(key) — the catalog is told the value, it does not store it."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:266",
+          "text": "The sweep reads the wait off each running session and keeps it in a map — nothing is written to the catalog."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:275",
+          "text": "A session whose /ping fails has its wait dropped for that sweep: a session that cannot answer /ping is left for the next sweep, and its stale wait is not shown meanwhile — which is why an unreachable session shows no waiting rather than an old one."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:262",
+          "text": "A process that exited without a clean stop leaves no wait behind: the sweep clears every entry whose process is gone, so a rerun of the key cannot inherit it."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:284",
+          "text": "the sweep reschedules itself about 30 s after it finishes — Math.max(50, Math.min(idleMs, 30_000)) — which is what bounds the staleness."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:449",
+          "text": "The overlay reaches the Sessions API from that in-memory map: sessionsApi(opts.catalog, { deleteSession, answer, waiting: (key) => waits.get(key) })."
+        },
+        {
+          "source": "code",
+          "ref": "packages/session/src/server.ts:130",
+          "text": "The process reports the wait on its /ping reply, and the reply also carries the note — which is why a read request never asks the process and only the sweep does."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/signals.ts:8",
+          "text": "The shape the row mirrors: ModelWait { since, ahead, provider }, since carried as Date.now() milliseconds."
+        },
+        {
+          "source": "code",
+          "ref": "packages/capacity/src/gate.ts:193",
+          "text": "provider comes from the queue position itself — lease.endpoint — naming the provider whose capacity the call waits on."
+        },
+        {
+          "source": "code",
+          "ref": "packages/capacity/src/gate.ts:199",
+          "text": "With several calls queued the gate publishes the one with the earliest since, so since, ahead and provider all describe the call that has waited longest."
+        },
+        {
+          "source": "code",
+          "ref": "packages/web/src/api.ts:15",
+          "text": "The web is the reader that asked for this: its Session type carries waiting?: ModelWait."
+        },
+        {
+          "source": "code",
+          "ref": "packages/session/src/live.ts:121",
+          "text": "the same ModelWait object crosses to the browser over the session socket, unconverted — so the REST field carries it as-is rather than re-encoding one of the two channels."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:137",
+          "text": "a sweep pings one session at a time with a 2 s timeout — a session that cannot answer that fast is left for the next sweep, so one stuck process cannot stall the sweep and every wake behind it."
+        },
+        {
+          "source": "code",
+          "ref": "packages/distributor/src/server.ts:181",
+          "text": "sweeps and wake-ups run one at a time through one queue, so a sweep can wait behind wakes — the gap between two overlays is not fixed at 30 s."
+        },
+        {
+          "source": "code",
+          "ref": "packages/capacity/src/ledger.ts:65",
+          "text": "ahead counts waiting ledger entries with a lower seq on the same endpoint — calls, not sessions, and on that provider."
+        },
+        {
+          "source": "code",
+          "ref": "packages/capacity/src/gate.ts:69",
+          "text": "each parallel call holds its own slot named holder#idx, so a session with parallel calls counts once per call."
+        }
+      ]
+    },
+    {
+      "id": "ask-state",
+      "pointer": "/components/schemas/Ask/properties/state",
+      "decision": "An ask has one lifecycle: pending until answered, resolved by PATCH /sessions/{key}/asks/{id}, and cancelled when the run that raised it ends or aborts or when the session withdraws an approval whose call can no longer act on it — the call's task ended, a newer request replaced it, a rerun reached the gate with different arguments, or a person's message reached the run while the call waited. There is no fourth state and no withdrawn flag: a withdrawal is a cancellation, and resolution means a person answered.",
+      "why": [
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/sql-store.ts:251",
+          "text": "The catalog moves only a pending ask to cancelled, which is what keeps pending counts from leaking."
+        },
+        {
+          "source": "code",
+          "ref": "packages/sdk/src/gate.ts:52",
+          "text": "The reasons a withdrawn approval carries: task_ended, superseded and arguments_changed; steered is approved in the durable session documents contract (contracts:6fc57e77-dd2f-4458-9802-ded98054f946) with its writer Planned for #2397."
+        },
+        {
+          "source": "code",
+          "ref": "packages/catalog/src/http.ts:135",
+          "text": "A cancelled ask is what a late answer sees, so the state has to carry the withdrawal case; the answered texts stay separate."
+        }
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "choice": "waiting-overlay",
+      "facts": [
+        "waiting-sweep"
+      ],
+      "was": "Session had no waiting field: every row field was a stored catalog column, and a session queued for model capacity looked like any other running row (approved v16).",
+      "now": "Session gains an optional waiting { since, ahead, provider } — present while a running session is queued for a slot, reporting the queued call that has waited longest, ahead counting calls on that provider; refreshed by each sweep that reaches the session process (the next sweep about 30 s after the previous one finishes, pings one at a time with a 2 s timeout, behind any wake queued first), absent when the sweep cannot reach it, never stored, and not nameable in q or orderBy.",
+      "why": "PR #2479: show sessions queued for a model slot; the amendment added provider, and the reviews settled which call is reported and how stale the value may be."
+    },
+    {
+      "choice": "row-fields",
+      "was": "The row description said rows are written on lifecycle events and at most one event stale, with no exception, and the field list was all stored columns (approved v16).",
+      "now": "The description adds: \"`waiting` is the one exception: an overlay on running rows, refreshed per sweep.\" and the field list names waiting? on a running row.",
+      "why": "PR #2479: the overlay is the one row value that is not event-written."
+    },
+    {
+      "choice": "catalog",
+      "facts": [
+        "safe-reads"
+      ],
+      "was": "\"Every read in this API comes from the catalog: no read starts a session's process\", and no read scans session directories or starts a process (approved v16).",
+      "now": "The same rule with the one overlay named: reads are served from the catalog, a running row's waiting is refreshed per sweep and never stored, and no read request starts a session's process. The same choice now also names the two operations on /sessions/{key} that the catalog serves — the one-session read and the delete — because they were asserted in the purpose without being shown.",
+      "why": "PR #2479: the sweep reads a running process, so the absolute \"comes from the catalog\" needed its exception stated rather than left implied. The check on purpose asked for evidence of GET /sessions/{key} and DELETE /sessions/{key}; both are cited to the code that serves them."
+    },
+    {
+      "choice": "ask-state",
+      "was": "Ask.state documented cancelled as the run that raised it ending or aborting, or the session withdrawing an approval whose call can no longer act on it — the call's task ended, a newer request replaced it, or a rerun reached the gate with different arguments (approved v16).",
+      "now": "The same, listing the fourth reason: or a person's message reached the run while the call waited (steered), a reason approved in the durable session documents contract (contracts:6fc57e77-dd2f-4458-9802-ded98054f946) with its writer Planned, #2397.",
+      "why": "Issue #2397 adds steered there; this API names the reasons it repeats and marks the one whose writer has not landed."
+    },
+    {
+      "choice": "resolve-method",
+      "was": "The 409 detail for a withdrawn ask gave the session's reason — the call's task ended, superseded by the newer request, or the arguments changed — else that the session is no longer waiting for it (approved v16).",
+      "now": "The same, with the fourth reason in the list — or a person's message reached the run while the call waited (steered) — and stating that any ask the catalog holds as cancelled gets the generic text, since the session's reason travels only with a refusal of a still-pending ask.",
+      "why": "Issue #2397: a person's message reaching the run withdraws the approval, and its reason reaches a late answer here only while the catalog still holds the ask pending."
+    },
+    {
+      "choice": "no-boot-reads",
+      "facts": [
+        "export-invocations-routes",
+        "export-never-boots"
+      ],
+      "was": "One non-goal named the owner of the export and invocation routes by its short key, \"contracts:5175ad9d\", in a sentence longer than the fact length (approved v16).",
+      "now": "Two facts: the routes belong to the distributor HTTP API contract, named by its full key contracts:5175ad9d-6484-4aa7-8607-c33a1bc6e9c4 (120 characters); and, separately, that invocations starts a session while export never does (92 characters).",
+      "why": "Asked for in review — cite a contract by its full key — and the entry then passed the fact length, so it is split in two and both new ids are named here."
+    }
+  ],
+  "compatibility": {
+    "breaking": [],
+    "safe": [
+      "Additive and optional: waiting is not in required, so every row that validated against approved v16 validates against v19 unchanged, and an absent waiting means what it meant in v16 — the session is not queued for a model slot. The row is an open object, so a reader that does not want the field ignores it.",
+      "What existing readers do: the web declares and renders it (packages/web/src/api.ts:15, waiting?: ModelWait, shown as \"Waiting…\"). The CLI and home read named fields only — home's SessionRow (packages/home/src/client.ts:5) has no waiting member and ignores it — so nothing matches on its absence.",
+      "No list changes: waiting is not a catalog column, so no q field set or orderBy gains or loses a term (packages/catalog/src/query.ts:16) and no previously valid query becomes invalid, or the reverse.",
+      "What this version edits besides the new property: the row description's one-exception sentence and the waiting examples; info.description's read-source clause, which now names the overlay as the catalog's one exception (quoted there); the cancelled-state sentence and the same list in info.description, which name the fourth withdrawal reason; and the PATCH /sessions/{key}/asks/{askId} 409 description, which says which reason a withdrawn ask carries and when only the generic one is available. Artifact, Principal, Money, DeleteResult, the Problem shape, every route, status code, required field, enum value and type are exactly as approved in v16.",
+      "Readers match only the prefix \"the request was withdrawn\" (packages/web/src/api.ts:132, packages/web/src/extensions/contracts/Comments.tsx:223), which every reason keeps; the web and the CLI (packages/cli/src/api.ts:47) show detail as-is, so until #2397 adds WHY.steered both show \"the request was withdrawn: undefined\".",
+      "All code refs resolve in one tree: origin/main at 2c46fea2, which now includes #2479. What is still unbuilt is marked in the text it appears in — the steered reason, whose writer lands with #2397."
+    ]
+  },
+  "baseline": 16
+}
