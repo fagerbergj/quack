@@ -40,7 +40,7 @@ export function factsPrompt(f: WaiverFacts): string {
   return [
     `Week ${f.week}, ${f.team}. Waiver type: ${f.waiverType}${faab ? `, $${mine.faabLeft} left` : `, your priority ${f.myPriority} of ${f.teams}`}.`,
     `League competition:\n${teams.join('\n')}`,
-    ...(f.depth?.length ? [`Free agents at or above replacement worth (the best healthy listed free agent's), by position: ${f.depth.join('; ')}`] : []),
+    ...(f.depth?.length ? [`Free agents at or above your weakest starter's worth, by position: ${f.depth.join('; ')}`] : []),
     ...(f.context && Object.keys(f.context).length ? [CONTEXT_LEGEND] : []),
     `Free agents by position (ownership and adds are platform-wide):\n${free.join('\n')}`,
     `Your roster:\n${roster.join('\n')}`,

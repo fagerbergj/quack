@@ -122,3 +122,10 @@ export function contextLines(ids: string[], d: { dump: Json; schedule: Json[]; k
 export function faDepth<P extends { pos: string }>(free: P[], level: Record<string, number>, value: (p: P) => number | null): string[] {
   return Object.entries(level).map(([pos, bar]) => `${pos}: ${free.filter((p) => p.pos === pos && (value(p) ?? 0) >= bar).length} FA ≥ ${r1(bar)}`);
 }
+
+/** The weakest starter's value at each position: the bar a free agent must reach to start. */
+export function starterBar<P extends { pos: string }>(starters: P[], value: (p: P) => number | null): Record<string, number> {
+  const bar: Record<string, number> = {};
+  for (const p of starters) { const v = value(p); if (v !== null) bar[p.pos] = Math.min(bar[p.pos] ?? Infinity, v); }
+  return bar;
+}

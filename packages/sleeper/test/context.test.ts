@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildFacts, buildTradeFacts, buildWaiverFacts, createSleeperClient, liveLeague } from '../src/index.ts';
-import { contextLines, dvpRanks, faDepth, fetchRecent, type Recent } from '../src/context.ts';
-import { replacementWorth } from '../src/waivers/facts.ts';
+import { contextLines, dvpRanks, faDepth, fetchRecent, starterBar, type Recent } from '../src/context.ts';
 import type { TradeFacts } from '../src/trades/facts.ts';
 import { factsPrompt as lineupPrompt } from '../src/lineup/workflow.ts';
 import { factsPrompt as waiversPrompt } from '../src/waivers/workflow.ts';
@@ -83,12 +82,14 @@ test('a missing week, a failed endpoint or no recent stats degrades to "no recen
   assert.ok(Object.keys(waivers.context).length && Object.keys(trades.context).length);
 });
 
-test('free agents per position are counted against the bar, and waivers sets it at replacement worth', async () => {
+test('free agents per position are counted against your weakest starter there', async () => {
   const free = [{ pos: 'K', v: 8 }, { pos: 'K', v: 7 }, { pos: 'K', v: 6 }, { pos: 'TE', v: null }];
-  assert.deepEqual(faDepth(free, { K: 7, TE: 5 }, (p) => p.v), ['K: 2 FA ≥ 7', 'TE: 0 FA ≥ 5']);
+  const value = (p: { v: number | null }) => p.v;
+  assert.deepEqual(starterBar([{ pos: 'K', v: 7 }, { pos: 'TE', v: 9 }, { pos: 'TE', v: 5 }], value), { K: 7, TE: 5 });
+  assert.deepEqual(faDepth(free, { K: 7, TE: 5 }, value), ['K: 2 FA ≥ 7', 'TE: 0 FA ≥ 5']);
   const { waivers } = await jobFacts();
-  const k = waivers.depth.find((d) => d.startsWith('K: '));
-  assert.match(k!, new RegExp(`≥ ${Math.round(replacementWorth(waivers, 'K')! * 10) / 10}$`));
+  // Bars: Burrow 25.8, Irving 20.7 (McCaffrey's 22.7 rate beats his 18.5), Nabers 16.2, Loveland 12.4, Aubrey 9.1, Buffalo 7.7.
+  assert.deepEqual([...waivers.depth].sort(), ['DEF: 5 FA ≥ 7.7', 'K: 2 FA ≥ 9.1', 'QB: 0 FA ≥ 25.8', 'RB: 0 FA ≥ 20.7', 'TE: 0 FA ≥ 12.4', 'WR: 0 FA ≥ 16.2']);
 });
 
 test('week 12: Mayer reads Bowers out, Henry reads QB DeVito with Maye out', async () => {
