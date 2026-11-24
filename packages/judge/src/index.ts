@@ -1,6 +1,6 @@
 import type { Context } from '@earendil-works/chord/context';
 import { LiveDoc, type SetTimer, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { Artifacts, attachVerdict, inSessionSlot, type SealedArtifact } from '@quack/sdk';
+import { Artifacts, attachVerdict, inSessionSlot, sealedVersions, type SealedArtifact } from '@quack/sdk';
 import { buildEvidence, checkDeclaration, PASS_ONLY, type AggregateDecl, type BuiltEvidence, type CheckDecl, type Declaration, type Inputs } from './declaration.ts';
 import { fold, fractional, groupResults, metOf, outerOf, type Tri } from './fold.ts';
 import { limiter } from './limit.ts';
@@ -301,7 +301,7 @@ const runOf = async (api: ToolExecutionApi, ctx: Context) => String((await api.s
 async function judgedInRun(api: ToolExecutionApi, kind: string, ctx: Context): Promise<number> {
   const run = await runOf(api, ctx);
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
-  const mine = (doc?.kinds[kind]?.versions ?? []).filter((v) => (v.verdict as { run?: string } | null)?.run === run);
+  const mine = sealedVersions(doc, kind).filter((v) => (v.verdict as { run?: string } | null)?.run === run);
   // A person's change request after a pass, in the same run, gets a fresh budget.
   return mine.length - 1 - mine.findLastIndex((v) => (v.verdict as { passed?: boolean }).passed);
 }

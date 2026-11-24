@@ -34,6 +34,9 @@ export type SealedArtifact = {
 /** written: the hash of the file as a write or edit last left it, and the run input it was written under. */
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[]; written?: { hash: string; input: string } }> };
 
+/** What the readers of a snapshot need of the artifacts doc; a session that sealed nothing has none. */
+export type ArtifactsView = { kinds: Record<string, { versions: SealedArtifact[] } | undefined> } | null | undefined;
+
 export const Artifacts = defineDoc<ArtifactsDoc>({
   kind: 'quack.artifacts',
   version: 1,
@@ -43,6 +46,12 @@ export const Artifacts = defineDoc<ArtifactsDoc>({
   initial: () => ({ kinds: {} }),
   checkpointWhen: () => false,
 });
+
+/** Every version sealed of a kind, oldest first; none when the kind was never sealed. */
+export const sealedVersions = (doc: ArtifactsView, kind: string): SealedArtifact[] => doc?.kinds[kind]?.versions ?? [];
+
+/** The newest version sealed of a kind, or undefined. */
+export const latestSealed = (doc: ArtifactsView, kind: string): SealedArtifact | undefined => sealedVersions(doc, kind).at(-1);
 
 /** The kind's one-line summary, cut to SUMMARY_MAX; a summarizer that throws or returns nothing leaves the version without one. */
 export function summaryOf(kind: ArtifactKind, content: string): string | undefined {
@@ -70,8 +79,8 @@ const sha256 = (content: string) => createHash('sha256').update(content).digest(
 
 /** Why the run may not finish: it changed the kind's file after the newest version and sealed nothing since; undefined when it may. */
 export async function unsubmitted(api: Pick<ToolExecutionApi, 'snapshot' | 'conversationId'>, kind: ArtifactKind, ctx: Context): Promise<string | undefined> {
-  const entry = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[kind.kind];
-  const [last, written] = [entry?.versions.at(-1), entry?.written];
+  const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
+  const [last, written] = [latestSealed(doc, kind.kind), doc?.kinds[kind.kind]?.written];
   const inputs = (await api.snapshot(LiveDoc, api.conversationId, ctx))?.run?.inputs.map(String) ?? [];
   // A change after a version final for this input is the seal's to refuse, not something to submit.
   if (!last || !written || written.hash === last.hash || !inputs.includes(written.input) || last.final?.input === inputs.at(-1)) return undefined;
@@ -103,7 +112,7 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
   if (problems.length) throw new Error(`${kind.path} does not match ${kind.kind}:\n- ${problems.join('\n- ')}`);
   const hash = sha256(content);
   const [basis, input] = [await kind.basis?.(api, ctx), await newestInput(api, ctx)];
-  const newest = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[kind.kind]?.versions.at(-1);
+  const newest = latestSealed(await api.snapshot(Artifacts, api.conversationId, ctx), kind.kind);
   if (input && newest?.final?.input === input && newest.hash !== hash) await refuseAfterFinal(api, kind, newest, ctx);
   const artifact = await api.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, api.conversationId);
@@ -229,7 +238,7 @@ function trackBashWrites(tool: ToolRegistration, kinds: ArtifactKind[]): ToolReg
         if (!read.ok) continue;
         const hash = sha256(read.value);
         const entry = doc?.kinds[k.kind];
-        if (hash !== entry?.written?.hash && hash !== entry?.versions.at(-1)?.hash) changed.push({ kind: k.kind, hash });
+        if (hash !== entry?.written?.hash && hash !== latestSealed(doc, k.kind)?.hash) changed.push({ kind: k.kind, hash });
       }
       if (changed.length) {
         await api.commit(async (tx) => {
