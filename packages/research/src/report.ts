@@ -299,13 +299,13 @@ export const reportDeclaration: Declaration = {
 
 export const researchRubric: Rubric = {
   name: 'research.report',
-  version: 12,
+  version: 13,
   threshold: 0.8,
   criteria: [
     { id: 'claims_grounded', checks: [
       { id: 'findings_cited', label: "A finding cites no source", weight: 'gate', code: findingsCited },
       { id: 'quotes_exist', label: "Quotes text that isn't in the source", weight: 'gate', code: quotesExist },
-      { id: 'supported_by_source', label: "A claim isn't stated by any source it cites", weight: SUPPORTED_WEIGHT },
+      { id: 'supported_by_source', label: "A claim is a fact no cited source states, or a conclusion that doesn't follow from the facts in its own bullet", weight: SUPPORTED_WEIGHT },
     ] },
   ],
 };

@@ -438,7 +438,7 @@ test('each sentence of a finding is a claim, asked of each kept source it cites 
   assert.deepEqual(ev.source[0].shared, { finding: '- Kestrel operates 38 electric buses. All are the Vantor E12. [s1][s2]' }, 'a finding of several sentences is shared, so its items pack');
   assert.equal(ev.source[4].shared, undefined, 'a one-sentence finding goes alone');
   assert.deepEqual(Object.keys(ev), ['sources', 'source']);
-  assert.deepEqual([researchRubric.version, researchRubric.threshold], [12, 0.8]);
+  assert.deepEqual([researchRubric.version, researchRubric.threshold], [13, 0.8]);
   assert.deepEqual(researchRubric.criteria.flatMap((c) => c.checks.map((k) => [k.id, k.weight])), [['findings_cited', 'gate'], ['quotes_exist', 'gate'], ['supported_by_source', 1]]);
   assert.equal(reportDeclaration.checks.supported_by_source.decisionModel, undefined, 'the decision model settles each item first');
 });
@@ -500,16 +500,16 @@ test('the web reads every judged item\'s claim back from the report by its name,
 
 test('every item of the fixture reports fits Clef\'s window with its finding shared, even when each cited page is long and on topic', () => {
   const asks = Object.entries(reportDeclaration.checks).map(([id, d]) => ({ id: `claims_grounded.${id}`, question: d.question }));
-  let shared = 0;
+  const shared: Record<string, number> = {};
   for (const name of readdirSync(new URL('./fixtures/reports/', import.meta.url))) {
     const md = readFileSync(new URL(`./fixtures/reports/${name}`, import.meta.url), 'utf8');
     const page = md.repeat(Math.ceil(200_000 / md.length));
     const units = buildEvidence(reportDeclaration, inputsOf(md, new Map(citedIds(md).map((id) => [id, page])))).evidence.source;
-    shared += units.filter((u) => u.shared?.finding).length;
+    shared[name] = units.filter((u) => u.shared?.finding).length;
     const over = units.filter((u) => decisionModelTokens(u, asks) >= 8192).map((u) => u.id);
     assert.deepEqual(over, [], name);
   }
-  assert.ok(shared > 0, 'the fixtures hold findings of several sentences, so the window is measured with the finding an inference is judged against');
+  assert.ok(Object.values(shared).some((n) => n > 0), `no fixture has a finding of several sentences: ${JSON.stringify(shared)}`);
 });
 
 const PAGE = 'I. Config. Store config in the environment. There is a tendency for config files to be scattered about in different places and different formats, making it hard to see where.';
