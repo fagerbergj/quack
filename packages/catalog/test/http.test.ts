@@ -12,7 +12,7 @@ const T0 = Date.parse('2026-11-01T00:00:00Z');
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-const deps = { waits: {} as Record<string, { since: number; ahead: number; provider: string }>, refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
+const deps = { waits: {} as Record<string, { since: number; ahead: number; provider: string; error?: string }>, refuse: undefined as string | undefined, answered: [] as unknown[], sessionSays: true as Awaited<ReturnType<SessionsApiDeps['answer']>> };
 let base = '';
 let catalog: ReturnType<typeof createCatalog>;
 let route: ReturnType<typeof sessionsApi>;
@@ -81,6 +81,15 @@ test('the session list is one keyset page of v8 rows: Money as a decimal string,
   assert.deepEqual((league.body.sessions as Array<{ key: string }>).map((r) => r.key).sort(), ['sleeper:platinum:1', 'sleeper:platinum:2']);
   const exact = await call('GET', `/sessions?q=${encodeURIComponent('cost.amountMicros:9007199254740993')}`);
   assert.deepEqual((exact.body.sessions as Array<{ key: string }>).map((r) => r.key), ['sleeper:platinum:2']);
+});
+
+test('a stopped session waiting to retry its model endpoint carries that wait; a stopped one queued for a slot does not', async () => {
+  const retrying = { since: 5, ahead: 0, provider: 'local', error: '502 peer proxy error' };
+  deps.waits = { 'review:monorepo': retrying, 'sleeper:platinum:1': { since: 5, ahead: 1, provider: 'local' } };
+  await catalog.stopped('review:monorepo');
+  await catalog.stopped('sleeper:platinum:1');
+  const list = (await call('GET', '/sessions')).body.sessions as Array<{ key: string; state: string; waiting?: unknown }>;
+  assert.deepEqual(list.map((r) => [r.key, r.state, r.waiting]).sort(), [['review:monorepo', 'stopped', retrying], ['sleeper:platinum:1', 'stopped', undefined], ['sleeper:platinum:2', 'idle', undefined]]);
 });
 
 test('a running session queued for a model slot carries its wait; an idle one never does', async () => {

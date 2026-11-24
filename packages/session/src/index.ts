@@ -1,4 +1,5 @@
-export { MODEL_RETRY, openSession, type AgentSpec, type Session } from './runtime.ts';
+export { openSession, type AgentSpec, type Session } from './runtime.ts';
+export { MODEL_OUTAGE_HOURS, outageHoursOf, outageRetry } from './model-fault.ts';
 export { createSessionServer, exitOnStop, PRINCIPAL_HEADER, principalHeader } from './server.ts';
 export { childPort, LAUNCH_ENV, listenReporting, takeLaunchEndpoint, takeLaunchToken } from './port.ts';
 export { agentSpec, bundleProblems, CURRENT_AGENT_FILE, withCurrentExtensions, buildModels, declaredEnv, deploymentEnv, providerEnv, loadAgent, parseDefinition, resolveExtensions, parseDeployment, referencedProviders, resolveDeployment, priceOf, type AgentDefinition, type Catalog, type CatalogEntry, type DeploymentConfig, type DeploymentExtensions } from './definition.ts';

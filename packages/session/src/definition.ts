@@ -16,7 +16,7 @@ const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; /** How many sessions the capacity gate lets this provider serve at once. */ capacity?: number; /** Hand-written entries; `resolveDeployment` merges them over what `GET {baseUrl}/models` states. */ models?: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use. */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; /** The provider/model of agents that name none. */ defaultModel: string; timeZone?: string; /** Named stores consumers reference by name. */ stores?: Record<string, StoreEntry>; /** The core session catalog's store, a stores name; absent is a sqlite file in the data dir. */ catalog?: { store?: string }; /** Extensions mounted in-process under /apps/<name>; the shape of each one's `settings` is the extension's own. */ extensions?: Record<string, ExtensionEntry>; /** How agent shells are confined; see ExecPolicy. */ exec?: ExecPolicy; /** How long a run waits out a failing model endpoint before it ends in error; default 6. */ modelOutageHours?: number };
 
 /** Per agent: its model as provider/model (parseDefinition fills the deployment's defaultModel when it names none), a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** How long an idle session keeps its log and workspace; absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
@@ -103,7 +103,7 @@ function deployedExtensionProblems(extensions: unknown, stores: unknown): string
   });
 }
 
-const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions', 'catalog'];
+const ROOT_KEYS = ['providers', 'defaultModel', 'timeZone', 'exec', 'stores', 'extensions', 'catalog', 'modelOutageHours'];
 
 // The catalog is core: its store is named at the root, checked against stores like an extension's.
 function catalogProblems(catalog: unknown, stores: unknown, extensions: unknown): string[] {
@@ -123,6 +123,7 @@ function rootProblems(raw: Record<string, unknown>): string[] {
   if (raw.exec !== undefined) problems.push(...execProblems('exec', raw.exec, true));
   problems.push(...storeProblems(raw.stores), ...deployedExtensionProblems(raw.extensions, raw.stores), ...catalogProblems(raw.catalog, raw.stores, raw.extensions));
   if (raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
+  if (raw.modelOutageHours !== undefined && !(typeof raw.modelOutageHours === 'number' && raw.modelOutageHours > 0 && raw.modelOutageHours <= 168)) problems.push('modelOutageHours must be a number of hours above 0 and at most 168');
   return problems;
 }
 

@@ -1,18 +1,18 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type ImageContent, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, section, type Conversation, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harness, hook, InboxDoc, LiveDoc, section, type Conversation, type ConversationRetryPolicy, type Extension, type Report, type SetTimer, type UserInput } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForMessages, type DispatchingExtension, type Principal, type SubmitResult } from '@quack/sdk';
+import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForMessages, type DispatchingExtension, type ModelWait, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
 import { runCeilingExtension, TURN_CEILING } from './run-ceiling.ts';
 import { CANNOT_SEE_IMAGES } from './images.ts';
 import { LifecycleStream, recordTurn } from './lifecycle.ts';
-import { resumeModelFault, watchModelFaults } from './model-fault.ts';
+import { outageRetry, resumeModelFault, watchModelFaults } from './model-fault.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 import { transcriptOf } from './export.ts';
 
@@ -38,8 +38,6 @@ function formatDate(d: Date, timeZone: string): string {
   return `${part('weekday')}, ${part('year')}-${part('month')}-${part('day')}`;
 }
 
-export { MODEL_RETRY };
-
 /** Who stopped or changed queued work, for the log line: the principal the distributor named, another service, or the run ceiling. */
 export type Caller = Principal | 'service' | 'run-ceiling';
 
@@ -54,7 +52,7 @@ export function reportLine({ error, ...info }: Report): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth.
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; /** Test seam: model responses one run may take (default TURN_CEILING). */ turnCeiling?: number; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<ConversationRetryPolicy>; /** How long a run waits out a failing model endpoint; absent keeps MODEL_RETRY's few minutes, as a session with no deployment behind it should. */ outageHours?: number; /** Test seam: model responses one run may take (default TURN_CEILING). */ turnCeiling?: number; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
@@ -88,6 +86,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   await mkdir(workspace, { recursive: true });
   const sees = !!opts.models.getModel(opts.agent.model.provider, opts.agent.model.modelId)?.input.includes('image');
   const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
+  const retry = { ...(opts.outageHours === undefined ? MODEL_RETRY : outageRetry(opts.outageHours)), ...opts.retry };
   const onReport = (report: Report) => {
     const line = reportLine(report);
     if (line) log(line);
@@ -102,7 +101,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     ...(opts.setTimer && { setTimer: opts.setTimer }),
     // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them;
     // queued steers and follow-ups reach the model together in one turn, not one per turn.
-    settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue', steeringMode: 'all', followUpMode: 'all' },
+    settings: { retry, afterFailedRun: 'continue', steeringMode: 'all', followUpMode: 'all' },
   }, ctx);
   open = harness;
   const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
@@ -113,7 +112,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const stale = current.instructions !== agent.instructions || current.model?.provider !== agent.model.provider || current.model?.modelId !== agent.model.modelId;
   if (stale) await root.configure({ model: agent.model, instructions: agent.instructions ?? null }, ctx);
   harness.resume();
-  await watchModelFaults(harness, root, log);
+  await watchModelFaults(harness, root, log, { provider: agent.model.provider, retry, now: () => +(opts.now?.() ?? Date.now()) });
   // A process that stopped mid-abort left the queue with nothing to run it. A close ends the wait; a storage error reaches onReport.
   void root.waitForIdle(ctx).then(() => startQueued(root, false)).catch(() => undefined);
 
@@ -196,7 +195,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       const { active, at: wakeAt } = harness.wake();
       const waitingOnHuman = active && (await onlyAwaitingHumans());
       const waiting = modelWait.get();
-      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt, waiting, note: waiting ? `Waiting for model capacity (${waiting.ahead} ahead)` : null };
+      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt, waiting, note: waitNote(waiting) };
     },
     // The caller's name for the session; the first one sticks, and the distributor lists it ahead of the first message.
     async recordTitle(title: string) {
@@ -295,5 +294,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     },
   };
 }
+
+const waitNote = (w: ModelWait | null) => (!w ? null : w.error ? `Waiting to retry ${w.provider}: ${w.error}` : `Waiting for model capacity (${w.ahead} ahead)`);
 
 export type Session = Awaited<ReturnType<typeof openSession>>;

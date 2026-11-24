@@ -33,7 +33,7 @@ export function look(r: Row): Look {
   const { num, repo, title, full } = kind.name(r);
   const w = kind.words(r);
   const failure = r.failures[0];
-  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : r.pendingAsks ? { line: waiting(r.pendingAsks), tone: 'warn' as const } : r.state === 'running' && r.waiting ? { line: 'Waiting…', tone: 'muted' as const, wait: r.waiting } : w ? state(r, w) : { line: r.agent, tone: 'muted' as const };
+  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : r.pendingAsks ? { line: waiting(r.pendingAsks), tone: 'warn' as const } : r.waiting && (r.state === 'running' || r.waiting.error) ? { line: 'Waiting…', tone: 'muted' as const, wait: r.waiting } : w ? state(r, w) : { line: r.agent, tone: 'muted' as const };
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
 }
 

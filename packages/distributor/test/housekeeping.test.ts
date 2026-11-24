@@ -13,7 +13,7 @@ const cleanups: Array<() => void> = [];
 after(() => cleanups.forEach((fn) => fn()));
 
 // A real driver over a temp data dir; `busy` names a session whose process answers /ping mid-run.
-async function start(opts: { busy?: string; waiting?: string[]; ping?: object } = {}) {
+async function start(opts: { busy?: string; waiting?: string[]; ping?: object; distributor?: Parameters<typeof createDistributor>[1] } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-house-'));
   cleanups.push(() => void rm(dataDir, { recursive: true, force: true }));
   for (const key of ['idle', 'busy', 'asking']) {
@@ -37,7 +37,7 @@ async function start(opts: { busy?: string; waiting?: string[]; ping?: object } 
       ...((opts.waiting ?? []).includes(key) ? [{ seq: 2, id: 'ask', at: 1, type: 'ask.opened' as const, data: { id: 'a1', type: 'approval' as const, createdAt: 1, toolCall: { tool: 't', args: {} } } }] : []),
     ]);
   }
-  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, catalog }).listen(0);
+  const server = createDistributor(driver, { proxySecret: PROXY_SECRET, catalog, ...opts.distributor }).listen(0);
   await new Promise((r) => server.once('listening', r));
   cleanups.push(() => server.close());
   const url = (path: string) => `http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`;
@@ -94,6 +94,25 @@ test('a failed ping clears the wait, and an exited process loses its entry even 
   await sweep();
   state.running = ['busy'];
   assert.equal(await waiting(), undefined, 'the entry of a process that exited is gone before the key runs again');
+});
+
+test('a session stopped while parked on a failing model endpoint lists as stopped and still waiting; a slot wait goes with the process', async () => {
+  const parked = { since: 5, ahead: 0, provider: 'local', error: '502 peer proxy error: connect: no route to host' };
+  const clock = { now: () => 1000, setTimer: () => () => {}, idleMs: 0 };
+  const { listed, sweep, state, catalog } = await start({ busy: 'busy', ping: { status: 'Healthy', wake: { at: 60_000 }, waiting: parked }, distributor: clock });
+  const row = async () => (await listed()).find((s) => s.key === 'busy');
+  await sweep();
+  // What the driver's onExit does once the stop lands.
+  state.running = [];
+  await catalog.stopped('busy');
+  assert.deepEqual([(await row())?.state, (await row())?.waiting], ['stopped', parked], 'stopped until its next try, it still waits to retry local');
+  await sweep();
+  assert.deepEqual((await row())?.waiting, parked);
+  const queued = await start({ busy: 'busy', ping: { status: 'Healthy', wake: { at: 60_000 }, waiting: { since: 5, ahead: 1, provider: 'local' } }, distributor: clock });
+  await queued.sweep();
+  queued.state.running = [];
+  await queued.catalog.stopped('busy');
+  assert.equal((await queued.listed()).find((s) => s.key === 'busy')?.waiting, undefined);
 });
 
 test('archive is refused for a running session, and the title stays as it was', async () => {

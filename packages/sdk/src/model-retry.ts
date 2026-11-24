@@ -1,6 +1,6 @@
 import { createAssistantMessageEventStream, isRetryableAssistantError, retryDelayMs, type AssistantMessage, type AssistantMessageEventStream, type Provider } from '@earendil-works/pi-ai';
 
-// pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
+// In-process retries (the judge, decide) and sessions with no deployment behind them ride out about 5 minutes; a deployed session's runs wait for hours.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
 
 /** Test seams: `sleep` rejects when `signal` aborts; `fetch` is the transport the provider is handed. */

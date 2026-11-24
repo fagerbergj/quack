@@ -10,10 +10,11 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '
 import { obj } from '@earendil-works/pi-schema';
 import { defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
-import { openSession } from '@quack/session';
+import { artifactsExtension, attachVerdict, MODEL_RETRY, seal, type ArtifactKind } from '@quack/sdk';
+import { openSession, outageRetry } from '@quack/session';
 import type { EvalAdapter } from '@quack/sdk';
 import { asJudged, itemFrom, langfuse, publish, readSession, replay, replayJudge, scoresOf, summarize, type ReplayResult, type SessionRecord } from '../src/index.ts';
+import { REPLAY_OUTAGE_HOURS } from '../src/replay.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -192,6 +193,13 @@ test('every replay spawns its runtime with a session key of its own: the item id
   const report = 'process.stderr.write(`Error: key ${process.env.QUACK_SESSION_KEY}\\n`);process.exit(1)';
   const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(report)}` } }, []);
   assert.match(r.error ?? '', /key eval:x:[0-9a-f]{8}$/);
+});
+
+test('every replay spawns its runtime with a short model outage window, so a dead model fails the item instead of parking for hours', async () => {
+  const report = 'process.stderr.write(`Error: window ${process.env.QUACK_MODEL_OUTAGE_HOURS}\\n`);process.exit(1)';
+  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(report)}` } }, []);
+  assert.match(r.error ?? '', new RegExp(`window ${REPLAY_OUTAGE_HOURS}$`));
+  assert.ok(outageRetry(REPLAY_OUTAGE_HOURS).maxRetries <= MODEL_RETRY.maxRetries);
 });
 
 test('a labelled case scores whether the replay blocked it, so a passing review that misses a known defect still counts as a miss', () => {

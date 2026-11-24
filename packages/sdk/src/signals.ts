@@ -4,16 +4,31 @@ import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 // One process owns one session, so these are module state. They are how session-half extensions
 // see each other: a gate that waits on a person tells a resource gate (capacity) the run is not generating.
 
-/** A session queued for a slot on its model endpoint (a provider id): when it began waiting (epoch ms) and how many are ahead of it. */
-export type ModelWait = { since: number; ahead: number; provider: string };
-let wait: ModelWait | null = null;
+/** A session queued for a slot on its model endpoint (a provider id): when it began waiting (epoch ms) and how many are ahead of it.
+ * With `error`, the endpoint failed and the run sleeps until its next try: `error` is the last failure. */
+export type ModelWait = { since: number; ahead: number; provider: string; error?: string };
+let queued: ModelWait | null = null;
+let down: ModelWait | null = null;
 const waitListeners = new Set<(w: ModelWait | null) => void>();
-/** The session's wait for a model slot (the capacity extension sets it); null when it is not queued. */
+// Listeners hear a change only: the session sets the down wait on every pi.live commit. Undefined is nothing published yet.
+let published: string | undefined;
+const publishWait = () => {
+  const w = queued ?? down;
+  const key = JSON.stringify(w);
+  if (key === published) return;
+  published = key;
+  waitListeners.forEach((l) => l(w));
+};
+/** The session's wait on its model: queued for a slot (the capacity extension sets it), else parked on a failing endpoint (the session sets it). */
 export const modelWait = {
-  get: () => wait,
+  get: () => queued ?? down,
   set(w: ModelWait | null) {
-    wait = w;
-    waitListeners.forEach((l) => l(w));
+    queued = w;
+    publishWait();
+  },
+  setDown(w: ModelWait | null) {
+    down = w;
+    publishWait();
   },
   subscribe(listener: (w: ModelWait | null) => void): () => void {
     waitListeners.add(listener);
