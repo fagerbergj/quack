@@ -1,6 +1,6 @@
 # QA rig
 
-The "exercise it on a non-production server" check, made repeatable. `tools/qa/` starts a throwaway distributor on free ports, drives the web UI with Playwright at desktop and phone widths in light and dark, and prints a pass/fail line per step with the screenshot paths. A pull request that changes the UI or a page route cites a scenario run in its description (the scenarios run, the summary, and which screenshots you looked at).
+The "exercise it on a non-production server" check, made repeatable. `tools/qa/` starts a throwaway distributor on free ports, drives the web UI with Playwright at desktop and phone widths in light and dark, and prints a pass/fail line per step with the screenshot paths.
 
 ## Run
 
@@ -12,7 +12,7 @@ npx playwright install chromium      # or: export QA_CHROMIUM=/path/to/chrome
 node tools/qa/run.ts --out /tmp/qa-out
 ```
 
-No CI job runs the rig; run it before opening a pull request that changes the UI or a page route, and cite the run. A step asserting text or a count the code produces fails when that changes; change the assertion in the same pull request.
+No CI job runs the rig; run it when a UI or page-route change needs a look in a real browser. A step asserting text or a count the code produces fails when that changes; change the assertion in the same pull request.
 
 `run.ts` builds `packages/web` once, then for each scenario starts its own stack, runs it, and tears the stack down. Flags: `--scenario home-sessions,schedules` to pick scenarios, `--web <dist dir>` to reuse a build (or one from another branch's checkout), `--model local|none|fake` to override the scenario's model (scenarios that script the fake model, and `headers`, which seeds sessions through it, need their own model), `--out <dir>`. The exit code is non-zero if any step failed.
 
