@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref, type SubmitEvent } from 'react';
-import { abortRun, archiveSession, decideApproval, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
+import { abortRun, archiveSession, deleteSession, exportUrl, getMeta, renameSession, sealedFrom, socketUrl, type Approval, type Failure, type ModelWait, type Question, type SealedArtifact, type Spend } from './api.ts';
 import { DeleteDialog, RenameDialog } from './Housekeeping.tsx';
 import { AttachButton, Pending, useAttachments, type Img } from './Attach.tsx';
 import { ApprovalCards, useApprovals } from './Approvals.tsx';
@@ -23,6 +23,7 @@ import { MoreIcon } from './MoreIcon.tsx';
 import { SessionChips, studioFor } from './slots.tsx';
 import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
+import { useStanding } from './delivered.ts';
 import { useLoad } from './useLoad.ts';
 import { applyView, emptyView, type View, type ViewFrame } from './view.ts';
 import { composerKeyDown } from './composer.ts';
@@ -342,9 +343,6 @@ const NO_META: Array<Record<string, unknown>> = [];
 // A running step names itself; waiting, idle or failed reads as the header's status.
 const activityOf = (status: string, tone: Tone, view: View, queued?: ModelWait) => (tone === 'run' ? (queued ? 'Waiting…' : stepLabel(view)) : status);
 
-// The reason a studio's approval is declined with when the person writes instead of approving; their message says the rest.
-export const SUPERSEDED = 'Sent a message instead';
-
 type Tab = 'pane' | 'chat';
 
 // Where the person answers what waits on them: a studio pane takes its questions and the approvals it owns, the chat everything else.
@@ -359,7 +357,7 @@ const tabFor = (label: string | undefined, picked: Tab | undefined, studio: Retu
 
 // A studio pane opens beside the chat by default; other sessions start collapsed on desktop and expand on demand.
 // Below lg, a studio opens on its pane unless an ask waits on the chat; other sessions open on the chat tab.
-function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, decide: (id: string) => void, setError: (e: string) => void, running: boolean) {
+function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approval[], questions: Question[], send: Send, running: boolean) {
   const studio = studioFor(sessionKey);
   const [picked, setTab] = useState<Tab>();
   const [expanded, setExpanded] = useState(false);
@@ -382,14 +380,8 @@ function usePane(sessionKey: string, items: SealedArtifact[], approvals: Approva
   const tab = tabFor(label, picked, studio, asks);
   const owned = useRef(asks.owned);
   owned.current = asks.owned;
-  // Steered, the message reaches the run the moment the declined approval returns, instead of queueing behind a wait.
-  const steer: Send = useCallback(async (input, whenBusy, images) => {
-    const pending = owned.current;
-    if (!pending.length) return send(input, whenBusy, images);
-    if (!(await send(input, 'steer', images))) return false;
-    await Promise.all(pending.map((a) => decideApproval(sessionKey, a.id, 'reject', SUPERSEDED).then(() => decide(a.id), (e: Error) => setError(e.message))));
-    return true;
-  }, [sessionKey, send, decide, setError]);
+  // Steered, the message withdraws the approvals it waits on and reaches the run at once, instead of queueing behind a wait.
+  const steer: Send = useCallback((input, whenBusy, images) => send(input, owned.current.length ? 'steer' : whenBusy, images), [send]);
   const panel = (t: Tab) => (label && tabbed ? { id: `${id}${t}`, role: 'tabpanel', 'aria-labelledby': `${id}${t}-tab` } : {});
   const headerToggle: ArtifactToggle | undefined = !studio && shown && !tabbed
     ? { label: `${paneOpen ? 'Hide' : 'Show'} ${label}`, open: paneOpen, toggle }
@@ -453,7 +445,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const pending = useApprovals(standing.approvals);
   const approvals = pending.items;
   const waiting = approvals.length + standing.questions.length;
-  const live = usePane(sessionKey, items, approvals, standing.questions, send, pending.decide, setError, view.running);
+  const live = usePane(sessionKey, items, approvals, standing.questions, send, view.running);
   const split = useSplit();
   // The pane takes the room the rail would; the rail then opens as the Details sheet at any width.
   const details = useDetails(!live.paneOpen);
@@ -464,7 +456,8 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
   const bottom = useStickToBottom();
   // A new invocation records its meta before its run starts, so a run starting is when to look again.
   const { data: meta } = useLoad(() => getMeta(sessionKey), [sessionKey, view.running], NO_META);
-  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about };
+  const { stand, markOf } = useStanding(sessionKey, items, approvals, view.running);
+  const rail = { sessionKey, title: name.text, view, meta, items, approvals, questions: standing.questions, spend: spend ?? view.spend, agent, about, markOf };
   const chat = chatClass(live);
   return (
     <div style={paneStyle} className="group/pane flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -480,7 +473,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
           <div ref={bottom.content} className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <SessionKeyContext value={sessionKey}>
-              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} />
+              <Transcript view={view} meta={meta} load={load} artifacts={items} running={tone === 'run'} onOpen={live.open} markOf={markOf} />
             </SessionKeyContext>
             <ApprovalCards sessionKey={sessionKey} title={name.text} items={live.asks.cards} decide={pending.decide} />
             {/* A studio pane answers its session's questions above the contract, so the chat does not repeat them. */}
@@ -498,7 +491,7 @@ export function SessionView({ sessionKey, agent, name, spend, manage, about }: {
         </div>
       </div>
       {live.paneOpen && <div {...split.separator} className="relative hidden w-px flex-none cursor-col-resize bg-line outline-none before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-line-strong focus-visible:bg-link focus-visible:ring-2 focus-visible:ring-link lg:block" />}
-      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view, queuedWait)} rail={<ContextRail {...rail} details={details} placement="rail" />} />
+      <Side live={live} meta={meta} sessionKey={sessionKey} artifacts={items} approvals={approvals} running={view.running} decided={pending.decide} questions={standing.questions} brief={openingOf(view)} activity={activityOf(status, tone, view, queuedWait)} stand={stand} rail={<ContextRail {...rail} details={details} placement="rail" />} />
       </div>
       <ContextRail {...rail} details={details} placement="sheet" />
     </div>

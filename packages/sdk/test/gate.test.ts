@@ -22,7 +22,7 @@ function setup(existing: Approval) {
     taskId: 1,
     now: () => 100,
     conversationId: 'c',
-    commit: async <T>(fn: (tx: { doc: () => Promise<typeof doc> }) => Promise<T>) => fn({ doc: async () => doc }),
+    commit: async <T>(fn: (tx: { conversation: () => Promise<undefined>; doc: () => Promise<typeof doc> }) => Promise<T>) => fn({ conversation: async () => undefined, doc: async () => doc }),
     watchDoc: async () => {
       watched++;
       return { value: doc, start: () => {}, stop: async () => { stopped++; } };

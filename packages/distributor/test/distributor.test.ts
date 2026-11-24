@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { PassThrough, Writable } from 'node:stream';
 import { RECORDS } from '../src/orphans.ts';
 import { openCatalog } from '@quack/catalog';
+import { inProcessFetch } from '@quack/sdk';
 import { createDistributor, credentialBroker, forwardOutput, processDriver, sessionDirName, sessionHost, type HostDriver, type Launch } from '../src/index.ts';
 import { PING_TIMEOUT_MS, PROXY_PROOF } from '../src/server.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
@@ -978,7 +979,9 @@ test('the session hears the proxy\'s person or the tailnet as a principal beside
     const refused = await fetch(`${base}/approvals/a`, { method: 'POST', body: '{}', headers: forged });
     assert.equal(refused.status, 401, 'an identity without the proxy\'s proof');
   }
-  assert.deepEqual(seen, ['Bearer launch-1 {"kind":"person","name":"jason"} undefined', 'Bearer launch-1 {"kind":"tailnet"} undefined']);
+  // An in-process app (a schedule, GitHub's queue) is a service to the session: it names no principal.
+  assert.equal((await inProcessFetch(server.serveApp)('http://distributor.local/sessions/k1/invocations', { method: 'POST', body: '{}' })).status, 200);
+  assert.deepEqual(seen, ['Bearer launch-1 {"kind":"person","name":"jason"} undefined', 'Bearer launch-1 {"kind":"tailnet"} undefined', 'Bearer launch-1 undefined undefined']);
   await new Promise((r) => server.close(r));
   await new Promise((r) => session.close(r));
 });

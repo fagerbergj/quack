@@ -179,9 +179,9 @@ test('a later run may not finish on a passed version written against an earlier 
 test('the manifest names the judge and reports what is wrong with an agent\'s judge config', () => {
   assert.equal(manifest.name, 'judge');
   const problems = (c: unknown) => manifest.validate!(c, { providers: {} });
-  assert.deepEqual(problems({ maxRevisions: 2, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'local', modelId: 'm' }, escalations: 4 }), []);
+  assert.deepEqual(problems({ maxRevisions: 2, decisionModel: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 }, judgeModel: { provider: 'local', modelId: 'm' } }), []);
   assert.deepEqual(problems({ maxRevisions: -1, decisionModel: { provider: 'clef' }, retries: 1 }), [
-    'judge.retries is not a judge setting; known: maxRevisions, decisionModel, judgeModel, escalations',
+    'judge.retries is not a judge setting; known: maxRevisions, decisionModel, judgeModel',
     'judge.maxRevisions must be a non-negative integer',
     'judge.decisionModel must be { provider, modelId, maxInputTokens }',
   ]);

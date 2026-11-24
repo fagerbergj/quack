@@ -29,7 +29,7 @@ const CRITERIA = { true: 'Yes, this holds.', false: 'No, it does not hold.' };
 export const PROMPT_VERSION = 2;
 // A unit without shared context goes alone with one question per check; packed units share one context and are told apart by index.
 const qid = (ask: Ask, i: number, packed: boolean) => (packed ? `${ask.id}#${i}` : ask.id);
-const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);
+export const passing = (ask: Ask): string[] => (ask.question.type === 'choice' ? ask.pass ?? Object.keys(ask.question.options).slice(0, 1) : ask.question.pass ?? ['yes']);
 
 function asked(ask: Ask, instructions: string): ClassifierQuestion {
   return ask.question.type === 'choice' ? { type: 'choice', instructions, criteria: ask.question.options } : { type: 'bool', instructions, criteria: CRITERIA };

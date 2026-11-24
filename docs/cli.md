@@ -7,7 +7,7 @@
 | `sessions [--state S] [--agent A] [--order-by F] [--page-size N] [--page-token T] [--keys] [q]` | One page of `GET /sessions`; `--keys` prints bare keys. |
 | `show [-f] [--verdict] [--messages N] <key>` | The session, its pending asks, the newest version of each artifact kind and the last N messages (default 5, at most 50); `-f` then streams new transcript lines until the run ends. |
 | `new [--agent A] [--key K] [-p] <text>` | Start a session through `POST /sessions/:key/invocations` and print its key. |
-| `send [-p] <key> <text>` | Send a message; returns once accepted and prints its submission id. A message sent during a run queues as a follow-up. |
+| `send [-p] <key> <text>` | Send a message; returns once accepted and prints its submission id. A message sent during a run queues as a follow-up; one sent while the run waits on an approval withdraws the approval and reaches the agent as a steer. |
 | `steer <key> <text>` | Send a message into the running turn instead of queueing it; with no run going it starts one, as `send` does. |
 | `withdraw <key> <id>` | Take back a queued follow-up by the id `send` printed; exits 2 when it is not queued. |
 | `asks [--session K] [--page-size N] [--page-token T] [q]` | One page of pending approvals and questions, across sessions oldest first or for one session. |
@@ -77,8 +77,8 @@ A list prints one page, of at most `--page-size` rows (the server's default 100,
 $ quack show --verdict 'github:fagerbergj/quack#2238'
 ...
 Verdicts
-github.review v1  passed  score 0.87  github.reviewer@7
-  constructive_actionable.says_why: finding-1: The finding explains the mechanism of the false positive ...
+github.review v1  passed  score 0.87  github.reviewer@13
+  constructive_actionable.shows_proposed_change: finding-1: The finding proposes a one-line assertion but describes it only in prose ...
 ```
 
 ## Extension apps

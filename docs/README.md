@@ -61,7 +61,7 @@ Every arm judges each case fresh unless it ends in `:reuse`: then, in each repea
 
 Without `--arm` it runs one arm, `current=.`.
 
-`--escalations` bounds each case's concurrent judge-model calls (4 by default, as in the live judge), so the judge model sees at most `--concurrency` times that at once.
+Each case puts one judge-model call in flight at a time, so `--concurrency` alone bounds the judge model's load.
 
 Arms run case by case, not as blocks: each repeat goes through the cases in order, and each case is judged under every arm in an order shuffled by `--seed` (random when unset, and printed first), so over cases and repeats every arm takes every place about equally and neither load nor the model server's prefix cache favours one arm.
 
@@ -70,6 +70,8 @@ A `:reuse` arm's batch, one session's drafts in version order against one store,
 `--rows` appends each case's rows to a JSON-lines file as the case finishes, so a stopped run keeps what it judged, and `replay-judge.ts --table rows.jsonl` prints the table from such a file.
 
 A row is one check of one case under one arm: `met`, its place (`pos`, 1 first), the items the decision model settled (`clef`), the items escalated (`esc`) and the items reused from an earlier draft (`reused`), and the case's judge milliseconds (`ms`) and model requests by model id (`requests`).
+
+`--decision-only` asks only the decision model and never the judge model, so use it to triage a pass-only rework: it counts what escalates and why, and the judge model's accuracy on escalated items is the same in both arms. Every arm needs a decision model and no `:reuse`. An escalated item is left unanswered and listed in its row's `items` by cause (`declared`, `unsure`, `pass-only-no`, `over-window`, or `outage` when Clef was asked and never answered), beside the items Clef passed (`pass`) or failed (`no`). Each arm's line gives the causes and the round verdicts as a range: `pass` if the round passes even with every escalated item failing, `fail` if it fails even with every one passing, and `open` otherwise. A round Clef did not answer measures nothing, so its rows are kept and the run stops with an error. `--expect labels.json`, on such a run or with `--table`, reads hand labels `{ case: { unit id: { flag } } }` (as in a `wrong-output/expected.json`) and gives each labelled item's outcome once per check that judged it and repeat, with totals per arm and check: a real failure (`flag: true`) is `caught` when it escalates or Clef's no stands, and `passed-by-clef` when Clef passes it; a false flag is `false-flag-cleared` when Clef passes it. Its judge seconds count Clef alone, and its `met` and verdicts are not a judge's, so final timing and verdict claims still need a full replay. It reads Clef's answers and the escalations off the judge's memo names, so a ref arm from before those names misreports its items or fails.
 
 A replay rebuilds a `contract.spec` version's evidence as the session stood at its seal: the versions, approvals and answers recorded by then, and each file of a git clone in the workspace as the commit the clone's reflog says HEAD held then, since a session goes on pulling after it seals a version.
 

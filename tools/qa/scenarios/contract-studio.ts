@@ -112,6 +112,32 @@ const scenario: Scenario = {
       await toggle.click();
       if ((await toggle.getAttribute('aria-expanded')) !== 'false') throw new Error('a second tap did not close the title');
     }, [{ width: 1280, height: 800 }, { width: 390, height: 800 }]);
+    await ctx.step('a message sent while a version waits withdraws it with no reject from the page and no error banner', async () => {
+      const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
+      try {
+        const page = await context.newPage();
+        const decisions: string[] = [];
+        page.on('request', (r) => void (r.method() === 'PATCH' && decisions.push(r.url())));
+        await page.goto(`${ctx.url}/${SDK}`);
+        const bar = paneOf(page, 'Contract').getByRole('region', { name: 'Approval' });
+        await visible(bar.getByRole('button', { name: 'Approve', exact: true }));
+        await page.getByRole('textbox', { name: 'Message' }).fill('Why is App a class and not an interface?');
+        await page.getByRole('button', { name: 'Send' }).click();
+        await bar.getByRole('button', { name: 'Approve', exact: true }).waitFor({ state: 'detached', timeout: 15_000 });
+        // The catalog hears the cancel from the session's lifecycle stream, a moment after the page does.
+        let v2: Array<{ state: string }> = [];
+        for (let i = 0; i < 30 && (!v2.length || v2.some((a) => a.state === 'pending')); i++, await new Promise((r) => setTimeout(r, 500))) {
+          const { asks = [] } = (await (await fetch(`${ctx.url}/sessions/${encodeURIComponent('contracts:qa-sdk')}/asks`)).json()) as { asks?: Array<{ state: string; toolCall?: { args?: { version?: number } } }> };
+          v2 = asks.filter((a) => a.toolCall?.args?.version === 2);
+        }
+        if (!v2.length || v2.some((a) => a.state !== 'cancelled')) throw new Error(`v2's asks read ${JSON.stringify(v2)}, not cancelled`);
+        if (decisions.length) throw new Error(`the page sent decisions: ${decisions.join(', ')}`);
+        if (await page.getByRole('alert').filter({ hasText: /withdrawn/ }).count()) throw new Error('an error banner names the withdrawal');
+        await ctx.shot(page, 'studio-message-withdraws-1280');
+      } finally {
+        await context.close();
+      }
+    });
     await ctx.step('approving the waiting version records it', async () => {
       const context = await ctx.browser.newContext({ viewport: { width: 1280, height: 800 } });
       try {

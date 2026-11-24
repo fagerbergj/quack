@@ -4,6 +4,7 @@ import { Thumbs, type Img } from './Attach.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { ledger, LedgerItem } from './Artifacts.tsx';
 import type { SealedArtifact } from './api.ts';
+import type { MarkOf } from './delivered.ts';
 import { Args } from './JsonView.tsx';
 import { Markdown } from './Markdown.tsx';
 import { Duck } from './Pond.tsx';
@@ -162,12 +163,12 @@ function UserRow({ m, meta }: { m: Message; meta: Meta }) {
   );
 }
 
-type RowProps = { item: Item; meta: Meta; load: Load; running: boolean; onOpen: (a: SealedArtifact) => void };
+type RowProps = { item: Item; meta: Meta; load: Load; running: boolean; onOpen: (a: SealedArtifact) => void; markOf?: MarkOf };
 
-function RowView({ item, meta, load, running, onOpen }: RowProps): ReactNode {
+function RowView({ item, meta, load, running, onOpen, markOf }: RowProps): ReactNode {
   switch (item.k) {
     case 'user': return <UserRow m={item.m} meta={meta} />;
-    case 'artifact': return <LedgerItem a={item.a} round={item.round} draft={item.draft} running={running} onOpen={onOpen} />;
+    case 'artifact': return <LedgerItem a={item.a} round={item.round} draft={item.draft} running={running} onOpen={onOpen} markOf={markOf} />;
     case 'compact': return <Compacted m={item.m} />;
     case 'prose': return <article aria-label="Assistant" className="min-w-0 text-[14.5px] leading-relaxed text-ink"><Markdown text={item.text} /></article>;
     case 'error': return <p className="m-0 text-[13px] text-danger">{`Error: ${item.text}`}</p>;
@@ -178,7 +179,7 @@ function RowView({ item, meta, load, running, onOpen }: RowProps): ReactNode {
 }
 
 // Every commit resends the transcript as fresh objects, so a row compares its item by value: only the streaming row and changed ones render.
-const Row = memo(RowView, (p, n) => same(p.meta, n.meta) && p.load === n.load && p.running === n.running && p.onOpen === n.onOpen && same(p.item, n.item));
+const Row = memo(RowView, (p, n) => same(p.meta, n.meta) && p.load === n.load && p.running === n.running && p.onOpen === n.onOpen && p.markOf === n.markOf && same(p.item, n.item));
 
 function blocks(m: AssistantMessage, key: string, results: Map<string, ToolResultMessage>): (Item | Step)[] {
   const out: (Item | Step)[] = m.content.flatMap((b, i): (Item | Step)[] => {
@@ -237,12 +238,12 @@ function build(view: Pick<View, 'items' | 'partial'>, artifacts: SealedArtifact[
   return items;
 }
 
-export function Transcript({ view, meta = NONE, load, artifacts = NO_ARTIFACTS, running = false, onOpen = ignore }: { view: View; meta?: Meta; load: Load; artifacts?: SealedArtifact[]; running?: boolean; onOpen?: (a: SealedArtifact) => void }) {
+export function Transcript({ view, meta = NONE, load, artifacts = NO_ARTIFACTS, running = false, onOpen = ignore, markOf }: { view: View; meta?: Meta; load: Load; artifacts?: SealedArtifact[]; running?: boolean; onOpen?: (a: SealedArtifact) => void; markOf?: MarkOf }) {
   const items = useMemo(() => build(view, artifacts), [view.items, view.partial, artifacts]);
   // Busy while a message streams, so a screen reader announces it once complete rather than each partial line.
   return (
     <div role="log" aria-label="Transcript" aria-busy={view.partial !== undefined} className="flex min-w-0 flex-col gap-5">
-      {items.map((item) => <Row key={item.key} item={item} meta={meta} load={load} running={item.k === 'artifact' && running} onOpen={onOpen} />)}
+      {items.map((item) => <Row key={item.key} item={item} meta={meta} load={load} running={item.k === 'artifact' && running} onOpen={onOpen} markOf={markOf} />)}
     </div>
   );
 }
