@@ -111,7 +111,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
     return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
   assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
-  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@14\), passed\./);
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@20\), passed\./);
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
@@ -124,7 +124,7 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.equal(verdict.passed, true);
   assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: URL7 }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
-  assert.deepEqual([...resolvers].sort(), ['clef', 'code', 'j'], 'promises_handled still goes to the judge model');
+  assert.deepEqual([...resolvers].sort(), ['clef', 'code'], 'Clef passes every item, so nothing escalates');
   assert.ok(clefUnits.includes('context+items'), 'findings are packed with the CI result they share');
   await session.close();
 });
