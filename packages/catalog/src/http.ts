@@ -19,8 +19,8 @@ export type SessionsApiDeps = {
   answer(key: string, ask: AskRow, resolution: { by: Principal; choice: string; text?: string; reason?: string }): Promise<boolean | string | { withdrawn: Withdrawal['reason'] }>;
   /** The session's wait for a model slot, shown on its row while it runs; one with `error` is a run waiting to retry its endpoint, shown while stopped too. */
   waiting?(key: string): { since: number; ahead: number; provider: string; error?: string } | undefined;
-  /** The session's own model pick, which a single session's read carries as `model`. */
-  model?(key: string): Promise<string | undefined>;
+  /** A single session's read carries its own pick as `model` and the model its next run resolves to as `resolvedModel`. */
+  model?(key: string): Promise<{ model?: string; resolvedModel?: string }>;
   /** Records the session's pick for its next run (null clears it); a string is why the model is refused. */
   setModel?(key: string, model: string | null): Promise<string | undefined>;
   /** The server's build, as GET /version answers it, which the change stream's hello carries. */
@@ -91,11 +91,12 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   return parsed as Record<string, unknown>;
 }
 
-const modelName = (v: unknown) => typeof v === 'string' && v.length <= MODEL_MAX && /^[^/]+\/.+$/.test(v);
+/** A `provider/model` reference as the Sessions API and the settings route take it. */
+export const isModelRef = (v: unknown): v is string => typeof v === 'string' && v.length <= MODEL_MAX && /^[^/]+\/.+$/.test(v);
 
 function patchOf(b: Record<string, unknown>): { title?: string | null; state?: 'archived' | 'stopped'; model?: string | null } {
   const { title, state, model } = b;
-  if (model !== undefined && model !== null && !modelName(model)) throw new Problem(400, 'model must be "provider/model" or null');
+  if (model !== undefined && model !== null && !isModelRef(model)) throw new Problem(400, 'model must be "provider/model" or null');
   if (title !== undefined && (typeof title !== 'string' || title.length > TITLE_MAX)) throw new Problem(400, `title must be text of at most ${TITLE_MAX} characters`);
   if (state !== undefined && state !== 'archived' && state !== 'stopped') throw new Problem(422, 'state may be written only as archived or stopped');
   return { ...(title !== undefined && { title: (title as string).trim() || null }), ...(state !== undefined && { state }), ...(model !== undefined && { model: model as string | null }) };
@@ -141,8 +142,8 @@ export function sessionsApi(catalog: Catalog, deps: SessionsApiDeps) {
   }
 
   const withModel = async <T extends { key: string }>(w: T) => {
-    const model = await deps.model?.(w.key);
-    return model ? { ...w, model } : w;
+    const { model, resolvedModel } = (await deps.model?.(w.key)) ?? {};
+    return { ...w, ...(model && { model }), ...(resolvedModel && { resolvedModel }) };
   };
 
   async function deleteSession(key: string, caller: Caller) {

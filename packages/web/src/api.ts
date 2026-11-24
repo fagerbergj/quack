@@ -102,9 +102,11 @@ export const deleteSession = async (key: string) => void (await json(await fetch
 export type ModelInfo = { name: string; contextWindow?: number; images?: boolean; reasoning?: boolean };
 /** The available models, and `defaultModel`, what a session runs when neither it nor its agent names one. */
 export const listModels = async () => json<{ models: ModelInfo[]; defaultModel?: string }>(await fetch('models'));
-/** The session's own pick, which applies from its next run; undefined when it has none. */
-export const getSessionModel = async (key: string) => (await json<{ model?: string }>(await fetch(base(key)))).model;
-export const setSessionModel = (key: string, model: string | null) => housekeep(base(key), 'PATCH', { model });
+/** The session's own pick (`model`, absent when it has none) and the model its next run resolves to, the agent's own included. */
+export type SessionModel = { model?: string; resolvedModel?: string };
+export const getSessionModel = async (key: string) => json<SessionModel>(await fetch(base(key)));
+export const setSessionModel = async (key: string, model: string | null) =>
+  json<SessionModel>(await fetch(base(key), { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model }) }));
 export const getSettings = async () => json<{ defaultModel?: string }>(await fetch('settings'));
 export const setDefaultModel = (model: string | null) => housekeep('settings', 'PATCH', { defaultModel: model });
 /** Where the session downloads as one JSON file; a plain link, so the browser saves it. */

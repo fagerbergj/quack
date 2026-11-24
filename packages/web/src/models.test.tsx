@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test } from 'vitest';
 import { App } from './App.tsx';
@@ -16,10 +16,12 @@ function openSession() {
   const ws = FakeSocket.all[0]!;
   ws.open();
   ws.frame(snapshot());
+  return ws;
 }
 
 test('the composer picks the session\'s model: Default names the default in its description, a pick is sent as the session\'s model', async () => {
-  routes['PATCH /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big' };
+  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', resolvedModel: 'local/flash' };
+  routes['PATCH /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big', resolvedModel: 'local/big' };
   openSession();
   const picker = await screen.findByRole('combobox', { name: 'Model' });
   expect(picker).toHaveValue('');
@@ -32,7 +34,7 @@ test('the composer picks the session\'s model: Default names the default in its 
 });
 
 test('the composer shows the session\'s own pick, and a refused pick keeps it and says why', async () => {
-  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big' };
+  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', model: 'local/big', resolvedModel: 'local/big' };
   routes['PATCH /sessions/ui%3Au1'] = new Fail(400, { detail: 'model local/flash is not available; available: local/big' });
   openSession();
   const picker = await screen.findByRole('combobox', { name: 'Model' });
@@ -41,6 +43,33 @@ test('the composer shows the session\'s own pick, and a refused pick keeps it an
   await waitFor(() => expect(picker).toHaveAccessibleDescription('model local/flash is not available; available: local/big'));
   expect(picker).toHaveValue('local/big');
   expect(picker).toHaveAttribute('aria-invalid', 'true');
+});
+
+test('a session without a pick whose agent names a model is described as running the agent\'s model', async () => {
+  routes['GET /sessions/ui%3Au1'] = { key: 'ui:u1', resolvedModel: 'local/big' };
+  openSession();
+  const picker = await screen.findByRole('combobox', { name: 'Model' });
+  await waitFor(() => expect(picker).toHaveAccessibleDescription('Model for the next run: local/big, 128k context (default)'));
+  expect(picker).toHaveValue('');
+});
+
+test('Enter on the focused picker never sends the draft', async () => {
+  const ws = openSession();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'half a thought');
+  const picker = await screen.findByRole('combobox', { name: 'Model' });
+  picker.focus();
+  // A browser's implicit submission is Enter's default action on a form control; false means the picker cancelled it.
+  expect(fireEvent.keyDown(picker, { key: 'Enter' })).toBe(false);
+  await userEvent.keyboard('{Enter}');
+  expect(ws.sent).toEqual([]);
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('half a thought');
+});
+
+test('two providers offering one id show their provider, so no two options read alike', async () => {
+  routes['GET /models'] = { models: [{ name: 'local/m', contextWindow: 4096 }, { name: 'hosted/m', contextWindow: 4096 }, { name: 'local/solo', contextWindow: 4096 }] };
+  openSession();
+  const picker = await screen.findByRole('combobox', { name: 'Model' });
+  expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual(['Default', 'local/m', 'hosted/m', 'solo']);
 });
 
 test('with no models listed the composer shows no picker', async () => {

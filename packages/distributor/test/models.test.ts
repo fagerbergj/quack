@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { after, mock, test } from 'node:test';
 import { openCatalog } from '@quack/catalog';
 import { parseDeployment, readModelChoice } from '@quack/session';
-import { modelRoutes, sessionModels } from '../src/models.ts';
+import { sessionModels } from '../src/models.ts';
 import { createDistributor, digest, processDriver, sessionDirName, sessionHost, type HostDriver, type Launch } from '../src/index.ts';
 import { PERSON, PROXY_SECRET } from './fixtures/proxy.ts';
 
@@ -56,7 +56,7 @@ test('the Settings default is checked, persists in the data dir across restarts,
   assert.deepEqual(await restarted.settings(), {});
 });
 
-// A distributor over a real data dir with one stopped session, `idle`, and the model routes mounted as main mounts them.
+// A distributor over a real data dir with one stopped session, `idle`; its clock stands still, so only a pick stops a process.
 async function distributor(driver?: (real: HostDriver) => HostDriver) {
   const dataDir = await temp();
   await mkdir(join(dataDir, sessionDirName('idle')), { recursive: true });
@@ -67,7 +67,7 @@ async function distributor(driver?: (real: HostDriver) => HostDriver) {
   await catalog.publish('idle', [{ seq: 1, id: 'session:idle', at: 0, type: 'session.created', data: { agent: 'quack', createdAt: 0 } }]);
   const models = sessionModels({ dataDir, deployment, fetch: listing });
   const real = processDriver({ command: [], dataDir });
-  const server = createDistributor(driver?.(real) ?? real, { proxySecret: PROXY_SECRET, catalog, models, routes: modelRoutes(models), setTimer: () => () => {} });
+  const server = createDistributor(driver?.(real) ?? real, { proxySecret: PROXY_SECRET, catalog, models, setTimer: () => () => {}, now: () => 0 });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   cleanups.push(() => void server.close());
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -103,8 +103,8 @@ test('a person sets a session\'s model through the Sessions API; an unavailable 
 });
 
 test('a pick restarts an idle process at once and a busy one only once its run ends, so running turns keep their model', async () => {
-  let status = 'HealthyBusy';
-  const upstream = createServer((_req, res) => res.end(JSON.stringify({ status })));
+  let ping: object = { status: 'HealthyBusy' };
+  const upstream = createServer((_req, res) => res.end(JSON.stringify(ping)));
   await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', r));
   cleanups.push(() => void upstream.close());
   const stops: string[] = [];
@@ -118,7 +118,10 @@ test('a pick restarts an idle process at once and a busy one only once its run e
   assert.deepEqual(stops, [], 'the busy run keeps its process and model');
   await server.sweep();
   assert.deepEqual(stops, [], 'still busy');
-  status = 'Healthy';
+  ping = { status: 'Healthy', wake: { at: 9e12 }, waiting: { since: 1, ahead: 0, provider: 'local', error: 'Connection error.' } };
+  await server.sweep();
+  assert.deepEqual(stops, [], 'a run parked in its outage backoff is still a run, so it keeps its model');
+  ping = { status: 'Healthy' };
   await server.sweep();
   assert.deepEqual(stops, ['idle'], 'stopped between runs, so the next run starts on the pick');
   live.add('idle');
@@ -145,4 +148,50 @@ test('the pick is a session override beside the pin: the pinned snapshot is unch
   assert.equal(JSON.parse(await readFile(join(snapshot, 'agent.json'), 'utf8')).model, undefined);
   assert.deepEqual(seen, [{ default: 'local/hand' }, { session: 'local/big' }], 'a cleared Settings default is removed before the next start');
   await assert.rejects(stat(join(dataDir, sessionDirName('s'), 'default-model')));
+});
+
+test('discovery is cached for a minute and shared by callers in flight, so list and refusal checks do not ask every provider each time', async () => {
+  let asked = 0;
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  const counting = (async () => ((asked += 1), await held, { ok: true, json: async () => ({ data: [{ id: 'big', meta: { n_ctx: 8192 } }] }) })) as unknown as typeof fetch;
+  let t = 0;
+  const models = sessionModels({ dataDir: await temp(), deployment, fetch: counting, now: () => t });
+  const both = Promise.all([models.list(), models.setDefault('local/big')]);
+  release();
+  await both;
+  assert.equal(asked, 1, 'one discovery in flight serves both callers');
+  t = 59_999;
+  await models.list();
+  assert.equal(asked, 1);
+  t = 60_000;
+  await models.list();
+  assert.equal(asked, 2, 'a minute on, the providers are asked again');
+});
+
+test('a session read carries the model its next run resolves to: the agent\'s own model when the session has no pick', async () => {
+  const { call } = await distributor((real) => ({ ...real, agents: async () => [{ name: 'quack', version: 1, status: 'promoted' as const, model: 'local/hand' }] }));
+  assert.deepEqual(await call('PATCH', '/settings', { defaultModel: 'local/big' }).then((r) => r.status), 200);
+  const row = await (await call('GET', '/sessions/idle')).json();
+  assert.deepEqual([row.model, row.resolvedModel], [undefined, 'local/hand'], 'the agent\'s model outranks the Settings default');
+  const picked = await (await call('PATCH', '/sessions/idle', { model: 'local/big' })).json();
+  assert.deepEqual([picked.model, picked.resolvedModel], ['local/big', 'local/big']);
+});
+
+test('the settings route takes the Sessions API\'s provider/model shape, and logs who changed the default', async () => {
+  const { call } = await distributor();
+  assert.equal((await call('PATCH', '/settings', { defaultModel: '/x' })).status, 400);
+  const log = mock.method(console, 'log', () => {});
+  assert.equal((await call('PATCH', '/settings', { defaultModel: 'local/big' })).status, 200);
+  const lines = log.mock.calls.map((c) => String(c.arguments[0]));
+  log.mock.restore();
+  assert.ok(lines.includes('default model set to local/big by jason'), lines.join('\n'));
+});
+
+test('a pick for a session with no directory on this host is a 400, not a server error', async () => {
+  const { dataDir, call } = await distributor();
+  await rm(join(dataDir, sessionDirName('idle')), { recursive: true });
+  const res = await call('PATCH', '/sessions/idle', { model: 'local/big' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).detail, /has no directory on this host/);
 });

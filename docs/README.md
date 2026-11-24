@@ -113,13 +113,13 @@ The contract is `contracts:ea66d629-d6f9-472e-bc63-0d325dc65296`.
 
 A session runs the first of these that is set: its own pick, its agent's `model`, the Settings default, the deployment's `defaultModel`, then the first available model. A pick or Settings default that is no longer available is skipped with a warning. The deployment's `defaultModel` is optional, so a fresh install runs from `QUACK_DATA_DIR` alone.
 
-The available models are every model with a context window that a provider's `GET {baseUrl}/models` lists or the deployment writes by hand, without the decision-model (`systemone`) providers. A provider that cannot list offers only its hand-written ones.
+The available models are every model with a context window that a provider's `GET {baseUrl}/models` lists or the deployment writes by hand, without the decision-model (`systemone`) providers. A provider that cannot list offers only its hand-written ones. The distributor reuses one discovery for 60 s, and callers that arrive while one is in flight share it.
 
 - `GET /models` returns `{ models: [{ name, contextWindow, images?, reasoning? }], defaultModel }`. Here `name` is `provider/model`, and `defaultModel` is what a session runs when neither it nor its agent names a model.
-- `GET /settings` and `PATCH /settings` with `{ "defaultModel": "provider/model" | null }` read and set the Settings default. It is kept in `settings.json` in the data dir.
-- `PATCH /sessions/{key}` with `{ "model": "provider/model" | null }` sets or clears the session's pick. `GET /sessions/{key}` returns the pick as `model`. A model that is not available is refused with 400, which names the ones that are.
+- `GET /settings` and `PATCH /settings` with `{ "defaultModel": "provider/model" | null }` read and set the Settings default. It is kept in `settings.json` in the data dir, and the distributor logs who changed it.
+- `PATCH /sessions/{key}` with `{ "model": "provider/model" | null }` sets or clears the session's pick. `GET /sessions/{key}` and the patch's answer return the pick as `model` and the model the next run resolves to as `resolvedModel`, which counts the agent's own model. A model that is not available is refused with 400, which names the ones that are. So is a pick for a session that has no directory on this host.
 
-The pick is stored in the session dir, beside `agent` and outside the pinned `agent-def` snapshot, so setting it never changes the pin. It applies from the session's next run. An idle process restarts at once. A busy one restarts once its run ends, so a run already going keeps its model. A new Settings default reaches a running session when its process next starts. The capacity gate is the chosen model's provider's.
+The pick is stored in the session dir, beside `agent` and outside the pinned `agent-def` snapshot, so setting it never changes the pin. It applies from the session's next run. An idle process restarts at once. A busy one restarts once its run ends, so a run already going keeps its model. A run waiting on a person, sleeping until a wake time, or parked in its outage backoff still counts as going. If the idle sweep stops such a process, its run resumes on the pick. A new Settings default reaches a running session when its process next starts. The capacity gate is the chosen model's provider's.
 
 The judge's and extensions' own models (`judgeModel`, `decisionModel` and the like in their settings) are not affected.
 
