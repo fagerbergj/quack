@@ -1,5 +1,6 @@
 import type { PlayerRef } from '../lineup/card.ts';
 import type { NewsItem } from '../lineup/facts.ts';
+import { worth } from '../waivers/facts.ts';
 import type { Side, Stance, TPlayer, TradeFacts } from './facts.ts';
 
 export const MAX_SUGGESTIONS = 3;
@@ -7,7 +8,7 @@ export const MAX_SUGGESTIONS = 3;
 export type TRef = PlayerRef & { proj: number; bye: number | null };
 type Linked = Array<NewsItem & { player: string }>;
 export type PartnerRef = { rosterId: number; team: string; record: string; stance: Stance; needs: Record<string, number> };
-/** Projection swing this week, per side: what each receives minus what each sends. */
+/** Worth swing per side (season rate or this week, as waivers values a player): what each receives minus what each sends. */
 export type Delta = { you: number; partner: number };
 type Offered = { give: TRef[]; get: TRef[]; delta: Delta };
 
@@ -26,7 +27,7 @@ export type FinderDecision = { suggestions: Array<{ partner: number; give: strin
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const ref = (p: TPlayer): TRef => ({ id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj, proj: p.proj, bye: p.bye });
 export const partnerRef = (s: Side): PartnerRef => ({ rosterId: s.rosterId, team: s.team, record: s.record, stance: s.stance, needs: s.needs });
-const total = (ps: TRef[]) => ps.reduce((n, p) => n + p.proj, 0);
+const total = (ps: TPlayer[]) => ps.reduce((n, p) => n + (worth(p) ?? 0), 0);
 const linked = (news: Record<string, NewsItem[]>, ps: TPlayer[]): Linked => ps.flatMap((p) => (news[p.id] ?? []).map((n) => ({ ...n, player: p.name })));
 
 function pick(from: Side, ids: string[], who: string): TPlayer[] {
@@ -45,7 +46,7 @@ function offered(f: TradeFacts, partner: Side, give: string[], get: string[]): O
   const r = pick(partner, get, partner.team);
   if (!g.length || !r.length) throw new Error('the model gave a trade with nothing on one side');
   const [give_, get_] = [g.map(ref), r.map(ref)];
-  return { give: give_, get: get_, delta: { you: round2(total(get_) - total(give_)), partner: round2(total(give_) - total(get_)) }, players: [...g, ...r] };
+  return { give: give_, get: get_, delta: { you: round2(total(r) - total(g)), partner: round2(total(g) - total(r)) }, players: [...g, ...r] };
 }
 
 /** Each suggestion trades one of your players for one of the partner's listed surplus players; ranked as the model ordered them. */
