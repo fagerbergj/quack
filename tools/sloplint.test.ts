@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { changedRanges, changedSince, lintSource } from './sloplint.ts';
 
@@ -71,4 +72,32 @@ test('a moved file is gated on its edited lines only, even with diff.renames off
   writeFileSync(join(dir, 'pkg/a.ts'), `${lines.with(4, 'export const v4 = 40;').join('\n')}\n`);
   git('commit', '-qam', 'move');
   assert.deepEqual([...changedSince(dir, 'HEAD~1')], [['pkg/a.ts', [[5, 5]]]]);
+});
+
+test('the CLI fails a new import cycle under packages/, passes a move inside one, and repo mode exits 0', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'quack-sloplint-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, env, encoding: 'utf8' });
+  const sloplint = (...args: string[]) => spawnSync(process.execPath, [fileURLToPath(new URL('./sloplint.ts', import.meta.url)), ...args], { cwd: dir, env, encoding: 'utf8' });
+  const at = (f: string, text: string) => writeFileSync(join(dir, 'packages/p', f), text);
+  git('init', '-q', '-b', 'main');
+  mkdirSync(join(dir, 'packages/p'), { recursive: true });
+  at('a.ts', "import { b } from './b.ts';\nexport const a = () => b;\n");
+  at('b.ts', 'export const b = 1;\n');
+  git('add', '.');
+  git('commit', '-qm', 'base');
+  git('checkout', '-qb', 'cycle');
+  at('b.ts', "import { a } from './a.ts';\nexport const b = () => a;\n");
+  git('commit', '-qam', 'cycle');
+  const added = sloplint('diff', 'main');
+  assert.equal(added.status, 1, added.stdout);
+  assert.match(added.stdout, /packages\/p\/b\.ts:1: import cycle across 2 files/);
+  assert.equal(sloplint('repo').status, 0);
+  git('checkout', '-qb', 'move');
+  git('mv', 'packages/p/b.ts', 'packages/p/c.ts');
+  at('a.ts', "import { b } from './c.ts';\nexport const a = () => b;\n");
+  git('commit', '-qam', 'move');
+  const moved = sloplint('diff', 'cycle');
+  assert.equal(moved.status, 0, moved.stdout);
 });

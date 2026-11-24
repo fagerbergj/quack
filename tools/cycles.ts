@@ -8,6 +8,12 @@ export type Edge = { from: string; to: string; line: number; step?: string };
 export type CycleFinding = { file: string; line: number; message: string };
 /** By group (a package or directory), each node's ties to the next, at their first site. */
 export type Graph = Map<string, Map<string, Map<string, Edge>>>;
+/** The merge base's sources under their own paths, and where the diff moved each moved file. */
+export type Base = { sources: Map<string, string>; moved: Map<string, string> };
+
+/** Ties of the base, with moved files under the paths they moved to, so a rename adds no tie. */
+export const moveEdges = <E extends Edge>(edges: E[], moved: Map<string, string>): E[] =>
+  edges.map((e) => ({ ...e, from: moved.get(e.from) ?? e.from, to: moved.get(e.to) ?? e.to }));
 
 const specsCache = new Map<string, { text: string; specs: Array<{ spec: string; line: number }> }>();
 
@@ -27,7 +33,6 @@ function runtimeSpecs(path: string, text: string) {
   return specs;
 }
 
-/** Each runtime import between two files of one package (`packages/<name>/`) in `sources`. */
 export const pkg = (f: string) => /^packages\/[^/]+\//.exec(f)?.[0];
 
 /** The file in `sources` a relative specifier in `from` names. */
@@ -36,6 +41,7 @@ export const resolver = (sources: Map<string, string>) => (from: string, spec: s
   return [p, `${p}.ts`, `${p}.tsx`, `${p}/index.ts`, `${p}/index.tsx`].find((c) => sources.has(c));
 };
 
+/** Each runtime import between two files of one package (`packages/<name>/`) in `sources`. */
 export function importEdges(sources: Map<string, string>): Edge[] {
   const resolve = resolver(sources);
   return [...sources].flatMap(([from, text]) => {
@@ -64,9 +70,14 @@ export function addTie(g: Graph, group: string, x: string, y: string, e: Edge) {
 }
 
 // File-level groups come first, so a change that shows at both levels reports the precise one.
+const entry = (dir: string, child: string) => `${posix.relative(dir, child)}${/\.tsx?$/.test(child) ? '' : '/'}`;
+
 function graphOf(edges: Edge[]): Graph {
   const g: Graph = new Map();
-  for (const e of edges) for (const [group, x, y] of ties(e)) addTie(g, group, x, y, e);
+  for (const e of edges) for (const [group, x, y] of ties(e)) {
+    const dir = group.slice(4);
+    addTie(g, group, x, y, group.startsWith('dir') ? { ...e, step: `${posix.relative(dir, e.from)}:${e.line} → ${entry(dir, y)}` } : e);
+  }
   return new Map([...g].sort(([a], [b]) => Number(a.startsWith('dir')) - Number(b.startsWith('dir'))));
 }
 
@@ -127,9 +138,14 @@ export function gate(old: Graph, head: Graph, name: (group: string, members: str
   return found;
 }
 
-/** Import cycles in `head` that hold an import `base` lacks. */
-export const cycleFindings = (base: Edge[], head: Edge[]) =>
-  gate(graphOf(base), graphOf(head), (group, c) => `import cycle across ${c.length} ${group.startsWith('dir') ? `entries of ${group.slice(4)}/` : 'files'}`);
+const cycleName = (group: string, c: string[]) => {
+  const dir = group.slice(4);
+  return group.startsWith('dir') ? `import cycle across ${c.length} entries of ${dir}/ (${c.map((x) => entry(dir, x)).sort().join(', ')})` : `import cycle across ${c.length} files`;
+};
+
+/** Import cycles in `head` that hold an import the base lacks. */
+export const cycleFindings = (base: Base, head: Map<string, string>) =>
+  gate(graphOf(moveEdges(importEdges(base.sources), base.moved)), graphOf(importEdges(head)), cycleName);
 
 /** Each file in a file-level import cycle, by the cycle it is in. */
 export function fileCycles(edges: Edge[]): Map<string, number> {
@@ -138,23 +154,31 @@ export function fileCycles(edges: Edge[]): Map<string, number> {
   return new Map(components(g.get('files') ?? new Map()).flatMap((c, i) => c.map((f) => [f, i] as const)));
 }
 
-/** The sources as they stood at the merge base with `ref`: `head` with every file the diff names read back from there. */
-export function baseSources(root: string, ref: string, head: Map<string, string>, keep: (f: string) => boolean): Map<string, string> {
+/** The sources at the merge base with `ref`: `head` with each file the diff names read back from there, and the diff's moves. */
+export function baseSources(root: string, ref: string, head: Map<string, string>, keep: (f: string) => boolean): Base {
   const git = (args: string[], input?: string) => execFileSync('git', args, { cwd: root, input, maxBuffer: 1 << 28 });
   const at = git(['merge-base', ref, 'HEAD']).toString().trim();
-  const named = git(['diff', '--name-only', '--no-renames', '-z', `${at}...HEAD`]).toString().split('\0').filter((f) => f && keep(f));
-  const base = new Map(head);
-  named.forEach((f) => base.delete(f));
-  if (!named.length) return base;
-  const out = git(['cat-file', '--batch'], named.map((f) => `${at}:${f}\n`).join(''));
-  for (let pos = 0, i = 0; i < named.length; i++) {
+  const fields = git(['diff', '--name-status', '--find-renames', '-l0', '-z', `${at}...HEAD`]).toString().split('\0');
+  const [sources, moved, old] = [new Map(head), new Map<string, string>(), [] as string[]];
+  for (let i = 0; i < fields.length - 1;) {
+    const status = fields[i];
+    const paths = status.startsWith('R') || status.startsWith('C') ? fields.slice(i + 1, i + 3) : [fields[i + 1]];
+    i += paths.length + 1;
+    const [from, to] = [paths[0], paths.at(-1)!];
+    if (keep(to)) sources.delete(to);
+    if (status.startsWith('R') && keep(from) && keep(to)) moved.set(from, to);
+    if (!status.startsWith('A') && keep(from)) old.push(from);
+  }
+  if (!old.length) return { sources, moved };
+  const out = git(['cat-file', '--batch'], old.map((f) => `${at}:${f}\n`).join(''));
+  for (let pos = 0, i = 0; i < old.length; i++) {
     const eol = out.indexOf(10, pos);
     const header = out.subarray(pos, eol).toString();
     pos = eol + 1;
     if (header.endsWith(' missing')) continue;
     const size = Number(header.split(' ')[2]);
-    base.set(named[i], out.subarray(pos, pos + size).toString('utf8'));
+    sources.set(old[i], out.subarray(pos, pos + size).toString('utf8'));
     pos += size + 1;
   }
-  return base;
+  return { sources, moved };
 }
