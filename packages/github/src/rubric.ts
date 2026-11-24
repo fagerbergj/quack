@@ -32,7 +32,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 18,
+  version: 19,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -193,7 +193,7 @@ export const reviewDeclaration: Declaration = {
   checks: {
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
-    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Is the behaviour this sentence of the pull request description says the change has either present in the `diff`, deferred to a linked follow-up, reported in the `review` as a blocking finding, or intentionally not delivered with the `review` explaining why the promise was walked back? A sentence that states no behaviour of the change (a motivation, a measurement, a check that was run, or code it only mentions) holds.') },
+    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Is the behaviour this sentence of the pull request description says the change has either present in the `diff`, deferred to a linked follow-up, reported in the `review` as a blocking finding, or intentionally not delivered with the `review` explaining why the promise was walked back? A sentence that describes the problem or the state before this change, rather than what the change does, holds, as does one that states no behaviour of the change (a motivation, a measurement, a check that was run, or code it only mentions).') },
     // A finding holds when every line it cites shows what it says there; a contradiction is the plainest way it does not.
     matches_cited_code: { scope: 'citation', aggregate: { name: 'grouped', groupBy: 'group', inner: 'all', outer: 'share' }, question: yes('Does this excerpt show what the finding says about the code at its `cite`, without contradicting the finding?') },
     // An item that names a source holds in code, so Clef is asked only of items that name none.
