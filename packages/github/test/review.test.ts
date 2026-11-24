@@ -130,33 +130,64 @@ diff --git a/docs/cli.md b/docs/cli.md
 +The verbose output lists every request.
 `;
 
-async function promiseUnits(body: string, diff: string, findings = '') {
+async function promiseUnits(body: string, diff: string, findings = '', notes = '') {
   const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body, baseRef: 'main', headSha: 'abc', checks: [], linkedIssues: [] };
   const exec = async (_argv: string[], o: { onOutput?: (t: string) => void }) => (o.onOutput?.(diff), { ok: true, value: { exitCode: 0 } });
   const api = { conversationId: 'c', snapshot: async () => ({ pr }), env: { exec, readTextFile: async () => ({ ok: true, value: 'x\n' }) } };
-  const content = `## Takeaway\nx\n## Verdict\n${findings ? 'request_changes' : 'approve'}\n## Findings\n${findings}`;
+  const content = `## Takeaway\nx\n## Verdict\n${findings ? 'request_changes' : 'approve'}\n## Findings\n${findings}${notes ? `\n## Notes\n${notes}` : ''}`;
   return buildEvidence(reviewDeclaration, await reviewInputs()(api as never, { content } as never, {} as never)).evidence.promise;
 }
-const promiseOf = (u: { state: Record<string, unknown> }) => u.state.promise as { sentence: string; diff: string };
+const promiseOf = (u: { state: Record<string, unknown> }) => u.state.promise as { sentence: string; diff: string; review: string };
 
 test('promises_handled asks only sentences that name code or a file, each with the hunks containing those names', async () => {
   const body = 'Adds a `--verbose` flag to the CLI.\n\n```console\n$ quack --verbose\n```\n\nSessions now resume where they stopped.\n\n`backoff` now doubles the retry budget.\n\nThe `colour` output also changes in docs/cli.md.\n\n## Tests\n- `npm test` passes on this head.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)';
   const units = await promiseUnits(body, PROMISE_DIFF);
   assert.deepEqual(units.map((u) => [u.id, promiseOf(u).sentence, promiseOf(u).diff.split('\n')[0]]), [
-    ['promise s2', 'Adds a `--verbose` flag to the CLI.', 'src/flag.ts'],
-    ['promise s4', '`backoff` now doubles the retry budget.', 'no hunk contains `backoff`; the diff changes src/flag.ts, docs/cli.md'],
-    ['promise s5', 'The `colour` output also changes in docs/cli.md.', 'docs/cli.md'],
+    ['promise opening.s2', 'Adds a `--verbose` flag to the CLI.', 'src/flag.ts'],
+    ['promise opening.s4', '`backoff` now doubles the retry budget.', 'no hunk contains `backoff`; the diff changes src/flag.ts, docs/cli.md'],
+    ['promise opening.s5', 'The `colour` output also changes in docs/cli.md.', 'no hunk contains `colour`; the diff changes src/flag.ts, docs/cli.md'],
   ], 'a sentence that names nothing, a code block, the Tests part and the footer make no item');
   assert.equal(promiseOf(units[0]).diff.includes('docs/cli.md'), false, 'only the hunks that contain a name are shown');
+  assert.match(promiseOf(units[2]).diff, /\n\ndocs\/cli\.md\n@@ -5/, 'the hunk of the name that is there follows the note on the one that is not');
   const reported = await promiseUnits(body, PROMISE_DIFF, '- blocking (delivery): src/flag.ts:1 — `backoff` is untouched, so nothing doubles\n');
-  assert.deepEqual(reported.map((u) => u.id), ['promise s2', 'promise s5'], 'a promise a blocking finding names was reported, so it is not asked');
+  assert.deepEqual(reported.map((u) => u.id), ['promise opening.s2', 'promise opening.s5'], 'a promise a blocking finding names was reported, so it is not asked');
+  const cited = await promiseUnits(body, PROMISE_DIFF, '- blocking (defect): docs/cli.md:5 — the verbose line is wrong\n');
+  assert.deepEqual(cited.map((u) => u.id), ['promise opening.s2', 'promise opening.s4', 'promise opening.s5'], 'the path a finding cites is not its prose');
+});
+
+test('promises_handled matches a name as a token and shows each name no hunk contains, though another name matches (#2528 review)', async () => {
+  const diff = 'diff --git a/src/retry.ts b/src/retry.ts\n--- a/src/retry.ts\n+++ b/src/retry.ts\n@@ -1 +1,2 @@\n+// the best few anyway, then give them all\n+export const small = (n: number) => n < 3;\n';
+  const units = await promiseUnits('The `small` helper now takes a `retryAll` argument.\n\nIt accepts `any` input.', diff);
+  assert.deepEqual(units.map((u) => promiseOf(u).diff.split('\n')[0]), [
+    'no hunk contains `retryAll`; the diff changes src/retry.ts',
+    'no hunk contains `any`; the diff changes src/retry.ts',
+  ], '`small` matching does not hide `retryAll`, and "anyway" is not `any`');
+  assert.match(promiseOf(units[0]).diff, /export const small/);
+});
+
+test("promises_handled shows the review's text on a sentence's names, so a promise the review walks back can hold (#2450 v1)", async () => {
+  // Prod false flag #2453 retired: the diff dropped the knip.json comment the description promised, and the review said why.
+  const notes = '- `knip.json` is strict JSON, so the head drops the comment the description promised; nothing breaks.\n- CI was green.';
+  const [unit] = await promiseUnits('Documents the rationale in `knip.json` as a JSONC comment.', PROMISE_DIFF, '', notes);
+  assert.match(promiseOf(unit).diff, /^no hunk contains `knip\.json`/);
+  assert.equal(promiseOf(unit).review, '- `knip.json` is strict JSON, so the head drops the comment the description promised; nothing breaks.\n');
+  assert.match(reviewDeclaration.checks.promises_handled.question.instructions, /intentionally not delivered with the `review` explaining why the promise was walked back/);
+  const [silent] = await promiseUnits('Documents the rationale in `knip.json` as a JSONC comment.', PROMISE_DIFF);
+  assert.equal(promiseOf(silent).review, '(the review names none of these)');
+});
+
+test('a case without the diff, findings or review input gives promise items instead of throwing', () => {
+  const decl = { scopes: { promise: reviewDeclaration.scopes.promise }, checks: {} };
+  const units = buildEvidence(decl, { description: 'Adds `retryAll`.', issues: '' }).evidence.promise;
+  assert.deepEqual(units.map((u) => promiseOf(u).diff), ['no hunk contains `retryAll`; the diff changes nothing']);
 });
 
 test('promises_handled asks nothing of a sentence that reports a run, says a named thing is unchanged, or names only paths outside the repo', async () => {
   // Pass-only, each of these went to the judge model in the #2528 replay: Clef said no, since no diff shows them.
-  const body = 'Adds a `--verbose` flag; `colour` is unchanged.\n\nThe `colour` output is unchanged.\n\nSeeding `seedArtifacts` alone works.\n\nTests: `flag.test.ts` covers `--verbose`.\n\nRan against `~/lab/cases.json` and `/tmp/out.json`.\n\n## QA rig\nThe `cli-flags` scenario passes.\n\n## Replays\n### `verbose` on 3 cases\n`verbose` matched base.\n\n## Not in this PR\n`--quiet` waits for #12.';
+  const body = 'Adds a `--verbose` flag; `colour` is unchanged.\n\nThe `colour` output is unchanged.\n\nSeeding `seedArtifacts` alone works.\n\nThe output stays `identical` to v2.\n\nTests: `flag.test.ts` covers `--verbose`.\n\nRan against `~/lab/cases.json` and `/tmp/out.json`.\n\n## QA rig\nThe `cli-flags` scenario passes.\n\n## Replays\n### `verbose` on 3 cases\n`verbose` matched base.\n\n## Not in this PR\n`--quiet` waits for #12.';
   const units = await promiseUnits(body, PROMISE_DIFF);
-  assert.deepEqual(units.map((u) => promiseOf(u).sentence), ['Adds a `--verbose` flag; `colour` is unchanged.'], 'an unchanged clause after the main one keeps the sentence');
+  assert.deepEqual(units.map((u) => promiseOf(u).sentence), ['Adds a `--verbose` flag; `colour` is unchanged.', 'Seeding `seedArtifacts` alone works.', 'The output stays `identical` to v2.'],
+    'an unchanged clause after the main one keeps the sentence, and "alone" or "identical" can be a promise');
 });
 
 const P2422 = JSON.parse(readFileSync(new URL('./fixtures/promises-2422-v1.json', import.meta.url), 'utf8')) as { description: string; diff: string };
@@ -167,11 +198,11 @@ test('#2422 v1: the promised `contract.guaranteeChunks` splitter the diff lacks 
   const miss = units.find((u) => promiseOf(u).sentence.includes('`contract.guaranteeChunks`'));
   assert.ok(miss, 'the sentence makes an item');
   assert.match(promiseOf(miss).diff, /^no hunk contains `contract\.guaranteeChunks`; the diff changes packages\/contracts\/src\/rubric\.ts/);
-  assert.equal(units.length, 12, 'only the sentences that name code or a file outside the replay, ruling and not-covered sections are asked');
+  assert.equal(units.length, 14, 'only the sentences that name code or a file outside the replay, ruling and not-covered sections are asked');
   assert.equal(reviewDeclaration.checks.promises_handled.decisionModel, PASS_ONLY, 'Clef cannot fail it, so it reaches the judge model');
 });
 
-test("every promises_handled unit fits Clef's 8192-token window, however long the sentence and the hunks it names", async () => {
+test("every promises_handled unit fits Clef's 8192-token window, however long the sentence and the hunks and review text that name it", async () => {
   const d = reviewDeclaration.checks.promises_handled;
   const fits = (units: Awaited<ReturnType<typeof promiseUnits>>) => units.every((u) => decisionModelTokens(u, [{ id: 'promises_handled', question: d.question, decisionModel: d.decisionModel }]) <= 8192);
   assert.ok(fits(await promiseUnits(P2422.description, P2422.diff)));
@@ -180,8 +211,10 @@ test("every promises_handled unit fits Clef's 8192-token window, however long th
   const hunk = (n: number, lines: number) => `diff --git a/src/w${n}.ts b/src/w${n}.ts\n--- a/src/w${n}.ts\n+++ b/src/w${n}.ts\n@@ -1 +1,${lines} @@\n${line.repeat(lines)}`;
   const diff = [hunk(0, 2000), ...Array.from({ length: 40 }, (_, n) => hunk(n + 1, 30))].join('');
   const long = `The \`widget\` ${'"keeps" every "quoted" word '.repeat(200)}stays.`;
-  const units = await promiseUnits(`Adds a \`widget\`.\n\n${long}`, diff);
+  const notes = Array.from({ length: 40 }, (_, n) => `- the \`widget\` "${n}" ${'is \\"quoted\\" '.repeat(20)}`).join('\n');
+  const units = await promiseUnits(`Adds a \`widget\`.\n\n${long}`, diff, '', notes);
   assert.equal(units.length, 2);
+  assert.match(promiseOf(units[1]).sentence, /\n… \(cut at 1500 characters\)$/, 'a cut sentence says so');
   assert.ok(fits(units));
   assert.ok(fits(await promiseUnits('Adds a `widget`.', hunk(0, 2000))), 'a single hunk over the budget is cut');
 });

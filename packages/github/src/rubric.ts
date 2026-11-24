@@ -32,7 +32,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 16,
+  version: 17,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -71,11 +71,12 @@ const findings = (where?: 'truthy' | 'falsy'): Scope => ({
 });
 
 // A section that reports what was run, measured or left out ("Tests", "QA rig", "Replays", "Not in this PR") promises
-// nothing, nor does a sentence that opens that way or whose main clause says a thing is unchanged; a ### goes with its ##.
+// nothing, nor does a sentence that opens that way or whose main clause says a named thing is unchanged; a ### goes with its ##.
 const REPORTING = /^\**(?:[\w-]+\s+){0,2}?(?:verif\w*|validat\w*|tests?|testing|checks?|checked|checklist|evidence|commands?|proof|qa|replays?|measured|numbers|rulings?)\b|^\**not\b/i;
-const UNCHANGED = /\b(?:unchanged|untouched|not changed|identical|alone)\b/i;
-const promising = (section: string) => !REPORTING.test(/^#{2,3} (.+)/.exec(section)?.[1] ?? '');
-const promiseParts = (inputs: Inputs, o: SplitDecl) => [o.from].flat().flatMap((name) => inputs[name].split(/^(?=## )/m)).filter(promising)
+const UNCHANGED = /[\w.`-]{2,60}\s+(?:is|are|was|were|stays|remains)\s+(?:\w+\s+){0,2}?(?:unchanged|untouched)\b/i;
+const headingOf = (part: string) => /^#{2,3} (.+)/.exec(part)?.[1].trim() ?? 'opening';
+const promising = (part: string) => !REPORTING.test(/^#{2,3} (.+)/.exec(part)?.[1] ?? '');
+const promiseParts = (inputs: Inputs) => ['description', 'issues'].flatMap((name) => (inputs[name] ?? '').split(/^(?=## )/m)).filter(promising)
   .flatMap((s) => s.split(/^(?=### )/m)).filter(promising);
 
 // A part's sentences outside code blocks, tables, headings and the generated-by footer.
@@ -88,43 +89,59 @@ const sentencesOf = (part: string) => part.replace(FENCED, '').split('\n').map((
 const PATH = /(?:[\w.@-]+\/)+[\w@-]+\.[a-z][a-z0-9]{1,4}\b|\b[\w-]+\.(?:ts|tsx|js|mjs|json|md|ya?ml|go|py|sh|sql|css|html)\b/g;
 // A path outside the repo (a home or /tmp file, a URL) is no name: no diff shows it.
 const namesOf = (s: string) => [...new Set([
-  ...[...s.matchAll(/`([^`\s]{2,80})`/g)].map((m) => m[1].replace(/(?:\(\)|:\d+(?:-\d+)?)$/, '')),
+  ...[...s.matchAll(/`([^`\s]{2,80})`/g)].map((m) => m[1].replace(/(?:\((?:\.\.\.)?\)|:\d+(?:-\d+)?)$/, '').replace(/^\.\//, '')),
   ...(s.replace(/`[^`]*`|https?:\/\/\S+/g, ' ').match(PATH) ?? []),
 ])].filter((n) => !/^(?:~|\/tmp\/|https?:)/.test(n));
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A name is a token: `any` does not match "anyway", and `rubric.ts` matches packages/github/src/rubric.ts.
+const tokenOf = (name: string) => new RegExp(`(?<![\\w$])${escape(name)}(?![\\w$])`);
 
 type Hunk = { file: string; text: string };
 const hunksOf = (diff: string): Hunk[] => diff.split(/^(?=diff --git )/m).flatMap((f) => {
   const file = /^diff --git a\/\S+ b\/(\S+)/.exec(f)?.[1];
-  return file ? f.split(/^(?=@@ )/m).slice(1).map((text) => ({ file, text })) : [];
+  return file ? f.split(/^(?=@@ )/m).slice(1).map((text) => ({ file, text: `${file}\n${text}` })) : [];
 });
+// The review's paragraphs and list items, each with its continuation lines.
+const blocksOf = (review: string) => review.split(/\n\s*\n|\n(?=\s*(?:[-*]|\d+\.) |#)/).map((b) => `${b.trim()}\n`);
 
-// In JSON characters, which Clef's tokenizer reads at about 3 a token: with the sentence (cut to 1.5k) and the question,
-// an item stays under 8192 tokens.
-const HUNK_BUDGET = 19_000;
-// The hunks that contain one of the names, in diff order, as many whole ones as fit; one too big alone is cut.
-function hunkText(names: string[], hunks: Hunk[]): string {
-  const found = hunks.filter((h) => names.some((n) => h.text.includes(n) || h.file.endsWith(n.replace(/^\.?\//, ''))));
+// In JSON characters, which Clef's tokenizer reads at about 3 a token: with the sentence (cut to 1.5k), the missing names
+// and the question, an item stays under 8192 tokens.
+const HUNK_BUDGET = 15_000;
+const REVIEW_BUDGET = 3_000;
+const cut = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)}\n… (cut at ${max} characters)` : s);
+// As many whole pieces as fit, in order; when the first is too big alone it is cut.
+function fit(pieces: string[], budget: number): string {
   let text = '';
-  for (const h of found) {
-    const next = `${text}${h.file}\n${h.text}`;
-    if (JSON.stringify(next).length <= HUNK_BUDGET) text = next;
-  }
-  return text || (found.length ? `${found[0].file}\n${found[0].text}`.slice(0, HUNK_BUDGET / 2) : '');
+  for (const p of pieces) if (JSON.stringify(text + p).length <= budget) text += p;
+  return text || (pieces.length ? cut(pieces[0], budget / 2) : '');
 }
 
-/** One item per promising description sentence that names code or a file, with the hunks containing those names. A sentence
- *  that names nothing makes no item, nor does one whose names a blocking finding repeats, since the review reported it. */
-function promiseItems(inputs: Inputs, o: SplitDecl): Chunk[] {
-  const hunks = hunksOf(inputs.diff);
-  const blocking = (JSON.parse(inputs.findings) as Array<{ blocking: boolean; text: string }>).filter((f) => f.blocking).map((f) => f.text).join('\n');
-  const files = [...new Set(hunks.map((h) => h.file))].join(', ').slice(0, 1000);
-  return promiseParts(inputs, o).flatMap(sentencesOf).flatMap((sentence, n) => {
+type Shown = { hunks: Hunk[]; blocks: string[]; files: string; blocking: string };
+// The hunks and review text that hold a sentence's names, and which names no hunk holds.
+function promiseOf(sentence: string, names: string[], s: Shown) {
+  const tokens = names.map(tokenOf);
+  const missing = names.filter((_, i) => !s.hunks.some((h) => tokens[i].test(h.text)));
+  const shown = fit(s.hunks.filter((h) => tokens.some((t) => t.test(h.text))).map((h) => h.text), HUNK_BUDGET);
+  const note = missing.length ? `no hunk contains ${missing.map((x) => `\`${x}\``).join(', ')}; the diff changes ${s.files || 'nothing'}` : '';
+  const review = fit(s.blocks.filter((b) => tokens.some((t) => t.test(b))), REVIEW_BUDGET);
+  return { sentence: cut(sentence, 1500), diff: [note, shown].filter(Boolean).join('\n\n'), review: review || '(the review names none of these)' };
+}
+
+// A finding's text after its `label (anchor): path:line ` prefix, so a name counts as reported only in the finding's prose.
+const blockingProse = (findings?: string) => (findings ? (JSON.parse(findings) as Array<{ blocking: boolean; text: string }>) : [])
+  .filter((f) => f.blocking).map((f) => f.text.replace(/^[\w-]+(?: \([^)]*\))?: \S+ /, '')).join('\n');
+
+/** One item per promising description sentence that names code or a file, with the hunks and review text holding those names.
+ *  A sentence that names nothing makes no item, nor does one whose names a blocking finding repeats, since the review reported it. */
+function promiseItems(inputs: Inputs): Chunk[] {
+  const hunks = hunksOf(inputs.diff ?? '');
+  const s: Shown = { hunks, blocks: blocksOf(inputs.review ?? ''), files: [...new Set(hunks.map((h) => h.file))].join(', ').slice(0, 1000), blocking: blockingProse(inputs.findings) };
+  return promiseParts(inputs).flatMap((part) => sentencesOf(part).flatMap((sentence, n) => {
     if (REPORTING.test(sentence) || UNCHANGED.test(sentence.split(/;|, so /)[0])) return [];
     const names = namesOf(sentence);
-    if (!names.length || names.some((x) => blocking.includes(x))) return [];
-    const diff = hunkText(names, hunks) || `no hunk contains ${names.map((x) => `\`${x}\``).join(' or ')}; the diff changes ${files || 'nothing'}`;
-    return [{ id: `s${n + 1}`, text: JSON.stringify({ sentence: sentence.slice(0, 1500), diff }) }];
-  });
+    if (!names.length || names.some((x) => tokenOf(x).test(s.blocking))) return [];
+    return [{ id: `${headingOf(part)}.s${n + 1}`, text: JSON.stringify(promiseOf(sentence, names, s)) }];
+  }));
 }
 registerSplitter('github.promises', promiseItems);
 
@@ -144,7 +161,6 @@ const SOURCES = [/[\w./-]+\.[A-Za-z]{1,5}:\d+/, /\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]
 const ABSENCE = /\b(?:no|not|nothing|none|nowhere|zero)\b\W+(?:\w+\W+){0,3}?(?:referenc\w*|import\w*|us(?:e|es|ed|age)|call(?:s|ed|ers?)?|remain\w*|left)\b|\b(?:referenc\w*|import\w*|used|called)\s+nowhere\b/i;
 const SEARCH_TOOL = /\b(?:grep|rg|ag|ack|find|search)\b/;
 const SEARCH_VERB = /\b(?:searched|grepped)\b/i;
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** How many sources a Verified item names, given the names of the PR's CI checks; under a share by `either` an item that names one holds without a model. */
 export function namedSources(text: string, checks: string[] = []): number {
@@ -169,12 +185,12 @@ export const reviewDeclaration: Declaration = {
     nonblocking: findings('falsy'),
     citation: { split: { name: 'github.citations', from: 'citations' }, piece: 'excerpt' },
     // promises_handled is pass-only: a sentence whose names no hunk contains is the rare escalation the judge model explains.
-    promise: { split: { name: 'github.promises', from: ['description', 'issues'] }, piece: 'promise' },
+    promise: { split: { name: 'github.promises', from: ['description', 'issues', 'diff', 'findings', 'review'] }, piece: 'promise' },
   },
   checks: {
     // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
     // Promises and Verified items earn the share that holds: under `all`, one noisy answer among many items flips the check.
-    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Does the `diff` deliver the behaviour this sentence of the pull request description says the change has? A sentence that states no behaviour of the change (a motivation, a measurement, a check that was run, or code it only mentions) holds, as does one that defers the behaviour to a linked follow-up.') },
+    promises_handled: { scope: 'promise', aggregate: SHARE, decisionModel: PASS_ONLY, question: yes('Is the behaviour this sentence of the pull request description says the change has either present in the `diff`, deferred to a linked follow-up, reported in the `review` as a blocking finding, or intentionally not delivered with the `review` explaining why the promise was walked back? A sentence that states no behaviour of the change (a motivation, a measurement, a check that was run, or code it only mentions) holds.') },
     // A finding holds when every line it cites shows what it says there; a contradiction is the plainest way it does not.
     matches_cited_code: { scope: 'citation', aggregate: { name: 'grouped', groupBy: 'group', inner: 'all', outer: 'share' }, question: yes('Does this excerpt show what the finding says about the code at its `cite`, without contradicting the finding?') },
     // An item that names a source holds in code, so Clef is asked only of items that name none.
