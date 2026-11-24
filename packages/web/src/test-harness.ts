@@ -111,6 +111,9 @@ export class FakeEventSource {
   }
 }
 
+/** The EventSources opened on one URL, oldest first: the page also holds the Sessions API change stream. */
+export const streamsOf = (url: string) => FakeEventSource.all.filter((s) => s.url === url);
+
 /** An IntersectionObserver a test drives: an observed element is on screen unless `offScreen` says otherwise; `scroll()` reports each one again. */
 export class FakeIntersectionObserver {
   static all: FakeIntersectionObserver[] = [];

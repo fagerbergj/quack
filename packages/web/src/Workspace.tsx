@@ -1,11 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { listSessions } from './api.ts';
+import { listSessions, type Version } from './api.ts';
 import { Home } from './Home.tsx';
 import { sessionTitle } from './kinds.ts';
 import { multiScope, rowOf, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
-const REFRESH_MS = 15_000;
+// Relative times ("3m") move on without a write; this redraws them and reads nothing.
+const TICK_MS = 60_000;
+// A non-200 answer ends an EventSource for good, so the page reopens it after this.
+const REOPEN_MS = 30_000;
+const WATCH = './sessions:watch';
 
 // The row carries its pending-ask count and its last run, so the tick is this one list.
 export async function loadRows(q?: string): Promise<Row[]> {
@@ -16,22 +20,47 @@ export async function loadRows(q?: string): Promise<Row[]> {
   return sessions.map((s) => rowOf(s, multiRepo));
 }
 
+/** The session list, re-read on mount, on every (re)open of the Sessions API change stream and on each change it reports; `served` is the build its hello names. */
 export function useWorkspaceData() {
   const [rows, setRows] = useState<Row[]>();
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [served, setServed] = useState<Version>();
   const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
-    const refresh = () => loadRows().then((r) => live && (setRows(r), setNow(Date.now()), setError('')), (e: Error) => live && setError(e.message));
+    let reading = false, again = false;
+    // One read at a time; changes during it ask for one more, so a burst never stacks reads or lands them out of order.
+    const refresh = async () => {
+      if (reading) return void (again = true);
+      reading = true;
+      do {
+        again = false;
+        await loadRows().then((r) => live && (setRows(r), setNow(Date.now()), setError('')), (e: Error) => live && setError(e.message));
+      } while (again && live);
+      reading = false;
+    };
+    let es: EventSource | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const open = () => {
+      es = new EventSource(WATCH);
+      // Opened means subscribed, so a read now misses no write.
+      es.onopen = () => void refresh();
+      es.addEventListener('changed', () => void refresh());
+      es.addEventListener('hello', (m) => setServed(JSON.parse(m.data) as Version));
+      es.onerror = () => { if (es?.readyState === EventSource.CLOSED) retry = setTimeout(open, REOPEN_MS); };
+    };
     void refresh();
-    const timer = setInterval(refresh, REFRESH_MS);
+    open();
+    const clock = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => {
       live = false;
-      clearInterval(timer);
+      es?.close();
+      clearTimeout(retry);
+      clearInterval(clock);
     };
   }, [tick]);
-  return { rows, error, now, reload: () => setTick((t) => t + 1) };
+  return { rows, error, now, served, reload: () => setTick((t) => t + 1) };
 }
 
 export type WorkspaceData = ReturnType<typeof useWorkspaceData>;

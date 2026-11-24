@@ -155,5 +155,3 @@ let version: Promise<Version | null> | undefined;
 // One request per page load; a failure resolves to null so the UI shows nothing.
 export const getVersion = () => (version ??= fetch('version').then((r) => json<Version>(r)).catch(() => null));
 export const forgetVersion = () => { version = undefined; };
-// The build the server runs now, past any cache; getVersion stays the build this page loaded with.
-export const servedVersion = () => fetch('version', { cache: 'no-store' }).then((r) => json<Version>(r)).catch(() => null);

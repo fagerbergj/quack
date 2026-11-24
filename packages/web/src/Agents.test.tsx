@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { agentGroups, commonModel } from './Agents.tsx';
 import { App } from './App.tsx';
 import { lineDiff } from './lineDiff.ts';
+import { FakeEventSource } from './test-harness.ts';
 
 const detail = (version: number, over: object = {}) => ({
   name: 'reviewer', version, status: 'draft',
@@ -28,6 +29,7 @@ beforeEach(() => {
   promoted = [];
   localStorage.clear();
   vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('EventSource', FakeEventSource);
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
 });
 afterEach(() => vi.unstubAllGlobals());
