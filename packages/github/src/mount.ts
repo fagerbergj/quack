@@ -15,7 +15,7 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 /** The GitHub app; its webhook is /apps/github/webhook, which GitHub signs instead of presenting a credential. */
-export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetch, env }: AppContext): App {
+export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetch, env, subscribe }: AppContext): App {
   const { implementerAgent, issueBase } = checkedSettings<GithubSettings>('github', settings, settingsProblems) ?? {};
   const agent = 'reviewer';
   const dataDir = env.QUACK_DATA_DIR ?? '.';
@@ -32,6 +32,7 @@ export function mountGithub({ settings, dbPath, deployment, distributorUrl, fetc
     issueBase,
     statesFile: join(dataDir, 'github-pulls.json'),
     waiting,
+    subscribe,
   });
   let stopRedelivery = () => {};
   return {

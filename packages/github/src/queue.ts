@@ -1,4 +1,6 @@
-const POLL_MS = 15_000;
+// Run ends retry the work at once; this sweep only covers a missed event, such as a distributor outage.
+const POLL_MS = 5 * 60_000;
+type Timers = { setInterval: (fn: () => void, ms: number) => { unref?(): unknown }; clearInterval: (t: any) => void };
 
 /** Where waiting work persists, one JSON item per key; adapters: sqliteWaiting, postgresWaiting. */
 export type WaitingStore = {
@@ -11,13 +13,14 @@ export type WaitingStore = {
 };
 
 /** Work waiting for a busy session, one item per key, retried until `attempt` says it is done. */
-export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item: T) => Promise<boolean>, pollMs = POLL_MS) {
+export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item: T) => Promise<boolean>, pollMs = POLL_MS, timers: Timers = globalThis) {
   const trying = new Set<string>();
-  let timer: NodeJS.Timeout | undefined;
-  const stop = () => { clearInterval(timer); timer = undefined; };
+  let timer: ReturnType<Timers['setInterval']> | undefined;
+  const stop = () => { timers.clearInterval(timer); timer = undefined; };
 
-  async function tick() {
+  async function tick(session?: string) {
     for (const { key, item } of await store.list()) {
+      if (session !== undefined && !key.startsWith(`${session} `)) continue;
       if (trying.has(key)) continue;
       trying.add(key);
       try {
@@ -30,7 +33,7 @@ export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item
     }
   }
   // An empty sweep is one read; the timer stays armed so work added mid-sweep is never stranded.
-  const resume = () => { timer ??= setInterval(() => void tick().catch((err) => console.warn(`github: queue sweep failed: ${String(err)}`)), pollMs).unref(); };
+  const resume = () => { timer ??= timers.setInterval(() => void tick().catch((err) => console.warn(`github: queue sweep failed: ${String(err)}`)), pollMs); timer.unref?.(); };
 
   return {
     /** Returns the item it replaced, if any. */
@@ -42,6 +45,8 @@ export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item
     resume,
     stop,
     /** One retry pass now, the same one the timer runs. */
-    sweep: tick,
+    sweep: () => tick(),
+    /** A retry pass over one session's waiting work; each key holds only its newest item, so pushes made while busy are one. */
+    retry: (session: string) => tick(session),
   };
 }
