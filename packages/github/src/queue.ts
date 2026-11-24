@@ -1,4 +1,6 @@
-const POLL_MS = 15_000;
+// Run ends retry the work at once; this sweep only covers a missed event, such as a distributor outage.
+const POLL_MS = 5 * 60_000;
+type Timers = { setInterval: (fn: () => void, ms: number) => { unref?(): unknown }; clearInterval: (t: any) => void };
 
 /** Where waiting work persists, one JSON item per key; adapters: sqliteWaiting, postgresWaiting. */
 export type WaitingStore = {
@@ -11,26 +13,40 @@ export type WaitingStore = {
 };
 
 /** Work waiting for a busy session, one item per key, retried until `attempt` says it is done. */
-export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item: T) => Promise<boolean>, pollMs = POLL_MS) {
+export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item: T) => Promise<boolean>, pollMs = POLL_MS, timers: Timers = globalThis) {
   const trying = new Set<string>();
-  let timer: NodeJS.Timeout | undefined;
-  const stop = () => { clearInterval(timer); timer = undefined; };
+  let timer: ReturnType<Timers['setInterval']> | undefined;
+  const stop = () => { timers.clearInterval(timer); timer = undefined; };
 
-  async function tick() {
-    for (const { key, item } of await store.list()) {
-      if (trying.has(key)) continue;
-      trying.add(key);
-      try {
-        if (await attempt(key, JSON.parse(item) as T)) await store.removeIf(key, item);
-      } catch (err) {
-        console.warn(`github: queued start for ${key} failed, will retry: ${String(err)}`);
-      } finally {
-        trying.delete(key);
+  // A run end that finds the key mid-attempt is remembered, and the attempt goes once more when it fails; any number collapse into one.
+  const again = new Set<string>();
+  async function work(key: string, stored: string) {
+    trying.add(key);
+    try {
+      for (let item = stored; ; ) {
+        again.delete(key);
+        if (await attempt(key, JSON.parse(item) as T)) return await store.removeIf(key, item);
+        const next = again.has(key) ? (await store.list()).find((e) => e.key === key) : undefined;
+        if (!next) return;
+        item = next.item;
       }
+    } catch (err) {
+      console.warn(`github: queued start for ${key} failed, will retry: ${String(err)}`);
+    } finally {
+      trying.delete(key);
+      again.delete(key);
+    }
+  }
+
+  async function tick(session?: string) {
+    for (const { key, item } of await store.list()) {
+      if (session !== undefined && !key.startsWith(`${session} `)) continue;
+      if (trying.has(key)) session !== undefined && again.add(key);
+      else await work(key, item);
     }
   }
   // An empty sweep is one read; the timer stays armed so work added mid-sweep is never stranded.
-  const resume = () => { timer ??= setInterval(() => void tick().catch((err) => console.warn(`github: queue sweep failed: ${String(err)}`)), pollMs).unref(); };
+  const resume = () => { timer ??= timers.setInterval(() => void tick().catch((err) => console.warn(`github: queue sweep failed: ${String(err)}`)), pollMs); timer.unref?.(); };
 
   return {
     /** Returns the item it replaced, if any. */
@@ -42,6 +58,8 @@ export function waitingQueue<T>(store: WaitingStore, attempt: (key: string, item
     resume,
     stop,
     /** One retry pass now, the same one the timer runs. */
-    sweep: tick,
+    sweep: () => tick(),
+    /** A retry pass over one session's waiting work; each key holds only its newest item, so pushes made while busy are one. */
+    retry: (session: string) => tick(session),
   };
 }
