@@ -1,9 +1,11 @@
-import type { Json, SleeperClient } from '../client.ts';
+import { NotFound, type Json, type SleeperClient } from '../client.ts';
+import { contextLines, fetchRecent, seasonPpg } from '../context.ts';
 import { ownerTeam, POSITIONS, ptsKey, UNAVAILABLE, type LineupInput } from '../lineup/facts.ts';
 import { fits, lineupSlots } from '../lineup/slots.ts';
 import { byeWeeks, COVER, teamNeeds, wplayer, type Bye, type WPlayer } from '../waivers/facts.ts';
 
-export type TPlayer = WPlayer & { role: 'starter' | 'bench' | 'ir' };
+/** `ppg` is season points per game in the league's scoring, absent before he has played. */
+export type TPlayer = WPlayer & { role: 'starter' | 'bench' | 'ir'; ppg?: number };
 export type Stance = 'contender' | 'rebuilder';
 /** One team as the trade jobs see it: standing, what it lacks and what it can spare. `surplus` is player ids. */
 export type Side = {
@@ -29,6 +31,8 @@ export type TradeFacts = {
   mine: Side;
   /** Every other team. */
   partners: Side[];
+  /** Per player the prompt shows (your roster and partner surplus), one line of recent form, usage and team; a trade outlasts this week's matchup. */
+  context: Record<string, string>;
 };
 
 export type FinderInput = LineupInput;
@@ -56,7 +60,7 @@ function standings(rosters: Json[]): Map<number, number> {
   return new Map(order.map((r, i) => [r.roster_id, i + 1]));
 }
 
-type Ctx = { users: Json[]; slots: string[]; positions: string[]; week: number; ranks: Map<number, number>; playoffTeams: number; dump: Json; wp: (id: string) => WPlayer };
+type Ctx = { users: Json[]; slots: string[]; positions: string[]; week: number; ranks: Map<number, number>; playoffTeams: number; dump: Json; wp: (id: string) => WPlayer & { ppg?: number } };
 
 function sideOf(r: Json, c: Ctx): Side {
   const user = c.users.find((u) => u.user_id === r.owner_id);
@@ -83,15 +87,19 @@ export async function buildTradeFacts(deps: TradeDeps, snap: Json, input: Finder
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
-  const [dump, proj, schedule] = await Promise.all([client.players(), client.projections(league.season, input.week), client.schedule(league.season)]);
+  const [dump, proj, schedule, season, recent] = await Promise.all([
+    client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.seasonStats(league.season).catch((e) => { if (e instanceof NotFound) return {}; throw e; }), fetchRecent(client, league.season, input.week),
+  ]);
   const byes = byeWeeks(schedule);
   const key = ptsKey(league.scoring_settings?.rec);
   const slots = lineupSlots(league.roster_positions);
   const playoffTeams = league.settings?.playoff_teams ?? Math.ceil(rosters.length / 2);
-  const ctx: Ctx = { users, slots, positions: POSITIONS.filter((p) => slots.some((s) => fits(s, p))), week: input.week, ranks: standings(rosters), playoffTeams, dump, wp: (id) => wplayer(id, dump, proj, key, byes) };
+  const ctx: Ctx = { users, slots, positions: POSITIONS.filter((p) => slots.some((s) => fits(s, p))), week: input.week, ranks: standings(rosters), playoffTeams, dump, wp: (id) => ({ ...wplayer(id, dump, proj, key, byes), ...seasonPpg(season, id, key) }) };
   const sides: Side[] = rosters.map((r: Json) => sideOf(r, ctx));
   const mine = sides.find((s) => s.rosterId === roster.roster_id)!;
-  return { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine, partners: sides.filter((s) => s !== mine) };
+  const partners = sides.filter((s) => s !== mine);
+  const context = contextLines([...Object.keys(mine.players), ...partners.flatMap((p) => p.surplus)], { dump, schedule, key, week: input.week, recent, weekly: false });
+  return { league: input.league, week: input.week, team: user.metadata?.team_name ?? user.display_name, teams: rosters.length, playoffTeams, mine, partners, context };
 }
 
 /** The players a finder deal can name: your active tradeable players and every partner's surplus. */

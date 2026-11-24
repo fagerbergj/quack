@@ -1,4 +1,5 @@
 import { NotFound, type Json, type SleeperClient } from '../client.ts';
+import { contextLines, faDepth, fetchRecent, starterBar } from '../context.ts';
 import { CLOSE_GAP, ownerTeam, POSITIONS, ptsKey, round2, UNAVAILABLE, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import { TRENDING_LIMIT } from '../trends/facts.ts';
 import { newsFor, type Searchable } from '../lineup/news.ts';
@@ -39,6 +40,10 @@ export type WaiverFacts = {
   widely: string[];
   roster: Record<string, Mine>;
   news: Record<string, NewsItem[]>;
+  /** Per free agent and roster player shown, one line of recent form, usage and matchup (`contextLines`). */
+  context: Record<string, string>;
+  /** Per position, free agents reaching your weakest starter's worth there, e.g. "K: 19 FA ≥ 7". */
+  depth: string[];
 };
 
 export type WaiverDeps = { client: SleeperClient; news?: (p: Searchable, at: number) => Promise<NewsItem[]> };
@@ -123,6 +128,8 @@ export async function buildWaiverFacts(deps: WaiverDeps, snap: Json, input: Line
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
+  // Never rejects, so it may run beside the fetches below.
+  const recent = fetchRecent(client, league.season, input.week);
   const [dump, proj, schedule, adds, research, stats] = await Promise.all([
     client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.trending('add', 24, TRENDING_LIMIT), client.research(league.season, input.week), client.seasonStats(league.season).catch((e) => { if (e instanceof NotFound) return {}; throw e; }),
   ]);
@@ -151,7 +158,11 @@ export async function buildWaiverFacts(deps: WaiverDeps, snap: Json, input: Line
     ...freeAgents(dump, taken, positions, wp, new Map(adds.map((t: Json) => [t.player_id, t.count])), research, wideOwned(rosters.length)),
     roster: mine,
     news: {},
+    context: {},
+    depth: [],
   };
+  facts.context = contextLines([...Object.values(facts.buckets).flat(), ...Object.keys(mine)], { dump, schedule, key, week: input.week, recent: await recent });
+  facts.depth = faDepth(Object.values(facts.free), starterBar(Object.values(mine).filter((p) => p.role === 'starter'), worth), worth);
   facts.news = await newsFor(deps.news, closeCalls(facts), at);
   return facts;
 }

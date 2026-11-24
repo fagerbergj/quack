@@ -5,9 +5,10 @@ import { newsLink, subjectNews } from './news.ts';
 import type { SleeperClient } from '../client.ts';
 import { liveLeague } from '../snapshot.ts';
 import { buildCard, type Decision } from './card.ts';
-import { buildFacts, type Facts, type FactsDeps, type PlayerFact } from './facts.ts';
+import { buildFacts, closeCalls, type Facts, type FactsDeps, type PlayerFact } from './facts.ts';
 import { lineupDeclaration, lineupInputs, lineupRubric } from './rubric.ts';
 import { cardSteps } from '../job.ts';
+import { CONTEXT_LEGEND, contextTail } from '../context.ts';
 
 export const LINEUP_WORKFLOW = 'sleeper.lineup';
 
@@ -28,14 +29,18 @@ const line = (p: PlayerFact) => {
   return `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.inj ? `, ${p.inj}` : ''}, ${g}`;
 };
 
-function factsPrompt(f: Facts): string {
+export function factsPrompt(f: Facts): string {
   const now = (s: string) => (f.current[s] ? line(f.players[f.current[s]!]) : 'empty');
   const open = f.open.map((s) => `${s} (now ${now(s)})\n${f.candidates[s].map((id) => `  - ${line(f.players[id])}${(f.news[id] ?? []).map((n) => ` ${newsLink(n)}`).join('')}`).join('\n')}`);
   const locked = f.slots.filter((s) => !f.open.includes(s)).map((s) => `${s}: ${now(s)}`);
-  const base = f.baseline.map((b) => `${b.slot}: ${b.name} ${b.proj}`);
+  const base = f.baseline.map((b) => `${b.slot}: ${b.name} ${b.proj}${contextTail(f.context, b.id)}`);
+  const starting = new Set(f.baseline.map((b) => b.id));
+  const bench = closeCalls(f).filter((p) => !starting.has(p.id) && f.context?.[p.id]).map((p) => `${p.name} ${p.proj}${contextTail(f.context, p.id)}`);
   return [
     `Week ${f.week}, ${f.team} (${f.record}) against ${f.opponent ?? 'a bye'}.`,
+    ...(f.context && Object.keys(f.context).length ? [CONTEXT_LEGEND] : []),
     `Best lineup by projection (the baseline; Out, IR, Doubtful and Sus excluded):\n${base.join('\n')}`,
+    ...(bench.length ? [`Context for the close-call bench players:\n${bench.join('\n')}`] : []),
     `Locked slots, final this week:\n${locked.join('\n') || 'none'}`,
     `Open slots with the players who can fill them:\n${open.join('\n')}`,
     ...(Object.values(f.news).some((n) => n.length) ? ['Linked news is dated. A newer report from a credible source (the team, the league or a named beat reporter) beats the Sleeper designation, which lags; when they conflict, say which you followed.'] : []),

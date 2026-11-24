@@ -1,4 +1,5 @@
 import type { Json, SleeperClient } from '../client.ts';
+import { contextLines, fetchRecent } from '../context.ts';
 import { kickoffsByGame, voidGame } from '../games.ts';
 import { newsFor, type Searchable } from './news.ts';
 import { bestLineup, fits, lineupSlots, numberSlots } from './slots.ts';
@@ -28,6 +29,8 @@ export type Facts = {
   baseline: Array<{ slot: string; id: string; name: string; pos: string; proj: number }>;
   oppProj: number | null;
   news: Record<string, NewsItem[]>;
+  /** Per player id, one line of recent form, usage and matchup (`contextLines`). */
+  context: Record<string, string>;
 };
 
 export type LineupInput = { league: string; week: number; owner: string };
@@ -96,8 +99,8 @@ export async function buildFacts(deps: FactsDeps, snap: Json, input: LineupInput
   const { league, users, rosters } = snap.data;
   const { user, roster } = ownerTeam(snap, input.owner);
   const { client } = deps;
-  const [matchups, dump, proj, schedule, scores] = await Promise.all([
-    client.matchups(input.league, input.week), client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.scores(league.season, input.week),
+  const [matchups, dump, proj, schedule, scores, recent] = await Promise.all([
+    client.matchups(input.league, input.week), client.players(), client.projections(league.season, input.week), client.schedule(league.season), client.scores(league.season, input.week), fetchRecent(client, league.season, input.week),
   ]);
   const mine = matchups.find((m: Json) => m.roster_id === roster.roster_id);
   if (!mine) throw new Error(`sleeper: no week ${input.week} matchup for roster ${roster.roster_id}`);
@@ -129,6 +132,7 @@ export async function buildFacts(deps: FactsDeps, snap: Json, input: LineupInput
     baseline,
     oppProj: theirs ? round2((theirs.starters as string[]).reduce((n, id) => n + (proj[id]?.[key] ?? 0), 0)) : null,
     news: {},
+    context: contextLines(ids, { dump, schedule, key, week: input.week, recent }),
   };
   facts.news = await newsFor(deps.news, closeCalls(facts), at);
   return facts;

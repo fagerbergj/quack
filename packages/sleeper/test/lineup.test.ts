@@ -510,7 +510,7 @@ test('a row\'s news check sees the reports of every player its why names, each o
     league: 'L1', week: 9, team: 't', record: '', opponent: null, slots: ['RB2', 'FLEX'], current: { RB2: hubbard.id, FLEX: irving.id }, open: ['RB2', 'FLEX'],
     players: { [hubbard.id]: hubbard, [irving.id]: irving }, candidates: { RB2: [irving.id, hubbard.id], FLEX: [irving.id, hubbard.id] },
     baseline: [{ slot: 'RB2', id: hubbard.id, name: hubbard.name, pos: 'RB', proj: 16.8 }, { slot: 'FLEX', id: irving.id, name: irving.name, pos: 'RB', proj: 17.56 }],
-    oppProj: null, news: { [hubbard.id]: [volume, trade], [irving.id]: [ap] },
+    oppProj: null, news: { [hubbard.id]: [volume, trade], [irving.id]: [ap] }, context: {},
   };
   const card = buildCard(f, { slots: [
     { slot: 'RB2', playerId: hubbard.id, why: "16.8 proj, best remaining RB/WR/TE after dedicated slots filled; 'bankable volume' (Yahoo); no designation; vs DEN." },
