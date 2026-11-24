@@ -308,13 +308,22 @@ test('every model check is declared; a pitfall is asked as the defect and costs 
   for (const k of checks.filter((x) => !x.code)) {
     const d = reviewDeclaration.checks[k.id];
     const pitfall = typeof k.weight === 'number' && k.weight < 0;
-    // A Verified item is asked as the defect too, so a line that only lists what was read holds.
-    const asDefect = pitfall || k.id === 'verified_names_evidence';
+    // A Verified item is asked as the defect too, so a line that only lists what was read holds. A blocking finding is asked
+    // the plain anchor question: its defect form left Clef unsure on twice as many prod findings.
+    const asDefect = (pitfall && k.id !== 'blocks_without_consequence') || k.id === 'verified_names_evidence';
     assert.deepEqual([d.question.type === 'bool' && d.question.pass, pitfall && d.aggregate.name], [asDefect ? ['no'] : undefined, pitfall ? 'share' : false], k.id);
   }
   assert.ok(checks.some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
   assert.equal(possible, 11);
+});
+
+test('blocks_without_consequence names every anchor the reviewer prompt lets a blocking finding take', () => {
+  const prompt = readFileSync(new URL('../../../agents/reviewer/prompt.md', import.meta.url), 'utf8');
+  const anchors = [.../names its anchor in parentheses: (.*)/.exec(prompt)![1].matchAll(/`(\w+)`/g)].map((m) => m[1]);
+  assert.deepEqual(anchors, ['defect', 'delivery', 'security', 'design', 'scope', 'tests']);
+  const asked = reviewDeclaration.checks.blocks_without_consequence.question.instructions;
+  for (const a of anchors) assert.match(asked, new RegExp(`\\b${a}\\b`), a);
 });
 
 test('an anchor without its space still parses, a cited root file counts, and an unreadable finding line is a problem', () => {

@@ -32,7 +32,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // model check is asked. `miss: 4` on matches_cited_code charges any missed citation the -4 that v13 charged only a contradicted one. 0.72 is the lowest threshold that gives no review shape more slack than 0.8 gave before the cut.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 21,
+  version: 22,
   threshold: 0.72,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -195,7 +195,7 @@ export const reviewDeclaration: Declaration = {
     // An item that names a source holds in code, so Clef is asked only of items that name none.
     verified_names_evidence: { scope: 'verified', aggregate: { name: 'share', by: 'either' }, question: defect('Does this item under Verified claim a result (tests pass, the logic is correct, nothing references something) without naming what was read or run to show it?') },
     anchor_borne_out: { scope: 'blocking', aggregate: SHARE, question: yes('Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?') },
-    blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: defect('Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?') },
+    blocks_without_consequence: { scope: 'blocking', aggregate: SHARE, question: yes("Would merging this change as it stands cause the harm this blocking finding's anchor names: wrong output, a crash or data loss (defect), promised behaviour missing (delivery), a security hole, a named design principle broken (design), work outside the change's purpose (scope), or a missing or broken test (tests)? Answer no when the finding asks for a nit, an edit to the pull request description, a doc or a comment, a follow-up, or tooling polish.") },
     wrong_output_below_blocking: { scope: 'nonblocking', aggregate: SHARE, question: defect('Does this finding, though not labelled blocking, describe wrong output, a crash or data loss?') },
   },
 };
