@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, GenerationTask, Harnes
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { actionable, Approvals, Failures, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForMessages, type DispatchingExtension, type ModelWait, type Principal, type SubmitResult } from '@quack/sdk';
+import { actionable, Approvals, Failures, MODEL_RETRY, modelWait, pendingApprovals, Questions, withdrawApprovals, withdrawForMessages, type DispatchingExtension, type ModelWait, type Principal, type SubmitResult } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { cutOffExtension } from './cut-off.ts';
 import { unknownToolExtension } from './unknown-tool.ts';
@@ -52,7 +52,7 @@ export function reportLine({ error, ...info }: Report): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth.
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<ConversationRetryPolicy>; /** How long a run waits out a failing model endpoint (default MODEL_OUTAGE_HOURS). */ outageHours?: number; /** Test seam: model responses one run may take (default TURN_CEILING). */ turnCeiling?: number; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<ConversationRetryPolicy>; /** How long a run waits out a failing model endpoint; absent keeps MODEL_RETRY's few minutes, as a session with no deployment behind it should. */ outageHours?: number; /** Test seam: model responses one run may take (default TURN_CEILING). */ turnCeiling?: number; log?: (line: string) => void; /** The session's key, for log lines. */ key?: string }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   registry.install(loopGuardExtension());
@@ -86,7 +86,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   await mkdir(workspace, { recursive: true });
   const sees = !!opts.models.getModel(opts.agent.model.provider, opts.agent.model.modelId)?.input.includes('image');
   const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
-  const retry = { ...outageRetry(opts.outageHours), ...opts.retry };
+  const retry = { ...(opts.outageHours === undefined ? MODEL_RETRY : outageRetry(opts.outageHours)), ...opts.retry };
   const onReport = (report: Report) => {
     const line = reportLine(report);
     if (line) log(line);

@@ -62,7 +62,7 @@ test('the production policy waits out about six hours of outage, trying at least
   const policy = outageRetry();
   let total = 0;
   for (let n = 1; n <= policy.maxRetries; n++) total += retryDelayMs(policy, n);
-  assert.ok(total >= MODEL_OUTAGE_HOURS * 3_600_000 && total <= MODEL_OUTAGE_HOURS * 3_600_000 + 300_000, `total backoff ${total}ms`);
+  assert.ok(total <= MODEL_OUTAGE_HOURS * 3_600_000 && total > MODEL_OUTAGE_HOURS * 3_600_000 - 300_000, `total backoff ${total}ms`);
   assert.equal(retryDelayMs(policy, policy.maxRetries), 300_000);
 });
 

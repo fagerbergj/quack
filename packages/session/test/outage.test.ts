@@ -7,7 +7,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { SetTimer } from '@earendil-works/pi-durable';
 import { failedRows, Failures, retryEngineBusy } from '@quack/sdk';
-import { openSession } from '../src/index.ts';
+import { MODEL_OUTAGE_HOURS, openSession, outageHoursOf } from '../src/index.ts';
 
 const root = await mkdtemp(join(tmpdir(), 'quack-outage-'));
 after(() => rm(root, { recursive: true, force: true }));
@@ -54,7 +54,7 @@ const noRoute = () => fauxAssistantMessage('', { stopReason: 'error', errorMessa
 const OUTAGE = [...Array.from({ length: 8 }, refused), ...Array.from({ length: 8 }, noRoute)];
 const HOUR = 3_600_000;
 
-async function open(name: string, steps: FauxResponseStep[], clock: Clock, outageHours?: number, turnCeiling?: number) {
+async function open(name: string, steps: FauxResponseStep[], clock: Clock, outageHours: number | undefined = MODEL_OUTAGE_HOURS, turnCeiling?: number) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses(steps);
   const models = createModels();
@@ -130,9 +130,31 @@ test('a session reopened while parked is still waiting, and answers once the mod
 
 test('failed tries are not model turns: a long park does not trip the run ceiling', async () => {
   const clock = new Clock();
-  const { session, said } = await open('ceiling-turns', [...OUTAGE, fauxAssistantMessage('Paris')], clock, undefined, 3);
+  const { session, said } = await open('ceiling-turns', [...OUTAGE, fauxAssistantMessage('Paris')], clock, MODEL_OUTAGE_HOURS, 3);
   await session.submit('Capital of France?', 'q');
   assert.ok(await clock.until(() => said('Paris'), 2 * HOUR));
   assert.deepEqual(failedRows(await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT)), []);
   await session.close();
+});
+
+test('a session opened with no outage window, as an eval harness opens one, keeps the few-minute budget and fails fast', async () => {
+  const clock = new Clock();
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([...OUTAGE, fauxAssistantMessage('never')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: join(root, 'no-window'), models, agent: { model: { provider: m.provider, modelId: m.id } }, now: clock.now, setTimer: clock.setTimer });
+  const rows = async () => failedRows(await session.harness.snapshot(Failures, session.root.id, BACKGROUND_CONTEXT));
+  await session.submit('hi', 'q');
+  assert.ok(await clock.until(async () => (await rows()).length > 0, 10 * 60_000), 'ended within ten minutes of outage');
+  assert.equal(faux.state.callCount, 10, 'the first call and nine retries');
+  await session.close();
+});
+
+test('a runtime takes QUACK_MODEL_OUTAGE_HOURS over the deployment window, and the deployment window over six hours', () => {
+  assert.equal(outageHoursOf({}, {}), MODEL_OUTAGE_HOURS);
+  assert.equal(outageHoursOf({ modelOutageHours: 2 }, {}), 2);
+  assert.equal(outageHoursOf({ modelOutageHours: 2 }, { QUACK_MODEL_OUTAGE_HOURS: '0.1' }), 0.1);
+  for (const bad of ['0', 'six', 'Infinity']) assert.throws(() => outageHoursOf({}, { QUACK_MODEL_OUTAGE_HOURS: bad }), /QUACK_MODEL_OUTAGE_HOURS must be/);
 });

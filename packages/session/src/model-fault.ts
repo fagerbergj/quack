@@ -11,11 +11,20 @@ export const MODEL_OUTAGE_HOURS = 6;
 // Tries back off from 2 s to one every 5 minutes; each is the real request, since a router's own /models answers while its upstream is dead.
 const BACKOFF = { enabled: true, baseDelayMs: 2000, maxAgentDelayMs: 300_000 };
 
-/** The harness retry policy: as many tries as the backoff takes to cover `hours`. A 4xx or an input over the context is never retried. */
+/** The harness retry policy: as many tries as the backoff fits within `hours`. A 4xx or an input over the context is never retried. */
 export function outageRetry(hours = MODEL_OUTAGE_HOURS): ConversationRetryPolicy {
   let maxRetries = 0;
-  for (let waited = 0; waited < hours * 3_600_000; ) waited += retryDelayMs(BACKOFF, ++maxRetries);
+  for (let waited = 0; waited + retryDelayMs(BACKOFF, maxRetries + 1) <= hours * 3_600_000; ) waited += retryDelayMs(BACKOFF, ++maxRetries);
   return { ...BACKOFF, maxRetries };
+}
+
+/** A runtime's window: QUACK_MODEL_OUTAGE_HOURS (an eval's short one) over the deployment's modelOutageHours over MODEL_OUTAGE_HOURS. */
+export function outageHoursOf(deployment: { modelOutageHours?: number }, env: Record<string, string | undefined> = process.env): number {
+  const raw = env.QUACK_MODEL_OUTAGE_HOURS;
+  if (raw === undefined) return deployment.modelOutageHours ?? MODEL_OUTAGE_HOURS;
+  const hours = Number(raw);
+  if (!(hours > 0 && hours <= 168)) throw new Error(`QUACK_MODEL_OUTAGE_HOURS must be a number of hours above 0 and at most 168, not ${raw}`);
+  return hours;
 }
 
 function windowText(policy: ConversationRetryPolicy): string {

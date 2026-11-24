@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildModels, CURRENT_AGENT_FILE, withCurrentExtensions, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, sessionFacts, startLifecycleSender, takeLaunchEndpoint, takeLaunchToken } from '@quack/session';
+import { buildModels, CURRENT_AGENT_FILE, withCurrentExtensions, createSessionServer, exitOnStop, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, outageHoursOf, parseDeployment, priceOf, referencedProviders, resolveDeployment, LAUNCH_ENV, sessionFacts, startLifecycleSender, takeLaunchEndpoint, takeLaunchToken } from '@quack/session';
 import { primeSessionEndpoint } from '@quack/sdk';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
@@ -30,7 +30,7 @@ const deployment = await resolveDeployment(config, fetch, referencedProviders(de
 const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog, deploymentExtensions, current);
 const { extensions } = definition;
 
-const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, outageHours: deployment.modelOutageHours, key: env('QUACK_SESSION_KEY') });
+const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent, timeZone: deployment.timeZone, exec: deployment.exec, outageHours: outageHoursOf(deployment), key: env('QUACK_SESSION_KEY') });
 // The lifecycle channel feeds the session catalog.
 const sender = launch
   ? await startLifecycleSender(session, {

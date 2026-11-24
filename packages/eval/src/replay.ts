@@ -24,6 +24,8 @@ export type ReplayResult = { item: DatasetItem; seconds: number; record: Session
 export type ItemInput = { inputs: string[]; pins: Record<string, JsonObject>; asks?: Policy };
 
 const RUNTIME = fileURLToPath(new URL('../../runtime/src/main.ts', import.meta.url));
+// A replay against a dead model fails within about 5 minutes so the runner moves on, instead of parking for the deployment's hours.
+export const REPLAY_OUTAGE_HOURS = 5 / 60;
 
 /** At `.` this tree's bundle and runtime; at another ref the bundle's directory from there, and each `guides` directory under
  * packages/ from there over a copy of this tree's packages, so the extension code stays this tree's. */
@@ -66,7 +68,7 @@ export async function replay(item: DatasetItem, candidate: Candidate, adapters: 
   // The runtime's server answers only its launch token, which it reads from this file and removes.
   const token = randomUUID();
   await writeFile(join(dir, '.launch-token'), token, { mode: 0o600 });
-  const env = { ...process.env, ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, QUACK_SESSION_TOKEN_FILE: join(dir, '.launch-token'), QUACK_SESSION_KEY: `eval:${item.id}:${randomUUID().slice(0, 8)}`, PORT: '0' };
+  const env = { ...process.env, QUACK_MODEL_OUTAGE_HOURS: String(REPLAY_OUTAGE_HOURS), ...candidate.env, ...Object.assign({}, ...doubles.map((d) => d.env)), QUACK_CONFIG: candidate.deployment, QUACK_AGENT: candidate.agent, QUACK_SESSION_DIR: dir, QUACK_SESSION_TOKEN_FILE: join(dir, '.launch-token'), QUACK_SESSION_KEY: `eval:${item.id}:${randomUUID().slice(0, 8)}`, PORT: '0' };
   const child = spawn(process.execPath, [candidate.runtime ?? RUNTIME], { env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   let stderr = '';
   child.stderr?.on('data', (d) => (stderr = (stderr + d).slice(-2000)));
